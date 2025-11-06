@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Projects</title>
+    <link rel="stylesheet" href="styles.css" />
+</head>
+
+<body>
+    <header class="app-header">
+        <div class="brand">
+            <img src="./acies.png" alt="ACIES Logo" class="logo-img" />
+        </div>
+        <!-- Centered navigation and search -->
+        <div class="header-center">
+            <nav class="main-nav">
+                <button class="main-tab-btn active" data-tab="projects">Projects</button>
+                <button class="main-tab-btn" data-tab="notes">Notes</button>
+                <button class="main-tab-btn" data-tab="tools">Tools</button>
+                <button class="main-tab-btn" data-tab="chat">Chat</button>
+            </nav>
+            <div class="nav-search">
+                <input id="search" type="search" placeholder="Search projects..." />
+            </div>
+        </div>
+        <div class="header-actions">
+            <button class="icon-btn quick-add" id="quickNew" aria-label="New project" title="New project">＋</button>
+            <button class="icon-btn" id="aiBtn" aria-label="AI Project" title="Create project with AI">🤖</button>
+            <button class="icon-btn" id="settingsBtn" aria-label="Settings" title="Settings">⚙️</button>
+            <button class="hamburger" id="menuBtn" aria-label="Open menu" aria-controls="drawer" aria-expanded="false">
+                <span></span><span></span><span></span>
+            </button>
+        </div>
+    </header>
+    <aside id="drawer" class="drawer" aria-hidden="true">
+        <div class="drawer-header">
+            <button class="icon-btn" id="drawerClose" aria-label="Close menu">✕</button>
+        </div>
+        <div class="drawer-body">
+            <div class="toolbar">
+                <button class="btn" id="btnNew">＋ New project</button>
+                <details class="menu">
+                    <summary class="btn">⇪ Import</summary>
+                    <div class="menu-list">
+                        <!-- FIX: This is the button that was missing. -->
+                        <button class="btn block" id="btnEmail">From Email (AI)...</button>
+                        <button class="btn block" id="btnImport">From CSV file…</button>
+                        <button class="btn block" id="btnPaste">Paste CSV…</button>
+                    </div>
+                </details>
+                <details class="menu">
+                    <summary class="btn">⬇︎ Export</summary>
+                    <div class="menu-list">
+                        <button class="btn block" id="btnExportCsv">Export CSV</button>
+                        <button class="btn block" id="btnExportJson">Export JSON</button>
+                    </div>
+                </details>
+                <button class="btn" id="btnMarkOverdue">Mark Overdue as Complete</button>
+                <button class="btn btn-danger" id="btnDeleteAll">☠️ Delete All Data</button>
+                <div class="kpi">
+                    <div class="card">
+                        <div class="tiny muted">Incomplete this week</div>
+                        <div class="num" id="kWeek">0</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </aside>
+    <div id="backdrop" class="backdrop" hidden></div>
+    <main>
+        <!-- Tab Panel for Projects -->
+        <div id="projects-panel" class="tab-panel active">
+            <section class="panel stack">
+                <div class="filter-controls">
+                    <div class="due-filter-group" id="dueFilterGroup">
+                        <button class="btn active" data-due-filter="all">All</button>
+                        <button class="btn" data-due-filter="overdue">Overdue</button>
+                        <button class="btn" data-due-filter="soon">This Week</button>
+                        <button class="btn" data-due-filter="ok">Upcoming</button>
+                    </div>
+                    <div class="status-filter-group" id="statusFilterGroup">
+                        <button class="btn active" data-filter="all">All</button>
+                        <button class="btn" data-filter="incomplete">Incomplete</button>
+                        <button class="btn" data-filter="Pending Review">Pending Review</button>
+                        <button class="btn" data-filter="Complete">Complete</button>
+                        <button class="btn" data-filter="Waiting">Waiting</button>
+                    </div>
+                </div>
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th style="width:110px" data-sort="id">ID</th>
+                            <th data-sort="name">Project</th>
+                            <th style="width:140px" data-sort="due">Due</th>
+                            <th style="width:170px">Status</th>
+                            <th>Tasks</th>
+                            <th class="nowrap" style="width:170px;text-align:right">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tbody"></tbody>
+                </table>
+                <div id="emptyState" class="empty" style="display:none">
+                    No projects yet. Import your CSV or add a new one.
+                </div>
+            </section>
+        </div>
+        <!-- Tab Panel for Notes -->
+        <div id="notes-panel" class="tab-panel" hidden>
+            <div class="panel stack">
+                <div class="notes-controls">
+                    <div class="notes-category-toggle">
+                        <button class="btn active" data-category-toggle="keyed">Keyed Notes</button>
+                        <button class="btn" data-category-toggle="general">General Notes</button>
+                    </div>
+                    <div class="notes-user-tabs-row">
+                        <nav class="inner-tabs" id="notesTabsContainer"></nav>
+                        <div class="notes-tab-actions">
+                            <button class="btn tiny" id="addNoteTabBtn">＋ Add Tab</button>
+                            <button class="btn tiny btn-danger" id="removeNoteTabBtn">－ Remove Tab</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="inner-tab-content">
+                    <textarea id="notesTextarea" class="notes-textarea"
+                        placeholder="Select a tab to start writing notes..."></textarea>
+                </div>
+                <!-- Search Results Container -->
+                <div id="notesSearchResults" class="notes-search-results"></div>
+            </div>
+        </div>
+        <!-- Tab Panel for Tools -->
+        <div id="tools-panel" class="tab-panel" hidden>
+            <section class="panel stack">
+                <div class="tools-grid">
+                    <!-- Card 1: Publish DWGs -->
+                    <div id="toolPublishDwgs" class="tool-card" role="button" tabindex="0">
+                        <div class="tool-card-content">
+                            <div class="tool-card-header">Publish DWGs</div>
+                            <div class="tool-card-body">
+                                Plots the layouts of each of the selected DWG files and combines them. Outputs to
+                                "user/documents/AutoCAD Plots".
+                            </div>
+                        </div>
+                        <div class="tool-card-status"></div>
+                    </div>
+                    <!-- Card 2: Clean XREFs -->
+                    <div id="toolCleanXrefs" class="tool-card" role="button" tabindex="0">
+                        <div class="tool-card-content">
+                            <div class="tool-card-header">Clean XREFs</div>
+                            <div class="tool-card-body">
+                                Strips saved paths from all external references (XREFs, images, underlays) in selected
+                                DWG files, forcing AutoCAD to find them in its support paths.
+                            </div>
+                        </div>
+                        <div class="tool-card-status"></div>
+                    </div>
+                    <!-- Card 3: Clean DWGs -->
+                    <div id="toolCleanDwgs" class="tool-card" role="button" tabindex="0">
+                        <div class="tool-card-content">
+                            <div class="tool-card-header">Clean DWGs</div>
+                            <div class="tool-card-body">
+                                Duplicates, cleans, and processes a titleblock and selected CAD drawings using
+                                predefined AutoCAD commands.
+                            </div>
+                        </div>
+                        <div class="tool-card-status"></div>
+                    </div>
+                </div>
+            </section>
+        </div>
+        <!-- Tab Panel for Chat -->
+        <div id="chat-panel" class="tab-panel" hidden>
+            <section class="panel stack">
+                <div class="chat-header"
+                    style="display: flex; justify-content: flex-end; padding-bottom: .75rem; border-bottom: 1px solid var(--border);">
+                    <button id="newChatBtn" class="btn tiny">New Chat</button>
+                </div>
+                <div id="chat-messages" class="chat-messages-container">
+                    <!-- Chat messages will be dynamically inserted here -->
+                </div>
+                <div class="chat-input-container">
+                    <textarea id="chat-input" placeholder="Write a multiline message... (Ctrl+Enter to send)"
+                        rows="3"></textarea>
+                    <button id="chat-send-btn" class="btn-primary">Send</button>
+                </div>
+                <!-- This is the new container for code file buttons -->
+                <div id="chat-code-files-container" class="chat-code-files-container">
+                    <!-- Code file buttons will be dynamically added here -->
+                </div>
+            </section>
+        </div>
+    </main>
+    <!-- Edit / New Modal -->
+    <dialog id="editDlg">
+        <div class="modal-header">
+            <div id="dlgTitle" class="title">Edit Project</div>
+            <div class="inline">
+                <button class="btn" onclick="closeDlg('editDlg')">✕ Close</button>
+                <button class="btn-primary" id="btnSaveProject">💾 Save</button>
+            </div>
+        </div>
+        <div class="modal-body stack">
+            <div class="modal-grid">
+                <div class="col-4">
+                    <label class="tiny muted">Project ID</label>
+                    <input id="f_id" placeholder="e.g. 250410" />
+                </div>
+                <div class="col-8">
+                    <label class="tiny muted">Project Name</label>
+                    <input id="f_name" placeholder="BofA, 121 Windward Ave., Venice, CA" />
+                </div>
+                <div class="col-4">
+                    <label class="tiny muted">Nickname</label>
+                    <input id="f_nick" placeholder="optional" />
+                </div>
+                <div class="col-4">
+                    <label class="tiny muted">Due Date (MM/DD/YY)</label>
+                    <input id="f_due" placeholder="09/24/25" />
+                </div>
+                <div class="col-4">
+                    <label class="tiny muted">Project Path</label>
+                    <div class="input-with-button">
+                        <input id="f_path" placeholder="e.g. M:\Projects\..." />
+                        <button class="btn tiny" id="btnCreateFolder" title="Create directory">Create</button>
+                    </div>
+                </div>
+                <div class="col-12">
+                    <label class="tiny muted">Status (choose any)</label>
+                    <div id="f_statuses" class="status-picker">
+                        <button type="button" class="st st-pr" data-status="Pending Review" aria-pressed="false"
+                            title="Pending Review">Pending review</button>
+                        <button type="button" class="st st-comp" data-status="Complete" aria-pressed="false"
+                            title="Complete">Complete</button>
+                        <button type="button" class="st st-wait" data-status="Waiting" aria-pressed="false"
+                            title="Waiting">Waiting</button>
+                    </div>
+                </div>
+                <div class="col-12">
+                    <label class="tiny muted">Notes</label>
+                    <textarea id="f_notes" rows="3" placeholder="freeform notes…"></textarea>
+                </div>
+            </div>
+            <div class="hr"></div>
+            <div class="stack">
+                <div class="inline" style="justify-content:space-between">
+                    <div class="title" style="font-size:16px">Tasks</div>
+                    <button class="btn-accent tiny" onclick="addTaskRow()">＋ Add Task</button>
+                </div>
+                <div id="taskList" class="stack"></div>
+            </div>
+            <div class="hr"></div>
+            <div class="stack">
+                <div class="inline" style="justify-content:space-between">
+                    <div class="title" style="font-size:16px">Reference Links</div>
+                    <button class="btn-accent tiny" onclick="addRefRow()">＋ Add Link</button>
+                </div>
+                <div id="refList" class="stack"></div>
+            </div>
+        </div>
+    </dialog>
+    <dialog id="emailDlg">
+        <div class="modal-header">
+            <div class="title">Create Project from Email (AI)</div>
+            <div class="inline">
+                <button class="btn" onclick="closeDlg('emailDlg')">✕ Cancel</button>
+                <button class="btn-primary" id="btnProcessEmail">Create Project</button>
+            </div>
+        </div>
+        <div class="modal-body stack">
+            <p class="tiny muted">Paste the full email content below. The AI will extract the project details for you to
+                review.</p>
+            <textarea id="emailArea" rows="15" placeholder="Paste email here…"></textarea>
+            <div id="aiSpinner" class="spinner" style="display:none;">Processing with AI...</div>
+        </div>
+    </dialog>
+    <!-- Paste CSV Modal -->
+    <dialog id="pasteDlg">
+        <div class="modal-header">
+            <div class="title">Paste CSV</div>
+            <div class="inline">
+                <button class="btn" onclick="closeDlg('pasteDlg')">✕ Close</button>
+                <button class="btn-primary" id="btnPasteImport">Import</button>
+            </div>
+        </div>
+        <div class="modal-body stack">
+            <div class="tiny muted">Expected columns: <b>ID, Project Name, Nickname, Notes, Due Date, Status, Tasks,
+                    Path, Reference1, Reference2, …</b></div>
+            <textarea id="pasteArea" rows="12" placeholder="Paste rows from Excel/CSV here…"></textarea>
+            <label class="inline tiny"><input type="checkbox" id="hasHeader" checked style="width:auto"> First row
+                contains headers</label>
+        </div>
+    </dialog>
+    <!-- Delete All Confirmation Modal -->
+    <dialog id="deleteDlg">
+        <div class="modal-header">
+            <div class="title">Delete All Project Data</div>
+            <button class="btn" onclick="closeDlg('deleteDlg')">✕ Cancel</button>
+        </div>
+        <div class="modal-body stack">
+            <p>This is a destructive and irreversible action.</p>
+            <p>To confirm, type <b>DELETE</b> into the box below and click the button.</p>
+            <input id="deleteConfirmInput" type="text" placeholder="Type DELETE to confirm" autocomplete="off" />
+            <button class="btn-danger" id="btnDeleteConfirm" disabled>Delete All Data</button>
+        </div>
+    </dialog>
+    <!-- Settings Modal -->
+    <dialog id="settingsDlg">
+        <div class="modal-header">
+            <div class="title">Settings</div>
+            <button class="btn" onclick="closeDlg('settingsDlg')">✕ Close</button>
+        </div>
+        <div class="modal-body stack">
+            <div class="modal-grid">
+                <div class="col-6">
+                    <label class="tiny muted">Full Name</label>
+                    <input id="settings_userName" placeholder="e.g. Jacob Husband" />
+                </div>
+                <div class="col-6">
+                    <label class="tiny muted">Google Gemini API Key</label>
+                    <div class="input-with-button">
+                        <input id="settings_apiKey" type="password" placeholder="Enter your API key" />
+                        <button type="button" class="btn tiny" id="settings_howToSetupBtn">How to Setup</button>
+                    </div>
+                </div>
+                <div class="col-12">
+                    <label class="tiny muted">Default Discipline</label>
+                    <div id="settings_discipline" class="inline" style="gap: 1rem;">
+                        <label class="inline tiny"><input type="radio" name="settings_discipline_radio"
+                                value="Electrical" style="width:auto"> Electrical</label>
+                        <label class="inline tiny"><input type="radio" name="settings_discipline_radio"
+                                value="Mechanical" style="width:auto"> Mechanical</label>
+                        <label class="inline tiny"><input type="radio" name="settings_discipline_radio" value="Plumbing"
+                                style="width:auto"> Plumbing</label>
+                    </div>
+                </div>
+            </div>
+            <p class="tiny muted" style="margin-top: 1rem;">Your settings are saved automatically as you type.</p>
+        </div>
+    </dialog>
+    <!-- API Key Help Modal -->
+    <dialog id="apiKeyHelpDlg">
+        <div class="modal-header">
+            <div class="title">How to Setup Google Gemini API Key</div>
+            <button class="btn" onclick="closeDlg('apiKeyHelpDlg')">✕ Close</button>
+        </div>
+        <div class="modal-body stack">
+            <p>To use the AI features, you need a free API key from Google AI Studio.</p>
+            <ol style="margin: 0; padding-left: 1.25rem; line-height: 1.6;">
+                <li>Click the button below to open the Google AI Studio API key page in your browser.</li>
+                <li>If you are not logged in, log in with your Google account.</li>
+                <li>Click the "<b>Create API key in new project</b>" button.</li>
+                <li>A new key will be generated. Click the copy icon next to it.</li>
+                <li>Return to this application and paste the key into the "Google Gemini API Key" field in the settings.
+                </li>
+            </ol>
+            <a href="https://aistudio.google.com/api-keys" target="_blank" class="btn-primary"
+                style="text-align: center; display: block; text-decoration: none; padding: .6rem;">Open Google AI Studio
+                API Keys Page</a>
+        </div>
+    </dialog>
+    <!-- Clean DWGs Modal -->
+    <dialog id="cleanDwgsDlg">
+        <div class="modal-header">
+            <div class="title">Clean DWGs Tool</div>
+            <button class="btn" onclick="closeDlg('cleanDwgsDlg')">✕ Cancel</button>
+        </div>
+        <div class="modal-body stack">
+            <p class="tiny muted">Select a titleblock, its size, and the DWG files to be cleaned. The files will be
+                copied locally for processing.</p>
+
+            <div class="modal-grid">
+                <div class="col-12">
+                    <label class="tiny muted">1. Select Titleblock DWG</label>
+                    <div class="input-with-button">
+                        <input id="cleanDwgs_titleblockPath" placeholder="No titleblock selected..." readonly />
+                        <button class="btn tiny" id="btnSelectTitleblock">Select...</button>
+                    </div>
+                </div>
+
+                <div class="col-12">
+                    <label class="tiny muted">2. Specify Titleblock Size</label>
+                    <div id="cleanDwgs_size" class="inline" style="gap: 1rem;">
+                        <label class="inline tiny"><input type="radio" name="cleanDwgs_size_radio" value="22x34"
+                                style="width:auto" checked> 22"x34"</label>
+                        <label class="inline tiny"><input type="radio" name="cleanDwgs_size_radio" value="24x36"
+                                style="width:auto"> 24"x36"</label>
+                        <label class="inline tiny"><input type="radio" name="cleanDwgs_size_radio" value="30x42"
+                                style="width:auto"> 30"x42"</label>
+                    </div>
+                </div>
+
+                <div class="col-12">
+                    <label class="tiny muted">3. Select CAD DWGs to Clean</label>
+                    <div class="input-with-button">
+                        <textarea id="cleanDwgs_cadFiles" rows="4" placeholder="No DWGs selected..."
+                            readonly></textarea>
+                        <button class="btn tiny" id="btnSelectCadFiles">Select...</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="modal-footer" style="text-align: right; margin-top: 1rem;">
+                <button class="btn-primary" id="btnProceedCleanDwgs">▶ Proceed</button>
+            </div>
+        </div>
+    </dialog>
+    <!-- HTML Templates for JS rendering -->
+    <template id="project-row-template">
+        <tr class="row">
+            <td class="cell-id"></td>
+            <td class="cell-name"></td>
+            <td class="cell-due"></td>
+            <td class="cell-status"></td>
+            <td class="cell-tasks"></td>
+            <td class="cell-actions actions"></td>
+        </tr>
+    </template>
+    <template id="task-row-template">
+        <div class="task-row modal-grid" style="align-items:center">
+            <div class="col-8"><input class="t-text" placeholder="Task description"></div>
+            <div class="col-1"><label class="tiny inline"><input type="checkbox" class="t-done" style="width:auto">
+                    Done</label></div>
+            <div class="col-3 inline" style="justify-content:flex-end; gap:.4rem"><button type="button"
+                    class="btn tiny btn-remove">Remove</button></div>
+            <div class="col-6"><input class="t-link" placeholder="Optional link or file path"></div>
+            <div class="col-6"><input class="t-link2" placeholder="Second link (optional)"></div>
+        </div>
+    </template>
+    <template id="ref-row-template">
+        <div class="ref-row modal-grid" style="align-items:center">
+            <div class="col-4"><input class="r-label" placeholder="Label (optional)"></div>
+            <div class="col-8"><input class="r-url" placeholder="URL or file path"></div>
+            <div class="col-12 inline" style="justify-content:flex-end; gap:.4rem"><button type="button"
+                    class="btn tiny btn-remove">Remove</button></div>
+        </div>
+    </template>
+    <script src="script.js"></script>
+</body>
+
+</html>

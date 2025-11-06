@@ -19,6 +19,8 @@ from google.genai import types
 # --- Helper function to get the application data path ---
 
 # --- Helper function to get the application data path ---
+
+
 def get_app_data_path(file_name="tasks.json"):
     """
     Determines the correct, cross-platform path for storing user data
@@ -26,24 +28,30 @@ def get_app_data_path(file_name="tasks.json"):
     """
     if sys.platform == "win32":
         base_dir = os.getenv('APPDATA')
-    elif sys.platform == "darwin": # macOS
-        base_dir = os.path.join(os.path.expanduser('~'), 'Library', 'Application Support')
-    else: # Linux and other Unix-like systems
+    elif sys.platform == "darwin":  # macOS
+        base_dir = os.path.join(os.path.expanduser(
+            '~'), 'Library', 'Application Support')
+    else:  # Linux and other Unix-like systems
         base_dir = os.path.join(os.path.expanduser('~'), '.local', 'share')
     if not base_dir:
         base_dir = os.path.expanduser('~')
     app_data_dir = os.path.join(base_dir, 'ProjectManagementApp')
     os.makedirs(app_data_dir, exist_ok=True)
     return os.path.join(app_data_dir, file_name)
+
+
 # --- Configuration ---
 BASE_DIR = Path(__file__).resolve().parent
-loaded = load_dotenv(BASE_DIR / '.env', override=True) # <— force .env to win
+loaded = load_dotenv(BASE_DIR / '.env', override=True)  # <— force .env to win
 logging.info(f".env loaded: {loaded} (override=True)")
 TASKS_FILE = get_app_data_path("tasks.json")
 NOTES_FILE = get_app_data_path("notes.json")
 SETTINGS_FILE = get_app_data_path("settings.json")
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s - %(levelname)s - %(message)s')
 # --- API Class ---
+
+
 class Api:
     # --- FIX: Removed self.window from __init__ to prevent circular reference ---
     def __init__(self):
@@ -91,22 +99,26 @@ class Api:
                     if line.startswith("PROGRESS:"):
                         message = line[len("PROGRESS:"):].strip()
                         js_message = json.dumps(message)
-                        window.evaluate_js(f'window.updateToolStatus("{tool_id}", {js_message})')
-                
+                        window.evaluate_js(
+                            f'window.updateToolStatus("{tool_id}", {js_message})')
+
                 process.stdout.close()
                 return_code = process.wait()
 
                 if return_code == 0:
-                    window.evaluate_js(f'window.updateToolStatus("{tool_id}", "DONE")')
+                    window.evaluate_js(
+                        f'window.updateToolStatus("{tool_id}", "DONE")')
                 else:
                     error_message = f"Script finished with error code {return_code}."
                     js_error = json.dumps(error_message)
-                    window.evaluate_js(f'window.updateToolStatus("{tool_id}", "ERROR: " + {js_error})')
+                    window.evaluate_js(
+                        f'window.updateToolStatus("{tool_id}", "ERROR: " + {js_error})')
 
             except Exception as e:
                 logging.error(f"Failed to execute script for {tool_id}: {e}")
                 js_error = json.dumps(str(e))
-                window.evaluate_js(f'window.updateToolStatus("{tool_id}", "ERROR: " + {js_error})')
+                window.evaluate_js(
+                    f'window.updateToolStatus("{tool_id}", "ERROR: " + {js_error})')
 
         thread = threading.Thread(target=script_runner)
         thread.start()
@@ -149,7 +161,7 @@ class Api:
                     'status': 'error',
                     'response': 'Invalid chat history format.'
                 }
-            
+
             if len(chat_history) == 0:
                 return {
                     'status': 'error',
@@ -158,7 +170,7 @@ class Api:
 
             client = genai.Client(api_key=api_key)
             model = "gemini-2.5-pro"
-            
+
             # Convert JavaScript chat history to Gemini API format
             contents = []
             for msg in chat_history:
@@ -166,30 +178,31 @@ class Api:
                 # Map 'model' role to 'assistant' if needed
                 if role == 'model':
                     role = 'model'  # Gemini uses 'model' for assistant responses
-                
+
                 parts = msg.get('parts', [])
                 if not parts:
                     continue
-                    
+
                 # Extract text from parts
                 text_parts = []
                 for part in parts:
                     if isinstance(part, dict) and 'text' in part:
-                        text_parts.append(types.Part.from_text(text=part['text']))
+                        text_parts.append(
+                            types.Part.from_text(text=part['text']))
                     elif isinstance(part, str):
                         text_parts.append(types.Part.from_text(text=part))
-                
+
                 if text_parts:
                     contents.append(types.Content(role=role, parts=text_parts))
-            
+
             if not contents:
                 return {
                     'status': 'error',
                     'response': 'No valid messages found in chat history.'
                 }
-            
+
             tools = [types.Tool(google_search=types.GoogleSearch())]
-            
+
             generate_content_config = types.GenerateContentConfig(
                 temperature=0,
                 top_p=0.7,
@@ -204,7 +217,7 @@ class Api:
                 contents=contents,
                 config=generate_content_config,
             )
-            
+
             return {'status': 'success', 'response': response.text}
 
         except Exception as e:
@@ -212,11 +225,11 @@ class Api:
             lower = msg.lower()
             if ("api key expired" in lower or
                 "api_key_invalid" in lower or
-                "invalid api key" in lower):
+                    "invalid api key" in lower):
                 return {'status': 'error',
                         'response': ('Your Google API key is expired/invalid. '
-                                    'Create a new key in Google AI Studio, '
-                                    'update your settings, then try again.')}
+                                     'Create a new key in Google AI Studio, '
+                                     'update your settings, then try again.')}
             logging.error(f"Error getting chat response from AI: {e}")
             return {'status': 'error', 'response': f"An AI error occurred: {msg}"}
 
@@ -233,7 +246,7 @@ class Api:
                 'status': 'error',
                 'message': 'AI API key is not configured. Please provide it in the app settings or set GOOGLE_API_KEY in your .env file.'
             }
-        
+
         current_date = datetime.date.today().strftime("%m/%d/%Y")
         prompt = f"""
 You are an intelligent assistant for {user_name}, a(n) {discipline} engineering project manager. Your task is to analyze an email and extract specific project details. Focus ONLY on the primary {discipline} engineering tasks mentioned. Ignore tasks for other disciplines.
@@ -261,7 +274,7 @@ Return ONLY the JSON object.
                     parts=[types.Part.from_text(text=prompt)],
                 ),
             ]
-            
+
             generate_content_config = types.GenerateContentConfig(
                 temperature=0,
                 response_mime_type="application/json",
@@ -275,14 +288,18 @@ Return ONLY the JSON object.
 
             cleaned = (response.text or "").strip()
             project_data = json.loads(cleaned)
-            
-            project_data.setdefault("id", ""); project_data.setdefault("name", "")
-            project_data.setdefault("due", ""); project_data.setdefault("path", "")
-            project_data.setdefault("tasks", []); project_data.setdefault("notes", "")
-            
+
+            project_data.setdefault("id", "")
+            project_data.setdefault("name", "")
+            project_data.setdefault("due", "")
+            project_data.setdefault("path", "")
+            project_data.setdefault("tasks", [])
+            project_data.setdefault("notes", "")
+
             if 'tasks' in project_data and isinstance(project_data['tasks'], list):
-                project_data['tasks'] = [{'text': str(task), 'done': False, 'links': []} for task in project_data['tasks']]
-            
+                project_data['tasks'] = [{'text': str(task), 'done': False, 'links': [
+                ]} for task in project_data['tasks']]
+
             return {'status': 'success', 'data': project_data}
 
         except Exception as e:
@@ -290,14 +307,14 @@ Return ONLY the JSON object.
             lower = msg.lower()
             if ("api key expired" in lower or
                 "api_key_invalid" in lower or
-                "invalid api key" in lower):
+                    "invalid api key" in lower):
                 return {'status': 'error',
                         'message': ('Your Google API key is expired/invalid. '
                                     'Create a new key in Google AI Studio → API keys, '
                                     'update your settings, then try again.')}
             logging.error(f"Error processing email with AI: {e}")
             return {'status': 'error', 'message': f"AI error: {msg}"}
-            
+
     def get_tasks(self):
         """Reads and returns the content of tasks.json."""
         try:
@@ -305,7 +322,7 @@ Return ONLY the JSON object.
                 return json.load(f)
         except (FileNotFoundError, json.JSONDecodeError):
             return []
-            
+
     def save_tasks(self, data):
         """Saves data to tasks.json and creates a backup."""
         try:
@@ -317,7 +334,7 @@ Return ONLY the JSON object.
         except Exception as e:
             logging.error(f"Error saving tasks: {e}")
             return {'status': 'error', 'message': str(e)}
-            
+
     def get_notes(self):
         """Reads and returns the content of notes.json."""
         try:
@@ -325,7 +342,7 @@ Return ONLY the JSON object.
                 return json.load(f)
         except (FileNotFoundError, json.JSONDecodeError):
             return {}
-            
+
     def save_notes(self, data):
         """Saves notes data to notes.json and creates a backup."""
         try:
@@ -337,7 +354,7 @@ Return ONLY the JSON object.
         except Exception as e:
             logging.error(f"Error saving notes: {e}")
             return {'status': 'error', 'message': str(e)}
-            
+
     def open_path(self, path):
         """Opens a path in the file explorer."""
         try:
@@ -352,12 +369,13 @@ Return ONLY the JSON object.
                     else:
                         return {'status': 'error', 'message': 'Path and parent do not exist.'}
             else:
-                subprocess.run(['open', p] if sys.platform == "darwin" else ['xdg-open', p])
+                subprocess.run(['open', p] if sys.platform ==
+                               "darwin" else ['xdg-open', p])
             return {'status': 'success'}
         except Exception as e:
             logging.error(f"Error opening path: {e}")
             return {'status': 'error', 'message': str(e)}
-            
+
     def create_folder(self, path):
         """Creates a directory."""
         if not path:
@@ -369,7 +387,7 @@ Return ONLY the JSON object.
         except Exception as e:
             logging.error(f"Error creating folder: {e}")
             return {'status': 'error', 'message': str(e)}
-            
+
     def run_publish_script(self):
         """Runs the PlotDWGs.ps1 PowerShell script with progress updates."""
         script_path = os.path.join(BASE_DIR, "PlotDWGs.ps1")
@@ -382,7 +400,8 @@ Return ONLY the JSON object.
         """Runs the removeXREFPaths.ps1 PowerShell script with progress updates."""
         script_path = os.path.join(BASE_DIR, "removeXREFPaths.ps1")
         if not os.path.exists(script_path):
-            raise Exception("removeXREFPaths.ps1 not found in application directory.")
+            raise Exception(
+                "removeXREFPaths.ps1 not found in application directory.")
         command = f'powershell.exe -ExecutionPolicy Bypass -File "{script_path}"'
         self._run_script_with_progress(command, 'toolCleanXrefs')
 
@@ -391,7 +410,7 @@ Return ONLY the JSON object.
         try:
             window = webview.windows[0]
             file_paths = window.create_file_dialog(
-                webview.FileDialog.OPEN, # DEPRECATION FIX
+                webview.FileDialog.OPEN,  # DEPRECATION FIX
                 allow_multiple=options.get('allow_multiple', False),
                 file_types=tuple(options.get('file_types', ()))
             )
@@ -402,41 +421,50 @@ Return ONLY the JSON object.
             logging.error(f"Error in file dialog: {e}")
             return {'status': 'error', 'message': str(e)}
 
+    def abort_clean_dwgs(self):
+        """Creates an abort signal file to stop the Clean DWGs process."""
+        try:
+            abort_file = os.path.join(os.environ.get(
+                'TEMP', ''), "abort_cleandwgs.flag")
+            with open(abort_file, 'w') as f:
+                f.write('abort')
+            logging.info("Abort signal created for Clean DWGs process")
+            return {'status': 'success'}
+        except Exception as e:
+            logging.error(f"Error creating abort file: {e}")
+            return {'status': 'error', 'message': str(e)}
+
     def run_clean_dwgs_script(self, data):
-        """
-        Prepares files and runs the CleanDWGs.ps1 PowerShell script.
-        Automatically includes titleblock's parent folder (typically "Xrefs").
-        """
+        """Prepares files and runs the CleanDWGs.ps1 PowerShell script."""
         try:
             titleblock_path = data.get('titleblock')
             selected_disciplines = data.get('disciplines', [])
-            titleblock_size = data.get('size')
 
             if not titleblock_path:
                 raise ValueError("Missing titleblock path.")
 
-            # Resolve titleblock path
+            # Resolve paths
             titleblock_full = Path(titleblock_path).resolve()
-            
-            # Get titleblock parent folder name (typically "Xrefs")
             titleblock_parent = titleblock_full.parent
-            xref_folder_name = titleblock_parent.name
-            
-            # Navigate up to find project root (parent of the titleblock parent)
             project_root = titleblock_parent.parent
-            
-            if not project_root or not project_root.exists():
-                raise ValueError("Could not determine project root from titleblock path.")
 
-            # Create output directory
+            if not project_root or not project_root.exists():
+                raise ValueError(
+                    "Could not determine project root from titleblock path.")
+
+            # Create output directory with timestamp
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             project_name = project_root.name
-            documents_folder = os.path.join(os.path.expanduser('~'), 'Documents')
-            output_root = os.path.join(documents_folder, "AutoCAD Clean DWGs", f"{project_name}_{timestamp}")
+            documents_folder = os.path.join(
+                os.path.expanduser('~'), 'Documents')
+            output_root = os.path.join(
+                documents_folder, "AutoCAD Clean DWGs", f"{project_name}_{timestamp}")
             os.makedirs(output_root, exist_ok=True)
 
-            # Folders to copy: titleblock parent folder (Xrefs) + selected disciplines
-            folders_to_copy = {xref_folder_name}
+            # FIX: Only include titleblock parent ONCE, and add selected disciplines
+            folders_to_copy = set()
+            folders_to_copy.add(titleblock_parent.name)  # Xrefs folder
+            # Electrical, Mechanical, etc.
             folders_to_copy.update(selected_disciplines)
 
             # Copy folders
@@ -444,33 +472,33 @@ Return ONLY the JSON object.
                 src_folder = project_root / folder
                 if src_folder.exists():
                     dest_folder = Path(output_root) / folder
-                    shutil.copytree(src_folder, dest_folder, dirs_exist_ok=True)
+                    shutil.copytree(src_folder, dest_folder,
+                                    dirs_exist_ok=True)
                     logging.info(f"Copied folder: {folder}")
                 else:
                     logging.warning(f"Folder not found: {src_folder}")
 
-            # Determine new titleblock path
-            new_titleblock_path = str(Path(output_root) / titleblock_full.relative_to(project_root))
+            # Determine new titleblock path relative to output
+            new_titleblock_path = str(
+                Path(output_root) / titleblock_full.relative_to(project_root))
 
-            # Build PowerShell command
+            # Build PowerShell command WITHOUT TitleblockSize parameter
             script_path = os.path.join(BASE_DIR, "CleanDWGs.ps1")
             if not os.path.exists(script_path):
                 raise FileNotFoundError("CleanDWGs.ps1 not found.")
-            
-            # Pass all folders to PowerShell
+
             all_folders_list = ','.join(sorted(folders_to_copy))
-            
+
             command = [
                 'powershell.exe',
                 '-ExecutionPolicy', 'Bypass',
                 '-File', script_path,
                 '-TitleblockPath', new_titleblock_path,
                 '-Disciplines', all_folders_list,
-                '-TitleblockSize', titleblock_size,
                 '-OutputFolder', output_root,
                 '-ProjectRoot', str(project_root)
             ]
-            
+
             self._run_script_with_progress(command, 'toolCleanDwgs')
             return {'status': 'success'}
 
@@ -478,15 +506,16 @@ Return ONLY the JSON object.
             logging.error(f"Error in run_clean_dwgs_script: {e}")
             window = webview.windows[0]
             js_error = json.dumps(str(e))
-            window.evaluate_js(f'window.updateToolStatus("toolCleanDwgs", "ERROR: " + {js_error})')
+            window.evaluate_js(
+                f'window.updateToolStatus("toolCleanDwgs", "ERROR: " + {js_error})')
             return {'status': 'error', 'message': str(e)}
-        
+
     def import_and_process_csv(self):
         """Handles CSV file import dialog."""
         try:
             window = webview.windows[0]
             file_paths = window.create_file_dialog(
-                webview.FileDialog.OPEN, # DEPRECATION FIX
+                webview.FileDialog.OPEN,  # DEPRECATION FIX
                 allow_multiple=False,
                 file_types=('CSV Files (*.csv)',)
             )
@@ -499,7 +528,7 @@ Return ONLY the JSON object.
         except Exception as e:
             logging.error(f"Error during CSV import: {e}")
             return {'status': 'error', 'message': str(e), 'data': []}
-            
+
     def _process_csv_rows(self, csv_content, csv_path):
         """Helper to process CSV data."""
         new_projects = []
@@ -553,6 +582,8 @@ Return ONLY the JSON object.
             }
             new_projects.append(project)
         return new_projects
+
+
 # --- Main Application Setup ---
 if __name__ == '__main__':
     api = Api()

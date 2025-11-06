@@ -1,0 +1,2498 @@
+I have a project management application that has a "Clean DWGs" tool that is not working properly. It is intended to do the following:
+1. user clicks on the tool and a user interface opens up asking for them to select a titleblock DWG and check mark the directories to be cleaned.
+2. user clicks proceed button after filling out the user interface.
+3. the selected files are then duplicated and moved to the users local documents in a directory named "AutoCAD Clean DWGs". The structure of the projects are in the format where there is the folder with the *project name* then inside that folder is the folders with the *discipline name* such as "Electrical" "Mechanical" "Plumbing" as well as the "Xrefs" folder where the Titleblock DWG is located. We want to copy the structure of the files locally so that the XREFs with saved relative paths are located. So for example the project might be named "Billy" so the user will select "Billy/Xref/TBLK.dwg" and "Billy/Electrical/1.DWG" as the title block DWG and CAD DWG. That structure needs to be replicated when the files are saved in the local documents. Also use a time stamp so we don't run into naming issues. For example, "AutoCAD Clean DWGs/Billy*timestamp*/Electrical/1.DWG" and "AutoCAD Clean DWGs/Billy*timestamp*/Xref/TBLK.dwg". All the manipulations should occur on the duplicated files and any reference to the DWGs are referencing these duplicated files.
+3.5 when copying over the files make sure to copy over the entire contents of the discipline folder (aka "Electrical") and the Xref folder (where the titleblock is located). This ensures that any reference files used in the CAD DWGs or title block DWG are accessible from the duplicated file location.
+4. the title block DWG should now open in AutoCAD and once it loads the command "CLEANTBLK" is automatically run from the AutoCAD command line and we wait for the user to complete the command by selecting (2) corner points making up the boundary of the rectangular title block. Provide the user the options to "undo the cleaning, I will handle it", "leave the cleaning, but let me fix it", "cleaning looks good, please continue". Then notify the user to close the Titleblock DWG to proceed if they selected an option to fix it themselves, otherwise save and close the DWG to continue.
+5. the first CAD DWG should now open in AutoCAD and once it loads the command "CLEANCAD" is automatically run from the AutoCAD command line and we wait for the process to finish. Automatically save as the file with the name including the sheet layout names separated by spaces such as "E00.00 E00.01" if the sheet layout names are "Model" "E00.00" "E00.01" always skipping "Model" sheet, after complete, close the file.
+6. Repeat the cleaning process for all CAD DWGS excluding the DWGs in the Xrefs folder that not the Title block DWG.
+7. Once the title block DWG and all CAD DWGs have been processed, open the resulting folder with the processed CAD DWGs for the user to see and do as they please.
+
+Currently the "Clean DWGs" tool is incomplete, because of the following:
+- The tool gets hung up when the user is selecting the corners to clean the titleblock with the message "Command completed successfully". Please fix this.
+
+# Bundled project files → prompt.txt
+# Generated: 2025-11-06T11:21:00
+# Directory: C:\Users\JacobH\Documents\dev\ProjectManagement
+
+## File list (in order):
+- script.js
+- main.py
+- index.html
+- CleanDWGs.ps1
+
+===== BEGIN script.js =====
+```javascript
+// filepath: C:\Users\JacobH\Documents\dev\ProjectManagement\script.js
+// ===================== STATE MANAGEMENT =====================
+/** @typedef {{ label:string, url:string, raw?:string }} Link */
+/** @typedef {{ text:string, done?:boolean, links:Link[] }} Task */
+/** @typedef {{ id:string, name:string, nick?:string, notes?:string, due?:string, path?:string, tasks:Task[], refs:Link[], statuses?:string[], statusTags?:string[], status?:string }} Project */
+let db = [];
+let notesDb = { keyed: {}, general: {} };
+let noteTabs = [];
+let editIndex = -1;
+let currentSort = { key: 'due', dir: 'desc' };
+let statusFilter = 'all';
+let dueFilter = 'all';
+const STATUS_CANON = ["Pending Review", "Complete", "Waiting"];
+const LABEL_TO_KEY = { 'Pending Review': 'pendingReview', 'Complete': 'complete', 'Waiting': 'waiting' };
+const KEY_TO_LABEL = { pendingReview: 'Pending Review', complete: 'Complete', waiting: 'Waiting' };
+let userSettings = {
+    userName: '',
+    discipline: 'Electrical', // Default value
+    apiKey: ''
+};
+let chatHistory = [];
+// ===================== SERVER I/O (PYWEBVIEW) =====================
+async function load() {
+    try {
+        const arr = await window.pywebview.api.get_tasks();
+        migrateStatuses(arr);
+        return arr;
+    } catch (e) {
+        console.warn('Failed to load from Python backend.', e);
+        toast('Could not load data.');
+        return [];
+    }
+}
+async function save() {
+    try {
+        const response = await window.pywebview.api.save_tasks(db);
+        if (response.status !== 'success') throw new Error(response.message || 'Unknown error');
+    } catch (e) {
+        console.warn('Failed to save to Python backend.', e);
+        toast('⚠️ Failed to save data.');
+    }
+}
+async function loadNotes() {
+    try {
+        const data = await window.pywebview.api.get_notes() || {};
+        // Expected data structure: { tabs: string[], keyed: object, general: object }
+        noteTabs = Array.isArray(data.tabs) && data.tabs.length > 0 ? data.tabs : ['Default Tab'];
+        notesDb = {
+            keyed: data.keyed || {},
+            general: data.general || {}
+        };
+        activeNoteTab = noteTabs[0];
+        return notesDb;
+    } catch (e) {
+        console.warn('Failed to load notes from Python backend.', e);
+        toast('Could not load notes.');
+        noteTabs = ['Default Tab'];
+        activeNoteTab = noteTabs[0];
+        return {};
+    }
+}
+async function saveNotes() {
+    try {
+        const dataToSave = {
+            tabs: noteTabs,
+            keyed: notesDb.keyed,
+            general: notesDb.general
+        };
+        const response = await window.pywebview.api.save_notes(dataToSave);
+        if (response.status !== 'success') throw new Error(response.message || 'Unknown error');
+    } catch (e) {
+        console.warn('Failed to save notes to Python backend.', e);
+        toast('⚠️ Failed to save notes.');
+    }
+}
+// ===================== UTILITIES & HELPERS =====================
+function el(tag, props = {}, children = []) { const n = document.createElement(tag); Object.entries(props).forEach(([k, v]) => { if (k.startsWith('aria-') || k.startsWith('data-')) { if (v != null) n.setAttribute(k, String(v)); } else { n[k] = v; } }); children.forEach(c => n.append(c)); return n; }
+function parseDueStr(s) { if (!s) return null; s = s.trim(); let m = s.match(/^\d{4}-\d{2}-\d{2}$/); if (m) return new Date(s + 'T12:00:00'); s = s.replace(/[.]/g, '/').replace(/\s+/g, ''); const parts = s.split('/'); if (parts.length === 3) { let [mm, dd, yy] = parts; if (yy.length === 2) { yy = '20' + yy; } const iso = `${yy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}T12:00:00`; const d = new Date(iso); if (!isNaN(d)) return d; } const d2 = new Date(s); return isNaN(d2) ? null : d2; }
+function dueState(dueStr) { const d = parseDueStr(dueStr); if (!d) return 'ok'; const today = new Date(); today.setHours(0, 0, 0, 0); const dayOfWeek = today.getDay(); const startOfWeek = new Date(today); startOfWeek.setDate(today.getDate() - dayOfWeek); const endOfWeek = new Date(startOfWeek); endOfWeek.setDate(startOfWeek.getDate() + 6); endOfWeek.setHours(23, 59, 59, 999); if (d >= startOfWeek && d <= endOfWeek) { return 'dueSoon'; } if (d < today) { return 'overdue'; } return 'ok'; }
+function humanDate(s) { const d = parseDueStr(s); if (!d) return ''; return d.toLocaleDateString(undefined, { year: '2-digit', month: '2-digit', day: '2-digit' }); }
+function basename(path) { try { if (!path) return ''; const norm = path.replace(/\\/g, '/'); const idx = norm.lastIndexOf('/'); return idx >= 0 ? norm.slice(idx + 1) : norm; } catch { return path; } }
+function toFileURL(raw) { if (!raw) return ''; let s = raw.trim(); if (/^https?:\/\//i.test(s)) return s; if (/^\\\\/.test(s)) return 'file:' + s.replace(/^\\\\/, '/////').replace(/\\/g, '/'); if (/^[A-Za-z]:\\/.test(s)) return 'file:///' + s.replace(/\\/g, '/'); return s; }
+function normalizeLink(input) { const raw = (input || '').trim(); const url = toFileURL(raw); const label = basename(raw) || raw || 'link'; return { label, url, raw }; }
+function convertPath(raw) { if (raw.startsWith('\\\\acies.lan\\cachedrive\\projects2\\')) return raw.replace('\\\\acies.lan\\cachedrive\\projects2\\', 'M:\\'); if (raw.startsWith('\\\\acies.lan\\cachedrive\\projects\\')) return raw.replace('\\\\acies.lan\\cachedrive\\projects\\', 'P:\\'); return raw; }
+function toast(msg, duration = 2200) { const t = el('div', { textContent: msg, style: 'position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--panel);border:1px solid var(--border);padding:.5rem .75rem;border-radius:10px;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.2)' }); document.body.append(t); setTimeout(() => t.remove(), duration); }
+function closeDlg(id) { document.getElementById(id).close(); }
+function val(id) { return document.getElementById(id).value.trim(); }
+const debounce = (fn, delay) => { let timeoutId; return (...args) => { clearTimeout(timeoutId); timeoutId = setTimeout(() => fn(...args), delay); }; };
+// ===================== USER SETTINGS =====================
+async function saveUserSettings() {
+    try {
+        await window.pywebview.api.save_user_settings(userSettings);
+    } catch (e) {
+        console.error("Failed to save user settings to backend:", e);
+        toast('⚠️ Could not save settings.');
+    }
+}
+async function loadUserSettings() {
+    try {
+        const storedSettings = await window.pywebview.api.get_user_settings();
+        if (storedSettings) {
+            userSettings = storedSettings;
+        }
+    } catch (e) {
+        console.error("Failed to load user settings from backend:", e);
+        userSettings = { userName: '', discipline: 'Electrical', apiKey: '' };
+    }
+}
+const debouncedSaveUserSettings = debounce(saveUserSettings, 500);
+
+// Add this near the other helper functions
+function resetToolStatus(toolId) {
+    const card = document.getElementById(toolId);
+    if (card) {
+        card.classList.remove('running');
+        const statusEl = card.querySelector('.tool-card-status');
+        if (statusEl) {
+            statusEl.textContent = '';
+            statusEl.classList.remove('error');
+        }
+    }
+}
+// ===================== STATUS MIGRATION & HELPERS =====================
+function canonStatus(s) { if (!s) return null; const t = String(s).trim().toLowerCase(); if (['pending review', 'pending-review', 'review', 'pr'].includes(t)) return 'Pending Review'; if (['complete', 'completed', 'done'].includes(t)) return 'Complete'; if (['waiting', 'wait'].includes(t)) return 'Waiting'; return null; }
+function hasStatus(p, s) { return Array.isArray(p.statuses) && p.statuses.includes(s); }
+function toggleStatus(p, label) { if (!Array.isArray(p.statuses)) p.statuses = []; const isOn = p.statuses.includes(label); const key = LABEL_TO_KEY[label]; if (key) setTag(p, key, !isOn); }
+function syncStatusArrays(p) { if (!Array.isArray(p.statuses)) p.statuses = []; const fromTags = Array.isArray(p.statusTags) ? p.statusTags : []; for (const k of fromTags) { const L = KEY_TO_LABEL[k]; if (L && !p.statuses.includes(L)) p.statuses.push(L); } p.statuses = [...new Set(p.statuses.filter(s => STATUS_CANON.includes(s)))]; p.statusTags = p.statuses.map(s => LABEL_TO_KEY[s]).filter(Boolean); if (p.statuses.includes('Complete')) p.status = 'Complete'; else if (p.statuses.includes('Waiting')) p.status = 'Waiting'; else if (p.statuses.includes('Pending Review')) p.status = 'Pending'; else p.status = p.status || ''; }
+function migrateStatuses(arr) { for (const p of arr) { if (!Array.isArray(p.statuses)) p.statuses = []; if (p.status) { String(p.status).split(/[,/|;]+/).map(s => s.trim()).filter(Boolean).forEach(piece => { const c = canonStatus(piece); if (c && !p.statuses.includes(c)) p.statuses.push(c); }); } p.statuses = p.statuses.filter(s => STATUS_CANON.includes(s)); syncStatusArrays(p); } }
+function setTag(p, key, on) { const tags = getStatusTags(p); const idx = tags.indexOf(key); if (on && idx === -1) tags.push(key); if (!on && idx !== -1) tags.splice(idx, 1); p.statusTags = tags; const label = KEY_TO_LABEL[key]; if (!Array.isArray(p.statuses)) p.statuses = []; const j = p.statuses.indexOf(label); if (label) { if (on && j === -1) p.statuses.push(label); if (!on && j !== -1) p.statuses.splice(j, 1); } if (p.statuses.includes('Complete')) p.status = 'Complete'; else if (p.statuses.includes('Waiting')) p.status = 'Waiting'; else if (p.statuses.includes('Pending Review')) p.status = 'Pending'; else p.status = ''; }
+function getStatusTags(p) { let tags = Array.isArray(p.statusTags) ? [...p.statusTags] : []; const s = (p.status || '').toLowerCase(); if (s) { if (s.includes('complete') && !tags.includes('complete')) tags.push('complete'); if (s.includes('waiting') && !tags.includes('waiting')) tags.push('waiting'); if ((s.includes('pending review') || s === 'pending') && !tags.includes('pendingReview')) tags.push('pendingReview'); } return [...new Set(tags)]; }
+// ===================== RENDER =====================
+function render() {
+    const tbody = document.getElementById('tbody');
+    const emptyState = document.getElementById('emptyState');
+    tbody.innerHTML = '';
+    const q = val('search').toLowerCase();
+    let items = db.filter(p => {
+        if (q && !matches(q, p)) return false;
+        // Due date filters
+        if (dueFilter === 'overdue' && (dueState(p.due) !== 'overdue' || hasStatus(p, 'Complete'))) return false;
+        if (dueFilter === 'soon' && dueState(p.due) !== 'dueSoon') return false;
+        if (dueFilter === 'ok' && dueState(p.due) !== 'ok') return false;
+        // Status filters
+        if (statusFilter === 'incomplete') {
+            if (hasStatus(p, 'Complete')) return false;
+        } else if (statusFilter !== 'all' && !hasStatus(p, statusFilter)) {
+            return false;
+        }
+        return true;
+    });
+    items.sort((a, b) => {
+        const valA = a[currentSort.key];
+        const valB = b[currentSort.key];
+        let comparison = 0;
+        if (currentSort.key === 'due') {
+            const da = parseDueStr(valA), dbb = parseDueStr(valB);
+            if (!da && !dbb) comparison = 0; else if (!da) comparison = 1; else if (!dbb) comparison = -1; else comparison = da - dbb;
+        } else {
+            comparison = String(valA || '').localeCompare(String(valB || ''), undefined, { numeric: true });
+        }
+        return comparison * (currentSort.dir === 'asc' ? 1 : -1);
+    });
+    updateSortHeaders();
+    document.getElementById('kWeek').textContent = db.filter(p => dueState(p.due) === 'dueSoon' && !hasStatus(p, 'Complete')).length;
+    emptyState.style.display = items.length ? 'none' : 'block';
+    const rowTemplate = document.getElementById('project-row-template');
+    items.forEach(p => {
+        const tr = rowTemplate.content.cloneNode(true).querySelector('tr');
+        const idx = db.indexOf(p);
+        tr.querySelector('.cell-id').textContent = p.id || '—';
+        const nameCell = tr.querySelector('.cell-name');
+        if (p.path) {
+            const link = el('button', { className: 'path-link', textContent: p.name || '—', title: `Open: ${p.path}` });
+            link.onclick = async () => { try { await window.pywebview.api.open_path(convertPath(p.path)); toast('Opened in File Explorer'); } catch (e) { toast('Failed to open path.'); } };
+            nameCell.append(link);
+        } else {
+            nameCell.textContent = p.name || '—';
+        }
+        if (p.nick) nameCell.append(el('small', { className: 'muted', textContent: ` (${p.nick})` }));
+        const dueCell = tr.querySelector('.cell-due');
+        if (p.due) {
+            const ds = dueState(p.due);
+            const pillClass = ds === 'overdue' ? 'pill overdue' : ds === 'dueSoon' ? 'pill dueSoon' : 'pill ok';
+            dueCell.append(el('div', { className: pillClass, textContent: humanDate(p.due) }));
+        } else {
+            dueCell.textContent = '—';
+        }
+        tr.querySelector('.cell-status').append(renderStatusToggles(p));
+        const taskCell = tr.querySelector('.cell-tasks');
+        if (p.tasks?.length) {
+            p.tasks.forEach(t => taskCell.append(el('div', { className: `task-chip ${t.done ? 'done' : ''}`, textContent: t.text || '—' })));
+        } else {
+            taskCell.textContent = '—';
+        }
+        const actionsCell = tr.querySelector('.cell-actions');
+        actionsCell.append(
+            el('button', { className: 'btn tiny', textContent: 'Edit', onclick: () => openEdit(idx) }),
+            el('button', { className: 'btn tiny btn-danger', textContent: 'Del', onclick: () => removeProject(idx) }),
+            el('button', { className: 'btn tiny', textContent: 'Dup', onclick: () => duplicate(idx) }),
+        );
+        tbody.append(tr);
+    });
+}
+function renderStatusToggles(p) {
+    const wrap = el('div', { className: 'status-group' });
+    const mk = (cls, label) => {
+        const b = el('button', { className: `st st-${cls}`, type: 'button', textContent: label.replace(' ', '\n'), title: label, 'aria-pressed': String(hasStatus(p, label)) });
+        b.onclick = async (e) => { e.stopPropagation(); toggleStatus(p, label); await save(); render(); };
+        return b;
+    };
+    wrap.append(mk('pr', 'Pending Review'), mk('comp', 'Complete'), mk('wait', 'Waiting'));
+    return wrap;
+}
+function matches(q, p) { if (!q) return true; return ['id', 'name', 'nick', 'notes'].some(k => (p[k] || '').toLowerCase().includes(q)) || (p.tasks || []).some(t => (t.text || '').toLowerCase().includes(q)) || (p.statuses || []).some(s => s.toLowerCase().includes(q)); }
+function updateSortHeaders() { document.querySelectorAll('th[data-sort]').forEach(th => { th.classList.remove('sort-asc', 'sort-desc'); if (th.dataset.sort === currentSort.key) th.classList.add(`sort-${currentSort.dir}`); }); }
+// ===================== CRUD & ACTIONS =====================
+function openEdit(i) { if (typeof i !== 'number' || i < 0 || !db[i]) return toast('Could not find row to edit.'); editIndex = i; const p = db[i]; document.getElementById('dlgTitle').textContent = `Edit Project — ${p.id || ''}`; fillForm(p); document.getElementById('editDlg').showModal(); }
+function openNew() { editIndex = -1; document.getElementById('dlgTitle').textContent = 'New Project'; fillForm({ tasks: [], refs: [], statuses: [] }); document.getElementById('editDlg').showModal(); }
+function removeProject(i) { if (!confirm('Delete this project?')) return; const id = db[i]?.id; db.splice(i, 1); save(); render(); toast(`Deleted ${id || 'project'}`); }
+function duplicate(i) {
+    const original = db[i];
+    const newProjectData = {
+        // Persistent info from original project
+        id: original.id,
+        name: original.name,
+        nick: original.nick,
+        path: original.path,
+        refs: JSON.parse(JSON.stringify(original.refs || [])), // Keep refs, deep copy
+
+        // Reset fields that are likely to change for the new assignment
+        due: '',
+        notes: '',
+        tasks: [],
+        statuses: []
+    };
+
+    editIndex = -1; // Ensure we are in "new project" mode
+    document.getElementById('dlgTitle').textContent = 'Create Duplicate Project';
+    fillForm(newProjectData);
+    document.getElementById('editDlg').showModal();
+}
+function markOverdueAsComplete() { let count = 0; db.forEach(p => { if (dueState(p.due) === 'overdue') { setTag(p, 'complete', true); count++; } }); if (count > 0) { save(); render(); toast(`Marked ${count} overdue projects as complete`); } else { toast('No overdue projects found'); } }
+// ===================== FORM HANDLING (EDIT/NEW MODAL) =====================
+function fillForm(p) {
+    document.getElementById('f_id').value = p.id || '';
+    document.getElementById('f_name').value = p.name || '';
+    document.getElementById('f_nick').value = p.nick || '';
+    document.getElementById('f_notes').value = p.notes || '';
+    document.getElementById('f_due').value = p.due || '';
+    document.getElementById('f_path').value = p.path || '';
+    setupStatusPicker('f_statuses', p.statuses || []);
+    document.getElementById('taskList').innerHTML = '';
+    const tasks = (p.tasks || []).map(task => typeof task === 'string' ? { text: task } : task);
+    tasks.forEach(addTaskRowFrom);
+    document.getElementById('refList').innerHTML = '';
+    (p.refs || []).forEach(addRefRowFrom);
+}
+function readForm() {
+    const out = { id: val('f_id'), name: val('f_name'), nick: val('f_nick'), notes: val('f_notes'), due: val('f_due'), path: val('f_path'), tasks: [], refs: [], statuses: readStatusPicker('f_statuses') };
+    document.querySelectorAll('#taskList .task-row').forEach(row => { const text = row.querySelector('.t-text').value.trim(); if (!text) return; const done = row.querySelector('.t-done').checked; const links = [row.querySelector('.t-link').value.trim(), row.querySelector('.t-link2').value.trim()].filter(Boolean).map(normalizeLink); out.tasks.push({ text, done, links }); });
+    document.querySelectorAll('#refList .ref-row').forEach(row => { const label = row.querySelector('.r-label').value.trim(); const raw = row.querySelector('.r-url').value.trim(); if (!raw) return; const link = normalizeLink(raw); if (label) link.label = label; out.refs.push(link); });
+    syncStatusArrays(out);
+    return out;
+}
+function onSaveProject() { const data = readForm(); if (editIndex >= 0) { db[editIndex] = data; toast('Project updated'); } else { db.push(data); toast('Project added'); } save(); render(); closeDlg('editDlg'); }
+function setupStatusPicker(containerId, selected) { const elc = document.getElementById(containerId); const setPressed = () => elc.querySelectorAll('.st').forEach(b => b.setAttribute('aria-pressed', String(selected.includes(b.dataset.status)))); if (!elc.__wired) { elc.addEventListener('click', e => { if (e.target.matches('.st')) { const s = e.target.dataset.status; const i = selected.indexOf(s); if (i >= 0) selected.splice(i, 1); else selected.push(s); setPressed(); } }); elc.__wired = true; } setPressed(); }
+function readStatusPicker(containerId) { return Array.from(document.querySelectorAll(`#${containerId} .st[aria-pressed="true"]`)).map(b => b.dataset.status); }
+function addTaskRow() { addTaskRowFrom({}); }
+function addTaskRowFrom(t = {}) { const template = document.getElementById('task-row-template'); const row = template.content.cloneNode(true).querySelector('.task-row'); row.querySelector('.t-text').value = t.text || ''; row.querySelector('.t-done').checked = !!t.done; row.querySelector('.t-link').value = t.links?.[0]?.raw || ''; row.querySelector('.t-link2').value = t.links?.[1]?.raw || ''; row.querySelector('.btn-remove').onclick = () => row.remove(); document.getElementById('taskList').append(row); }
+function addRefRow() { addRefRowFrom({}); }
+function addRefRowFrom(L = {}) { const template = document.getElementById('ref-row-template'); const row = template.content.cloneNode(true).querySelector('.ref-row'); row.querySelector('.r-label').value = L.label || ''; row.querySelector('.r-url').value = L.raw || L.url || ''; row.querySelector('.btn-remove').onclick = () => row.remove(); document.getElementById('refList').append(row); }
+// ===================== CSV Import/Export =====================
+function parseCSV(text) { const rows = []; let i = 0, field = '', row = [], inQ = false; function pushField() { row.push(field); field = ''; } function pushRow() { rows.push(row); row = []; } while (i < text.length) { const ch = text[i]; if (inQ) { if (ch === '"') { if (text[i + 1] === '"') { field += '"'; i += 2; continue; } inQ = false; i++; continue; } field += ch; i++; continue; } else { if (ch === '"') { inQ = true; i++; continue; } if (ch === ',') { pushField(); i++; continue; } if (ch === '\n') { pushField(); pushRow(); i++; continue; } if (ch === '\r') { if (text[i + 1] === '\n') { i += 2; pushField(); pushRow(); } else { i++; pushField(); pushRow(); } continue; } field += ch; i++; } } if (field !== '' || row.length) { pushField(); pushRow(); } return rows; }
+function importRows(rows, hasHeader = true) { if (rows.length && !hasHeader) { const joined = rows[0].map(s => (s || '').toUpperCase()).join(' | '); if (joined.includes('PROJECT NAME') || joined.includes('DUE')) hasHeader = true; } if (hasHeader) rows = rows.slice(1); let added = 0; for (const r of rows) { if (!r.length) continue; const [id, name, nick, notes, due, statusCell, tasksStr, path, ...refs] = r; if (!(id || name || tasksStr || refs.some(Boolean))) continue; const p = { id: String(id || '').trim(), name: (name || '').trim(), nick: (nick || '').trim(), notes: (notes || '').trim(), due: (due || '').trim(), path: (path || '').trim(), tasks: [], refs: [], statuses: [] }; const parts = String(statusCell || '').split(/[,/|;]+/).map(s => s.trim()).filter(Boolean); for (const s of parts) { const c = canonStatus(s); if (c && !p.statuses.includes(c)) p.statuses.push(c); } const tparts = (tasksStr || '').replace(/\r/g, '\n').split(/\n|;|\u2022|\r/).map(s => s.trim()).filter(Boolean); for (const t of tparts) p.tasks.push({ text: t, done: false, links: [] }); for (const cell of refs) { const s = (cell || '').trim(); if (!s) continue; p.refs.push(normalizeLink(s)); } db.push(p); added++; } save(); render(); toast(`Imported ${added} rows`); }
+function exportCSV() { const header = ['ID', 'PROJECT NAME', 'NICKNAME', 'NOTES', 'DUE DATE', 'STATUS', 'TASKS', 'PATH', 'REFERENCE1', 'REFERENCE2', 'REFERENCE3', 'REFERENCE4']; const lines = [header.join(',')]; for (const p of db) { const tasks = (p.tasks || []).map(t => t.text).join(' | '); const refs = (p.refs || []).map(L => L.raw || L.url).slice(0, 4); const statusStr = (p.statuses || []).join(' | '); const row = [p.id, p.name, p.nick || '', (p.notes || '').replaceAll('\n', ' '), p.due || '', statusStr, tasks, p.path || '', ...refs]; const csv = row.map(cell => { const s = String(cell ?? ''); return /[",\n]/.test(s) ? '"' + s.replaceAll('"', '""') + '"' : s; }).join(','); lines.push(csv); } const blob = new Blob([lines.join('\n')], { type: 'text/csv' }); const url = URL.createObjectURL(blob); const a = el('a', { href: url, download: 'projects.csv' }); document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
+function exportJSON() { const blob = new Blob([JSON.stringify(db, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = el('a', { href: url, download: 'projects.json' }); document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
+// ===================== NOTES MANAGEMENT =====================
+const debouncedSaveNotes = debounce(saveNotes, 500);
+let activeNoteCategory = 'keyed';
+let activeNoteTab = null;
+
+function renderNoteTabs() {
+    const container = document.getElementById('notesTabsContainer');
+    container.innerHTML = '';
+    noteTabs.forEach(tabName => {
+        const btn = el('button', {
+            className: `inner-tab-btn ${tabName === activeNoteTab ? 'active' : ''}`,
+            textContent: tabName,
+            'data-plan-tab': tabName
+        });
+        container.append(btn);
+    });
+    updateActiveNoteTextarea();
+}
+
+function updateActiveNoteTextarea() {
+    const textarea = document.getElementById('notesTextarea');
+    if (!activeNoteTab) {
+        textarea.value = '';
+        textarea.placeholder = 'Create a tab to begin.';
+        textarea.disabled = true;
+        return;
+    }
+    textarea.disabled = false;
+    textarea.placeholder = `Enter ${activeNoteCategory} notes for ${activeNoteTab}...`;
+    textarea.value = notesDb[activeNoteCategory]?.[activeNoteTab] || '';
+}
+
+function handleNoteInput(e) {
+    if (!activeNoteCategory || !activeNoteTab) return;
+    if (!notesDb[activeNoteCategory]) {
+        notesDb[activeNoteCategory] = {};
+    }
+    notesDb[activeNoteCategory][activeNoteTab] = e.target.value;
+    debouncedSaveNotes();
+}
+
+function deleteNoteParagraph(category, plan, index) {
+    if (!confirm('Are you sure you want to delete this note paragraph?')) return;
+    const fullContent = notesDb[category]?.[plan] || '';
+    const notes = fullContent.split(/\n\s*\n/).filter(note => note.trim() !== '');
+    notes.splice(index, 1);
+    const newContent = notes.join('\n\n');
+    if (!notesDb[category]) notesDb[category] = {};
+    notesDb[category][plan] = newContent;
+    saveNotes(); // Save immediately
+    renderNoteTabs(); // Re-render to update textarea
+    renderNoteSearchResults(); // Re-run search
+}
+
+function renderNoteSearchResults() {
+    const query = val('search').toLowerCase();
+    const resultsContainer = document.getElementById('notesSearchResults');
+    resultsContainer.innerHTML = '';
+    if (!query) return;
+
+    const queryWords = query.split(' ').filter(w => w);
+    if (!queryWords.length) return;
+
+    const CATEGORY_LABELS = { keyed: 'Keyed Notes', general: 'General Notes' };
+    const seenNotes = new Set(); // Track unique notes to avoid duplicates
+
+    for (const category in notesDb) {
+        for (const plan in notesDb[category]) {
+            const normalizedPlan = plan.toLowerCase(); // Normalize tab name for comparison
+            const content = notesDb[category][plan];
+            if (!content) continue;
+
+            const notes = content.split(/\n\s*\n/).filter(note => note.trim() !== '');
+            notes.forEach((noteText, index) => {
+                const lowerNoteText = noteText.toLowerCase();
+                if (queryWords.every(word => lowerNoteText.includes(word))) {
+                    // Create a unique key for the note based on category, plan, and content
+                    const noteKey = `${category}:${normalizedPlan}:${noteText}`;
+                    if (seenNotes.has(noteKey)) return; // Skip if already processed
+                    seenNotes.add(noteKey);
+
+                    // Use the original plan name (not normalized) for display
+                    const location = `${CATEGORY_LABELS[category]} - ${plan}`;
+                    const item = el('div', { className: 'note-result-item' });
+                    const contentDiv = el('div', { className: 'note-result-content' });
+                    const actionsDiv = el('div', { className: 'note-result-actions' });
+
+                    contentDiv.append(
+                        el('div', { className: 'location', textContent: location }),
+                        el('div', { className: 'snippet', textContent: noteText })
+                    );
+
+                    const editBtn = el('button', { className: 'btn tiny', textContent: 'Edit' });
+                    editBtn.onclick = () => {
+                        activeNoteCategory = category;
+                        activeNoteTab = plan; // Use original plan name
+                        document.querySelectorAll('[data-category-toggle]').forEach(btn => btn.classList.toggle('active', btn.dataset.categoryToggle === category));
+                        renderNoteTabs(); // Re-render tabs to show the active one
+                        const searchInput = document.getElementById('search');
+                        searchInput.value = '';
+                        renderNoteSearchResults();
+                        setTimeout(() => {
+                            const targetTextarea = document.getElementById('notesTextarea');
+                            if (targetTextarea) {
+                                targetTextarea.focus();
+                                const pos = targetTextarea.value.indexOf(noteText);
+                                if (pos !== -1) {
+                                    targetTextarea.setSelectionRange(pos, pos + noteText.length);
+                                    const textBefore = targetTextarea.value.substring(0, pos);
+                                    const lineBreaks = (textBefore.match(/\n/g) || []).length;
+                                    const lineHeight = targetTextarea.scrollHeight / targetTextarea.value.split('\n').length;
+                                    targetTextarea.scrollTop = lineBreaks * lineHeight;
+                                }
+                            }
+                        }, 50);
+                    };
+
+                    const copyBtn = el('button', { className: 'btn tiny', textContent: 'Copy' });
+                    copyBtn.onclick = () => {
+                        navigator.clipboard.writeText(noteText)
+                            .then(() => toast('Note copied to clipboard!'))
+                            .catch(err => toast('Failed to copy note.'));
+                    };
+
+                    const deleteBtn = el('button', { className: 'btn tiny btn-danger', textContent: 'Delete' });
+                    deleteBtn.onclick = () => deleteNoteParagraph(category, plan, index);
+
+                    actionsDiv.append(editBtn, copyBtn, deleteBtn);
+                    item.append(contentDiv, actionsDiv);
+                    resultsContainer.append(item);
+                }
+            });
+        }
+    }
+}
+// ===================== TAB MANAGEMENT =====================
+function handleMainSearch() {
+    const activeTab = document.querySelector('.main-tab-btn.active')?.dataset.tab || 'projects';
+    if (activeTab === 'notes') {
+        renderNoteSearchResults();
+    } else {
+        render();
+    }
+}
+
+function initTabbedInterfaces() {
+    // Main tabs
+    const mainTabContainer = document.querySelector('.main-nav');
+    const mainSearchInput = document.getElementById('search');
+
+    mainTabContainer.addEventListener('click', e => {
+        if (!e.target.matches('.main-tab-btn')) return;
+        const targetTab = e.target.dataset.tab;
+        mainTabContainer.querySelectorAll('.main-tab-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.tab === targetTab));
+        document.querySelectorAll('.tab-panel').forEach(panel => {
+            panel.hidden = panel.id !== `${targetTab}-panel`;
+            panel.classList.toggle('active', panel.id === `${targetTab}-panel`);
+        });
+
+        if (targetTab === 'notes') {
+            mainSearchInput.placeholder = 'Search notes...';
+            mainSearchInput.disabled = false;
+        } else if (targetTab === 'chat') {
+            mainSearchInput.placeholder = 'Search disabled';
+            mainSearchInput.disabled = true;
+        } else { // This covers 'projects' and 'tools'
+            mainSearchInput.placeholder = 'Search projects...';
+            mainSearchInput.disabled = false;
+        }
+        // Clear search and re-render for the new context
+        mainSearchInput.value = '';
+        handleMainSearch();
+    });
+    // Notes Category Toggle
+    const categoryToggle = document.querySelector('.notes-category-toggle');
+    categoryToggle.addEventListener('click', e => {
+        if (!e.target.matches('[data-category-toggle]')) return;
+        activeNoteCategory = e.target.dataset.categoryToggle;
+        categoryToggle.querySelectorAll('[data-category-toggle]').forEach(btn => btn.classList.remove('active'));
+        e.target.classList.add('active');
+        updateActiveNoteTextarea();
+    });
+    // Inner tabs (for notes section)
+    const innerTabContainer = document.getElementById('notesTabsContainer');
+    innerTabContainer.addEventListener('click', e => {
+        if (!e.target.matches('.inner-tab-btn')) return;
+        activeNoteTab = e.target.dataset.planTab;
+        renderNoteTabs();
+    });
+}
+// ===================== TOOL STATUS UPDATER =====================
+// This function is called by the Python backend
+window.updateToolStatus = function (toolId, message) {
+    const card = document.getElementById(toolId);
+    if (!card) return;
+
+    const statusEl = card.querySelector('.tool-card-status');
+    const abortBtn = document.getElementById('abortBtn');
+
+    statusEl.classList.remove('error');
+
+    // Show/hide abort button for Clean DWGs tool
+    if (toolId === 'toolCleanDwgs') {
+        if (message && message !== 'DONE' && !message.startsWith('ERROR:')) {
+            abortBtn.style.display = 'inline-block';
+            abortBtn.onclick = async () => {
+                try {
+                    await window.pywebview.api.abort_clean_dwgs();
+                    toast('Abort signal sent. Process will stop shortly...');
+                    abortBtn.disabled = true;
+                    setTimeout(() => { abortBtn.disabled = false; }, 5000);
+                } catch (e) {
+                    toast('Failed to send abort signal.');
+                }
+            };
+        } else {
+            abortBtn.style.display = 'none';
+        }
+    }
+
+    if (message.startsWith('ERROR:')) {
+        const errorMsg = message.substring(6).trim();
+        statusEl.textContent = `Error: ${errorMsg}`;
+        statusEl.classList.add('error');
+        card.classList.add('running');
+        setTimeout(() => {
+            card.classList.remove('running');
+            if (abortBtn) abortBtn.style.display = 'none';
+        }, 5000);
+    } else if (message === 'DONE') {
+        statusEl.textContent = 'Completed successfully!';
+        setTimeout(() => {
+            card.classList.remove('running');
+            if (abortBtn) abortBtn.style.display = 'none';
+        }, 2000);
+    } else {
+        statusEl.textContent = message;
+    }
+}
+// ===================== EVENT WIRING =====================
+function openSettingsModal() {
+    document.getElementById('settings_userName').value = userSettings.userName || '';
+    document.getElementById('settings_apiKey').value = userSettings.apiKey || '';
+    const disciplineRadios = document.querySelectorAll('#settings_discipline input[name="settings_discipline_radio"]');
+    disciplineRadios.forEach(radio => {
+        radio.checked = (radio.value === userSettings.discipline);
+    });
+    document.getElementById('settingsDlg').showModal();
+}
+
+function initEventListeners() {
+
+    console.log('Verifying critical elements...');
+    const criticalElements = ['btnProceedCleanDwgs', 'toolCleanDwgs', 'cleanDwgs_titleblockPath'];
+    criticalElements.forEach(id => {
+        if (!document.getElementById(id)) {
+            console.error(`❌ CRITICAL: Element '${id}' not found!`);
+        }
+    });
+
+    document.getElementById('quickNew').addEventListener('click', openNew);
+    document.getElementById('settingsBtn').addEventListener('click', openSettingsModal);
+    document.getElementById('menuBtn').addEventListener('click', openDrawer);
+    document.getElementById('drawerClose').addEventListener('click', closeDrawer);
+    document.getElementById('backdrop').addEventListener('click', closeDrawer);
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && document.getElementById('drawer').classList.contains('open')) closeDrawer(); });
+    document.getElementById('btnNew').addEventListener('click', openNew);
+    document.getElementById('btnImport').addEventListener('click', async () => { try { const result = await window.pywebview.api.import_and_process_csv(); if (result.status === 'success') { if (result.data?.length > 0) { db.push(...result.data); migrateStatuses(db); await save(); render(); toast(`Successfully imported ${result.data.length} projects.`); } else { toast('No new projects were found in the selected file.'); } } else if (result.status !== 'cancelled') { throw new Error(result.message || 'An unknown error occurred during import.'); } } catch (e) { console.error('CSV Import failed:', e); toast(`⚠️ Import failed: ${e.message}`); } });
+    document.getElementById('btnPaste').addEventListener('click', () => document.getElementById('pasteDlg').showModal());
+    document.getElementById('btnExportCsv').addEventListener('click', exportCSV);
+    document.getElementById('btnExportJson').addEventListener('click', exportJSON);
+    document.getElementById('btnMarkOverdue').addEventListener('click', markOverdueAsComplete);
+    document.getElementById('search').addEventListener('input', debounce(handleMainSearch, 250));
+    document.getElementById('dueFilterGroup').addEventListener('click', (e) => { if (e.target.tagName === 'BUTTON') { dueFilter = e.target.dataset.dueFilter; document.querySelectorAll('#dueFilterGroup .btn').forEach(b => b.classList.remove('active')); e.target.classList.add('active'); render(); } });
+    document.getElementById('statusFilterGroup').addEventListener('click', (e) => { if (e.target.tagName === 'BUTTON') { statusFilter = e.target.dataset.filter; document.querySelectorAll('#statusFilterGroup .btn').forEach(b => b.classList.remove('active')); e.target.classList.add('active'); render(); } });
+    document.querySelector('.table thead').addEventListener('click', e => { const th = e.target.closest('th[data-sort]'); if (!th) return; const key = th.dataset.sort; if (currentSort.key === key) { currentSort.dir = currentSort.dir === 'asc' ? 'desc' : 'asc'; } else { currentSort.key = key; currentSort.dir = key === 'due' ? 'desc' : 'asc'; } render(); });
+    document.getElementById('btnPasteImport').addEventListener('click', () => { const txt = val('pasteArea'); const rows = parseCSV(txt); const hasHeader = document.getElementById('hasHeader').checked; importRows(rows, hasHeader); closeDlg('pasteDlg'); document.getElementById('pasteArea').value = ''; });
+    document.getElementById('btnSaveProject').addEventListener('click', onSaveProject);
+    document.getElementById('btnCreateFolder').addEventListener('click', async () => { const path = val('f_path'); if (!path) return toast('Project path is empty.'); try { const res = await window.pywebview.api.create_folder(path); if (res.status === 'success') toast('Folder created successfully.'); else throw new Error(res.message); } catch (e) { toast(`⚠️ Error creating folder: ${e.message}`); } });
+    document.getElementById('btnDeleteAll').addEventListener('click', () => { document.getElementById('deleteConfirmInput').value = ''; document.getElementById('btnDeleteConfirm').disabled = true; document.getElementById('deleteDlg').showModal(); });
+    document.getElementById('deleteConfirmInput').addEventListener('input', (e) => { document.getElementById('btnDeleteConfirm').disabled = e.target.value !== 'DELETE'; });
+    document.getElementById('btnDeleteConfirm').addEventListener('click', () => { if (val('deleteConfirmInput') === 'DELETE') { db = []; save(); render(); closeDlg('deleteDlg'); toast('All project data has been deleted.'); } });
+
+    const openAiModal = () => {
+        if (!userSettings.apiKey) {
+            toast('Please set up your Gemini API key in the settings first.');
+            openSettingsModal();
+            return;
+        }
+        document.getElementById('emailArea').value = '';
+        document.getElementById('aiSpinner').style.display = 'none';
+        document.getElementById('emailDlg').showModal();
+    };
+    document.getElementById('btnEmail').addEventListener('click', openAiModal);
+    document.getElementById('aiBtn').addEventListener('click', openAiModal);
+    document.getElementById('settings_howToSetupBtn').addEventListener('click', () => document.getElementById('apiKeyHelpDlg').showModal());
+
+    // Settings Dialog listeners
+    document.getElementById('settings_userName').addEventListener('input', (e) => {
+        userSettings.userName = e.target.value;
+        debouncedSaveUserSettings();
+    });
+    document.getElementById('settings_apiKey').addEventListener('input', (e) => {
+        userSettings.apiKey = e.target.value;
+        debouncedSaveUserSettings();
+    });
+    document.getElementById('settings_discipline').addEventListener('change', (e) => {
+        if (e.target.name === 'settings_discipline_radio') {
+            userSettings.discipline = e.target.value;
+            debouncedSaveUserSettings();
+        }
+    });
+
+    document.getElementById('btnProcessEmail').addEventListener('click', async () => {
+        const emailText = val('emailArea');
+        if (!emailText) return toast('Please paste email content first.');
+        if (!userSettings.apiKey) {
+            toast('Please set your Gemini API key in the settings (⚙️).');
+            openSettingsModal();
+            return;
+        }
+        const spinner = document.getElementById('aiSpinner');
+        spinner.style.display = 'block';
+        try {
+            const result = await window.pywebview.api.process_email_with_ai(
+                emailText,
+                userSettings.apiKey,
+                userSettings.userName,
+                userSettings.discipline
+            );
+            if (result.status === 'success') {
+                closeDlg('emailDlg');
+                openNew();
+                fillForm(result.data);
+                toast('AI analysis complete. Please review and save.');
+            } else {
+                throw new Error(result.message || 'An unknown AI error occurred.');
+            }
+        } catch (e) {
+            console.error('AI Processing failed:', e);
+            toast(`⚠️ AI Error: ${e.message}`, 5000);
+        } finally {
+            spinner.style.display = 'none';
+        }
+    });
+    // Notes functionality
+    document.getElementById('notesTextarea').addEventListener('input', handleNoteInput);
+    document.getElementById('addNoteTabBtn').addEventListener('click', () => {
+        const newTabName = prompt('Enter a name for the new tab:');
+        if (newTabName && !noteTabs.includes(newTabName)) {
+            noteTabs.push(newTabName);
+            activeNoteTab = newTabName;
+            saveNotes();
+            renderNoteTabs();
+        } else if (newTabName) {
+            toast('A tab with that name already exists.');
+        }
+    });
+    document.getElementById('removeNoteTabBtn').addEventListener('click', () => {
+        if (!activeNoteTab) return toast('No active tab to remove.');
+        if (!confirm(`Are you sure you want to permanently delete the "${activeNoteTab}" tab and all its notes?`)) return;
+
+        const index = noteTabs.indexOf(activeNoteTab);
+        if (index > -1) {
+            noteTabs.splice(index, 1);
+            delete notesDb.keyed[activeNoteTab];
+            delete notesDb.general[activeNoteTab];
+
+            if (noteTabs.length === 0) {
+                activeNoteTab = null;
+            } else {
+                activeNoteTab = noteTabs[Math.max(0, index - 1)];
+            }
+            saveNotes();
+            renderNoteTabs();
+        }
+    });
+    // Tools Tab
+    document.getElementById('toolPublishDwgs').addEventListener('click', async (e) => {
+        const card = e.currentTarget;
+        if (card.classList.contains('running')) return;
+        card.classList.add('running');
+        window.updateToolStatus('toolPublishDwgs', 'Starting...');
+        try {
+            await window.pywebview.api.run_publish_script();
+        } catch (e) {
+            window.updateToolStatus('toolPublishDwgs', `ERROR: ${e.message}`);
+        }
+    });
+    document.getElementById('toolCleanXrefs').addEventListener('click', async (e) => {
+        const card = e.currentTarget;
+        if (card.classList.contains('running')) return;
+        card.classList.add('running');
+        window.updateToolStatus('toolCleanXrefs', 'Starting...');
+        try {
+            await window.pywebview.api.run_clean_xrefs_script();
+        } catch (e) {
+            window.updateToolStatus('toolCleanXrefs', `ERROR: ${e.message}`);
+        }
+    });
+    document.getElementById('toolCleanDwgs').addEventListener('click', (e) => {
+        const card = e.currentTarget;
+        if (card.classList.contains('running')) return;
+        // Reset form
+        document.getElementById('cleanDwgs_titleblockPath').value = '';
+        document.getElementById('cleanDwgsDlg').showModal();
+    });
+
+    // Clean DWGs Dialog - NULL-SAFE
+    const btnSelectTitleblock = document.getElementById('btnSelectTitleblock');
+    if (btnSelectTitleblock) {
+        btnSelectTitleblock.addEventListener('click', async () => {
+            try {
+                const result = await window.pywebview.api.select_files({
+                    allow_multiple: false,
+                    file_types: ['AutoCAD Drawings (*.dwg)']
+                });
+                if (result.status === 'success' && result.paths.length > 0) {
+                    const titleblockPathEl = document.getElementById('cleanDwgs_titleblockPath');
+                    if (titleblockPathEl) titleblockPathEl.value = result.paths[0];
+                }
+            } catch (e) {
+                toast(`⚠️ Error selecting file: ${e.message}`);
+            }
+        });
+    } else {
+        console.error('❌ btnSelectTitleblock not found!');
+    }
+
+    // CRITICAL: Add null check before adding event listener
+    const btnProceedCleanDwgs = document.getElementById('btnProceedCleanDwgs');
+    if (btnProceedCleanDwgs) {
+        btnProceedCleanDwgs.addEventListener('click', async () => {
+            const titleblockPath = val('cleanDwgs_titleblockPath');
+
+            // Get selected disciplines (titleblock parent is automatic)
+            const selectedDisciplines = Array.from(document.querySelectorAll('input[name="cleanDwgs_discipline"]:checked'))
+                .map(cb => cb.value);
+
+            if (!titleblockPath) {
+                toast('Please select a titleblock DWG.');
+                return;
+            }
+
+            const data = {
+                titleblock: titleblockPath,
+                disciplines: selectedDisciplines
+                // REMOVED: size parameter
+            };
+
+            closeDlg('cleanDwgsDlg');
+            const card = document.getElementById('toolCleanDwgs');
+            if (card) card.classList.add('running');
+            window.updateToolStatus('toolCleanDwgs', 'Copying files and starting AutoCAD...');
+
+            try {
+                await window.pywebview.api.run_clean_dwgs_script(data);
+            } catch (e) {
+                window.updateToolStatus('toolCleanDwgs', `ERROR: ${e.message}`);
+                // Reset after error
+                setTimeout(() => resetToolStatus('toolCleanDwgs'), 5000);
+            }
+        });
+    } else {
+        console.error('❌ CRITICAL: btnProceedCleanDwgs not found!');
+    }
+
+    // Chat Tab
+    document.getElementById('chat-send-btn').addEventListener('click', handleSendMessage);
+    document.getElementById('chat-input').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && e.ctrlKey) {
+            e.preventDefault(); // prevent new line
+            handleSendMessage();
+        }
+    });
+    document.getElementById('newChatBtn').addEventListener('click', startNewChat);
+
+    // Initialize tab functionality
+    initTabbedInterfaces();
+}
+// ===================== CHAT FUNCTIONS =====================
+/**
+ * Appends a message to the chat container and updates the code file buttons.
+ * @param {string} html The message content (can be HTML).
+ * @param {'user' | 'bot'} sender The sender of the message.
+ */
+function appendChatMessage(html, sender) {
+    const messagesContainer = document.getElementById('chat-messages');
+    const codeFilesContainer = document.getElementById('chat-code-files-container');
+    const messageType = sender === 'user' ? 'user-message' : 'bot-message';
+
+    const messageDiv = el('div', { className: `chat-message ${messageType}` });
+    messageDiv.innerHTML = html; // Use innerHTML to render parsed markdown/code blocks
+
+    messagesContainer.append(messageDiv);
+    messagesContainer.scrollTop = messagesContainer.scrollHeight; // Auto-scroll to bottom
+
+    // Add event listeners for any new copy buttons inside the message
+    messageDiv.querySelectorAll('.copy-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const code = btn.closest('.code-block').querySelector('code').innerText;
+            navigator.clipboard.writeText(code).then(() => {
+                btn.textContent = 'Copied!';
+                setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
+            }).catch(err => {
+                toast('Failed to copy code.');
+                console.error('Copy failed', err);
+            });
+        });
+    });
+
+    // If it's a bot message, detect code blocks and create buttons below the chat window
+    if (sender === 'bot') {
+        messageDiv.querySelectorAll('.code-block').forEach((codeBlock, index) => {
+            const language = codeBlock.querySelector('.code-block-header span')?.textContent || 'code';
+            const code = codeBlock.querySelector('code')?.innerText;
+
+            if (!code) return;
+
+            const fileButton = el('div', { className: 'code-file-button' });
+            const fileNameSpan = el('span', { className: 'file-name', textContent: `${language}_${index + 1}` });
+            const copyBtn = el('button', { className: 'copy-btn', textContent: 'Copy' });
+
+            copyBtn.addEventListener('click', () => {
+                navigator.clipboard.writeText(code).then(() => {
+                    copyBtn.textContent = 'Copied!';
+                    toast(`Copied ${language} code block.`);
+                    setTimeout(() => { copyBtn.textContent = 'Copy'; }, 2000);
+                }).catch(err => {
+                    toast('Failed to copy code.');
+                    console.error('Copy failed', err);
+                });
+            });
+
+            fileButton.append(fileNameSpan, copyBtn);
+            codeFilesContainer.append(fileButton);
+        });
+    }
+}
+
+/**
+ * Parses the bot's response, separating text from code blocks.
+ * @param {string} responseText The raw text from the Gemini API.
+ * @returns {string} HTML string with formatted code blocks.
+ */
+function parseBotResponse(responseText) {
+    const codeBlockRegex = /```(\w*)\n([\s\S]*?)\n```/g;
+    let lastIndex = 0;
+    let html = '';
+
+    let match;
+    while ((match = codeBlockRegex.exec(responseText)) !== null) {
+        // Add the text before the code block
+        const precedingText = responseText.substring(lastIndex, match.index).trim();
+        if (precedingText) {
+            html += `<p>${precedingText.replace(/\n/g, '<br>')}</p>`;
+        }
+
+        const language = match[1] || 'code';
+        const code = match[2].trim();
+
+        // Add the formatted code block
+        html += `
+            <div class="code-block">
+                <div class="code-block-header">
+                    <span>${language}</span>
+                    <button class="copy-btn">Copy</button>
+                </div>
+                <pre><code>${code.replace(/</g, "<").replace(/>/g, ">")}</code></pre>
+            </div>
+        `;
+
+        lastIndex = codeBlockRegex.lastIndex;
+    }
+
+    // Add any remaining text after the last code block
+    const remainingText = responseText.substring(lastIndex).trim();
+    if (remainingText) {
+        html += `<p>${remainingText.replace(/\n/g, '<br>')}</p>`;
+    }
+
+    return html;
+}
+
+function startNewChat() {
+    if (confirm('Are you sure you want to start a new chat? Your current conversation will be lost.')) {
+        chatHistory = [];
+        document.getElementById('chat-messages').innerHTML = '';
+        document.getElementById('chat-code-files-container').innerHTML = '';
+        appendChatMessage('<p>New chat started. How can I help you?</p>', 'bot');
+    }
+}
+
+async function handleSendMessage() {
+    const input = document.getElementById('chat-input');
+    const message = input.value.trim();
+    if (!message) return;
+
+    if (!userSettings.apiKey) {
+        toast('Please set up your Gemini API key in the settings (⚙️) first.');
+        openSettingsModal();
+        return;
+    }
+
+    // Display user's message and add to history
+    appendChatMessage(message.replace(/</g, "<").replace(/>/g, ">"), 'user');
+    chatHistory.push({ role: 'user', parts: [{ text: message }] });
+    input.value = '';
+    input.focus();
+
+    // Show thinking indicator
+    const thinkingMsg = el('div', { className: 'chat-message bot-message thinking' });
+    thinkingMsg.innerHTML = '<div class="spinner">Thinking...</div>';
+    const messagesContainer = document.getElementById('chat-messages');
+    messagesContainer.append(thinkingMsg);
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+
+    try {
+        const result = await window.pywebview.api.get_chat_response(chatHistory);
+        thinkingMsg.remove();
+
+        if (result.status === 'success') {
+            const formattedHtml = parseBotResponse(result.response);
+            appendChatMessage(formattedHtml, 'bot');
+            chatHistory.push({ role: 'model', parts: [{ text: result.response }] });
+        } else {
+            throw new Error(result.response);
+        }
+    } catch (e) {
+        thinkingMsg.remove();
+        const errorHtml = `<strong>Error:</strong> ${e.message}`;
+        appendChatMessage(errorHtml, 'bot');
+        console.error('Chat error:', e);
+    }
+}
+// ===================== INITIALIZATION =====================
+async function init() {
+    // Wait for the webview Python backend to be ready first.
+    await new Promise(resolve => window.addEventListener('pywebviewready', resolve));
+
+    try {
+        // Now that the API is ready, set up all event listeners.
+        initEventListeners();
+
+        // Load all data from the backend.
+        await loadUserSettings();
+        db = await load();
+        await loadNotes();
+
+        // Render the UI with the loaded data.
+        renderNoteTabs();
+        render();
+    } catch (error) {
+        console.error("Fatal error during application initialization:", error);
+        document.body.innerHTML = `<div style="padding: 2rem; text-align: center; color: #ef4444;">
+            <h1>Application Failed to Start</h1>
+            <p>Could not load initial data. Please check the console for errors (Right-click > Inspect) and restart the application.</p>
+            <p><b>Error:</b> ${error.message}</p>
+        </div>`;
+    }
+}
+
+// Start the application
+init();
+
+function openDrawer() { document.getElementById('drawer').classList.add('open'); document.getElementById('backdrop').hidden = false; document.getElementById('menuBtn')?.setAttribute('aria-expanded', 'true'); }
+function closeDrawer() { document.getElementById('drawer').classList.remove('open'); document.getElementById('backdrop').hidden = true; document.getElementById('menuBtn')?.setAttribute('aria-expanded', 'false'); }
+```
+===== END script.js =====
+
+===== BEGIN main.py =====
+```python
+import webview
+import json
+import os
+import subprocess
+import sys
+import shutil
+import csv
+import io
+import logging
+from pathlib import Path
+from dotenv import load_dotenv
+import datetime
+import threading
+
+# --- Google GenAI (new client) ---
+# Uses GOOGLE_API_KEY from environment/.env
+from google import genai
+from google.genai import types
+# --- Helper function to get the application data path ---
+
+# --- Helper function to get the application data path ---
+
+
+def get_app_data_path(file_name="tasks.json"):
+    """
+    Determines the correct, cross-platform path for storing user data
+    and returns the full path for the given file_name.
+    """
+    if sys.platform == "win32":
+        base_dir = os.getenv('APPDATA')
+    elif sys.platform == "darwin":  # macOS
+        base_dir = os.path.join(os.path.expanduser(
+            '~'), 'Library', 'Application Support')
+    else:  # Linux and other Unix-like systems
+        base_dir = os.path.join(os.path.expanduser('~'), '.local', 'share')
+    if not base_dir:
+        base_dir = os.path.expanduser('~')
+    app_data_dir = os.path.join(base_dir, 'ProjectManagementApp')
+    os.makedirs(app_data_dir, exist_ok=True)
+    return os.path.join(app_data_dir, file_name)
+
+
+# --- Configuration ---
+BASE_DIR = Path(__file__).resolve().parent
+loaded = load_dotenv(BASE_DIR / '.env', override=True)  # <— force .env to win
+logging.info(f".env loaded: {loaded} (override=True)")
+TASKS_FILE = get_app_data_path("tasks.json")
+NOTES_FILE = get_app_data_path("notes.json")
+SETTINGS_FILE = get_app_data_path("settings.json")
+logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s - %(levelname)s - %(message)s')
+# --- API Class ---
+
+
+class Api:
+    # --- FIX: Removed self.window from __init__ to prevent circular reference ---
+    def __init__(self):
+        pass
+
+    def _run_script_with_progress(self, command, tool_id):
+        """
+        Runs a script in a separate thread, captures its stdout, and sends 
+        progress updates to the frontend.
+        """
+        def script_runner():
+            window = webview.windows[0]
+            try:
+                startupinfo = None
+                if sys.platform == "win32":
+                    startupinfo = subprocess.STARTUPINFO()
+                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                    startupinfo.wShowWindow = subprocess.SW_HIDE
+
+                # FIX: Handle both string and list commands
+                if isinstance(command, list):
+                    process = subprocess.Popen(
+                        command,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        encoding='utf-8',
+                        errors='replace',
+                        startupinfo=startupinfo
+                    )
+                else:
+                    process = subprocess.Popen(
+                        command,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        encoding='utf-8',
+                        errors='replace',
+                        shell=True,
+                        startupinfo=startupinfo
+                    )
+
+                for line in iter(process.stdout.readline, ''):
+                    line = line.strip()
+                    if line.startswith("PROGRESS:"):
+                        message = line[len("PROGRESS:"):].strip()
+                        js_message = json.dumps(message)
+                        window.evaluate_js(
+                            f'window.updateToolStatus("{tool_id}", {js_message})')
+
+                process.stdout.close()
+                return_code = process.wait()
+
+                if return_code == 0:
+                    window.evaluate_js(
+                        f'window.updateToolStatus("{tool_id}", "DONE")')
+                else:
+                    error_message = f"Script finished with error code {return_code}."
+                    js_error = json.dumps(error_message)
+                    window.evaluate_js(
+                        f'window.updateToolStatus("{tool_id}", "ERROR: " + {js_error})')
+
+            except Exception as e:
+                logging.error(f"Failed to execute script for {tool_id}: {e}")
+                js_error = json.dumps(str(e))
+                window.evaluate_js(
+                    f'window.updateToolStatus("{tool_id}", "ERROR: " + {js_error})')
+
+        thread = threading.Thread(target=script_runner)
+        thread.start()
+
+    def get_user_settings(self):
+        """Reads and returns user settings from settings.json."""
+        try:
+            with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {'userName': '', 'discipline': 'Electrical', 'apiKey': ''}
+
+    def save_user_settings(self, data):
+        """Saves user settings to settings.json."""
+        try:
+            with open(SETTINGS_FILE, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            return {'status': 'success'}
+        except Exception as e:
+            logging.error(f"Error saving user settings: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def get_chat_response(self, chat_history):
+        settings = self.get_user_settings()
+        api_key = settings.get('apiKey', '').strip()
+
+        if not api_key:
+            api_key = (os.getenv("GOOGLE_API_KEY") or "").strip()
+
+        if not api_key:
+            return {
+                'status': 'error',
+                'response': 'API key not found. Please configure it in the AI settings.'
+            }
+
+        try:
+            # Validate input
+            if not isinstance(chat_history, list):
+                return {
+                    'status': 'error',
+                    'response': 'Invalid chat history format.'
+                }
+
+            if len(chat_history) == 0:
+                return {
+                    'status': 'error',
+                    'response': 'Chat history is empty.'
+                }
+
+            client = genai.Client(api_key=api_key)
+            model = "gemini-2.5-pro"
+
+            # Convert JavaScript chat history to Gemini API format
+            contents = []
+            for msg in chat_history:
+                role = msg.get('role', 'user')
+                # Map 'model' role to 'assistant' if needed
+                if role == 'model':
+                    role = 'model'  # Gemini uses 'model' for assistant responses
+
+                parts = msg.get('parts', [])
+                if not parts:
+                    continue
+
+                # Extract text from parts
+                text_parts = []
+                for part in parts:
+                    if isinstance(part, dict) and 'text' in part:
+                        text_parts.append(
+                            types.Part.from_text(text=part['text']))
+                    elif isinstance(part, str):
+                        text_parts.append(types.Part.from_text(text=part))
+
+                if text_parts:
+                    contents.append(types.Content(role=role, parts=text_parts))
+
+            if not contents:
+                return {
+                    'status': 'error',
+                    'response': 'No valid messages found in chat history.'
+                }
+
+            tools = [types.Tool(google_search=types.GoogleSearch())]
+
+            generate_content_config = types.GenerateContentConfig(
+                temperature=0,
+                top_p=0.7,
+                thinking_config=types.ThinkingConfig(
+                    thinking_budget=-1,
+                ),
+                tools=tools,
+            )
+
+            response = client.models.generate_content(
+                model=model,
+                contents=contents,
+                config=generate_content_config,
+            )
+
+            return {'status': 'success', 'response': response.text}
+
+        except Exception as e:
+            msg = str(e)
+            lower = msg.lower()
+            if ("api key expired" in lower or
+                "api_key_invalid" in lower or
+                    "invalid api key" in lower):
+                return {'status': 'error',
+                        'response': ('Your Google API key is expired/invalid. '
+                                     'Create a new key in Google AI Studio, '
+                                     'update your settings, then try again.')}
+            logging.error(f"Error getting chat response from AI: {e}")
+            return {'status': 'error', 'response': f"An AI error occurred: {msg}"}
+
+    def process_email_with_ai(self, email_text, api_key, user_name, discipline):
+        """
+        Processes email text using Google GenAI to extract project details.
+        """
+        final_api_key = (api_key or "").strip()
+        if not final_api_key:
+            final_api_key = (os.getenv("GOOGLE_API_KEY") or "").strip()
+
+        if not final_api_key:
+            return {
+                'status': 'error',
+                'message': 'AI API key is not configured. Please provide it in the app settings or set GOOGLE_API_KEY in your .env file.'
+            }
+
+        current_date = datetime.date.today().strftime("%m/%d/%Y")
+        prompt = f"""
+You are an intelligent assistant for {user_name}, a(n) {discipline} engineering project manager. Your task is to analyze an email and extract specific project details. Focus ONLY on the primary {discipline} engineering tasks mentioned. Ignore tasks for other disciplines.
+Analyze the following email text and extract the information into a valid JSON object with the following keys: "id", "name", "due", "path", "tasks", "notes".
+- "id": Find a project number (e.g., "250597"). If none, leave it empty.
+- "name": Determine the project name, typically including the client and address (e.g., "BofA, 22004 Sherman Way, Canoga Park, CA").
+- "due": Find the due date and format it as "MM/DD/YY". The current date is {current_date}. If the year is not specified in the email, assume the current year or the next year if the date would be in the past. Ensure the due date is on or after today. If multiple dates, choose the most relevant upcoming one.
+- "path": Find the main project file path (e.g., "M:\\\\Gensler\\\\...").
+- "tasks": Create a JSON array of strings listing only the key {discipline} engineering action items. Be concise. Examples: ["Update CAD per architect's comments", "Fill out permit forms", "Prepare binded CADs for IFP submission"].
+- "notes": Provide a brief, one-sentence summary of the email's main request.
+If a piece of information is not found, the value should be an empty string "" for strings, or an empty array [] for tasks.
+Here is the email:
+---
+{email_text}
+---
+Return ONLY the JSON object.
+""".strip()
+        try:
+            client = genai.Client(api_key=final_api_key)
+            model = "gemini-2.5-pro"
+
+            contents = [
+                types.Content(
+                    role="user",
+                    parts=[types.Part.from_text(text=prompt)],
+                ),
+            ]
+
+            generate_content_config = types.GenerateContentConfig(
+                temperature=0,
+                response_mime_type="application/json",
+            )
+
+            response = client.models.generate_content(
+                model=model,
+                contents=contents,
+                config=generate_content_config,
+            )
+
+            cleaned = (response.text or "").strip()
+            project_data = json.loads(cleaned)
+
+            project_data.setdefault("id", "")
+            project_data.setdefault("name", "")
+            project_data.setdefault("due", "")
+            project_data.setdefault("path", "")
+            project_data.setdefault("tasks", [])
+            project_data.setdefault("notes", "")
+
+            if 'tasks' in project_data and isinstance(project_data['tasks'], list):
+                project_data['tasks'] = [{'text': str(task), 'done': False, 'links': [
+                ]} for task in project_data['tasks']]
+
+            return {'status': 'success', 'data': project_data}
+
+        except Exception as e:
+            msg = str(e)
+            lower = msg.lower()
+            if ("api key expired" in lower or
+                "api_key_invalid" in lower or
+                    "invalid api key" in lower):
+                return {'status': 'error',
+                        'message': ('Your Google API key is expired/invalid. '
+                                    'Create a new key in Google AI Studio → API keys, '
+                                    'update your settings, then try again.')}
+            logging.error(f"Error processing email with AI: {e}")
+            return {'status': 'error', 'message': f"AI error: {msg}"}
+
+    def get_tasks(self):
+        """Reads and returns the content of tasks.json."""
+        try:
+            with open(TASKS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return []
+
+    def save_tasks(self, data):
+        """Saves data to tasks.json and creates a backup."""
+        try:
+            if os.path.exists(TASKS_FILE):
+                shutil.copy2(TASKS_FILE, TASKS_FILE + '.bak')
+            with open(TASKS_FILE, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            return {'status': 'success'}
+        except Exception as e:
+            logging.error(f"Error saving tasks: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def get_notes(self):
+        """Reads and returns the content of notes.json."""
+        try:
+            with open(NOTES_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {}
+
+    def save_notes(self, data):
+        """Saves notes data to notes.json and creates a backup."""
+        try:
+            if os.path.exists(NOTES_FILE):
+                shutil.copy2(NOTES_FILE, NOTES_FILE + '.bak')
+            with open(NOTES_FILE, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            return {'status': 'success'}
+        except Exception as e:
+            logging.error(f"Error saving notes: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def open_path(self, path):
+        """Opens a path in the file explorer."""
+        try:
+            p = os.path.normpath(path)
+            if sys.platform == "win32":
+                if os.path.exists(p):
+                    os.startfile(p)
+                else:
+                    parent = os.path.dirname(p)
+                    if os.path.exists(parent):
+                        os.startfile(parent)
+                    else:
+                        return {'status': 'error', 'message': 'Path and parent do not exist.'}
+            else:
+                subprocess.run(['open', p] if sys.platform ==
+                               "darwin" else ['xdg-open', p])
+            return {'status': 'success'}
+        except Exception as e:
+            logging.error(f"Error opening path: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def create_folder(self, path):
+        """Creates a directory."""
+        if not path:
+            return {'status': 'error', 'message': 'Path cannot be empty.'}
+        try:
+            p = os.path.normpath(path)
+            os.makedirs(p, exist_ok=True)
+            return {'status': 'success'}
+        except Exception as e:
+            logging.error(f"Error creating folder: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def run_publish_script(self):
+        """Runs the PlotDWGs.ps1 PowerShell script with progress updates."""
+        script_path = os.path.join(BASE_DIR, "PlotDWGs.ps1")
+        if not os.path.exists(script_path):
+            raise Exception("PlotDWGs.ps1 not found in application directory.")
+        command = f'powershell.exe -ExecutionPolicy Bypass -File "{script_path}"'
+        self._run_script_with_progress(command, 'toolPublishDwgs')
+
+    def run_clean_xrefs_script(self):
+        """Runs the removeXREFPaths.ps1 PowerShell script with progress updates."""
+        script_path = os.path.join(BASE_DIR, "removeXREFPaths.ps1")
+        if not os.path.exists(script_path):
+            raise Exception(
+                "removeXREFPaths.ps1 not found in application directory.")
+        command = f'powershell.exe -ExecutionPolicy Bypass -File "{script_path}"'
+        self._run_script_with_progress(command, 'toolCleanXrefs')
+
+    def select_files(self, options):
+        """Shows a file dialog and returns selected paths."""
+        try:
+            window = webview.windows[0]
+            file_paths = window.create_file_dialog(
+                webview.FileDialog.OPEN,  # DEPRECATION FIX
+                allow_multiple=options.get('allow_multiple', False),
+                file_types=tuple(options.get('file_types', ()))
+            )
+            if not file_paths:
+                return {'status': 'cancelled', 'paths': []}
+            return {'status': 'success', 'paths': file_paths}
+        except Exception as e:
+            logging.error(f"Error in file dialog: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def abort_clean_dwgs(self):
+        """Creates an abort signal file to stop the Clean DWGs process."""
+        try:
+            abort_file = os.path.join(os.environ.get(
+                'TEMP', ''), "abort_cleandwgs.flag")
+            with open(abort_file, 'w') as f:
+                f.write('abort')
+            logging.info("Abort signal created for Clean DWGs process")
+            return {'status': 'success'}
+        except Exception as e:
+            logging.error(f"Error creating abort file: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def run_clean_dwgs_script(self, data):
+        """Prepares files and runs the CleanDWGs.ps1 PowerShell script."""
+        try:
+            titleblock_path = data.get('titleblock')
+            selected_disciplines = data.get('disciplines', [])
+
+            if not titleblock_path:
+                raise ValueError("Missing titleblock path.")
+
+            # Resolve paths
+            titleblock_full = Path(titleblock_path).resolve()
+            titleblock_parent = titleblock_full.parent
+            project_root = titleblock_parent.parent
+
+            if not project_root or not project_root.exists():
+                raise ValueError(
+                    "Could not determine project root from titleblock path.")
+
+            # Create output directory with timestamp
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            project_name = project_root.name
+            documents_folder = os.path.join(
+                os.path.expanduser('~'), 'Documents')
+            output_root = os.path.join(
+                documents_folder, "AutoCAD Clean DWGs", f"{project_name}_{timestamp}")
+            os.makedirs(output_root, exist_ok=True)
+
+            # FIX: Only include titleblock parent ONCE, and add selected disciplines
+            folders_to_copy = set()
+            folders_to_copy.add(titleblock_parent.name)  # Xrefs folder
+            # Electrical, Mechanical, etc.
+            folders_to_copy.update(selected_disciplines)
+
+            # Copy folders
+            for folder in folders_to_copy:
+                src_folder = project_root / folder
+                if src_folder.exists():
+                    dest_folder = Path(output_root) / folder
+                    shutil.copytree(src_folder, dest_folder,
+                                    dirs_exist_ok=True)
+                    logging.info(f"Copied folder: {folder}")
+                else:
+                    logging.warning(f"Folder not found: {src_folder}")
+
+            # Determine new titleblock path relative to output
+            new_titleblock_path = str(
+                Path(output_root) / titleblock_full.relative_to(project_root))
+
+            # Build PowerShell command WITHOUT TitleblockSize parameter
+            script_path = os.path.join(BASE_DIR, "CleanDWGs.ps1")
+            if not os.path.exists(script_path):
+                raise FileNotFoundError("CleanDWGs.ps1 not found.")
+
+            all_folders_list = ','.join(sorted(folders_to_copy))
+
+            command = [
+                'powershell.exe',
+                '-ExecutionPolicy', 'Bypass',
+                '-File', script_path,
+                '-TitleblockPath', new_titleblock_path,
+                '-Disciplines', all_folders_list,
+                '-OutputFolder', output_root,
+                '-ProjectRoot', str(project_root)
+            ]
+
+            self._run_script_with_progress(command, 'toolCleanDwgs')
+            return {'status': 'success'}
+
+        except Exception as e:
+            logging.error(f"Error in run_clean_dwgs_script: {e}")
+            window = webview.windows[0]
+            js_error = json.dumps(str(e))
+            window.evaluate_js(
+                f'window.updateToolStatus("toolCleanDwgs", "ERROR: " + {js_error})')
+            return {'status': 'error', 'message': str(e)}
+
+    def import_and_process_csv(self):
+        """Handles CSV file import dialog."""
+        try:
+            window = webview.windows[0]
+            file_paths = window.create_file_dialog(
+                webview.FileDialog.OPEN,  # DEPRECATION FIX
+                allow_multiple=False,
+                file_types=('CSV Files (*.csv)',)
+            )
+            if not file_paths:
+                return {'status': 'cancelled', 'data': []}
+            with open(file_paths[0], 'r', encoding='utf-8-sig') as f:
+                csv_content = f.read()
+            projects = self._process_csv_rows(csv_content, file_paths[0])
+            return {'status': 'success', 'data': projects}
+        except Exception as e:
+            logging.error(f"Error during CSV import: {e}")
+            return {'status': 'error', 'message': str(e), 'data': []}
+
+    def _process_csv_rows(self, csv_content, csv_path):
+        """Helper to process CSV data."""
+        new_projects = []
+        fallback_paths = {}
+        csv_dir = os.path.dirname(csv_path)
+        fallback_json_path = os.path.join(csv_dir, 'tasks.json')
+        if os.path.exists(fallback_json_path):
+            try:
+                with open(fallback_json_path, 'r', encoding='utf-8') as f:
+                    fallback_data = json.load(f)
+                    for p in fallback_data:
+                        if p.get('id') and p.get('path'):
+                            fallback_paths[str(p['id']).strip()] = p['path']
+            except Exception as e:
+                logging.warning(f"Could not load fallback tasks.json: {e}")
+        f = io.StringIO(csv_content)
+        reader = csv.reader(f)
+        try:
+            header = next(reader)
+            if 'project name' not in ''.join(header).lower():
+                f.seek(0)
+        except StopIteration:
+            return []
+        for row in reader:
+            if not any(field.strip() for field in row):
+                continue
+            row.extend([''] * 12)
+            proj_id, name, nick, notes, due, tasks_str, path, *_ = row
+            if not any([proj_id, name, path]):
+                continue
+            final_path = (path or '').strip()
+            if final_path and not os.path.exists(os.path.normpath(final_path)):
+                fallback_path = fallback_paths.get((proj_id or '').strip())
+                if fallback_path:
+                    final_path = fallback_path
+            tasks_list = [
+                {'text': t.strip(), 'done': False, 'links': []}
+                for t in tasks_str.replace('\r', '\n').replace(';', '\n').replace('\u2022', '\n').split('\n')
+                if t.strip()
+            ]
+            project = {
+                'id': (proj_id or '').strip(),
+                'name': (name or '').strip(),
+                'nick': (nick or '').strip(),
+                'notes': (notes or '').strip(),
+                'due': (due or '').strip(),
+                'path': final_path,
+                'tasks': tasks_list,
+                'refs': [],
+                'statuses': []
+            }
+            new_projects.append(project)
+        return new_projects
+
+
+# --- Main Application Setup ---
+if __name__ == '__main__':
+    api = Api()
+    window = webview.create_window(
+        'ACIES Scheduler',
+        'index.html',
+        js_api=api,
+        width=1400,
+        height=900,
+        resizable=True,
+        min_size=(1024, 768)
+    )
+    # --- FIX: Removed the line that caused the circular reference ---
+    webview.start()
+```
+===== END main.py =====
+
+===== BEGIN index.html =====
+```html
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Projects</title>
+    <link rel="stylesheet" href="styles.css" />
+</head>
+
+<body>
+    <header class="app-header">
+        <div class="brand">
+            <img src="./acies.png" alt="ACIES Logo" class="logo-img" />
+        </div>
+        <!-- Centered navigation and search -->
+        <div class="header-center">
+            <nav class="main-nav">
+                <button class="main-tab-btn active" data-tab="projects">Projects</button>
+                <button class="main-tab-btn" data-tab="notes">Notes</button>
+                <button class="main-tab-btn" data-tab="tools">Tools</button>
+                <button class="main-tab-btn" data-tab="chat">Chat</button>
+            </nav>
+            <div class="nav-search">
+                <input id="search" type="search" placeholder="Search projects..." />
+            </div>
+        </div>
+        <div class="header-actions">
+            <button class="icon-btn quick-add" id="quickNew" aria-label="New project" title="New project">＋</button>
+            <button class="icon-btn" id="aiBtn" aria-label="AI Project" title="Create project with AI">🤖</button>
+            <button class="icon-btn" id="settingsBtn" aria-label="Settings" title="Settings">⚙️</button>
+            <button class="hamburger" id="menuBtn" aria-label="Open menu" aria-controls="drawer" aria-expanded="false">
+                <span></span><span></span><span></span>
+            </button>
+        </div>
+    </header>
+    <aside id="drawer" class="drawer" aria-hidden="true">
+        <div class="drawer-header">
+            <button class="icon-btn" id="drawerClose" aria-label="Close menu">✕</button>
+        </div>
+        <div class="drawer-body">
+            <div class="toolbar">
+                <button class="btn" id="btnNew">＋ New project</button>
+                <details class="menu">
+                    <summary class="btn">⇪ Import</summary>
+                    <div class="menu-list">
+                        <!-- FIX: This is the button that was missing. -->
+                        <button class="btn block" id="btnEmail">From Email (AI)...</button>
+                        <button class="btn block" id="btnImport">From CSV file…</button>
+                        <button class="btn block" id="btnPaste">Paste CSV…</button>
+                    </div>
+                </details>
+                <details class="menu">
+                    <summary class="btn">⬇︎ Export</summary>
+                    <div class="menu-list">
+                        <button class="btn block" id="btnExportCsv">Export CSV</button>
+                        <button class="btn block" id="btnExportJson">Export JSON</button>
+                    </div>
+                </details>
+                <button class="btn" id="btnMarkOverdue">Mark Overdue as Complete</button>
+                <button class="btn btn-danger" id="btnDeleteAll">☠️ Delete All Data</button>
+                <div class="kpi">
+                    <div class="card">
+                        <div class="tiny muted">Incomplete this week</div>
+                        <div class="num" id="kWeek">0</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </aside>
+    <div id="backdrop" class="backdrop" hidden></div>
+    <main>
+        <!-- Tab Panel for Projects -->
+        <div id="projects-panel" class="tab-panel active">
+            <section class="panel stack">
+                <div class="filter-controls">
+                    <div class="due-filter-group" id="dueFilterGroup">
+                        <button class="btn active" data-due-filter="all">All</button>
+                        <button class="btn" data-due-filter="overdue">Overdue</button>
+                        <button class="btn" data-due-filter="soon">This Week</button>
+                        <button class="btn" data-due-filter="ok">Upcoming</button>
+                    </div>
+                    <div class="status-filter-group" id="statusFilterGroup">
+                        <button class="btn active" data-filter="all">All</button>
+                        <button class="btn" data-filter="incomplete">Incomplete</button>
+                        <button class="btn" data-filter="Pending Review">Pending Review</button>
+                        <button class="btn" data-filter="Complete">Complete</button>
+                        <button class="btn" data-filter="Waiting">Waiting</button>
+                    </div>
+                </div>
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th style="width:110px" data-sort="id">ID</th>
+                            <th data-sort="name">Project</th>
+                            <th style="width:140px" data-sort="due">Due</th>
+                            <th style="width:170px">Status</th>
+                            <th>Tasks</th>
+                            <th class="nowrap" style="width:170px;text-align:right">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tbody"></tbody>
+                </table>
+                <div id="emptyState" class="empty" style="display:none">
+                    No projects yet. Import your CSV or add a new one.
+                </div>
+            </section>
+        </div>
+        <!-- Tab Panel for Notes -->
+        <div id="notes-panel" class="tab-panel" hidden>
+            <div class="panel stack">
+                <div class="notes-controls">
+                    <div class="notes-category-toggle">
+                        <button class="btn active" data-category-toggle="keyed">Keyed Notes</button>
+                        <button class="btn" data-category-toggle="general">General Notes</button>
+                    </div>
+                    <div class="notes-user-tabs-row">
+                        <nav class="inner-tabs" id="notesTabsContainer"></nav>
+                        <div class="notes-tab-actions">
+                            <button class="btn tiny" id="addNoteTabBtn">＋ Add Tab</button>
+                            <button class="btn tiny btn-danger" id="removeNoteTabBtn">－ Remove Tab</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="inner-tab-content">
+                    <textarea id="notesTextarea" class="notes-textarea"
+                        placeholder="Select a tab to start writing notes..."></textarea>
+                </div>
+                <!-- Search Results Container -->
+                <div id="notesSearchResults" class="notes-search-results"></div>
+            </div>
+        </div>
+        <!-- Tab Panel for Tools -->
+        <div id="tools-panel" class="tab-panel" hidden>
+            <section class="panel stack">
+                <div style="text-align: right; margin-bottom: 1rem;">
+                    <button id="abortBtn" class="btn btn-danger" style="display: none;">⏹ Abort Process</button>
+                </div>
+                <div class="tools-grid">
+                    <!-- Card 1: Publish DWGs -->
+                    <div id="toolPublishDwgs" class="tool-card" role="button" tabindex="0">
+                        <div class="tool-card-content">
+                            <div class="tool-card-header">Publish DWGs</div>
+                            <div class="tool-card-body">
+                                Plots the layouts of each of the selected DWG files and combines them. Outputs to
+                                "user/documents/AutoCAD Plots".
+                            </div>
+                        </div>
+                        <div class="tool-card-status"></div>
+                    </div>
+                    <!-- Card 2: Clean XREFs -->
+                    <div id="toolCleanXrefs" class="tool-card" role="button" tabindex="0">
+                        <div class="tool-card-content">
+                            <div class="tool-card-header">Clean XREFs</div>
+                            <div class="tool-card-body">
+                                Strips saved paths from all external references (XREFs, images, underlays) in selected
+                                DWG files, forcing AutoCAD to find them in its support paths.
+                            </div>
+                        </div>
+                        <div class="tool-card-status"></div>
+                    </div>
+                    <!-- Card 3: Clean DWGs -->
+                    <div id="toolCleanDwgs" class="tool-card" role="button" tabindex="0">
+                        <div class="tool-card-content">
+                            <div class="tool-card-header">Clean DWGs</div>
+                            <div class="tool-card-body">
+                                Duplicates, cleans, and processes a titleblock and selected CAD drawings using
+                                predefined AutoCAD commands.
+                            </div>
+                        </div>
+                        <div class="tool-card-status"></div>
+                    </div>
+                </div>
+            </section>
+        </div>
+        <!-- Tab Panel for Chat -->
+        <div id="chat-panel" class="tab-panel" hidden>
+            <section class="panel stack">
+                <div class="chat-header"
+                    style="display: flex; justify-content: flex-end; padding-bottom: .75rem; border-bottom: 1px solid var(--border);">
+                    <button id="newChatBtn" class="btn tiny">New Chat</button>
+                </div>
+                <div id="chat-messages" class="chat-messages-container">
+                    <!-- Chat messages will be dynamically inserted here -->
+                </div>
+                <div class="chat-input-container">
+                    <textarea id="chat-input" placeholder="Write a multiline message... (Ctrl+Enter to send)"
+                        rows="3"></textarea>
+                    <button id="chat-send-btn" class="btn-primary">Send</button>
+                </div>
+                <!-- This is the new container for code file buttons -->
+                <div id="chat-code-files-container" class="chat-code-files-container">
+                    <!-- Code file buttons will be dynamically added here -->
+                </div>
+            </section>
+        </div>
+    </main>
+    <!-- Edit / New Modal -->
+    <dialog id="editDlg">
+        <div class="modal-header">
+            <div id="dlgTitle" class="title">Edit Project</div>
+            <div class="inline">
+                <button class="btn" onclick="closeDlg('editDlg')">✕ Close</button>
+                <button class="btn-primary" id="btnSaveProject">💾 Save</button>
+            </div>
+        </div>
+        <div class="modal-body stack">
+            <div class="modal-grid">
+                <div class="col-4">
+                    <label class="tiny muted">Project ID</label>
+                    <input id="f_id" placeholder="e.g. 250410" />
+                </div>
+                <div class="col-8">
+                    <label class="tiny muted">Project Name</label>
+                    <input id="f_name" placeholder="BofA, 121 Windward Ave., Venice, CA" />
+                </div>
+                <div class="col-4">
+                    <label class="tiny muted">Nickname</label>
+                    <input id="f_nick" placeholder="optional" />
+                </div>
+                <div class="col-4">
+                    <label class="tiny muted">Due Date (MM/DD/YY)</label>
+                    <input id="f_due" placeholder="09/24/25" />
+                </div>
+                <div class="col-4">
+                    <label class="tiny muted">Project Path</label>
+                    <div class="input-with-button">
+                        <input id="f_path" placeholder="e.g. M:\Projects\..." />
+                        <button class="btn tiny" id="btnCreateFolder" title="Create directory">Create</button>
+                    </div>
+                </div>
+                <div class="col-12">
+                    <label class="tiny muted">Status (choose any)</label>
+                    <div id="f_statuses" class="status-picker">
+                        <button type="button" class="st st-pr" data-status="Pending Review" aria-pressed="false"
+                            title="Pending Review">Pending review</button>
+                        <button type="button" class="st st-comp" data-status="Complete" aria-pressed="false"
+                            title="Complete">Complete</button>
+                        <button type="button" class="st st-wait" data-status="Waiting" aria-pressed="false"
+                            title="Waiting">Waiting</button>
+                    </div>
+                </div>
+                <div class="col-12">
+                    <label class="tiny muted">Notes</label>
+                    <textarea id="f_notes" rows="3" placeholder="freeform notes…"></textarea>
+                </div>
+            </div>
+            <div class="hr"></div>
+            <div class="stack">
+                <div class="inline" style="justify-content:space-between">
+                    <div class="title" style="font-size:16px">Tasks</div>
+                    <button class="btn-accent tiny" onclick="addTaskRow()">＋ Add Task</button>
+                </div>
+                <div id="taskList" class="stack"></div>
+            </div>
+            <div class="hr"></div>
+            <div class="stack">
+                <div class="inline" style="justify-content:space-between">
+                    <div class="title" style="font-size:16px">Reference Links</div>
+                    <button class="btn-accent tiny" onclick="addRefRow()">＋ Add Link</button>
+                </div>
+                <div id="refList" class="stack"></div>
+            </div>
+        </div>
+    </dialog>
+    <dialog id="emailDlg">
+        <div class="modal-header">
+            <div class="title">Create Project from Email (AI)</div>
+            <div class="inline">
+                <button class="btn" onclick="closeDlg('emailDlg')">✕ Cancel</button>
+                <button class="btn-primary" id="btnProcessEmail">Create Project</button>
+            </div>
+        </div>
+        <div class="modal-body stack">
+            <p class="tiny muted">Paste the full email content below. The AI will extract the project details for you to
+                review.</p>
+            <textarea id="emailArea" rows="15" placeholder="Paste email here…"></textarea>
+            <div id="aiSpinner" class="spinner" style="display:none;">Processing with AI...</div>
+        </div>
+    </dialog>
+    <!-- Paste CSV Modal -->
+    <dialog id="pasteDlg">
+        <div class="modal-header">
+            <div class="title">Paste CSV</div>
+            <div class="inline">
+                <button class="btn" onclick="closeDlg('pasteDlg')">✕ Close</button>
+                <button class="btn-primary" id="btnPasteImport">Import</button>
+            </div>
+        </div>
+        <div class="modal-body stack">
+            <div class="tiny muted">Expected columns: <b>ID, Project Name, Nickname, Notes, Due Date, Status, Tasks,
+                    Path, Reference1, Reference2, …</b></div>
+            <textarea id="pasteArea" rows="12" placeholder="Paste rows from Excel/CSV here…"></textarea>
+            <label class="inline tiny"><input type="checkbox" id="hasHeader" checked style="width:auto"> First row
+                contains headers</label>
+        </div>
+    </dialog>
+    <!-- Delete All Confirmation Modal -->
+    <dialog id="deleteDlg">
+        <div class="modal-header">
+            <div class="title">Delete All Project Data</div>
+            <button class="btn" onclick="closeDlg('deleteDlg')">✕ Cancel</button>
+        </div>
+        <div class="modal-body stack">
+            <p>This is a destructive and irreversible action.</p>
+            <p>To confirm, type <b>DELETE</b> into the box below and click the button.</p>
+            <input id="deleteConfirmInput" type="text" placeholder="Type DELETE to confirm" autocomplete="off" />
+            <button class="btn-danger" id="btnDeleteConfirm" disabled>Delete All Data</button>
+        </div>
+    </dialog>
+    <!-- Settings Modal -->
+    <dialog id="settingsDlg">
+        <div class="modal-header">
+            <div class="title">Settings</div>
+            <button class="btn" onclick="closeDlg('settingsDlg')">✕ Close</button>
+        </div>
+        <div class="modal-body stack">
+            <div class="modal-grid">
+                <div class="col-6">
+                    <label class="tiny muted">Full Name</label>
+                    <input id="settings_userName" placeholder="e.g. Jacob Husband" />
+                </div>
+                <div class="col-6">
+                    <label class="tiny muted">Google Gemini API Key</label>
+                    <div class="input-with-button">
+                        <input id="settings_apiKey" type="password" placeholder="Enter your API key" />
+                        <button type="button" class="btn tiny" id="settings_howToSetupBtn">How to Setup</button>
+                    </div>
+                </div>
+                <div class="col-12">
+                    <label class="tiny muted">Default Discipline</label>
+                    <div id="settings_discipline" class="inline" style="gap: 1rem;">
+                        <label class="inline tiny"><input type="radio" name="settings_discipline_radio"
+                                value="Electrical" style="width:auto"> Electrical</label>
+                        <label class="inline tiny"><input type="radio" name="settings_discipline_radio"
+                                value="Mechanical" style="width:auto"> Mechanical</label>
+                        <label class="inline tiny"><input type="radio" name="settings_discipline_radio" value="Plumbing"
+                                style="width:auto"> Plumbing</label>
+                    </div>
+                </div>
+            </div>
+            <p class="tiny muted" style="margin-top: 1rem;">Your settings are saved automatically as you type.</p>
+        </div>
+    </dialog>
+    <!-- API Key Help Modal -->
+    <dialog id="apiKeyHelpDlg">
+        <div class="modal-header">
+            <div class="title">How to Setup Google Gemini API Key</div>
+            <button class="btn" onclick="closeDlg('apiKeyHelpDlg')">✕ Close</button>
+        </div>
+        <div class="modal-body stack">
+            <p>To use the AI features, you need a free API key from Google AI Studio.</p>
+            <ol style="margin: 0; padding-left: 1.25rem; line-height: 1.6;">
+                <li>Click the button below to open the Google AI Studio API key page in your browser.</li>
+                <li>If you are not logged in, log in with your Google account.</li>
+                <li>Click the "<b>Create API key in new project</b>" button.</li>
+                <li>A new key will be generated. Click the copy icon next to it.</li>
+                <li>Return to this application and paste the key into the "Google Gemini API Key" field in the settings.
+                </li>
+            </ol>
+            <a href="https://aistudio.google.com/api-keys" target="_blank" class="btn-primary"
+                style="text-align: center; display: block; text-decoration: none; padding: .6rem;">Open Google AI Studio
+                API Keys Page</a>
+        </div>
+    </dialog>
+    <!-- Clean DWGs Modal -->
+    <dialog id="cleanDwgsDlg">
+        <div class="modal-header">
+            <div class="title">Clean DWGs Tool</div>
+            <button class="btn" onclick="closeDlg('cleanDwgsDlg')">✕ Cancel</button>
+        </div>
+        <div class="modal-body stack">
+            <p class="tiny muted">Select a titleblock. The titleblock's parent folder (typically "Xrefs") will be
+                automatically included. Choose additional discipline folders to clean.</p>
+
+            <div class="modal-grid">
+                <div class="col-12">
+                    <label class="tiny muted">1. Select Titleblock DWG</label>
+                    <div class="input-with-button">
+                        <input id="cleanDwgs_titleblockPath" placeholder="No titleblock selected..." readonly />
+                        <button class="btn tiny" id="btnSelectTitleblock">Select...</button>
+                    </div>
+                </div>
+
+                <!-- REMOVED: Titleblock Size selection section -->
+
+                <div class="col-12">
+                    <label class="tiny muted">2. Select Additional Disciplines to Clean</label>
+                    <!-- Renumbered from 3 -->
+                    <div id="cleanDwgs_disciplines" class="inline" style="gap: 1rem; flex-wrap: wrap;">
+                        <label class="inline tiny"><input type="checkbox" name="cleanDwgs_discipline" value="Electrical"
+                                style="width:auto"> Electrical</label>
+                        <label class="inline tiny"><input type="checkbox" name="cleanDwgs_discipline" value="Mechanical"
+                                style="width:auto"> Mechanical</label>
+                        <label class="inline tiny"><input type="checkbox" name="cleanDwgs_discipline" value="Plumbing"
+                                style="width:auto"> Plumbing</label>
+                    </div>
+                    <p class="tiny muted" style="margin-top: 0.5rem;">✓ The titleblock's parent folder is automatically
+                        included.</p>
+                </div>
+            </div>
+
+            <div class="modal-footer" style="text-align: right; margin-top: 1rem;">
+                <button class="btn-primary" id="btnProceedCleanDwgs">▶ Proceed</button>
+            </div>
+        </div>
+    </dialog>
+    <!-- HTML Templates for JS rendering -->
+    <template id="project-row-template">
+        <tr class="row">
+            <td class="cell-id"></td>
+            <td class="cell-name"></td>
+            <td class="cell-due"></td>
+            <td class="cell-status"></td>
+            <td class="cell-tasks"></td>
+            <td class="cell-actions actions"></td>
+        </tr>
+    </template>
+    <template id="task-row-template">
+        <div class="task-row modal-grid" style="align-items:center">
+            <div class="col-8"><input class="t-text" placeholder="Task description"></div>
+            <div class="col-1"><label class="tiny inline"><input type="checkbox" class="t-done" style="width:auto">
+                    Done</label></div>
+            <div class="col-3 inline" style="justify-content:flex-end; gap:.4rem"><button type="button"
+                    class="btn tiny btn-remove">Remove</button></div>
+            <div class="col-6"><input class="t-link" placeholder="Optional link or file path"></div>
+            <div class="col-6"><input class="t-link2" placeholder="Second link (optional)"></div>
+        </div>
+    </template>
+    <template id="ref-row-template">
+        <div class="ref-row modal-grid" style="align-items:center">
+            <div class="col-4"><input class="r-label" placeholder="Label (optional)"></div>
+            <div class="col-8"><input class="r-url" placeholder="URL or file path"></div>
+            <div class="col-12 inline" style="justify-content:flex-end; gap:.4rem"><button type="button"
+                    class="btn tiny btn-remove">Remove</button></div>
+        </div>
+    </template>
+    <script src="script.js"></script>
+</body>
+
+</html>
+```
+===== END index.html =====
+
+===== BEGIN CleanDWGs.ps1 =====
+```
+param(
+    [string]$TitleblockPath,
+    [string]$Disciplines,
+    [string]$OutputFolder,
+    [string]$ProjectRoot
+)
+
+#--- ENVIRONMENT SETUP ---
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+#--- LOGGING FUNCTION ---
+function Write-Log {
+    param([string]$Message, [string]$Level = "INFO")
+    Write-Host "PROGRESS: $Message"
+}
+
+#--- ABORT SIGNAL CHECK ---
+function Test-AbortSignal {
+    $abortFile = Join-Path $env:TEMP "abort_cleandwgs.flag"
+    if (Test-Path $abortFile) {
+        Write-Log "Abort signal detected. Stopping..." "WARNING"
+        Remove-Item $abortFile -Force -ErrorAction SilentlyContinue
+        return $true
+    }
+    return $false
+}
+
+#--- AUTOCAD INITIALIZATION ---
+function Initialize-AutoCAD {
+    try {
+        Write-Log "Attempting to connect to running AutoCAD instance..."
+        $Acad = [Runtime.Interopservices.Marshal]::GetActiveObject("AutoCAD.Application")
+        Write-Log "Connected to existing AutoCAD instance."
+    }
+    catch {
+        Write-Log "No running instance found. Starting AutoCAD..."
+        try {
+            $Acad = New-Object -COMObject "AutoCAD.Application"
+            $Acad.Visible = $true
+            Start-Sleep -Seconds 5
+            Write-Log "AutoCAD started successfully."
+        }
+        catch {
+            throw "Failed to start AutoCAD: $_"
+        }
+    }
+    
+    if ($null -eq $Acad) {
+        throw "Could not obtain AutoCAD COM object."
+    }
+    
+    $Acad.Visible = $true
+    return $Acad
+}
+
+#--- WAIT FOR AUTOCAD READY ---
+function Wait-For-AutoCAD {
+    param($AcadApp, [int]$TimeoutSeconds = 30)
+    Write-Log "Waiting for AutoCAD to become ready..."
+    $elapsed = 0
+    while ($elapsed -lt $TimeoutSeconds) {
+        try {
+            $null = $AcadApp.GetAcadState()
+            Start-Sleep -Milliseconds 500
+            return
+        }
+        catch {
+            Start-Sleep -Seconds 1
+            $elapsed++
+        }
+    }
+    Write-Log "WARNING: AutoCAD readiness timeout after $TimeoutSeconds seconds." "WARNING"
+}
+
+#--- WAIT FOR COMMAND COMPLETION ---
+function Wait-For-Command {
+    param($AcadApp, [int]$TimeoutSeconds = 120)
+    $elapsed = 0
+    Write-Log "Waiting for command to complete..."
+    while ($elapsed -lt $TimeoutSeconds) {
+        try {
+            $state = $AcadApp.GetAcadState()
+            if ($state.IsQuiescent) {
+                Write-Log "Command completed successfully."
+                return $true
+            }
+        }
+        catch {
+            # AutoCAD is busy, continue waiting
+        }
+        
+        if (Test-AbortSignal) {
+            throw "Operation aborted by user"
+        }
+        
+        Start-Sleep -Milliseconds 500
+        $elapsed += 0.5
+    }
+    throw "Command timeout after $TimeoutSeconds seconds. AutoCAD may be frozen or waiting for user input."
+}
+
+#--- SET SILENT MODE ---
+function Set-SilentMode {
+    param($Doc)
+    try {
+        Write-Log "Configuring AutoCAD silent mode..."
+        $Doc.SetVariable("FILEDIA", 0)
+        $Doc.SetVariable("EXPERT", 5)
+        $Doc.SetVariable("XREFNOTIFY", 0)
+        $Doc.SetVariable("OLELINKSDIALOG", 0)
+        $Doc.SetVariable("XLOADCTL", 0)
+        $Doc.SetVariable("PROXYNOTICE", 0)
+        $Doc.SetVariable("ACADLSPASDOC", 0)
+        $Doc.SetVariable("CMDDIA", 0)
+        $Doc.SetVariable("ATTDIA", 0)
+        
+        try {
+            $Doc.SendCommand("._EXCELWARNINGS 0`n")
+        }
+        catch {
+            Write-Log "Excel warnings command not available (ignoring)" "WARNING"
+        }
+        
+        Write-Log "Silent mode configured."
+    }
+    catch {
+        Write-Log "Warning: Could not set all silent mode variables: $_" "WARNING"
+    }
+}
+
+#--- BRING AUTOCAD TO FRONT ---
+function Bring-Acad-To-Front {
+    param($AcadApp)
+    try {
+        $AcadApp.WindowState = 3
+        $AcadApp.Visible = $true
+        $null = $AcadApp.Activate()
+    }
+    catch {
+        Write-Log "Could not bring AutoCAD to front: $_" "WARNING"
+    }
+}
+
+#--- USER DIALOG FOR TITLEBLOCK REVIEW ---
+function Show-TitleblockReviewDialog {
+    Add-Type -AssemblyName System.Windows.Forms
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = "Titleblock Review Required"
+    $form.Size = New-Object System.Drawing.Size(520, 220)
+    $form.StartPosition = "CenterScreen"
+    $form.TopMost = $true
+    $form.FormBorderStyle = "FixedDialog"
+    $form.MaximizeBox = $false
+    $form.MinimizeBox = $false
+    
+    $label = New-Object System.Windows.Forms.Label
+    $label.Text = "The titleblock has been processed with CLEANTBLK.`n`nPlease review it in AutoCAD and select an action:"
+    $label.Location = New-Object System.Drawing.Point(10, 10)
+    $label.Size = New-Object System.Drawing.Size(480, 50)
+    $label.AutoSize = $false
+    $form.Controls.Add($label)
+    
+    $btnUndo = New-Object System.Windows.Forms.Button
+    $btnUndo.Text = "Undo & Skip All"
+    $btnUndo.Location = New-Object System.Drawing.Point(10, 80)
+    $btnUndo.Size = New-Object System.Drawing.Size(150, 40)
+    $btnUndo.BackColor = [System.Drawing.Color]::FromArgb(255, 100, 100)
+    $btnUndo.DialogResult = [System.Windows.Forms.DialogResult]::Retry
+    $form.Controls.Add($btnUndo)
+    
+    $btnFix = New-Object System.Windows.Forms.Button
+    $btnFix.Text = "Let Me Fix It`n(Close when done)"
+    $btnFix.Location = New-Object System.Drawing.Point(175, 80)
+    $btnFix.Size = New-Object System.Drawing.Size(150, 40)
+    $btnFix.DialogResult = [System.Windows.Forms.DialogResult]::Ignore
+    $form.Controls.Add($btnFix)
+    
+    $btnGood = New-Object System.Windows.Forms.Button
+    $btnGood.Text = "Looks Good!`nSave & Continue"
+    $btnGood.Location = New-Object System.Drawing.Point(340, 80)
+    $btnGood.Size = New-Object System.Drawing.Size(150, 40)
+    $btnGood.BackColor = [System.Drawing.Color]::FromArgb(100, 255, 100)
+    $btnGood.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $form.Controls.Add($btnGood)
+    
+    $form.AcceptButton = $btnGood
+    
+    return $form.ShowDialog()
+}
+
+#--- PROCESS TITLEBLOCK ---
+function Process-Titleblock {
+    param($AcadApp, $TbPath)
+    
+    Write-Log "=== Processing Titleblock ==="
+    $tbName = [System.IO.Path]::GetFileName($TbPath)
+    Write-Log "Opening titleblock: $tbName"
+    
+    if (Test-AbortSignal) { throw "Operation aborted by user before opening titleblock" }
+    
+    $tbDoc = $AcadApp.Documents.Open($TbPath)
+    Set-SilentMode -Doc $tbDoc
+    
+    Wait-For-AutoCAD -AcadApp $AcadApp
+    Bring-Acad-To-Front -AcadApp $AcadApp
+    Start-Sleep -Seconds 2
+    
+    Write-Log "Executing CLEANTBLK command..."
+    $tbDoc.SendCommand("._CLEANTBLK`n")
+    Wait-For-Command -AcadApp $AcadApp -TimeoutSeconds 60
+    
+    $dialogResult = Show-TitleblockReviewDialog
+    
+    switch ($dialogResult) {
+        "Retry" {
+            Write-Log "User selected: Undo & Skip All"
+            try {
+                $tbDoc.SendCommand("._UNDO`n")
+                Start-Sleep -Seconds 1
+                $tbDoc.Close($false)
+            }
+            catch {
+                Write-Log "Error during undo: $_" "WARNING"
+                try { $tbDoc.Close($false) } catch {}
+            }
+            return $false
+        }
+        "Ignore" {
+            Write-Log "User selected: Let Me Fix It"
+            $tbDoc.Save()
+            [System.Windows.Forms.MessageBox]::Show(
+                "Please review and manually fix the titleblock in AutoCAD.`n`nClose the file when you are ready to continue processing CAD files.",
+                "Manual Review Mode",
+                [System.Windows.Forms.MessageBoxButtons]::OK,
+                [System.Windows.Forms.MessageBoxIcon]::Information
+            )
+            
+            while ($AcadApp.Documents | Where-Object { $_.Name -eq $tbName }) {
+                Start-Sleep -Seconds 1
+                if (Test-AbortSignal) { 
+                    try { $tbDoc.Close($false) } catch {}
+                    throw "Operation aborted during manual review" 
+                }
+            }
+            Write-Log "Titleblock closed by user. Continuing..."
+            return $true
+        }
+        "OK" {
+            Write-Log "User selected: Save & Continue"
+            try {
+                $tbDoc.Save()
+                $tbDoc.Close()
+            }
+            catch {
+                Write-Log "Error saving titleblock: $_" "WARNING"
+                try { $tbDoc.Close($false) } catch {}
+            }
+            return $true
+        }
+        default {
+            Write-Log "User cancelled operation"
+            try { $tbDoc.Close($false) } catch {}
+            throw "Operation cancelled by user"
+        }
+    }
+}
+
+#--- PROCESS CAD FILE ---
+function Process-CADFile {
+    param($AcadApp, $DwgPath)
+    
+    $dwgName = [System.IO.Path]::GetFileName($DwgPath)
+    Write-Log "Processing CAD file: $dwgName"
+    
+    if (Test-AbortSignal) { throw "Operation aborted by user while processing $dwgName" }
+    
+    if (-not (Test-Path $DwgPath)) {
+        throw "File not found: $DwgPath"
+    }
+    
+    $doc = $null
+    try {
+        $doc = $AcadApp.Documents.Open($DwgPath)
+        Set-SilentMode -Doc $doc
+        
+        $doc.Activate()
+        Bring-Acad-To-Front -AcadApp $AcadApp
+        Wait-For-AutoCAD -AcadApp $AcadApp
+        Start-Sleep -Seconds 1
+        
+        Write-Log "Executing CLEANCAD command..."
+        $doc.SendCommand("._CLEANCAD`n")
+        Wait-For-Command -AcadApp $AcadApp -TimeoutSeconds 120
+        
+        $layoutNames = @()
+        foreach ($layout in $doc.Layouts) {
+            if ($layout.Name -ne "Model") {
+                $layoutNames += $layout.Name
+            }
+        }
+        
+        if ($layoutNames.Count -gt 0) {
+            $newFileName = ($layoutNames -join " ") + ".dwg"
+            $newFilePath = Join-Path (Split-Path $DwgPath -Parent) $newFileName
+            
+            $counter = 1
+            $originalName = $newFileName
+            while (Test-Path $newFilePath) {
+                $baseName = [System.IO.Path]::GetFileNameWithoutExtension($originalName)
+                $newFileName = "$baseName ($counter).dwg"
+                $newFilePath = Join-Path (Split-Path $DwgPath -Parent) $newFileName
+                $counter++
+            }
+            
+            $doc.SaveAs($newFilePath)
+            Write-Log "Saved as: $newFileName"
+        }
+        else {
+            $doc.Save()
+            Write-Log "No layouts found, saved original file"
+        }
+    }
+    catch {
+        throw $_
+    }
+    finally {
+        if ($doc) {
+            try { $doc.Close($false) } catch { Write-Log "Failed to close document: $_" "WARNING" }
+        }
+    }
+    
+    Write-Log "CAD file processed successfully."
+    return $true
+}
+
+#--- MAIN EXECUTION ---
+try {
+    Write-Log "=== CLEAN DWGS SCRIPT STARTED ==="
+    Write-Log "Parameters: TitleblockPath=$TitleblockPath, Disciplines=$Disciplines"
+    Write-Log "OutputFolder=$OutputFolder, ProjectRoot=$ProjectRoot"
+    
+    if (-not $TitleblockPath -or -not (Test-Path $TitleblockPath)) {
+        throw "Titleblock DWG not found at path: $TitleblockPath"
+    }
+    
+    $DisciplineList = @()
+    if (-not [string]::IsNullOrWhiteSpace($Disciplines)) {
+        $DisciplineList = $Disciplines -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' }
+    }
+    
+    Write-Log "Processing discipline folders: $($DisciplineList -join ', ')"
+    
+    $Acad = Initialize-AutoCAD
+    Wait-For-AutoCAD -AcadApp $Acad
+    
+    $abortFile = Join-Path $env:TEMP "abort_cleandwgs.flag"
+    Write-Log "To abort: Click the 'Abort Process' button in the app"
+    
+    # Process titleblock with user interaction
+    $continueProcessing = Process-Titleblock -AcadApp $Acad -TbPath $TitleblockPath
+    
+    if (-not $continueProcessing) {
+        Write-Log "Titleblock processing aborted by user. Skipping CAD files."
+    }
+    else {
+        Write-Log "=== Discovering CAD Files ==="
+        $allDwgFiles = @()
+        
+        foreach ($discipline in $DisciplineList) {
+            $disciplinePath = Join-Path $OutputFolder $discipline
+            if (Test-Path $disciplinePath) {
+                Write-Log "Scanning $discipline folder..."
+                
+                # FIX: Exclude Xref DWGs except titleblock
+                $dwgFiles = Get-ChildItem -Path $disciplinePath -Filter "*.dwg" -File -Recurse | 
+                Where-Object { 
+                    $_.FullName -eq $TitleblockPath -or 
+                    (-not ($_.DirectoryName -like "*\Xrefs\*" -and $_.DirectoryName -notlike "*$([System.IO.Path]::GetFileName($TitleblockPath))*"))
+                } | 
+                ForEach-Object { $_.FullName }
+                
+                Write-Log "Found $($dwgFiles.Count) DWG files in $discipline"
+                $allDwgFiles += $dwgFiles
+            }
+            else {
+                Write-Log "WARNING: Discipline folder not found: $disciplinePath" "WARNING"
+            }
+        }
+        
+        # Remove titleblock from CAD file list if present
+        $allDwgFiles = $allDwgFiles | Where-Object { $_ -ne $TitleblockPath } | Select-Object -Unique
+        
+        $totalFiles = $allDwgFiles.Count
+        Write-Log "Total CAD files to process: $totalFiles"
+        
+        if ($totalFiles -eq 0) {
+            Write-Log "WARNING: No CAD files found to process" "WARNING"
+        }
+        
+        $processedCount = 0
+        $failedCount = 0
+        
+        foreach ($dwgPath in $allDwgFiles) {
+            $processedCount++
+            try {
+                Write-Log "=== File $processedCount of $totalFiles ==="
+                Process-CADFile -AcadApp $Acad -DwgPath $dwgPath
+            }
+            catch {
+                $failedCount++
+                $errorMsg = $_.Exception.Message
+                Write-Log "ERROR: Failed to process $(Split-Path $dwgPath -Leaf): $errorMsg" "ERROR"
+                
+                if ($errorMsg -eq "Operation aborted by user") {
+                    throw $_
+                }
+                
+                continue
+            }
+        }
+        
+        Write-Log "=== PROCESSING COMPLETE ==="
+        Write-Log "Successfully processed: $($processedCount - $failedCount) files"
+        if ($failedCount -gt 0) {
+            Write-Log "Failed: $failedCount files" "WARNING"
+        }
+    }
+    
+    Write-Log "Opening output folder..."
+    if (Test-Path $OutputFolder) {
+        Start-Process explorer.exe -ArgumentList "`"$OutputFolder`"" -ErrorAction SilentlyContinue
+        Write-Log "Output folder opened successfully."
+    }
+    else {
+        throw "Output folder not found at $OutputFolder"
+    }
+    
+    Write-Log "=== SCRIPT FINISHED SUCCESSFULLY ==="
+}
+catch {
+    $errorMsg = $_.Exception.Message
+    $errorLevel = if ($errorMsg -eq "Operation aborted by user") { "WARNING" } else { "ERROR" }
+    Write-Log "Script terminated: $errorMsg" $errorLevel
+    
+    if ($errorMsg -ne "Operation aborted by user") {
+        [System.Windows.Forms.MessageBox]::Show(
+            "An error occurred:`n`n$errorMsg`n`nPlease check the output for details.",
+            "Clean DWGs Tool Error",
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Error
+        )
+    }
+}
+finally {
+    if ($Acad) {
+        try {
+            foreach ($doc in $Acad.Documents) {
+                try { $doc.Close($false) } catch { Write-Log "Failed to close document during cleanup: $_" "WARNING" }
+            }
+        }
+        catch { Write-Log "Error during AutoCAD cleanup: $_" "WARNING" }
+    }
+    
+    $abortFile = Join-Path $env:TEMP "abort_cleandwgs.flag"
+    if (Test-Path $abortFile) {
+        Remove-Item $abortFile -Force -ErrorAction SilentlyContinue
+    }
+    
+    Write-Log "Cleanup completed. Script terminated."
+}
+```
+===== END CleanDWGs.ps1 =====
+

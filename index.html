@@ -133,6 +133,9 @@
         <!-- Tab Panel for Tools -->
         <div id="tools-panel" class="tab-panel" hidden>
             <section class="panel stack">
+                <div style="text-align: right; margin-bottom: 1rem;">
+                    <button id="abortBtn" class="btn btn-danger" style="display: none;">⏹ Abort Process</button>
+                </div>
                 <div class="tools-grid">
                     <!-- Card 1: Publish DWGs -->
                     <div id="toolPublishDwgs" class="tool-card" role="button" tabindex="0">
@@ -367,8 +370,8 @@
             <button class="btn" onclick="closeDlg('cleanDwgsDlg')">✕ Cancel</button>
         </div>
         <div class="modal-body stack">
-            <p class="tiny muted">Select a titleblock and its size. The titleblock's parent folder (typically "Xrefs")
-                will be automatically included. Choose additional discipline folders to clean.</p>
+            <p class="tiny muted">Select a titleblock. The titleblock's parent folder (typically "Xrefs") will be
+                automatically included. Choose additional discipline folders to clean.</p>
 
             <div class="modal-grid">
                 <div class="col-12">
@@ -379,20 +382,11 @@
                     </div>
                 </div>
 
-                <div class="col-12">
-                    <label class="tiny muted">2. Specify Titleblock Size</label>
-                    <div id="cleanDwgs_size" class="inline" style="gap: 1rem;">
-                        <label class="inline tiny"><input type="radio" name="cleanDwgs_size_radio" value="22x34"
-                                style="width:auto" checked> 22"x34"</label>
-                        <label class="inline tiny"><input type="radio" name="cleanDwgs_size_radio" value="24x36"
-                                style="width:auto"> 24"x36"</label>
-                        <label class="inline tiny"><input type="radio" name="cleanDwgs_size_radio" value="30x42"
-                                style="width:auto"> 30"x42"</label>
-                    </div>
-                </div>
+                <!-- REMOVED: Titleblock Size selection section -->
 
                 <div class="col-12">
-                    <label class="tiny muted">3. Select Additional Disciplines to Clean</label>
+                    <label class="tiny muted">2. Select Additional Disciplines to Clean</label>
+                    <!-- Renumbered from 3 -->
                     <div id="cleanDwgs_disciplines" class="inline" style="gap: 1rem; flex-wrap: wrap;">
                         <label class="inline tiny"><input type="checkbox" name="cleanDwgs_discipline" value="Electrical"
                                 style="width:auto"> Electrical</label>

@@ -107,6 +107,19 @@ async function loadUserSettings() {
     }
 }
 const debouncedSaveUserSettings = debounce(saveUserSettings, 500);
+
+// Add this near the other helper functions
+function resetToolStatus(toolId) {
+    const card = document.getElementById(toolId);
+    if (card) {
+        card.classList.remove('running');
+        const statusEl = card.querySelector('.tool-card-status');
+        if (statusEl) {
+            statusEl.textContent = '';
+            statusEl.classList.remove('error');
+        }
+    }
+}
 // ===================== STATUS MIGRATION & HELPERS =====================
 function canonStatus(s) { if (!s) return null; const t = String(s).trim().toLowerCase(); if (['pending review', 'pending-review', 'review', 'pr'].includes(t)) return 'Pending Review'; if (['complete', 'completed', 'done'].includes(t)) return 'Complete'; if (['waiting', 'wait'].includes(t)) return 'Waiting'; return null; }
 function hasStatus(p, s) { return Array.isArray(p.statuses) && p.statuses.includes(s); }
@@ -458,22 +471,44 @@ window.updateToolStatus = function (toolId, message) {
     if (!card) return;
 
     const statusEl = card.querySelector('.tool-card-status');
+    const abortBtn = document.getElementById('abortBtn');
+
     statusEl.classList.remove('error');
+
+    // Show/hide abort button for Clean DWGs tool
+    if (toolId === 'toolCleanDwgs') {
+        if (message && message !== 'DONE' && !message.startsWith('ERROR:')) {
+            abortBtn.style.display = 'inline-block';
+            abortBtn.onclick = async () => {
+                try {
+                    await window.pywebview.api.abort_clean_dwgs();
+                    toast('Abort signal sent. Process will stop shortly...');
+                    abortBtn.disabled = true;
+                    setTimeout(() => { abortBtn.disabled = false; }, 5000);
+                } catch (e) {
+                    toast('Failed to send abort signal.');
+                }
+            };
+        } else {
+            abortBtn.style.display = 'none';
+        }
+    }
 
     if (message.startsWith('ERROR:')) {
         const errorMsg = message.substring(6).trim();
         statusEl.textContent = `Error: ${errorMsg}`;
         statusEl.classList.add('error');
-        card.classList.add('running'); // Keep it in running state to show error
-        // Optionally, reset after a delay
+        card.classList.add('running');
         setTimeout(() => {
             card.classList.remove('running');
+            if (abortBtn) abortBtn.style.display = 'none';
         }, 5000);
     } else if (message === 'DONE') {
         statusEl.textContent = 'Completed successfully!';
         setTimeout(() => {
             card.classList.remove('running');
-        }, 2000); // Keep success message for 2 seconds
+            if (abortBtn) abortBtn.style.display = 'none';
+        }, 2000);
     } else {
         statusEl.textContent = message;
     }
@@ -644,8 +679,6 @@ function initEventListeners() {
         if (card.classList.contains('running')) return;
         // Reset form
         document.getElementById('cleanDwgs_titleblockPath').value = '';
-        document.querySelector('input[name="cleanDwgs_size_radio"][value="22x34"]').checked = true;
-        // Show dialog
         document.getElementById('cleanDwgsDlg').showModal();
     });
 
@@ -675,8 +708,6 @@ function initEventListeners() {
     if (btnProceedCleanDwgs) {
         btnProceedCleanDwgs.addEventListener('click', async () => {
             const titleblockPath = val('cleanDwgs_titleblockPath');
-            const sizeEl = document.querySelector('input[name="cleanDwgs_size_radio"]:checked');
-            const size = sizeEl ? sizeEl.value : '22x34';
 
             // Get selected disciplines (titleblock parent is automatic)
             const selectedDisciplines = Array.from(document.querySelectorAll('input[name="cleanDwgs_discipline"]:checked'))
@@ -689,19 +720,21 @@ function initEventListeners() {
 
             const data = {
                 titleblock: titleblockPath,
-                disciplines: selectedDisciplines,
-                size: size
+                disciplines: selectedDisciplines
+                // REMOVED: size parameter
             };
 
             closeDlg('cleanDwgsDlg');
             const card = document.getElementById('toolCleanDwgs');
             if (card) card.classList.add('running');
-            window.updateToolStatus('toolCleanDwgs', 'Starting...');
+            window.updateToolStatus('toolCleanDwgs', 'Copying files and starting AutoCAD...');
 
             try {
                 await window.pywebview.api.run_clean_dwgs_script(data);
             } catch (e) {
                 window.updateToolStatus('toolCleanDwgs', `ERROR: ${e.message}`);
+                // Reset after error
+                setTimeout(() => resetToolStatus('toolCleanDwgs'), 5000);
             }
         });
     } else {

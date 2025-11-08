@@ -9,4 +9,5 @@ I have a project management application that has a "Clean DWGs" tool that is not
 7. Once the title block DWG and all CAD DWGs have been processed, open the resulting folder with the processed CAD DWGs for the user to see and do as they please.
 
 Currently the "Clean DWGs" tool is incomplete, because of the following:
-- The tool gets hung up when the user is selecting the corners to clean the titleblock with the message "Command completed successfully". Please fix this.
+- The tool moves too quickly when cleaning the CAD DWGs. It opens and closes some files without giving a chance for it to load and run "CLEANCAD". This results in some files not receiving "Save as" command, therefore it does not get cleaned. Please fix the timing of the saved CAD files.
+- Please remove the notification that informs me that the title block file has been opened. I only care to be notified after it has been cleaned.

@@ -5,7 +5,7 @@ param(
     [string]$ProjectRoot
 )
 
-#--- WINDOW MANAGEMENT (from old version) ---
+#--- WINDOW MANAGEMENT ---
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -23,7 +23,6 @@ public class Win32 {
 function Bring-Acad-To-Front {
     param($AcadApp)
     try {
-        # Wait for HWND to be available
         $hwndWait = 0; $maxHwndWait = 10
         while ($null -eq $AcadApp.HWND -and $hwndWait -lt $maxHwndWait) {
             Start-Sleep -Seconds 1; $hwndWait++
@@ -52,16 +51,15 @@ function Write-Log {
 }
 
 function Show-UserPrompt {
-    param([string]$Message, [string]$Title = "Review Required")
+    param([string]$Message, [string]$Title = "Review Required", [System.Windows.Forms.MessageBoxButtons]$Buttons)
     Add-Type -AssemblyName System.Windows.Forms
     $result = [System.Windows.Forms.MessageBox]::Show(
-        $Message, $Title,
-        [System.Windows.Forms.MessageBoxButtons]::YesNoCancel,
+        $Message, $Title, $Buttons,
         [System.Windows.Forms.MessageBoxIcon]::Question,
         [System.Windows.Forms.MessageBoxDefaultButton]::Button1,
         [System.Windows.Forms.MessageBoxOptions]::DefaultDesktopOnly
     )
-    return $result  # Returns: Yes, No, or Cancel
+    return $result
 }
 
 #--- ABORT SIGNAL CHECK ---
@@ -75,208 +73,243 @@ function Test-AbortSignal {
     return $false
 }
 
-#--- ENHANCED WAIT FUNCTIONS ---
+#--- OPTIMIZED WAIT FUNCTIONS ---
 function Wait-For-AutoCAD-Ready {
-    param($AcadApp, [int]$TimeoutSeconds = 30)
-    $elapsed = 0
-    while ($elapsed -lt $TimeoutSeconds) {
+    param($AcadApp, [int]$TimeoutSeconds = 45)
+    $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($stopwatch.Elapsed.TotalSeconds -lt $TimeoutSeconds) {
         try {
-            $state = $AcadApp.GetAcadState()
-            $cmdActive = $AcadApp.ActiveDocument.GetVariable("CMDACTIVE")
-            if ($state.IsQuiescent -and $cmdActive -eq 0) {
-                Start-Sleep -Milliseconds 500  # Stabilization delay
+            if ($AcadApp.GetAcadState().IsQuiescent -and ($AcadApp.Documents.Count -eq 0 -or $AcadApp.ActiveDocument.GetVariable("CMDACTIVE") -eq 0)) {
+                Start-Sleep -Milliseconds 250
                 return $true
             }
         }
         catch { }
-        Start-Sleep -Milliseconds 500
-        $elapsed += 0.5
+        Start-Sleep -Milliseconds 250
     }
-    Write-Log "WARNING: AutoCAD readiness timeout after $TimeoutSeconds seconds." "WARNING"
+    throw "Timeout: AutoCAD did not become ready within $TimeoutSeconds seconds."
 }
 
 function Wait-For-Command-Complete {
-    param($AcadApp, [int]$TimeoutSeconds = 120)
-    $elapsed = 0
-    Write-Log "Waiting for command to complete..."
-    while ($elapsed -lt $TimeoutSeconds) {
+    param($AcadApp, [int]$TimeoutSeconds = 300)
+    Write-Log "Waiting for current command to complete..."
+    $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    $lastMessageTime = $stopwatch.Elapsed.TotalSeconds
+
+    while ($stopwatch.Elapsed.TotalSeconds -lt $TimeoutSeconds) {
         if (Test-AbortSignal) { throw "Operation aborted by user" }
         
         try {
-            $state = $AcadApp.GetAcadState()
-            $cmdActive = $AcadApp.ActiveDocument.GetVariable("CMDACTIVE")
-            if ($state.IsQuiescent -and $cmdActive -eq 0) {
-                Start-Sleep -Milliseconds 500  # Ensure stability
-                Write-Log "Command completed successfully."
+            if ($AcadApp.GetAcadState().IsQuiescent -and $AcadApp.ActiveDocument.GetVariable("CMDACTIVE") -eq 0) {
+                Start-Sleep -Milliseconds 250
+                Write-Log "Command completed."
                 return $true
             }
         }
         catch { }
         
-        Start-Sleep -Milliseconds 500
-        $elapsed += 0.5
-    }
-    throw "Command timeout after $TimeoutSeconds seconds. AutoCAD may be waiting for input."
-}
-
-#--- ROBUST AUTOCAD INITIALIZATION (from old version) ---
-function Initialize-AutoCAD {
-    $progIds = @("AutoCAD.Application", "AutoCAD.Application.24", "AutoCAD.Application.23", "AutoCAD.Application.22")
-    $maxRetries = 3; $retryCount = 0
-    $script:AcadWasStarted = $false
-    
-    while ($null -eq $Acad -and $retryCount -lt $maxRetries) {
-        $retryCount++
-        
-        # Try connecting to running instance
-        foreach ($progId in $progIds) {
-            try {
-                $Acad = [System.Runtime.InteropServices.Marshal]::GetActiveObject($progId)
-                if ($Acad) {
-                    Write-Log "Connected to running AutoCAD ($progId)"
-                    $script:AcadWasStarted = $false
-                    break
-                }
-            }
-            catch { }
+        if (($stopwatch.Elapsed.TotalSeconds - $lastMessageTime) -ge 10) {
+            Write-Log "Still waiting for command to complete..."
+            $lastMessageTime = $stopwatch.Elapsed.TotalSeconds
         }
         
-        # If no running instance, start new one
-        if ($null -eq $Acad) {
-            Write-Log "No running AutoCAD found. Starting new instance..."
-            foreach ($progId in $progIds) {
-                try {
-                    $Acad = New-Object -ComObject $progId
+        Start-Sleep -Milliseconds 250
+    }
+    throw "Command timeout after $TimeoutSeconds seconds. AutoCAD may be waiting for user input."
+}
+
+#--- ROBUST AUTOCAD INITIALIZATION ---
+function Initialize-AutoCAD {
+    $progIds = @("AutoCAD.Application.25", "AutoCAD.Application.24", "AutoCAD.Application.23", "AutoCAD.Application.22", "AutoCAD.Application")
+    $script:AcadWasStarted = $false
+    
+    Write-Log "Searching for a running instance of AutoCAD (2025 preferred)..."
+    foreach ($progId in $progIds) {
+        try {
+            $Acad = [System.Runtime.InteropServices.Marshal]::GetActiveObject($progId)
+            if ($Acad) {
+                Write-Log "Successfully connected to running instance of $progId."
+                $script:AcadWasStarted = $false
+                $Acad.Visible = $true
+                break
+            }
+        }
+        catch { }
+    }
+    
+    if ($null -eq $Acad) {
+        Write-Log "No running instance found. Starting a new AutoCAD process (2025 preferred)..."
+        foreach ($progId in $progIds) {
+            try {
+                $Acad = New-Object -ComObject $progId
+                if ($Acad) {
+                    Write-Log "AutoCAD process started ($progId). Waiting for it to initialize..."
                     $script:AcadWasStarted = $true
                     $Acad.Visible = $true
                     
-                    # Wait for initialization
-                    $initWait = 0; $maxInitWait = 30
-                    while ($initWait -lt $maxInitWait) {
-                        try { $test = $Acad.Application; break }
-                        catch { Start-Sleep -Seconds 1; $initWait++ }
+                    $initStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+                    while ($initStopwatch.Elapsed.TotalSeconds -lt 60) {
+                        try {
+                            $test = $Acad.Name
+                            Write-Log "$progId has initialized successfully."
+                            break # Exit inner loop
+                        }
+                        catch { Start-Sleep -Milliseconds 250 }
                     }
-                    Write-Log "AutoCAD started and initialized ($progId)"
-                    break
+                    if ($Acad) { break } # Exit outer loop
                 }
-                catch { }
             }
-        }
-        
-        if ($null -eq $Acad -and $retryCount -lt $maxRetries) {
-            Write-Log "Retrying in 5 seconds..."
-            Start-Sleep -Seconds 5
+            catch { }
         }
     }
     
     if ($null -eq $Acad) {
-        throw "Failed to connect to or start AutoCAD after $maxRetries attempts."
+        throw "Failed to connect to or start AutoCAD. Please ensure AutoCAD is installed correctly."
     }
-    
-    # Clean up default drawings if we started AutoCAD
+
+    Write-Log "Setting application-level silent mode to prevent pop-ups..."
+    try {
+        $Acad.SetVariable("FILEDIA", 0)
+        $Acad.SetVariable("CMDDIA", 0)
+        $Acad.SetVariable("PROXYNOTICE", 0)
+        $Acad.SetVariable("XREFNOTIFY", 0)
+        Write-Log "Application prepared for silent operation."
+    }
+    catch {
+        Write-Log "Could not set initial silent mode. Pop-ups may occur. Error: $($_.Exception.Message)" "WARNING"
+    }
+
     if ($script:AcadWasStarted) {
-        $defaultDocNames = @("Drawing1.dwg", "Drawing2.dwg")
-        $docsToClose = $Acad.Documents | Where-Object { $defaultDocNames -contains $_.Name }
-        foreach ($doc in $docsToClose) {
-            try { $doc.Close($false); Wait-For-AutoCAD-Ready -AcadApp $Acad }
-            catch { }
+        for ($i = $Acad.Documents.Count - 1; $i -ge 0; $i--) {
+            $doc = $Acad.Documents.Item($i)
+            if ($doc.Name -like "Drawing*.dwg") {
+                try {
+                    Write-Log "Closing default drawing: $($doc.Name)"
+                    $doc.Close($false)
+                }
+                catch {}
+            }
         }
     }
     
     return $Acad
 }
 
-#--- PROCESS TITLEBLOCK ---
+function Show-ManualClosePrompt {
+    param($AcadApp, $DocFullName)
+    $message = "Please close '$(Split-Path $DocFullName -Leaf)' manually in AutoCAD when you are finished, then click OK here to continue the process."
+    Show-UserPrompt -Message $message -Title "Manual Action Required" -Buttons ([System.Windows.Forms.MessageBoxButtons]::OK)
+    
+    Write-Log "Waiting for user to manually close '$((Split-Path $DocFullName -Leaf))'..."
+    while ($AcadApp.Documents | Where-Object { $_.FullName -eq $DocFullName }) {
+        if (Test-AbortSignal) { throw "Operation aborted during manual close wait" }
+        Start-Sleep -Seconds 2
+    }
+    Write-Log "Document closed by user. Proceeding..."
+}
+
+#--- PROCESS TITLEBLOCK (REVISED WORKFLOW) ---
 function Process-Titleblock {
     param($AcadApp, $TbPath)
     
-    Write-Log "=== Processing Titleblock ==="
+    Write-Log "=== 1. Processing Titleblock ==="
     $tbName = [System.IO.Path]::GetFileName($TbPath)
-    Write-Log "Opening: $tbName"
+    Write-Log "Opening: $tbName..."
     
     if (Test-AbortSignal) { throw "Operation aborted by user" }
     
-    $tbDoc = $AcadApp.Documents.Open($TbPath)
-    Set-SilentMode -Doc $tbDoc
+    $tbDoc = $null
+    try {
+        $tbDoc = $AcadApp.Documents.Open($TbPath)
+    }
+    catch {
+        $errorMsg = "Failed to open the title block file: '$TbPath'.`n`n"
+        $errorMsg += "Possible causes: File is corrupt, not a valid DWG, or a permissions issue exists.`n`n"
+        $errorMsg += "Original Error: $($_.Exception.Message)"
+        throw $errorMsg
+    }
+    
     Wait-For-AutoCAD-Ready -AcadApp $AcadApp
     Bring-Acad-To-Front -AcadApp $AcadApp
     
-    Write-Log "Executing CLEANTBLK command..."
+    # Show instruction prompt - use TopMost to ensure visibility
+    Add-Type -AssemblyName System.Windows.Forms
+    $msgBox = [System.Windows.Forms.MessageBox]::Show(
+        "The title block '$tbName' is now open in AutoCAD.`n`n" +
+        "Please select the two corner points of the title block when prompted.`n`n" +
+        "Click OK to start the cleaning process.",
+        "Action Required",
+        [System.Windows.Forms.MessageBoxButtons]::OK,
+        [System.Windows.Forms.MessageBoxIcon]::Information
+    )
+    
+    # Check if user clicked OK or closed the dialog
+    if ($msgBox -ne [System.Windows.Forms.DialogResult]::OK) {
+        Write-Log "User cancelled the operation." "WARNING"
+        try { $tbDoc.Close($false) } catch {}
+        return $false
+    }
+    
+    Write-Log "Sending CLEANTBLK command..."
     $tbDoc.SendCommand("._CLEANTBLK`n")
     
-    # CRITICAL: Wait for command to truly complete
-    Write-Log "Please complete the CLEANTBLK command by selecting the titleblock corners in AutoCAD."
+    Write-Log "Waiting for CLEANTBLK command to complete (user interaction required)..."
     Wait-For-Command-Complete -AcadApp $AcadApp -TimeoutSeconds 300
     
-    # Now prompt for user action
-    $message = @"
-Cleaning of titleblock '$tbName' is complete.
-
-Please review the drawing in AutoCAD.
-
-- Click YES to SAVE the changes and continue.
-- Click NO to UNDO the changes (then close manually).
-- Click CANCEL to LEAVE the changes and close manually.
-"@
+    Write-Log "CLEANTBLK command completed. Awaiting review..."
     
-    $choice = Show-UserPrompt -Message $message -Title "Titleblock Review"
+    # Review prompt
+    $reviewMessage = @"
+Please review the cleaned title block.
+
+What would you like to do?
+
+- YES: Cleaning looks good. Save the changes and continue.
+- NO: Undo the cleaning. I will handle it manually.
+- CANCEL: Leave the cleaning as is, but let me fix it manually.
+"@
+
+    $choice = [System.Windows.Forms.MessageBox]::Show(
+        $reviewMessage,
+        "Titleblock Review",
+        [System.Windows.Forms.MessageBoxButtons]::YesNoCancel,
+        [System.Windows.Forms.MessageBoxIcon]::Question,
+        [System.Windows.Forms.MessageBoxDefaultButton]::Button1
+    )
     
     switch ($choice) {
         "Yes" {
-            Write-Log "User chose: Save and Continue"
+            Write-Log "User choice: 'Cleaning looks good, please continue'."
             $tbDoc.Save()
             $tbDoc.Close()
             return $true
         }
         "No" {
-            Write-Log "User chose: Undo and Handle Manually"
-            $tbDoc.SendCommand("._UNDO`n1`n")
-            Show-ManualClosePrompt -AcadApp $AcadApp -FileName $tbName
+            Write-Log "User choice: 'Undo the cleaning, I will handle it'."
+            $tbDoc.SendCommand("._U`n")
+            Wait-For-Command-Complete -AcadApp $AcadApp -TimeoutSeconds 30
+            Show-ManualClosePrompt -AcadApp $AcadApp -DocFullName $tbDoc.FullName
             return $true
         }
         "Cancel" {
-            Write-Log "User chose: Leave and Handle Manually"
-            Show-ManualClosePrompt -AcadApp $AcadApp -FileName $tbName
+            Write-Log "User choice: 'Leave the cleaning, but let me fix it'."
+            Show-ManualClosePrompt -AcadApp $AcadApp -DocFullName $tbDoc.FullName
             return $true
         }
-    }
-    return $false
-}
-
-function Show-ManualClosePrompt {
-    param($AcadApp, $FileName)
-    $message = "Please close '$FileName' manually in AutoCAD when ready, then click OK to continue."
-    [System.Windows.Forms.MessageBox]::Show($message, "Manual Close Required", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
-    
-    # Wait for file to be closed
-    while ($AcadApp.Documents | Where-Object { $_.Name -eq $FileName }) {
-        if (Test-AbortSignal) { throw "Operation aborted during manual close wait" }
-        Start-Sleep -Seconds 2
-    }
-}
-
-#--- SET SILENT MODE ---
-function Set-SilentMode {
-    param($Doc)
-    try {
-        $variables = @("FILEDIA=0", "EXPERT=5", "XREFNOTIFY=0", "OLELINKSDIALOG=0", "XLOADCTL=0", "PROXYNOTICE=0", "ACADLSPASDOC=0", "CMDDIA=0", "ATTDIA=0")
-        foreach ($var in $variables) {
-            try { $Doc.SendCommand("._SETVAR`n$var`n") } catch { }
+        Default {
+            Write-Log "User cancelled the operation during titleblock review. Halting process." "WARNING"
+            try { $tbDoc.Close($false) } catch {}
+            return $false
         }
-        try { $Doc.SendCommand("._EXCELWARNINGS 0`n") } catch { }
-        Write-Log "Silent mode configured"
-    }
-    catch {
-        Write-Log "Warning setting silent mode: $($_.Exception.Message)" "WARNING"
     }
 }
 
 #--- PROCESS CAD FILE ---
 function Process-CADFile {
-    param($AcadApp, $DwgPath)
+    param($AcadApp, $DwgPath, $OutputRoot)
     
     $dwgName = [System.IO.Path]::GetFileName($DwgPath)
-    Write-Log "=== Processing: $dwgName ==="
+    Write-Log "Processing: $dwgName"
     
     if (Test-AbortSignal) { throw "Operation aborted by user" }
     if (-not (Test-Path $DwgPath)) { throw "File not found: $DwgPath" }
@@ -284,56 +317,38 @@ function Process-CADFile {
     $doc = $null
     try {
         $doc = $AcadApp.Documents.Open($DwgPath)
-        Set-SilentMode -Doc $doc
-        $doc.Activate()
-        Bring-Acad-To-Front -AcadApp $AcadApp
         Wait-For-AutoCAD-Ready -AcadApp $AcadApp
+        $doc.Activate()
         
         Write-Log "Executing CLEANCAD command..."
         $doc.SendCommand("._CLEANCAD`n")
         Wait-For-Command-Complete -AcadApp $AcadApp -TimeoutSeconds 180
         
-        # Get layout names for renaming
         $layoutNames = @()
         foreach ($layout in $doc.Layouts) {
-            if ($layout.Name -ne "Model") { $layoutNames += $layout.Name }
+            if ($layout.Name.ToUpper() -ne "MODEL") { $layoutNames += $layout.Name }
         }
         
-        $message = @"
-Processing of '$dwgName' is complete.
-
-- Click YES to SAVE as '$($layoutNames -join " ").dwg' and continue.
-- Click NO to UNDO changes (then close manually).
-- Click CANCEL to LEAVE changes and close manually.
-"@
-        
-        $choice = Show-UserPrompt -Message $message -Title "CAD File Review"
-        
-        switch ($choice) {
-            "Yes" {
-                if ($layoutNames.Count -gt 0) {
-                    $newName = ($layoutNames -join " ") + ".dwg"
-                    $newPath = Join-Path (Split-Path $DwgPath -Parent) $newName
-                    $doc.SaveAs($newPath)
-                    Write-Log "Saved as: $newName"
-                }
-                else {
-                    $doc.Save()
-                }
-                $doc.Close()
-            }
-            "No" {
-                $doc.SendCommand("._UNDO`n1`n")
-                Show-ManualClosePrompt -AcadApp $AcadApp -FileName $dwgName
-            }
-            "Cancel" {
-                Show-ManualClosePrompt -AcadApp $AcadApp -FileName $dwgName
-            }
+        if ($layoutNames.Count -gt 0) {
+            # Save to project root with layout names
+            $newName = ($layoutNames -join " ") + ".dwg"
+            $newPath = Join-Path $OutputRoot $newName
+            Write-Log "Saving cleaned file to project root: '$newName'..."
+            $doc.SaveAs($newPath)
         }
+        else {
+            # No layouts found, save with original name to project root
+            $originalName = [System.IO.Path]::GetFileName($DwgPath)
+            $newPath = Join-Path $OutputRoot $originalName
+            Write-Log "No layouts found. Saving to project root as '$originalName'..."
+            $doc.SaveAs($newPath)
+        }
+        
+        $doc.Close()
         return $true
     }
     catch {
-        Write-Log "Error processing $dwgName`: $($_.Exception.Message)" "ERROR"
+        Write-Log "Error processing '$dwgName`: $($_.Exception.Message)" "ERROR"
         if ($doc) { try { $doc.Close($false) } catch { } }
         throw
     }
@@ -342,8 +357,7 @@ Processing of '$dwgName' is complete.
 #--- MAIN EXECUTION ---
 try {
     Write-Log "=== CLEAN DWGS SCRIPT STARTED ==="
-    Write-Log "Parameters: TitleblockPath=$TitleblockPath, Disciplines=$Disciplines"
-    Write-Log "OutputFolder=$OutputFolder, ProjectRoot=$ProjectRoot"
+    Write-Log "Output Folder: $OutputFolder"
     
     if (-not $TitleblockPath -or -not (Test-Path $TitleblockPath)) {
         throw "Titleblock DWG not found at path: $TitleblockPath"
@@ -354,112 +368,85 @@ try {
         $DisciplineList = $Disciplines -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' }
     }
     
-    Write-Log "Processing discipline folders: $($DisciplineList -join ', ')"
-    
     $Acad = Initialize-AutoCAD
-    Wait-For-AutoCAD-Ready -AcadApp $Acad
     
-    # --- DISCOVER ALL CAD FILES ---
     $allDwgFiles = @()
+    Write-Log "Scanning for CAD drawings to process..."
     foreach ($discipline in $DisciplineList) {
         $disciplinePath = Join-Path $OutputFolder $discipline
         if (Test-Path $disciplinePath) {
-            Write-Log "Scanning $discipline folder..."
-            
-            # Get all DWGs except titleblock and Xref folder contents (except titleblock itself)
-            $dwgFiles = Get-ChildItem -Path $disciplinePath -Filter "*.dwg" -File -Recurse | 
-            Where-Object { 
-                $_.FullName -ne $TitleblockPath -and 
-                -not ($_.DirectoryName -like "*\Xrefs\*" -and $_.FullName -ne $TitleblockPath)
-            } | 
-            ForEach-Object { $_.FullName }
-            
-            Write-Log "Found $($dwgFiles.Count) DWG files in $discipline"
-            $allDwgFiles += $dwgFiles
+            Write-Log "Scanning path: '$disciplinePath'"
+            $dwgFilesInDiscipline = Get-ChildItem -Path $disciplinePath -Filter "*.dwg" -File -Recurse | Where-Object { $_.FullName -ne $TitleblockPath }
+            $count = ($dwgFilesInDiscipline | Measure-Object).Count
+            Write-Log "Found $count DWG(s) in '$discipline' to process."
+            if ($count -gt 0) {
+                $allDwgFiles += $dwgFilesInDiscipline.FullName
+            }
         }
         else {
-            Write-Log "WARNING: Discipline folder not found: $disciplinePath" "WARNING"
+            Write-Log "WARNING: Discipline folder not found, skipping scan: $disciplinePath" "WARNING"
         }
     }
     
     $allDwgFiles = $allDwgFiles | Select-Object -Unique
     $totalFiles = $allDwgFiles.Count
-    Write-Log "Total CAD files to process: $totalFiles"
+    Write-Log "Found $totalFiles total unique CAD files to process (excluding the titleblock)."
     
-    if ($totalFiles -eq 0) {
-        Write-Log "WARNING: No CAD files found to process" "WARNING"
-    }
-    
-    # --- PROCESS TITLEBLOCK ---
     $continueProcessing = Process-Titleblock -AcadApp $Acad -TbPath $TitleblockPath
     
     if (-not $continueProcessing) {
-        Write-Log "Titleblock processing was cancelled. Skipping CAD files."
+        throw "Operation halted by user after titleblock processing."
+    }
+    
+    Write-Log "=== 2. Processing CAD Drawings ==="
+    if ($totalFiles -eq 0) {
+        Write-Log "No additional CAD files were found in the selected discipline folders to process."
     }
     else {
-        # --- PROCESS CAD FILES ---
         $processedCount = 0; $failedCount = 0
-        
         foreach ($dwgPath in $allDwgFiles) {
             $processedCount++
             try {
-                Write-Log "=== File $processedCount of $totalFiles ==="
-                Process-CADFile -AcadApp $Acad -DwgPath $dwgPath
+                Write-Log "--- File $processedCount of $totalFiles ---"
+                Process-CADFile -AcadApp $Acad -DwgPath $dwgPath -OutputRoot $OutputFolder
             }
             catch {
                 $failedCount++
                 $errorMsg = $_.Exception.Message
                 Write-Log "ERROR: Failed to process $(Split-Path $dwgPath -Leaf): $errorMsg" "ERROR"
-                
-                if ($errorMsg -eq "Operation aborted by user") {
-                    throw $_  # Re-throw to abort entire process
-                }
-                continue  # Continue to next file
+                if ($errorMsg -like "*aborted by user*") { throw $_ }
+                continue
             }
         }
         
         Write-Log "=== PROCESSING COMPLETE ==="
-        Write-Log "Successfully processed: $($processedCount - $failedCount) files"
+        Write-Log "Successfully processed: $($processedCount - $failedCount) files."
         if ($failedCount -gt 0) {
-            Write-Log "Failed: $failedCount files" "WARNING"
+            Write-Log "Failed to process: $failedCount files." "WARNING"
         }
     }
     
-    # --- OPEN OUTPUT FOLDER ---
-    Write-Log "Opening output folder..."
+    Write-Log "Opening output folder for review..."
     if (Test-Path $OutputFolder) {
-        Start-Process explorer.exe -ArgumentList "`"$OutputFolder`"" -ErrorAction SilentlyContinue
-        Write-Log "Output folder opened."
-    }
-    else {
-        throw "Output folder not found at $OutputFolder"
+        Start-Process explorer.exe -ArgumentList "`"$OutputFolder`""
     }
     
     Write-Log "=== SCRIPT FINISHED SUCCESSFULLY ==="
 }
 catch {
     $errorMsg = $_.Exception.Message
-    $errorLevel = if ($errorMsg -eq "Operation aborted by user") { "WARNING" } else { "ERROR" }
+    $errorLevel = if ($errorMsg -like "*aborted by user*" -or $errorMsg -like "*halted by user*") { "WARNING" } else { "ERROR" }
     Write-Log "Script terminated: $errorMsg" $errorLevel
     
-    if ($errorMsg -ne "Operation aborted by user") {
-        [System.Windows.Forms.MessageBox]::Show(
-            "An error occurred:`n`n$errorMsg`n`nPlease check the output for details.",
-            "Clean DWGs Tool Error",
-            [System.Windows.Forms.MessageBoxButtons]::OK,
-            [System.Windows.Forms.MessageBoxIcon]::Error
-        )
+    if ($errorLevel -eq "ERROR") {
+        Show-UserPrompt -Message "An unexpected error occurred:`n`n$errorMsg`n`nPlease check the application log for details." -Title "Clean DWGs Tool Error" -Buttons ([System.Windows.Forms.MessageBoxButtons]::OK)
     }
 }
 finally {
-    if ($Acad) {
+    if ($Acad -and $script:AcadWasStarted) {
         try {
-            foreach ($doc in $Acad.Documents) {
-                try { $doc.Close($false) } catch { }
-            }
-            if ($script:AcadWasStarted) {
-                $Acad.Quit()
-            }
+            Write-Log "Closing AutoCAD instance started by the script..."
+            $Acad.Quit()
         }
         catch { }
     }

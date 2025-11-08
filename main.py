@@ -461,41 +461,45 @@ Return ONLY the JSON object.
                 documents_folder, "AutoCAD Clean DWGs", f"{project_name}_{timestamp}")
             os.makedirs(output_root, exist_ok=True)
 
-            # FIX: Only include titleblock parent ONCE, and add selected disciplines
+            # Determine all folders to copy
             folders_to_copy = set()
-            folders_to_copy.add(titleblock_parent.name)  # Xrefs folder
-            # Electrical, Mechanical, etc.
+            folders_to_copy.add(titleblock_parent.name)  # e.g., "Xref"
+            # e.g., "Electrical", "Mechanical"
             folders_to_copy.update(selected_disciplines)
 
-            # Copy folders
+            # Copy the entire contents of each required folder
             for folder in folders_to_copy:
                 src_folder = project_root / folder
-                if src_folder.exists():
+                if src_folder.exists() and src_folder.is_dir():
                     dest_folder = Path(output_root) / folder
                     shutil.copytree(src_folder, dest_folder,
                                     dirs_exist_ok=True)
-                    logging.info(f"Copied folder: {folder}")
+                    logging.info(
+                        f"Copied folder: {src_folder} to {dest_folder}")
                 else:
-                    logging.warning(f"Folder not found: {src_folder}")
+                    logging.warning(
+                        f"Folder not found or is not a directory: {src_folder}")
 
-            # Determine new titleblock path relative to output
+            # Determine the path of the titleblock in the new copied location
             new_titleblock_path = str(
                 Path(output_root) / titleblock_full.relative_to(project_root))
 
-            # Build PowerShell command WITHOUT TitleblockSize parameter
+            # Build the PowerShell command
             script_path = os.path.join(BASE_DIR, "CleanDWGs.ps1")
             if not os.path.exists(script_path):
                 raise FileNotFoundError("CleanDWGs.ps1 not found.")
 
-            all_folders_list = ','.join(sorted(folders_to_copy))
+            # We only need to pass the discipline names, not the Xref folder name
+            disciplines_arg = ','.join(sorted(selected_disciplines))
 
             command = [
                 'powershell.exe',
                 '-ExecutionPolicy', 'Bypass',
                 '-File', script_path,
                 '-TitleblockPath', new_titleblock_path,
-                '-Disciplines', all_folders_list,
+                '-Disciplines', disciplines_arg,
                 '-OutputFolder', output_root,
+                # Pass original root for context if needed
                 '-ProjectRoot', str(project_root)
             ]
 

@@ -45,8 +45,10 @@ LANG_MAP = {
 }
 # -------------------------------------------------------------------
 
+
 def lang_for(path: Path) -> str:
     return LANG_MAP.get(path.suffix.lower(), "")
+
 
 def main():
     root = Path(__file__).resolve().parent
@@ -64,7 +66,8 @@ def main():
             if p.is_file():
                 files.append(p)
             else:
-                print(f"[warn] Hardcoded file not found or is not a file: {filename}")
+                print(
+                    f"[warn] Hardcoded file not found or is not a file: {filename}")
         # Skip standard sorting, the order is the hardcoded list's order
     else:
         # Standard file discovery
@@ -122,6 +125,7 @@ def main():
 
     target.write_text("".join(lines), encoding="utf-8", newline="\n")
     print(f"[done] Wrote {TARGET_NAME} with {len(files)} file(s).")
+
 
 if __name__ == "__main__":
     main()

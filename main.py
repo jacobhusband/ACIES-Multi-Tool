@@ -69,18 +69,48 @@ class Api:
             appdata_path, 'Autodesk', 'ApplicationPlugins')
         os.makedirs(self.app_plugins_folder, exist_ok=True)
 
+    def check_bundle_installed(self, bundle_name):
+        """
+        Checks if a specific bundle directory exists in the ApplicationPlugins folder.
+        Returns a simple boolean status.
+        """
+        if not bundle_name or not bundle_name.endswith('.bundle'):
+            return {'status': 'error', 'message': 'Invalid bundle name provided.'}
+
+        bundle_path = os.path.join(self.app_plugins_folder, bundle_name)
+        is_installed = os.path.isdir(bundle_path)
+
+        logging.info(
+            f"Checking for bundle '{bundle_name}': {'Installed' if is_installed else 'Not Installed'}")
+
+        return {'status': 'success', 'is_installed': is_installed}
+
+    def _is_autocad_running(self):
+        """Checks if the AutoCAD process (acad.exe) is currently running."""
+        try:
+            # Use tasklist to check for the process name.
+            # This is standard on Windows and doesn't require installing psutil.
+            output = subprocess.check_output(
+                'tasklist /FI "IMAGENAME eq acad.exe" /FO CSV',
+                shell=True, creationflags=subprocess.CREATE_NO_WINDOW
+            ).decode()
+            # If "acad.exe" is in the output, it's running.
+            return "acad.exe" in output.lower()
+        except Exception as e:
+            logging.error(f"Error checking for AutoCAD process: {e}")
+            return False  # Assume not running if check fails to avoid blocking user
+
     def get_bundle_statuses(self):
         """
-        Fetches remote assets from GitHub and compares them against locally installed bundles.
-        Returns a list of bundles with their installation status.
+        Fetches remote assets and compares against local bundles + version.txt.
         """
         logging.info("Fetching bundle statuses...")
         try:
             # 1. Get local bundles
-            local_bundles = {d for d in os.listdir(
-                self.app_plugins_folder) if d.endswith('.bundle')}
+            local_bundles = os.listdir(self.app_plugins_folder)
 
             # 2. Get remote assets
+            # NOTE: Ensure your repo is public or you have the token logic here
             api_url = f"https://api.github.com/repos/{self.github_repo}/releases/tags/{self.release_tag}"
             response = requests.get(api_url, timeout=10)
             response.raise_for_status()
@@ -94,27 +124,54 @@ class Api:
 
                 bundle_name = asset_name.replace(
                     f"-{self.release_tag}.zip", ".bundle")
+                bundle_path = os.path.join(
+                    self.app_plugins_folder, bundle_name)
+
+                is_installed = bundle_name in local_bundles
+                local_version = None
+
+                # Check for version.txt to determine if update is needed
+                if is_installed:
+                    version_file = os.path.join(bundle_path, 'version.txt')
+                    if os.path.exists(version_file):
+                        with open(version_file, 'r') as f:
+                            local_version = f.read().strip()
+
+                # Determine Status
+                if not is_installed:
+                    state = 'not_installed'
+                elif local_version != self.release_tag:
+                    # Installed, but version mismatch (or missing version file) -> Update
+                    state = 'update_available'
+                else:
+                    state = 'installed'
 
                 status = {
                     'name': bundle_name.replace('.bundle', ''),
                     'bundle_name': bundle_name,
-                    'is_installed': bundle_name in local_bundles,
-                    'asset': asset  # Pass the full asset info for the install function
+                    'state': state,  # 'installed', 'not_installed', 'update_available'
+                    'local_version': local_version or 'unknown',
+                    'remote_version': self.release_tag,
+                    'asset': asset
                 }
                 statuses.append(status)
 
-            logging.info(f"Found {len(statuses)} bundles.")
             return {'status': 'success', 'data': statuses}
 
-        except requests.exceptions.RequestException as e:
-            logging.error(f"GitHub API error in get_bundle_statuses: {e}")
-            return {'status': 'error', 'message': 'Could not connect to GitHub to check for bundles.'}
         except Exception as e:
             logging.error(f"Error getting bundle statuses: {e}")
             return {'status': 'error', 'message': str(e)}
 
     def install_single_bundle(self, asset):
-        """Downloads and extracts a single bundle asset."""
+        """Downloads, extracts bundle, and writes version.txt."""
+
+        # 1. Safety Check: AutoCAD locks files (DLLs). It must be closed to Update/Install.
+        if self._is_autocad_running():
+            return {
+                'status': 'error',
+                'message': 'AutoCAD is currently running. Please close AutoCAD and try again to prevent file locking errors.'
+            }
+
         asset_name = asset.get('name')
         download_url = asset.get('browser_download_url')
         bundle_name = asset_name.replace(f"-{self.release_tag}.zip", ".bundle")
@@ -122,39 +179,45 @@ class Api:
 
         logging.info(f"Installing bundle: {bundle_name}")
         try:
-            # Download
             response = requests.get(download_url, stream=True, timeout=30)
             response.raise_for_status()
 
-            # Create directory
             os.makedirs(extract_path, exist_ok=True)
 
-            # Extract
             with zipfile.ZipFile(io.BytesIO(response.content)) as z:
                 z.extractall(extract_path)
 
-            logging.info(f"Successfully installed {bundle_name}")
+            # --- NEW: Write version.txt ---
+            with open(os.path.join(extract_path, 'version.txt'), 'w') as f:
+                f.write(self.release_tag)
+
+            logging.info(
+                f"Successfully installed {bundle_name} version {self.release_tag}")
             return {'status': 'success', 'bundle_name': bundle_name}
         except Exception as e:
             logging.error(f"Failed to install {bundle_name}: {e}")
             return {'status': 'error', 'message': f"Failed to install {bundle_name}: {e}"}
 
     def uninstall_bundle(self, bundle_name):
-        """Removes a bundle directory from the ApplicationPlugins folder."""
+        """Removes a bundle directory."""
+
+        # 1. Safety Check: AutoCAD locks files.
+        if self._is_autocad_running():
+            return {
+                'status': 'error',
+                'message': 'AutoCAD is currently running. Please close AutoCAD before uninstalling to ensure all files can be removed.'
+            }
+
         if not bundle_name or not bundle_name.endswith('.bundle'):
             return {'status': 'error', 'message': 'Invalid bundle name.'}
 
         bundle_path = os.path.join(self.app_plugins_folder, bundle_name)
-        logging.info(f"Uninstalling bundle: {bundle_name}")
 
         try:
             if os.path.isdir(bundle_path):
                 shutil.rmtree(bundle_path)
-                logging.info(f"Successfully removed {bundle_name}")
                 return {'status': 'success', 'bundle_name': bundle_name}
             else:
-                logging.warning(
-                    f"Bundle not found for uninstall: {bundle_path}")
                 return {'status': 'error', 'message': 'Bundle not found.'}
         except Exception as e:
             logging.error(f"Failed to uninstall {bundle_name}: {e}")
@@ -539,6 +602,18 @@ Return ONLY the JSON object.
 
     def run_clean_dwgs_script(self, data):
         """Prepares files and runs the CleanDWGs.ps1 PowerShell script."""
+
+        required_bundle = "ElectricalCommands.CleanCADCommands.bundle"
+        bundle_path = os.path.join(self.app_plugins_folder, required_bundle)
+
+        if not os.path.isdir(bundle_path):
+            logging.warning(
+                f"Prerequisite not met: '{required_bundle}' is not installed.")
+            return {
+                'status': 'prerequisite_failed',
+                'message': f'The "{required_bundle.replace(".bundle", "")}" bundle is required. Please install it from the manager above.'
+            }
+
         try:
             titleblock_path = data.get('titleblock')
             selected_disciplines = data.get('disciplines', [])

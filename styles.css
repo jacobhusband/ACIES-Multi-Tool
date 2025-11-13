@@ -1251,3 +1251,21 @@ dialog::backdrop {
 .bundle-name {
     font-weight: 500;
 }
+
+.bundle-status.update-available {
+    background-color: #f59e0b;
+    box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.2);
+}
+
+.tool-card.disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    background-color: var(--background-alt);
+    /* A slightly different background */
+}
+
+/* Optional: Disable the hover-grow effect */
+.tool-card.disabled:hover {
+    transform: none;
+    box-shadow: none;
+}

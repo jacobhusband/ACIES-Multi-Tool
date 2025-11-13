@@ -134,7 +134,7 @@ async function loadAndRenderBundles() {
             throw new Error(response.message);
         }
 
-        container.innerHTML = ''; // Clear spinner
+        container.innerHTML = '';
         if (response.data.length === 0) {
             container.textContent = 'No bundles found in the remote repository.';
             return;
@@ -143,23 +143,42 @@ async function loadAndRenderBundles() {
         response.data.forEach(bundle => {
             const item = el('div', { className: 'bundle-item' });
 
-            const statusClass = bundle.is_installed ? 'installed' : 'not-installed';
-            const statusTitle = bundle.is_installed ? 'Installed' : 'Not Installed';
+            // Determine visual state based on 'state' property
+            let statusClass, statusTitle, btnText, btnClass;
 
-            const actionButton = bundle.is_installed
-                ? el('button', { className: 'btn tiny btn-danger', textContent: 'Uninstall' })
-                : el('button', { className: 'btn tiny btn-primary', textContent: 'Install' });
+            if (bundle.state === 'installed') {
+                statusClass = 'installed';
+                statusTitle = `Installed (v${bundle.local_version})`;
+                btnText = 'Uninstall';
+                btnClass = 'btn-danger';
+            } else if (bundle.state === 'update_available') {
+                statusClass = 'update-available'; // New CSS class needed
+                statusTitle = `Update Available (Local: v${bundle.local_version} → Remote: ${bundle.remote_version})`;
+                btnText = 'Update';
+                btnClass = 'btn-accent'; // Use accent color for updates
+            } else {
+                statusClass = 'not-installed';
+                statusTitle = 'Not Installed';
+                btnText = 'Install';
+                btnClass = 'btn-primary';
+            }
+
+            const actionButton = el('button', { className: `btn tiny ${btnClass}`, textContent: btnText });
 
             actionButton.dataset.bundleName = bundle.bundle_name;
-            // Store the full asset object as a string for installation
-            if (!bundle.is_installed) {
+            actionButton.dataset.actionType = btnText; // Store action type
+
+            // Store asset for Install OR Update
+            if (bundle.state !== 'installed') {
                 actionButton.dataset.asset = JSON.stringify(bundle.asset);
             }
 
             item.append(
                 el('div', { className: 'bundle-info' }, [
                     el('div', { className: `bundle-status ${statusClass}`, title: statusTitle }),
-                    el('span', { className: 'bundle-name', textContent: bundle.name })
+                    el('span', { className: 'bundle-name', textContent: bundle.name }),
+                    // Optional: Show version badge for updates
+                    bundle.state === 'update_available' ? el('span', { className: 'pill dueSoon', textContent: 'New', style: 'margin-left:8px; font-size:0.7em' }) : ''
                 ]),
                 actionButton
             );
@@ -168,23 +187,22 @@ async function loadAndRenderBundles() {
 
     } catch (e) {
         container.innerHTML = `<div class="error-message">Error loading bundles: ${e.message}</div>`;
-        console.error("Bundle loading failed:", e);
     }
 }
 
 async function handleBundleAction(e) {
     const button = e.target;
-    const isInstall = button.textContent === 'Install';
-    const isUninstall = button.textContent === 'Uninstall';
+    const actionType = button.dataset.actionType; // 'Install', 'Update', or 'Uninstall'
 
-    if (!isInstall && !isUninstall) return;
+    if (!actionType) return;
 
+    const originalText = button.textContent;
     button.disabled = true;
-    button.textContent = isInstall ? 'Installing...' : 'Uninstalling...';
+    button.textContent = actionType === 'Uninstall' ? 'Uninstalling...' : 'Processing...';
 
     try {
         let response;
-        if (isInstall) {
+        if (actionType === 'Install' || actionType === 'Update') {
             const asset = JSON.parse(button.dataset.asset);
             response = await window.pywebview.api.install_single_bundle(asset);
         } else {
@@ -196,14 +214,16 @@ async function handleBundleAction(e) {
             throw new Error(response.message);
         }
 
-        toast(`Bundle '${response.bundle_name}' ${isInstall ? 'installed' : 'uninstalled'} successfully.`);
+        const successVerb = actionType === 'Uninstall' ? 'uninstalled' : (actionType === 'Update' ? 'updated' : 'installed');
+        toast(`Bundle '${response.bundle_name}' ${successVerb} successfully.`);
 
     } catch (err) {
-        toast(`⚠️ Action failed: ${err.message}`);
-        console.error("Bundle action failed:", err);
+        // This catches the AutoCAD running error
+        toast(`⚠️ ${err.message}`, 5000);
     } finally {
-        // Refresh the list to show the new status
+        // Always refresh list
         await loadAndRenderBundles();
+        await updateCleanDwgToolState();
     }
 }
 
@@ -522,6 +542,7 @@ function initTabbedInterfaces() {
 
         if (targetTab === 'tools') {
             loadAndRenderBundles();
+            updateCleanDwgToolState();
         }
 
         if (targetTab === 'notes') {
@@ -554,6 +575,33 @@ function initTabbedInterfaces() {
         activeNoteTab = e.target.dataset.planTab;
         renderNoteTabs();
     });
+}
+// ===================== TOOL CARD MANAGEMENT =====================
+async function updateCleanDwgToolState() {
+    const toolCard = document.getElementById('toolCleanDwgs');
+    const requiredBundle = 'ElectricalCommands.CleanCADCommands.bundle';
+    if (!toolCard) return;
+
+    try {
+        const response = await window.pywebview.api.check_bundle_installed(requiredBundle);
+
+        if (response.status === 'success' && response.is_installed) {
+            // Enable the card
+            toolCard.classList.remove('disabled');
+            toolCard.title = 'Clean, purge, and process CAD drawings.';
+            toolCard.setAttribute('tabindex', '0');
+        } else {
+            // Disable the card
+            toolCard.classList.add('disabled');
+            toolCard.title = 'Requires "ElectricalCommands.CleanCADCommands" to be installed.';
+            toolCard.setAttribute('tabindex', '-1'); // Remove from keyboard navigation
+        }
+    } catch (e) {
+        console.error('Failed to check prerequisite for Clean DWGs tool:', e);
+        // Fail safe: keep it disabled if the check fails
+        toolCard.classList.add('disabled');
+        toolCard.title = 'Could not verify prerequisites.';
+    }
 }
 // ===================== TOOL STATUS UPDATER =====================
 // This function is called by the Python backend
@@ -769,6 +817,11 @@ function initEventListeners() {
     document.getElementById('toolCleanDwgs').addEventListener('click', (e) => {
         const card = e.currentTarget;
         if (card.classList.contains('running')) return;
+
+        if (card.classList.contains('disabled')) {
+            toast('This tool is disabled. Please install the required bundle first.', 3000);
+            return; // Stop the function here
+        }
         // Reset form
         document.getElementById('cleanDwgs_titleblockPath').value = '';
         document.getElementById('cleanDwgsDlg').showModal();
@@ -795,13 +848,10 @@ function initEventListeners() {
         console.error('❌ btnSelectTitleblock not found!');
     }
 
-    // CRITICAL: Add null check before adding event listener
     const btnProceedCleanDwgs = document.getElementById('btnProceedCleanDwgs');
     if (btnProceedCleanDwgs) {
         btnProceedCleanDwgs.addEventListener('click', async () => {
             const titleblockPath = val('cleanDwgs_titleblockPath');
-
-            // Get selected disciplines (titleblock parent is automatic)
             const selectedDisciplines = Array.from(document.querySelectorAll('input[name="cleanDwgs_discipline"]:checked'))
                 .map(cb => cb.value);
 
@@ -813,19 +863,46 @@ function initEventListeners() {
             const data = {
                 titleblock: titleblockPath,
                 disciplines: selectedDisciplines
-                // REMOVED: size parameter
             };
 
+            // Close the dialog immediately for a better user experience
             closeDlg('cleanDwgsDlg');
-            const card = document.getElementById('toolCleanDwgs');
-            if (card) card.classList.add('running');
-            window.updateToolStatus('toolCleanDwgs', 'Copying files and starting AutoCAD...');
 
             try {
-                await window.pywebview.api.run_clean_dwgs_script(data);
+                // Call the backend
+                const response = await window.pywebview.api.run_clean_dwgs_script(data);
+
+                // --- START: New Prerequisite Handling ---
+                if (response.status === 'prerequisite_failed') {
+                    // Show a specific, helpful error message
+                    toast(`⚠️ ${response.message}`, 4000); // Show for 4 seconds
+
+                    // Guide the user by scrolling to the bundle manager
+                    const bundleManager = document.querySelector('.bundle-manager');
+                    if (bundleManager) {
+                        bundleManager.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+                        // Add a temporary highlight to draw attention
+                        bundleManager.style.transition = 'outline 0.1s ease-in-out';
+                        bundleManager.style.outline = '2px solid #f43f5e'; // A red-pink color
+                        setTimeout(() => { bundleManager.style.outline = 'none'; }, 2000);
+                    }
+                    return; // Stop further execution
+                }
+                // --- END: New Prerequisite Handling ---
+
+                // If the call was successful (not a prerequisite failure or other error)
+                if (response.status === 'success') {
+                    const card = document.getElementById('toolCleanDwgs');
+                    if (card) card.classList.add('running');
+                    window.updateToolStatus('toolCleanDwgs', 'Copying files and starting AutoCAD...');
+                } else {
+                    // Handle other potential backend errors that don't throw an exception
+                    throw new Error(response.message || 'An unknown error occurred.');
+                }
+
             } catch (e) {
                 window.updateToolStatus('toolCleanDwgs', `ERROR: ${e.message}`);
-                // Reset after error
                 setTimeout(() => resetToolStatus('toolCleanDwgs'), 5000);
             }
         });

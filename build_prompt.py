@@ -16,9 +16,7 @@ TARGET_NAME = "prompt.txt"
 # If this list IS empty, the script will proceed with standard file discovery and sorting.
 HARDCODED_FILES = [
     "script.js",
-    "main.py",
     "index.html",
-    "CleanDWGs.ps1",
 ]
 
 # Order priority; anything not listed falls back to alphabetical after these

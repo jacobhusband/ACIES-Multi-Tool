@@ -75,12 +75,18 @@ function Test-AbortSignal {
 
 #--- OPTIMIZED WAIT FUNCTIONS ---
 function Wait-For-AutoCAD-Ready {
-    param($AcadApp, [int]$TimeoutSeconds = 45)
+    param($AcadApp, [int]$TimeoutSeconds = 45, [switch]$ExtraWait)
     $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     while ($stopwatch.Elapsed.TotalSeconds -lt $TimeoutSeconds) {
         try {
             if ($AcadApp.GetAcadState().IsQuiescent -and ($AcadApp.Documents.Count -eq 0 -or $AcadApp.ActiveDocument.GetVariable("CMDACTIVE") -eq 0)) {
-                Start-Sleep -Milliseconds 250
+                # Base wait to ensure stability
+                Start-Sleep -Milliseconds 500
+                
+                # Extra wait if document just opened to ensure full load
+                if ($ExtraWait) {
+                    Start-Sleep -Milliseconds 1500
+                }
                 return $true
             }
         }
@@ -214,7 +220,6 @@ function Process-Titleblock {
     
     Write-Log "=== 1. Processing Titleblock ==="
     $tbName = [System.IO.Path]::GetFileName($TbPath)
-    Write-Log "Opening: $tbName..."
     
     if (Test-AbortSignal) { throw "Operation aborted by user" }
     
@@ -229,8 +234,10 @@ function Process-Titleblock {
         throw $errorMsg
     }
     
-    Wait-For-AutoCAD-Ready -AcadApp $AcadApp
+    Wait-For-AutoCAD-Ready -AcadApp $AcadApp -ExtraWait
     Bring-Acad-To-Front -AcadApp $AcadApp
+    
+    Write-Log "Titleblock '$tbName' loaded and ready for cleaning."
     
     # Show instruction prompt - use TopMost to ensure visibility
     Add-Type -AssemblyName System.Windows.Forms
@@ -317,12 +324,20 @@ function Process-CADFile {
     $doc = $null
     try {
         $doc = $AcadApp.Documents.Open($DwgPath)
-        Wait-For-AutoCAD-Ready -AcadApp $AcadApp
+        
+        # Wait for document to fully load with extra time
+        Wait-For-AutoCAD-Ready -AcadApp $AcadApp -ExtraWait
+        
+        # Activate the document and wait again
         $doc.Activate()
+        Start-Sleep -Milliseconds 500
         
         Write-Log "Executing CLEANCAD command..."
         $doc.SendCommand("._CLEANCAD`n")
         Wait-For-Command-Complete -AcadApp $AcadApp -TimeoutSeconds 180
+        
+        # Additional wait after command completes to ensure all operations finish
+        Start-Sleep -Milliseconds 1000
         
         $layoutNames = @()
         foreach ($layout in $doc.Layouts) {
@@ -344,7 +359,14 @@ function Process-CADFile {
             $doc.SaveAs($newPath)
         }
         
+        # Wait after save to ensure it completes
+        Start-Sleep -Milliseconds 500
+        
         $doc.Close()
+        
+        # Wait after close to ensure clean shutdown
+        Start-Sleep -Milliseconds 500
+        
         return $true
     }
     catch {

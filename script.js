@@ -120,6 +120,93 @@ function resetToolStatus(toolId) {
         }
     }
 }
+
+// ===================== BUNDLE MANAGEMENT =====================
+async function loadAndRenderBundles() {
+    const container = document.getElementById('bundle-list-container');
+    if (!container) return;
+
+    container.innerHTML = '<div class="spinner">Loading bundle statuses...</div>';
+
+    try {
+        const response = await window.pywebview.api.get_bundle_statuses();
+        if (response.status !== 'success') {
+            throw new Error(response.message);
+        }
+
+        container.innerHTML = ''; // Clear spinner
+        if (response.data.length === 0) {
+            container.textContent = 'No bundles found in the remote repository.';
+            return;
+        }
+
+        response.data.forEach(bundle => {
+            const item = el('div', { className: 'bundle-item' });
+
+            const statusClass = bundle.is_installed ? 'installed' : 'not-installed';
+            const statusTitle = bundle.is_installed ? 'Installed' : 'Not Installed';
+
+            const actionButton = bundle.is_installed
+                ? el('button', { className: 'btn tiny btn-danger', textContent: 'Uninstall' })
+                : el('button', { className: 'btn tiny btn-primary', textContent: 'Install' });
+
+            actionButton.dataset.bundleName = bundle.bundle_name;
+            // Store the full asset object as a string for installation
+            if (!bundle.is_installed) {
+                actionButton.dataset.asset = JSON.stringify(bundle.asset);
+            }
+
+            item.append(
+                el('div', { className: 'bundle-info' }, [
+                    el('div', { className: `bundle-status ${statusClass}`, title: statusTitle }),
+                    el('span', { className: 'bundle-name', textContent: bundle.name })
+                ]),
+                actionButton
+            );
+            container.append(item);
+        });
+
+    } catch (e) {
+        container.innerHTML = `<div class="error-message">Error loading bundles: ${e.message}</div>`;
+        console.error("Bundle loading failed:", e);
+    }
+}
+
+async function handleBundleAction(e) {
+    const button = e.target;
+    const isInstall = button.textContent === 'Install';
+    const isUninstall = button.textContent === 'Uninstall';
+
+    if (!isInstall && !isUninstall) return;
+
+    button.disabled = true;
+    button.textContent = isInstall ? 'Installing...' : 'Uninstalling...';
+
+    try {
+        let response;
+        if (isInstall) {
+            const asset = JSON.parse(button.dataset.asset);
+            response = await window.pywebview.api.install_single_bundle(asset);
+        } else {
+            const bundleName = button.dataset.bundleName;
+            response = await window.pywebview.api.uninstall_bundle(bundleName);
+        }
+
+        if (response.status !== 'success') {
+            throw new Error(response.message);
+        }
+
+        toast(`Bundle '${response.bundle_name}' ${isInstall ? 'installed' : 'uninstalled'} successfully.`);
+
+    } catch (err) {
+        toast(`⚠️ Action failed: ${err.message}`);
+        console.error("Bundle action failed:", err);
+    } finally {
+        // Refresh the list to show the new status
+        await loadAndRenderBundles();
+    }
+}
+
 // ===================== STATUS MIGRATION & HELPERS =====================
 function canonStatus(s) { if (!s) return null; const t = String(s).trim().toLowerCase(); if (['pending review', 'pending-review', 'review', 'pr'].includes(t)) return 'Pending Review'; if (['complete', 'completed', 'done'].includes(t)) return 'Complete'; if (['waiting', 'wait'].includes(t)) return 'Waiting'; return null; }
 function hasStatus(p, s) { return Array.isArray(p.statuses) && p.statuses.includes(s); }
@@ -433,6 +520,10 @@ function initTabbedInterfaces() {
             panel.classList.toggle('active', panel.id === `${targetTab}-panel`);
         });
 
+        if (targetTab === 'tools') {
+            loadAndRenderBundles();
+        }
+
         if (targetTab === 'notes') {
             mainSearchInput.placeholder = 'Search notes...';
             mainSearchInput.disabled = false;
@@ -556,6 +647,7 @@ function initEventListeners() {
     document.getElementById('btnDeleteAll').addEventListener('click', () => { document.getElementById('deleteConfirmInput').value = ''; document.getElementById('btnDeleteConfirm').disabled = true; document.getElementById('deleteDlg').showModal(); });
     document.getElementById('deleteConfirmInput').addEventListener('input', (e) => { document.getElementById('btnDeleteConfirm').disabled = e.target.value !== 'DELETE'; });
     document.getElementById('btnDeleteConfirm').addEventListener('click', () => { if (val('deleteConfirmInput') === 'DELETE') { db = []; save(); render(); closeDlg('deleteDlg'); toast('All project data has been deleted.'); } });
+    document.getElementById('bundle-list-container').addEventListener('click', handleBundleAction);
 
     const openAiModal = () => {
         if (!userSettings.apiKey) {

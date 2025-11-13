@@ -133,6 +133,14 @@
         <!-- Tab Panel for Tools -->
         <div id="tools-panel" class="tab-panel" hidden>
             <section class="panel stack">
+                <div class="bundle-manager">
+                    <h3 class="bundle-manager-title">Manage Autodesk Bundles</h3>
+                    <p class="tiny muted">Install or uninstall command bundles from the GitHub repository.</p>
+                    <div id="bundle-list-container" class="bundle-list-container">
+                        <!-- Bundles will be dynamically inserted here by script.js -->
+                        <div class="spinner">Loading bundle statuses...</div>
+                    </div>
+                </div>
                 <div style="text-align: right; margin-bottom: 1rem;">
                     <button id="abortBtn" class="btn btn-danger" style="display: none;">⏹ Abort Process</button>
                 </div>

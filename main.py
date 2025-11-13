@@ -11,12 +11,13 @@ from pathlib import Path
 from dotenv import load_dotenv
 import datetime
 import threading
+import requests  # Added for GitHub API calls
+import zipfile   # Added for extracting bundles
 
 # --- Google GenAI (new client) ---
 # Uses GOOGLE_API_KEY from environment/.env
 from google import genai
 from google.genai import types
-# --- Helper function to get the application data path ---
 
 # --- Helper function to get the application data path ---
 
@@ -49,13 +50,115 @@ NOTES_FILE = get_app_data_path("notes.json")
 SETTINGS_FILE = get_app_data_path("settings.json")
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s')
+
 # --- API Class ---
 
 
 class Api:
     # --- FIX: Removed self.window from __init__ to prevent circular reference ---
     def __init__(self):
-        pass
+        # --- Configuration for Bundle Management ---
+        self.github_repo = "jacobhusband/ElectricalCommands"
+        self.release_tag = "v0.0.0"
+
+        appdata_path = os.getenv('APPDATA')
+        if not appdata_path:
+            raise EnvironmentError(
+                "CRITICAL: Could not determine the APPDATA directory.")
+        self.app_plugins_folder = os.path.join(
+            appdata_path, 'Autodesk', 'ApplicationPlugins')
+        os.makedirs(self.app_plugins_folder, exist_ok=True)
+
+    def get_bundle_statuses(self):
+        """
+        Fetches remote assets from GitHub and compares them against locally installed bundles.
+        Returns a list of bundles with their installation status.
+        """
+        logging.info("Fetching bundle statuses...")
+        try:
+            # 1. Get local bundles
+            local_bundles = {d for d in os.listdir(
+                self.app_plugins_folder) if d.endswith('.bundle')}
+
+            # 2. Get remote assets
+            api_url = f"https://api.github.com/repos/{self.github_repo}/releases/tags/{self.release_tag}"
+            response = requests.get(api_url, timeout=10)
+            response.raise_for_status()
+            assets = response.json().get('assets', [])
+
+            statuses = []
+            for asset in assets:
+                asset_name = asset.get('name')
+                if not asset_name or 'Source code' in asset_name or not asset_name.endswith('.zip'):
+                    continue
+
+                bundle_name = asset_name.replace(
+                    f"-{self.release_tag}.zip", ".bundle")
+
+                status = {
+                    'name': bundle_name.replace('.bundle', ''),
+                    'bundle_name': bundle_name,
+                    'is_installed': bundle_name in local_bundles,
+                    'asset': asset  # Pass the full asset info for the install function
+                }
+                statuses.append(status)
+
+            logging.info(f"Found {len(statuses)} bundles.")
+            return {'status': 'success', 'data': statuses}
+
+        except requests.exceptions.RequestException as e:
+            logging.error(f"GitHub API error in get_bundle_statuses: {e}")
+            return {'status': 'error', 'message': 'Could not connect to GitHub to check for bundles.'}
+        except Exception as e:
+            logging.error(f"Error getting bundle statuses: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def install_single_bundle(self, asset):
+        """Downloads and extracts a single bundle asset."""
+        asset_name = asset.get('name')
+        download_url = asset.get('browser_download_url')
+        bundle_name = asset_name.replace(f"-{self.release_tag}.zip", ".bundle")
+        extract_path = os.path.join(self.app_plugins_folder, bundle_name)
+
+        logging.info(f"Installing bundle: {bundle_name}")
+        try:
+            # Download
+            response = requests.get(download_url, stream=True, timeout=30)
+            response.raise_for_status()
+
+            # Create directory
+            os.makedirs(extract_path, exist_ok=True)
+
+            # Extract
+            with zipfile.ZipFile(io.BytesIO(response.content)) as z:
+                z.extractall(extract_path)
+
+            logging.info(f"Successfully installed {bundle_name}")
+            return {'status': 'success', 'bundle_name': bundle_name}
+        except Exception as e:
+            logging.error(f"Failed to install {bundle_name}: {e}")
+            return {'status': 'error', 'message': f"Failed to install {bundle_name}: {e}"}
+
+    def uninstall_bundle(self, bundle_name):
+        """Removes a bundle directory from the ApplicationPlugins folder."""
+        if not bundle_name or not bundle_name.endswith('.bundle'):
+            return {'status': 'error', 'message': 'Invalid bundle name.'}
+
+        bundle_path = os.path.join(self.app_plugins_folder, bundle_name)
+        logging.info(f"Uninstalling bundle: {bundle_name}")
+
+        try:
+            if os.path.isdir(bundle_path):
+                shutil.rmtree(bundle_path)
+                logging.info(f"Successfully removed {bundle_name}")
+                return {'status': 'success', 'bundle_name': bundle_name}
+            else:
+                logging.warning(
+                    f"Bundle not found for uninstall: {bundle_path}")
+                return {'status': 'error', 'message': 'Bundle not found.'}
+        except Exception as e:
+            logging.error(f"Failed to uninstall {bundle_name}: {e}")
+            return {'status': 'error', 'message': f"Failed to uninstall {bundle_name}: {e}"}
 
     def _run_script_with_progress(self, command, tool_id):
         """

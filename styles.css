@@ -1195,3 +1195,59 @@ dialog::backdrop {
     background: var(--accent);
     border-color: var(--accent);
 }
+
+/* Filepath: styles.css */
+
+.bundle-manager {
+    margin-bottom: 2rem;
+    padding: 1rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+}
+
+.bundle-manager-title {
+    margin-top: 0;
+    margin-bottom: 0.25rem;
+}
+
+.bundle-list-container {
+    margin-top: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.bundle-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem;
+    background-color: var(--background-alt);
+    border-radius: 6px;
+}
+
+.bundle-info {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.bundle-status {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+}
+
+.bundle-status.installed {
+    background-color: #22c55e;
+    /* green-500 */
+}
+
+.bundle-status.not-installed {
+    background-color: #a1a1aa;
+    /* zinc-400 */
+}
+
+.bundle-name {
+    font-weight: 500;
+}

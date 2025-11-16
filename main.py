@@ -770,7 +770,7 @@ Return ONLY the JSON object.
 if __name__ == '__main__':
     api = Api()
     window = webview.create_window(
-        'ACIES Scheduler',
+        'ACIES Desktop Application',
         'index.html',
         js_api=api,
         width=1400,

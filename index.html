@@ -416,6 +416,22 @@
             <div id="detailsCommands" class="stack"></div>
         </div>
     </dialog>
+    <!-- Install Prerequisite Modal -->
+    <dialog id="installPrereqDlg">
+        <div class="modal-header">
+            <div id="installPrereqTitle" class="title">Installation Required</div>
+            <button class="btn" onclick="closeDlg('installPrereqDlg')">✕ Cancel</button>
+        </div>
+        <div class="modal-body stack">
+            <p id="installPrereqMessage">To use this tool, the "CleanCADCommands" bundle needs to be installed. Would you like to install it now?</p>
+            <div id="installSpinner" class="spinner" style="display:none;">Installing...</div>
+        </div>
+        <div class="modal-footer" style="text-align: right; margin-top: 1rem;">
+            <button class="btn" onclick="closeDlg('installPrereqDlg')">Later</button>
+            <button class="btn-primary" id="btnInstallPrereq">Install</button>
+        </div>
+    </dialog>
+
     <!-- HTML Templates for JS rendering -->
     <template id="project-row-template">
         <tr class="row">

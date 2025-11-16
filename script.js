@@ -939,8 +939,9 @@ function initEventListeners() {
         if (card.classList.contains('running')) return;
 
         if (card.classList.contains('disabled')) {
-            toast('This tool is disabled. Please install the required bundle first.', 3000);
-            return; // Stop the function here
+            // Instead of a toast, show the installation dialog
+            document.getElementById('installPrereqDlg').showModal();
+            return;
         }
         // Reset form
         document.getElementById('cleanDwgs_titleblockPath').value = '';
@@ -1029,6 +1030,50 @@ function initEventListeners() {
     } else {
         console.error('❌ CRITICAL: btnProceedCleanDwgs not found!');
     }
+
+    document.getElementById('btnInstallPrereq').addEventListener('click', async () => {
+        const installBtn = document.getElementById('btnInstallPrereq');
+        const spinner = document.getElementById('installSpinner');
+        const requiredBundleName = 'CleanCADCommands';
+
+        // Find the full bundle asset from the backend data to pass to the installer
+        let bundleToInstall;
+        try {
+            const response = await window.pywebview.api.get_bundle_statuses();
+            if (response.status !== 'success') throw new Error(response.message);
+            const bundleData = response.data.find(b => b.name.includes(requiredBundleName));
+            if (!bundleData || !bundleData.asset) {
+                throw new Error(`Could not retrieve bundle information for ${requiredBundleName}.`);
+            }
+            bundleToInstall = bundleData.asset;
+        } catch (e) {
+            toast(`⚠️ Error preparing installation: ${e.message}`, 5000);
+            return;
+        }
+
+        installBtn.disabled = true;
+        spinner.style.display = 'block';
+
+        try {
+            const response = await window.pywebview.api.install_single_bundle(bundleToInstall);
+
+            if (response.status !== 'success') {
+                throw new Error(response.message);
+            }
+
+            toast(`Bundle '${response.bundle_name}' installed successfully.`);
+            closeDlg('installPrereqDlg');
+
+        } catch (err) {
+            toast(`⚠️ Installation failed: ${err.message}`, 5000);
+        } finally {
+            installBtn.disabled = false;
+            spinner.style.display = 'none';
+            // Refresh UI states
+            await loadAndRenderBundles();
+            await updateCleanDwgToolState();
+        }
+    });
 
     // Initialize tab functionality
     initTabbedInterfaces();

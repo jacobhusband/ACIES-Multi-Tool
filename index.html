@@ -19,7 +19,7 @@
                 <button class="main-tab-btn active" data-tab="projects">Projects</button>
                 <button class="main-tab-btn" data-tab="notes">Notes</button>
                 <button class="main-tab-btn" data-tab="tools">Tools</button>
-                <button class="main-tab-btn" data-tab="chat">Chat</button>
+                <button class="main-tab-btn" data-tab="plugins">Plugins</button>
             </nav>
             <div class="nav-search">
                 <input id="search" type="search" placeholder="Search projects..." />
@@ -133,17 +133,16 @@
         <!-- Tab Panel for Tools -->
         <div id="tools-panel" class="tab-panel" hidden>
             <section class="panel stack">
-                <div class="bundle-manager">
-                    <h3 class="bundle-manager-title">Manage Autodesk Bundles</h3>
-                    <p class="tiny muted">Install or uninstall command bundles from the GitHub repository.</p>
-                    <div id="bundle-list-container" class="bundle-list-container">
-                        <!-- Bundles will be dynamically inserted here by script.js -->
-                        <div class="spinner">Loading bundle statuses...</div>
-                    </div>
-                </div>
                 <div style="text-align: right; margin-bottom: 1rem;">
                     <button id="abortBtn" class="btn btn-danger" style="display: none;">⏹ Abort Process</button>
                 </div>
+
+                <!-- AutoCAD Tools Section -->
+                <div class="autocad-tools-section">
+                    <h3 class="bundle-manager-title">AutoCAD Tools</h3>
+                    <p class="tiny muted">Run scripts to automate common AutoCAD tasks.</p>
+                </div>
+
                 <div class="tools-grid">
                     <!-- Card 1: Publish DWGs -->
                     <div id="toolPublishDwgs" class="tool-card" role="button" tabindex="0">
@@ -181,24 +180,17 @@
                 </div>
             </section>
         </div>
-        <!-- Tab Panel for Chat -->
-        <div id="chat-panel" class="tab-panel" hidden>
+        <!-- Tab Panel for Plugins -->
+        <div id="plugins-panel" class="tab-panel" hidden>
             <section class="panel stack">
-                <div class="chat-header"
-                    style="display: flex; justify-content: flex-end; padding-bottom: .75rem; border-bottom: 1px solid var(--border);">
-                    <button id="newChatBtn" class="btn tiny">New Chat</button>
-                </div>
-                <div id="chat-messages" class="chat-messages-container">
-                    <!-- Chat messages will be dynamically inserted here -->
-                </div>
-                <div class="chat-input-container">
-                    <textarea id="chat-input" placeholder="Write a multiline message... (Ctrl+Enter to send)"
-                        rows="3"></textarea>
-                    <button id="chat-send-btn" class="btn-primary">Send</button>
-                </div>
-                <!-- This is the new container for code file buttons -->
-                <div id="chat-code-files-container" class="chat-code-files-container">
-                    <!-- Code file buttons will be dynamically added here -->
+                <!-- Unified Commands Section -->
+                <div class="commands-section">
+                    <h3 class="bundle-manager-title">AutoCAD Plugins</h3>
+                    <p class="tiny muted">Install, update, or uninstall command bundles. Click a card to see details.</p>
+                    <div id="commands-container" class="tools-grid">
+                        <!-- Command cards will be dynamically inserted here -->
+                        <div class="spinner">Loading commands...</div>
+                    </div>
                 </div>
             </section>
         </div>
@@ -411,6 +403,17 @@
             <div class="modal-footer" style="text-align: right; margin-top: 1rem;">
                 <button class="btn-primary" id="btnProceedCleanDwgs">▶ Proceed</button>
             </div>
+        </div>
+    </dialog>
+    <!-- Command Details Modal -->
+    <dialog id="commandDetailsDlg">
+        <div class="modal-header">
+            <div id="detailsTitle" class="title">Command Details</div>
+            <button class="btn" onclick="closeDlg('commandDetailsDlg')">✕ Close</button>
+        </div>
+        <div class="modal-body stack">
+            <div id="detailsVideo" class="video-container"></div>
+            <div id="detailsCommands" class="stack"></div>
         </div>
     </dialog>
     <!-- HTML Templates for JS rendering -->

@@ -977,7 +977,6 @@ dialog::backdrop {
     transition: all 0.2s ease-in-out;
     box-shadow: 0 2px 6px var(--shadow);
     position: relative;
-    overflow: hidden;
 }
 
 .tool-card:hover,
@@ -1039,233 +1038,192 @@ dialog::backdrop {
     color: var(--danger);
 }
 
-/* Chat Tab Styles */
-.chat-messages-container {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-    padding: 1rem;
-    height: 65vh;
-    /* Adjust as needed */
-    overflow-y: auto;
-    background-color: var(--bg);
-    border-radius: 10px;
-    border: 1px solid var(--border);
-}
-
-.chat-message {
-    padding: .75rem 1rem;
-    border-radius: 12px;
-    max-width: 80%;
-    line-height: 1.5;
-    white-space: pre-wrap;
-    /* Allows line breaks */
-    word-wrap: break-word;
-}
-
-.chat-message.user-message {
-    background: var(--accent);
-    color: white;
-    align-self: flex-end;
-    border-bottom-right-radius: 4px;
-}
-
-.chat-message.bot-message {
-    background: var(--panel-light);
-    align-self: flex-start;
-    border-bottom-left-radius: 4px;
-}
-
-.chat-message.bot-message p {
-    margin: 0 0 0.5rem 0;
-}
-
-.chat-message.bot-message p:last-child {
-    margin-bottom: 0;
-}
-
-
-.chat-input-container {
-    display: flex;
-    gap: .75rem;
-    align-items: flex-end;
-}
-
-#chat-input {
-    flex-grow: 1;
-    resize: vertical;
-}
-
-#chat-send-btn {
-    height: fit-content;
-    flex-shrink: 0;
-}
-
-.code-block {
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    margin: .75rem 0;
-    position: relative;
-    font-family: Consolas, "Courier New", monospace;
-}
-
-.code-block-header {
-    background: var(--bg-secondary);
-    padding: .4rem .75rem;
-    border-bottom: 1px solid var(--border);
-    border-top-left-radius: 9px;
-    border-top-right-radius: 9px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    font-size: 12px;
-    color: var(--muted);
-}
-
-.code-block pre {
-    margin: 0;
-    padding: .75rem;
-    overflow-x: auto;
-}
-
-.code-block code {
-    font-family: inherit;
-    font-size: 13px;
-}
-
-.copy-btn {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    color: var(--text);
-    cursor: pointer;
-    padding: .2rem .5rem;
-    border-radius: 6px;
-    font-size: 12px;
-    transition: all .2s ease;
-}
-
-.copy-btn:hover {
-    background: var(--accent);
-    border-color: var(--accent);
-}
-
-.chat-code-files-container {
-    display: flex;
-    flex-wrap: wrap;
-    gap: .75rem;
-    padding-top: .75rem;
-    border-top: 1px solid var(--border);
-    margin-top: .75rem;
-    min-height: 42px;
-    /* Reserve some space */
-}
-
-.code-file-button {
-    display: flex;
-    align-items: center;
-    background: var(--bg-secondary);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: .25rem;
-    padding-left: .6rem;
-    font-size: 13px;
-    box-shadow: 0 2px 4px var(--shadow);
-}
-
-.code-file-button .file-name {
-    color: var(--muted);
-    margin-right: .5rem;
-    font-weight: 500;
-}
-
-/* Use the existing .copy-btn class for the button inside */
-.code-file-button .copy-btn {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    color: var(--text);
-    cursor: pointer;
-    padding: .2rem .5rem;
-    border-radius: 6px;
-    font-size: 12px;
-    transition: all .2s ease;
-}
-
-.code-file-button .copy-btn:hover {
-    background: var(--accent);
-    border-color: var(--accent);
-}
-
-/* Filepath: styles.css */
-
-.bundle-manager {
-    margin-bottom: 2rem;
-    padding: 1rem;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-}
-
-.bundle-manager-title {
-    margin-top: 0;
-    margin-bottom: 0.25rem;
-}
-
-.bundle-list-container {
-    margin-top: 1rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-}
-
-.bundle-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0.75rem;
-    background-color: var(--background-alt);
-    border-radius: 6px;
-}
-
-.bundle-info {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-}
-
 .bundle-status {
     width: 10px;
     height: 10px;
     border-radius: 50%;
+    flex-shrink: 0;
 }
 
 .bundle-status.installed {
-    background-color: #22c55e;
-    /* green-500 */
+    background-color: #22c55e; /* green-500 */
 }
 
 .bundle-status.not-installed {
-    background-color: #a1a1aa;
-    /* zinc-400 */
-}
-
-.bundle-name {
-    font-weight: 500;
+    background-color: #a1a1aa; /* zinc-400 */
 }
 
 .bundle-status.update-available {
-    background-color: #f59e0b;
-    box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.2);
+    background-color: #f59e0b; /* amber-500 */
+    box-shadow: 0 0 0 3px color-mix(in srgb, #f59e0b 30%, transparent);
+    animation: pulse-amber 2s ease-in-out infinite;
+}
+
+@keyframes pulse-amber {
+    0%, 100% { box-shadow: 0 0 0 3px color-mix(in srgb, #f59e0b 30%, transparent); }
+    50% { box-shadow: 0 0 0 5px color-mix(in srgb, #f59e0b 50%, transparent); }
+}
+
+.bundle-video {
+    margin-top: 0.5rem;
+}
+
+.bundle-video a {
+    color: var(--accent);
+    text-decoration: none;
+    font-weight: 500;
+}
+
+.bundle-video a:hover {
+    text-decoration: underline;
+}
+
+.bundle-commands {
+    margin-top: 0.5rem;
+}
+
+.bundle-commands h4 {
+    margin: 0 0 0.5rem 0;
+    font-size: 14px;
+    color: var(--accent-light);
+}
+
+.bundle-commands ul {
+    margin: 0;
+    padding-left: 1rem;
+    list-style: none;
+}
+
+.bundle-commands li {
+    margin-bottom: 0.25rem;
+    font-size: 13px;
+    color: var(--muted);
+}
+
+.bundle-commands strong {
+    color: var(--text);
 }
 
 .tool-card.disabled {
     opacity: 0.5;
     cursor: not-allowed;
-    background-color: var(--background-alt);
-    /* A slightly different background */
+    background-color: var(--background-alt); /* A slightly different background */
 }
 
-/* Optional: Disable the hover-grow effect */
 .tool-card.disabled:hover {
     transform: none;
     box-shadow: none;
+}
+
+/* New styles for Release Cards */
+.commands-section {
+    margin-bottom: 1rem;
+}
+
+.release-card {
+    background: linear-gradient(135deg, var(--panel), var(--panel-light));
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    transition: all 0.2s ease-in-out;
+    box-shadow: 0 2px 6px var(--shadow);
+    padding: 1rem;
+}
+
+.release-card:hover {
+    border-color: var(--accent);
+    transform: translateY(-2px);
+}
+
+.release-card-header {
+    font-weight: 700;
+    color: var(--text);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+}
+
+.release-card-title {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.info-btn {
+    background: none;
+    border: 1px solid transparent;
+    color: var(--muted);
+    font-weight: 700;
+    font-size: 16px;
+    border-radius: 99px;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    cursor: pointer;
+    transition: all .2s ease;
+}
+
+.info-btn:hover {
+    background: var(--bg);
+    color: var(--accent-light);
+    border-color: var(--border);
+}
+
+.release-card-body {
+    flex-grow: 1;
+    margin-bottom: 1rem;
+}
+
+.command-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .4rem;
+}
+
+.command-tag {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    padding: .2rem .5rem;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--muted);
+}
+
+.release-card-footer {
+    text-align: right;
+}
+
+/* Details Modal */
+#detailsVideo {
+    position: relative;
+    padding-bottom: 56.25%; /* 16:9 aspect ratio */
+    height: 0;
+    overflow: hidden;
+    border-radius: 10px;
+    background: #000;
+    margin-bottom: 1rem;
+}
+
+#detailsVideo iframe {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    border: 0;
+}
+
+#detailsCommands .bundle-commands {
+    background: var(--bg);
+    padding: 0.75rem;
+    border-radius: 10px;
+    border: 1px solid var(--border);
 }

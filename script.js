@@ -18,7 +18,67 @@ let userSettings = {
     discipline: 'Electrical', // Default value
     apiKey: ''
 };
-let chatHistory = [];
+
+// Release meta data for bundles
+const RELEASE_META = {
+    "assets": [
+        {
+            "commands": {
+                "EMBEDFROMXREFS": "Embeds raster images from XREFs into the drawing by converting them to OLE objects using PowerPoint, preserving orientation.",
+                "EMBEDFROMPDFS": "Embeds PDF underlays into the drawing by converting them to PNG and then OLE objects using PowerPoint.",
+                "CLEANTBLK": "Cleans the title block by exploding blocks, keeping only the title block, detaching XREFs, and embedding images.",
+                "CLEANCAD": "Cleans the entire sheet by embedding XREFs and performing cleanup operations."
+            },
+            "video_url": "https://loom.com/clean-cad-commands-demo",
+            "filename": "ElectricalCommands.CleanCADCommands-v0.0.0.zip"
+        },
+        {
+            "commands": {
+                "WIPEOUTOBJECTS": "Creates wipeout objects behind selected text, MText, tables, or polylines to mask the background.",
+                "CREATEVIEWPORTFROMREGION": "Creates a viewport in paperspace from a selected region in modelspace, with automatic scaling options.",
+                "CREATEPADDEDOUTLINEAROUNDBLOCKS": "Creates a convex hull boundary polyline around selected block references with optional padding.",
+                "BLOCKBOUNDARYGRID": "Creates a grid-based union boundary around block references, connecting separate groups if needed."
+            },
+            "video_url": "https://loom.com/general-commands-demo",
+            "filename": "ElectricalCommands.GeneralCommands-v0.0.0.zip"
+        },
+        {
+            "commands": {},
+            "video_url": null,
+            "filename": "ElectricalCommands.GetAttributesCommands-v0.0.0.zip"
+        },
+        {
+            "commands": {
+                "P30": "Plots the current layout to PDF at 30x42 inches using DWG to PDF.pc3.",
+                "P24": "Plots the current layout to PDF at 24x36 inches using DWG to PDF.pc3.",
+                "P22": "Plots the current layout to PDF at 22x34 inches using DWG to PDF.pc3."
+            },
+            "video_url": "https://loom.com/plot-commands-demo",
+            "filename": "ElectricalCommands.PlotCommands-v0.0.0.zip"
+        },
+        {
+            "commands": {
+                "INSERTPNGIMAGES": "Inserts PNG images from a selected folder into the drawing in a 3-column grid layout, sorted by filename.",
+                "INSERTPDFSHEETS": "Inserts all pages of a multi-page PDF as underlays in a grid layout.",
+                "GETSUMFROMTEXTEXPORT": "Extracts room types and square footage from selected text objects and exports the combined data to a JSON file.",
+                "GETSUMFROMTEXT": "Sums numerical values from selected text objects, handling various formats including VA ratings.",
+                "CALCULATEAREAS": "Calculates areas of selected polylines and adds text labels with the area in square feet at the center of each."
+            },
+            "video_url": "https://loom.com/t24-commands-demo",
+            "filename": "ElectricalCommands.T24Commands-v0.0.0.zip"
+        },
+        {
+            "commands": {
+                "REPLACETEXTCONTENT": "Replaces the text content of selected TEXT and MTEXT objects with new user-specified text.",
+                "INCREMENTTEXTCONTENT": "Increments text content with a prefix, start/end numbers, and odd/even filtering, sorted by distance from a reference point.",
+                "ADDVALUETOTEXT": "Adds a specified integer value to numbers found in selected text objects, handling various formats like ranges and separators."
+            },
+            "video_url": "https://loom.com/text-commands-demo",
+            "filename": "ElectricalCommands.TextCommands-v0.0.0.zip"
+        }
+    ]
+};
+
 // ===================== SERVER I/O (PYWEBVIEW) =====================
 async function load() {
     try {
@@ -122,40 +182,84 @@ function resetToolStatus(toolId) {
 }
 
 // ===================== BUNDLE MANAGEMENT =====================
+function openDetailsModal(asset) {
+    const dlg = document.getElementById('commandDetailsDlg');
+    if (!dlg || !asset) return;
+
+    const titleEl = document.getElementById('detailsTitle');
+    const videoEl = document.getElementById('detailsVideo');
+    const commandsEl = document.getElementById('detailsCommands');
+
+    titleEl.textContent = asset.filename.replace('ElectricalCommands.', '').replace(/-v[\d.]+\.zip$/, '');
+
+    // Video
+    videoEl.innerHTML = ''; // Clear previous content
+    if (asset.video_url && asset.video_url.includes('loom.com')) {
+        const videoId = asset.video_url.split('/').pop();
+        const iframe = el('iframe', {
+            src: `https://www.loom.com/embed/${videoId}`,
+            allowfullscreen: true
+        });
+        videoEl.append(iframe);
+    } else {
+        videoEl.innerHTML = '<p>No video available.</p>';
+    }
+
+    // Commands
+    commandsEl.innerHTML = ''; // Clear previous content
+    if (asset.commands && Object.keys(asset.commands).length > 0) {
+        const commandsList = el('ul', {}, Object.entries(asset.commands).map(([cmd, desc]) =>
+            el('li', {}, [el('strong', { textContent: cmd }), `: ${desc}`])
+        ));
+        commandsEl.append(
+            el('div', { className: 'bundle-commands' }, [
+                el('h4', { textContent: 'Commands:' }),
+                commandsList
+            ])
+        );
+    } else {
+        commandsEl.innerHTML = '<p>No command details available.</p>';
+    }
+
+    dlg.showModal();
+}
+
 async function loadAndRenderBundles() {
-    const container = document.getElementById('bundle-list-container');
+    const container = document.getElementById('commands-container');
     if (!container) return;
 
-    container.innerHTML = '<div class="spinner">Loading bundle statuses...</div>';
+    container.innerHTML = '<div class="spinner">Loading commands...</div>';
 
     try {
         const response = await window.pywebview.api.get_bundle_statuses();
-        if (response.status !== 'success') {
-            throw new Error(response.message);
-        }
+        if (response.status !== 'success') throw new Error(response.message);
 
         container.innerHTML = '';
         if (response.data.length === 0) {
-            container.textContent = 'No bundles found in the remote repository.';
+            container.textContent = 'No command bundles found.';
             return;
         }
 
         response.data.forEach(bundle => {
-            const item = el('div', { className: 'bundle-item' });
+            const asset = RELEASE_META.assets.find(a => a.filename.includes(bundle.name));
 
-            // Determine visual state based on 'state' property
+            const card = el('div', { className: 'release-card' });
+            const cardHeader = el('div', { className: 'release-card-header' });
+            const cardBody = el('div', { className: 'release-card-body' });
+            const cardFooter = el('div', { className: 'release-card-footer' });
+
+            // --- Determine State ---
             let statusClass, statusTitle, btnText, btnClass;
-
             if (bundle.state === 'installed') {
                 statusClass = 'installed';
                 statusTitle = `Installed (v${bundle.local_version})`;
                 btnText = 'Uninstall';
                 btnClass = 'btn-danger';
             } else if (bundle.state === 'update_available') {
-                statusClass = 'update-available'; // New CSS class needed
-                statusTitle = `Update Available (Local: v${bundle.local_version} → Remote: ${bundle.remote_version})`;
+                statusClass = 'update-available';
+                statusTitle = `Update Available (v${bundle.remote_version})`;
                 btnText = 'Update';
-                btnClass = 'btn-accent'; // Use accent color for updates
+                btnClass = 'btn-accent';
             } else {
                 statusClass = 'not-installed';
                 statusTitle = 'Not Installed';
@@ -163,39 +267,57 @@ async function loadAndRenderBundles() {
                 btnClass = 'btn-primary';
             }
 
-            const actionButton = el('button', { className: `btn tiny ${btnClass}`, textContent: btnText });
+            // --- Header ---
+            const title = bundle.name.replace('ElectricalCommands.', '');
+            const statusIndicator = el('div', { className: `bundle-status ${statusClass}`, title: statusTitle });
+            const titleEl = el('div', { className: 'release-card-title' }, [
+                statusIndicator,
+                el('span', { textContent: title })
+            ]);
+            const infoBtn = el('button', { className: 'info-btn', textContent: '?', title: 'Show details' });
+            if (asset) {
+                infoBtn.onclick = () => openDetailsModal(asset);
+            } else {
+                infoBtn.disabled = true;
+                infoBtn.title = 'No details available';
+            }
+            cardHeader.append(titleEl, infoBtn);
 
+            // --- Body (Command Tags) ---
+            const tagsContainer = el('div', { className: 'command-tags' });
+            if (asset && Object.keys(asset.commands).length > 0) {
+                Object.keys(asset.commands).forEach(cmd => {
+                    tagsContainer.append(el('span', { className: 'command-tag', textContent: cmd }));
+                });
+            } else {
+                tagsContainer.append(el('span', { className: 'command-tag', textContent: 'No commands listed' }));
+            }
+            cardBody.append(tagsContainer);
+
+            // --- Footer (Action Button) ---
+            const actionButton = el('button', { className: `btn ${btnClass}`, textContent: btnText });
             actionButton.dataset.bundleName = bundle.bundle_name;
-            actionButton.dataset.actionType = btnText; // Store action type
-
-            // Store asset for Install OR Update
+            actionButton.dataset.actionType = btnText;
             if (bundle.state !== 'installed') {
                 actionButton.dataset.asset = JSON.stringify(bundle.asset);
             }
+            cardFooter.append(actionButton);
 
-            item.append(
-                el('div', { className: 'bundle-info' }, [
-                    el('div', { className: `bundle-status ${statusClass}`, title: statusTitle }),
-                    el('span', { className: 'bundle-name', textContent: bundle.name }),
-                    // Optional: Show version badge for updates
-                    bundle.state === 'update_available' ? el('span', { className: 'pill dueSoon', textContent: 'New', style: 'margin-left:8px; font-size:0.7em' }) : ''
-                ]),
-                actionButton
-            );
-            container.append(item);
+            // --- Assemble & Render ---
+            card.append(cardHeader, cardBody, cardFooter);
+            container.append(card);
         });
 
     } catch (e) {
-        container.innerHTML = `<div class="error-message">Error loading bundles: ${e.message}</div>`;
+        container.innerHTML = `<div class="error-message">Error loading commands: ${e.message}</div>`;
     }
 }
 
 async function handleBundleAction(e) {
-    const button = e.target;
-    const actionType = button.dataset.actionType; // 'Install', 'Update', or 'Uninstall'
+    const button = e.target.closest('[data-action-type]');
+    if (!button) return;
 
-    if (!actionType) return;
-
+    const actionType = button.dataset.actionType;
     const originalText = button.textContent;
     button.disabled = true;
     button.textContent = actionType === 'Uninstall' ? 'Uninstalling...' : 'Processing...';
@@ -218,10 +340,8 @@ async function handleBundleAction(e) {
         toast(`Bundle '${response.bundle_name}' ${successVerb} successfully.`);
 
     } catch (err) {
-        // This catches the AutoCAD running error
         toast(`⚠️ ${err.message}`, 5000);
     } finally {
-        // Always refresh list
         await loadAndRenderBundles();
         await updateCleanDwgToolState();
     }
@@ -540,7 +660,7 @@ function initTabbedInterfaces() {
             panel.classList.toggle('active', panel.id === `${targetTab}-panel`);
         });
 
-        if (targetTab === 'tools') {
+        if (targetTab === 'plugins') {
             loadAndRenderBundles();
             updateCleanDwgToolState();
         }
@@ -548,7 +668,7 @@ function initTabbedInterfaces() {
         if (targetTab === 'notes') {
             mainSearchInput.placeholder = 'Search notes...';
             mainSearchInput.disabled = false;
-        } else if (targetTab === 'chat') {
+        } else if (targetTab === 'plugins') {
             mainSearchInput.placeholder = 'Search disabled';
             mainSearchInput.disabled = true;
         } else { // This covers 'projects' and 'tools'
@@ -593,7 +713,7 @@ async function updateCleanDwgToolState() {
         } else {
             // Disable the card
             toolCard.classList.add('disabled');
-            toolCard.title = 'Requires "ElectricalCommands.CleanCADCommands" to be installed.';
+            toolCard.title = 'Requires "CleanCADCommands" to be installed.';
             toolCard.setAttribute('tabindex', '-1'); // Remove from keyboard navigation
         }
     } catch (e) {
@@ -695,7 +815,7 @@ function initEventListeners() {
     document.getElementById('btnDeleteAll').addEventListener('click', () => { document.getElementById('deleteConfirmInput').value = ''; document.getElementById('btnDeleteConfirm').disabled = true; document.getElementById('deleteDlg').showModal(); });
     document.getElementById('deleteConfirmInput').addEventListener('input', (e) => { document.getElementById('btnDeleteConfirm').disabled = e.target.value !== 'DELETE'; });
     document.getElementById('btnDeleteConfirm').addEventListener('click', () => { if (val('deleteConfirmInput') === 'DELETE') { db = []; save(); render(); closeDlg('deleteDlg'); toast('All project data has been deleted.'); } });
-    document.getElementById('bundle-list-container').addEventListener('click', handleBundleAction);
+    document.getElementById('commands-container').addEventListener('click', handleBundleAction);
 
     const openAiModal = () => {
         if (!userSettings.apiKey) {
@@ -910,173 +1030,8 @@ function initEventListeners() {
         console.error('❌ CRITICAL: btnProceedCleanDwgs not found!');
     }
 
-    // Chat Tab
-    document.getElementById('chat-send-btn').addEventListener('click', handleSendMessage);
-    document.getElementById('chat-input').addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && e.ctrlKey) {
-            e.preventDefault(); // prevent new line
-            handleSendMessage();
-        }
-    });
-    document.getElementById('newChatBtn').addEventListener('click', startNewChat);
-
     // Initialize tab functionality
     initTabbedInterfaces();
-}
-// ===================== CHAT FUNCTIONS =====================
-/**
- * Appends a message to the chat container and updates the code file buttons.
- * @param {string} html The message content (can be HTML).
- * @param {'user' | 'bot'} sender The sender of the message.
- */
-function appendChatMessage(html, sender) {
-    const messagesContainer = document.getElementById('chat-messages');
-    const codeFilesContainer = document.getElementById('chat-code-files-container');
-    const messageType = sender === 'user' ? 'user-message' : 'bot-message';
-
-    const messageDiv = el('div', { className: `chat-message ${messageType}` });
-    messageDiv.innerHTML = html; // Use innerHTML to render parsed markdown/code blocks
-
-    messagesContainer.append(messageDiv);
-    messagesContainer.scrollTop = messagesContainer.scrollHeight; // Auto-scroll to bottom
-
-    // Add event listeners for any new copy buttons inside the message
-    messageDiv.querySelectorAll('.copy-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const code = btn.closest('.code-block').querySelector('code').innerText;
-            navigator.clipboard.writeText(code).then(() => {
-                btn.textContent = 'Copied!';
-                setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
-            }).catch(err => {
-                toast('Failed to copy code.');
-                console.error('Copy failed', err);
-            });
-        });
-    });
-
-    // If it's a bot message, detect code blocks and create buttons below the chat window
-    if (sender === 'bot') {
-        messageDiv.querySelectorAll('.code-block').forEach((codeBlock, index) => {
-            const language = codeBlock.querySelector('.code-block-header span')?.textContent || 'code';
-            const code = codeBlock.querySelector('code')?.innerText;
-
-            if (!code) return;
-
-            const fileButton = el('div', { className: 'code-file-button' });
-            const fileNameSpan = el('span', { className: 'file-name', textContent: `${language}_${index + 1}` });
-            const copyBtn = el('button', { className: 'copy-btn', textContent: 'Copy' });
-
-            copyBtn.addEventListener('click', () => {
-                navigator.clipboard.writeText(code).then(() => {
-                    copyBtn.textContent = 'Copied!';
-                    toast(`Copied ${language} code block.`);
-                    setTimeout(() => { copyBtn.textContent = 'Copy'; }, 2000);
-                }).catch(err => {
-                    toast('Failed to copy code.');
-                    console.error('Copy failed', err);
-                });
-            });
-
-            fileButton.append(fileNameSpan, copyBtn);
-            codeFilesContainer.append(fileButton);
-        });
-    }
-}
-
-/**
- * Parses the bot's response, separating text from code blocks.
- * @param {string} responseText The raw text from the Gemini API.
- * @returns {string} HTML string with formatted code blocks.
- */
-function parseBotResponse(responseText) {
-    const codeBlockRegex = /```(\w*)\n([\s\S]*?)\n```/g;
-    let lastIndex = 0;
-    let html = '';
-
-    let match;
-    while ((match = codeBlockRegex.exec(responseText)) !== null) {
-        // Add the text before the code block
-        const precedingText = responseText.substring(lastIndex, match.index).trim();
-        if (precedingText) {
-            html += `<p>${precedingText.replace(/\n/g, '<br>')}</p>`;
-        }
-
-        const language = match[1] || 'code';
-        const code = match[2].trim();
-
-        // Add the formatted code block
-        html += `
-            <div class="code-block">
-                <div class="code-block-header">
-                    <span>${language}</span>
-                    <button class="copy-btn">Copy</button>
-                </div>
-                <pre><code>${code.replace(/</g, "<").replace(/>/g, ">")}</code></pre>
-            </div>
-        `;
-
-        lastIndex = codeBlockRegex.lastIndex;
-    }
-
-    // Add any remaining text after the last code block
-    const remainingText = responseText.substring(lastIndex).trim();
-    if (remainingText) {
-        html += `<p>${remainingText.replace(/\n/g, '<br>')}</p>`;
-    }
-
-    return html;
-}
-
-function startNewChat() {
-    if (confirm('Are you sure you want to start a new chat? Your current conversation will be lost.')) {
-        chatHistory = [];
-        document.getElementById('chat-messages').innerHTML = '';
-        document.getElementById('chat-code-files-container').innerHTML = '';
-        appendChatMessage('<p>New chat started. How can I help you?</p>', 'bot');
-    }
-}
-
-async function handleSendMessage() {
-    const input = document.getElementById('chat-input');
-    const message = input.value.trim();
-    if (!message) return;
-
-    if (!userSettings.apiKey) {
-        toast('Please set up your Gemini API key in the settings (⚙️) first.');
-        openSettingsModal();
-        return;
-    }
-
-    // Display user's message and add to history
-    appendChatMessage(message.replace(/</g, "<").replace(/>/g, ">"), 'user');
-    chatHistory.push({ role: 'user', parts: [{ text: message }] });
-    input.value = '';
-    input.focus();
-
-    // Show thinking indicator
-    const thinkingMsg = el('div', { className: 'chat-message bot-message thinking' });
-    thinkingMsg.innerHTML = '<div class="spinner">Thinking...</div>';
-    const messagesContainer = document.getElementById('chat-messages');
-    messagesContainer.append(thinkingMsg);
-    messagesContainer.scrollTop = messagesContainer.scrollHeight;
-
-    try {
-        const result = await window.pywebview.api.get_chat_response(chatHistory);
-        thinkingMsg.remove();
-
-        if (result.status === 'success') {
-            const formattedHtml = parseBotResponse(result.response);
-            appendChatMessage(formattedHtml, 'bot');
-            chatHistory.push({ role: 'model', parts: [{ text: result.response }] });
-        } else {
-            throw new Error(result.response);
-        }
-    } catch (e) {
-        thinkingMsg.remove();
-        const errorHtml = `<strong>Error:</strong> ${e.message}`;
-        appendChatMessage(errorHtml, 'bot');
-        console.error('Chat error:', e);
-    }
 }
 // ===================== INITIALIZATION =====================
 async function init() {

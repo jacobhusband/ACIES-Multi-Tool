@@ -526,9 +526,14 @@ function render() {
     const startOfLastWeek = new Date(startOfWeek); startOfLastWeek.setDate(startOfWeek.getDate() - 7);
     const endOfLastWeek = new Date(endOfWeek); endOfLastWeek.setDate(endOfWeek.getDate() - 7);
 
+    const currentYear = today.getFullYear();
+    const lastYear = currentYear - 1;
+
     let dueThisWeek = 0;
     let dueLastWeek = 0;
     let upcoming = 0;
+    let completedThisYear = 0;
+    let completedLastYear = 0;
     let minDate = null;
     let maxDate = null;
 
@@ -541,15 +546,24 @@ function render() {
 
             if (!minDate || d < minDate) minDate = d;
             if (!maxDate || d > maxDate) maxDate = d;
+
+            if (hasStatus(p, 'Complete')) {
+                if (d.getFullYear() === currentYear) completedThisYear++;
+                if (d.getFullYear() === lastYear) completedLastYear++;
+            }
         }
     });
 
     // Average Calculation
     let avgPerWeek = 0;
+    let avgPerMonth = 0;
     if (minDate && maxDate && total > 0) {
         const diffTime = Math.abs(maxDate - minDate);
         const diffWeeks = Math.ceil(diffTime / (1000 * 60 * 60 * 24 * 7)) || 1;
         avgPerWeek = (total / diffWeeks).toFixed(1);
+
+        const diffMonths = (diffTime / (1000 * 60 * 60 * 24 * 30.44)) || 1;
+        avgPerMonth = (total / diffMonths).toFixed(1);
     }
 
     // Update DOM (Safe check for elements)
@@ -560,6 +574,9 @@ function render() {
     setStat('statThisWeek', dueThisWeek);
     setStat('statUpcoming', upcoming);
     setStat('statAvg', avgPerWeek);
+    setStat('statAvgMonth', avgPerMonth);
+    setStat('statCompletedLastYear', completedLastYear);
+    setStat('statCompletedThisYear', completedThisYear);
 
     // Empty State Toggle
     emptyState.style.display = items.length ? 'none' : 'block';

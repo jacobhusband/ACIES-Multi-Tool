@@ -15,8 +15,8 @@ TARGET_NAME = "prompt.txt"
 # If this list is NOT empty, ONLY these files will be included, in this order.
 # If this list IS empty, the script will proceed with standard file discovery and sorting.
 HARDCODED_FILES = [
-    "script.js",
     "index.html",
+    "styles.css",
 ]
 
 # Order priority; anything not listed falls back to alphabetical after these
@@ -24,8 +24,6 @@ ORDER_HINT = [
     "index.html",
     "styles.css",
     "script.js",
-    "server.py",
-    "tasks.json",
 ]
 
 # Include only these extensions (set to None to include everything)

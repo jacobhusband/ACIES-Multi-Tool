@@ -1,43 +1,27 @@
-// filepath: C:\Users\JacobH\Documents\dev\ProjectManagement\script.js
-// ===================== STATE MANAGEMENT =====================
-/** @typedef {{ label:string, url:string, raw?:string }} Link */
-/** @typedef {{ text:string, done?:boolean, links:Link[] }} Task */
-/** @typedef {{ id:string, name:string, nick?:string, notes?:string, due?:string, path?:string, tasks:Task[], refs:Link[], statuses?:string[], statusTags?:string[], status?:string }} Project */
-let db = [];
-let notesDb = { keyed: {}, general: {} };
-let noteTabs = [];
-let editIndex = -1;
-let currentSort = { key: 'due', dir: 'desc' };
-let statusFilter = 'all';
-let dueFilter = 'all';
+// ===================== CONFIGURATION & CONSTANTS =====================
 const STATUS_CANON = ["Pending Review", "Complete", "Waiting"];
 const LABEL_TO_KEY = { 'Pending Review': 'pendingReview', 'Complete': 'complete', 'Waiting': 'waiting' };
 const KEY_TO_LABEL = { pendingReview: 'Pending Review', complete: 'Complete', waiting: 'Waiting' };
-let userSettings = {
-    userName: '',
-    discipline: 'Electrical', // Default value
-    apiKey: ''
-};
 
-// Release meta data for bundles
+// Release meta data for bundles (Static Data)
 const RELEASE_META = {
     "assets": [
         {
             "commands": {
-                "EMBEDFROMXREFS": "Embeds raster images from XREFs into the drawing by converting them to OLE objects using PowerPoint, preserving orientation.",
-                "EMBEDFROMPDFS": "Embeds PDF underlays into the drawing by converting them to PNG and then OLE objects using PowerPoint.",
-                "CLEANTBLK": "Cleans the title block by exploding blocks, keeping only the title block, detaching XREFs, and embedding images.",
-                "CLEANCAD": "Cleans the entire sheet by embedding XREFs and performing cleanup operations."
+                "EMBEDFROMXREFS": "Embeds raster images from XREFs into drawing (OLE/PowerPoint).",
+                "EMBEDFROMPDFS": "Embeds PDF underlays into drawing (PNG -> OLE).",
+                "CLEANTBLK": "Explodes blocks, keeps title block, detaches XREFs.",
+                "CLEANCAD": "Embeds XREFs and performs cleanup."
             },
             "video_url": "https://loom.com/clean-cad-commands-demo",
             "filename": "ElectricalCommands.CleanCADCommands-v0.0.0.zip"
         },
         {
             "commands": {
-                "WIPEOUTOBJECTS": "Creates wipeout objects behind selected text, MText, tables, or polylines to mask the background.",
-                "CREATEVIEWPORTFROMREGION": "Creates a viewport in paperspace from a selected region in modelspace, with automatic scaling options.",
-                "CREATEPADDEDOUTLINEAROUNDBLOCKS": "Creates a convex hull boundary polyline around selected block references with optional padding.",
-                "BLOCKBOUNDARYGRID": "Creates a grid-based union boundary around block references, connecting separate groups if needed."
+                "WIPEOUTOBJECTS": "Creates wipeout objects behind text/tables.",
+                "CREATEVIEWPORTFROMREGION": "Creates viewport in paperspace from modelspace region.",
+                "CREATEPADDEDOUTLINEAROUNDBLOCKS": "Creates convex hull boundary around blocks.",
+                "BLOCKBOUNDARYGRID": "Creates grid-based union boundary around blocks."
             },
             "video_url": "https://loom.com/general-commands-demo",
             "filename": "ElectricalCommands.GeneralCommands-v0.0.0.zip"
@@ -49,29 +33,29 @@ const RELEASE_META = {
         },
         {
             "commands": {
-                "P30": "Plots the current layout to PDF at 30x42 inches using DWG to PDF.pc3.",
-                "P24": "Plots the current layout to PDF at 24x36 inches using DWG to PDF.pc3.",
-                "P22": "Plots the current layout to PDF at 22x34 inches using DWG to PDF.pc3."
+                "P30": "Plot layout to PDF (30x42).",
+                "P24": "Plot layout to PDF (24x36).",
+                "P22": "Plot layout to PDF (22x34)."
             },
             "video_url": "https://loom.com/plot-commands-demo",
             "filename": "ElectricalCommands.PlotCommands-v0.0.0.zip"
         },
         {
             "commands": {
-                "INSERTPNGIMAGES": "Inserts PNG images from a selected folder into the drawing in a 3-column grid layout, sorted by filename.",
-                "INSERTPDFSHEETS": "Inserts all pages of a multi-page PDF as underlays in a grid layout.",
-                "GETSUMFROMTEXTEXPORT": "Extracts room types and square footage from selected text objects and exports the combined data to a JSON file.",
-                "GETSUMFROMTEXT": "Sums numerical values from selected text objects, handling various formats including VA ratings.",
-                "CALCULATEAREAS": "Calculates areas of selected polylines and adds text labels with the area in square feet at the center of each."
+                "INSERTPNGIMAGES": "Inserts PNGs in grid layout.",
+                "INSERTPDFSHEETS": "Inserts PDF pages as underlays.",
+                "GETSUMFROMTEXTEXPORT": "Sums areas/types and exports to JSON.",
+                "GETSUMFROMTEXT": "Sums numerical values from text.",
+                "CALCULATEAREAS": "Calculates polyline areas and labels them."
             },
             "video_url": "https://loom.com/t24-commands-demo",
             "filename": "ElectricalCommands.T24Commands-v0.0.0.zip"
         },
         {
             "commands": {
-                "REPLACETEXTCONTENT": "Replaces the text content of selected TEXT and MTEXT objects with new user-specified text.",
-                "INCREMENTTEXTCONTENT": "Increments text content with a prefix, start/end numbers, and odd/even filtering, sorted by distance from a reference point.",
-                "ADDVALUETOTEXT": "Adds a specified integer value to numbers found in selected text objects, handling various formats like ranges and separators."
+                "REPLACETEXTCONTENT": "Batch replace text content.",
+                "INCREMENTTEXTCONTENT": "Increment text with prefixes/sorting.",
+                "ADDVALUETOTEXT": "Add integer values to existing text numbers."
             },
             "video_url": "https://loom.com/text-commands-demo",
             "filename": "ElectricalCommands.TextCommands-v0.0.0.zip"
@@ -79,96 +63,183 @@ const RELEASE_META = {
     ]
 };
 
-// ===================== SERVER I/O (PYWEBVIEW) =====================
-async function load() {
-    try {
-        const arr = await window.pywebview.api.get_tasks();
-        migrateStatuses(arr);
-        return arr;
-    } catch (e) {
-        console.warn('Failed to load from Python backend.', e);
-        toast('Could not load data.');
-        return [];
-    }
-}
-async function save() {
-    try {
-        const response = await window.pywebview.api.save_tasks(db);
-        if (response.status !== 'success') throw new Error(response.message || 'Unknown error');
-    } catch (e) {
-        console.warn('Failed to save to Python backend.', e);
-        toast('⚠️ Failed to save data.');
-    }
-}
-async function loadNotes() {
-    try {
-        const data = await window.pywebview.api.get_notes() || {};
-        // Expected data structure: { tabs: string[], keyed: object, general: object }
-        noteTabs = Array.isArray(data.tabs) && data.tabs.length > 0 ? data.tabs : ['Default Tab'];
-        notesDb = {
-            keyed: data.keyed || {},
-            general: data.general || {}
-        };
-        activeNoteTab = noteTabs[0];
-        return notesDb;
-    } catch (e) {
-        console.warn('Failed to load notes from Python backend.', e);
-        toast('Could not load notes.');
-        noteTabs = ['Default Tab'];
-        activeNoteTab = noteTabs[0];
-        return {};
-    }
-}
-async function saveNotes() {
-    try {
-        const dataToSave = {
-            tabs: noteTabs,
-            keyed: notesDb.keyed,
-            general: notesDb.general
-        };
-        const response = await window.pywebview.api.save_notes(dataToSave);
-        if (response.status !== 'success') throw new Error(response.message || 'Unknown error');
-    } catch (e) {
-        console.warn('Failed to save notes to Python backend.', e);
-        toast('⚠️ Failed to save notes.');
-    }
-}
-// ===================== UTILITIES & HELPERS =====================
-function el(tag, props = {}, children = []) { const n = document.createElement(tag); Object.entries(props).forEach(([k, v]) => { if (k.startsWith('aria-') || k.startsWith('data-')) { if (v != null) n.setAttribute(k, String(v)); } else { n[k] = v; } }); children.forEach(c => n.append(c)); return n; }
-function parseDueStr(s) { if (!s) return null; s = s.trim(); let m = s.match(/^\d{4}-\d{2}-\d{2}$/); if (m) return new Date(s + 'T12:00:00'); s = s.replace(/[.]/g, '/').replace(/\s+/g, ''); const parts = s.split('/'); if (parts.length === 3) { let [mm, dd, yy] = parts; if (yy.length === 2) { yy = '20' + yy; } const iso = `${yy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}T12:00:00`; const d = new Date(iso); if (!isNaN(d)) return d; } const d2 = new Date(s); return isNaN(d2) ? null : d2; }
-function dueState(dueStr) { const d = parseDueStr(dueStr); if (!d) return 'ok'; const today = new Date(); today.setHours(0, 0, 0, 0); const dayOfWeek = today.getDay(); const startOfWeek = new Date(today); startOfWeek.setDate(today.getDate() - dayOfWeek); const endOfWeek = new Date(startOfWeek); endOfWeek.setDate(startOfWeek.getDate() + 6); endOfWeek.setHours(23, 59, 59, 999); if (d >= startOfWeek && d <= endOfWeek) { return 'dueSoon'; } if (d < today) { return 'overdue'; } return 'ok'; }
-function humanDate(s) { const d = parseDueStr(s); if (!d) return ''; return d.toLocaleDateString(undefined, { year: '2-digit', month: '2-digit', day: '2-digit' }); }
-function basename(path) { try { if (!path) return ''; const norm = path.replace(/\\/g, '/'); const idx = norm.lastIndexOf('/'); return idx >= 0 ? norm.slice(idx + 1) : norm; } catch { return path; } }
-function toFileURL(raw) { if (!raw) return ''; let s = raw.trim(); if (/^https?:\/\//i.test(s)) return s; if (/^\\\\/.test(s)) return 'file:' + s.replace(/^\\\\/, '/////').replace(/\\/g, '/'); if (/^[A-Za-z]:\\/.test(s)) return 'file:///' + s.replace(/\\/g, '/'); return s; }
-function normalizeLink(input) { const raw = (input || '').trim(); const url = toFileURL(raw); const label = basename(raw) || raw || 'link'; return { label, url, raw }; }
-function convertPath(raw) { if (raw.startsWith('\\\\acies.lan\\cachedrive\\projects2\\')) return raw.replace('\\\\acies.lan\\cachedrive\\projects2\\', 'M:\\'); if (raw.startsWith('\\\\acies.lan\\cachedrive\\projects\\')) return raw.replace('\\\\acies.lan\\cachedrive\\projects\\', 'P:\\'); return raw; }
-function toast(msg, duration = 2200) { const t = el('div', { textContent: msg, style: 'position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--panel);border:1px solid var(--border);padding:.5rem .75rem;border-radius:10px;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.2)' }); document.body.append(t); setTimeout(() => t.remove(), duration); }
-function closeDlg(id) { document.getElementById(id).close(); }
-function val(id) { return document.getElementById(id).value.trim(); }
-const debounce = (fn, delay) => { let timeoutId; return (...args) => { clearTimeout(timeoutId); timeoutId = setTimeout(() => fn(...args), delay); }; };
-// ===================== USER SETTINGS =====================
-async function saveUserSettings() {
-    try {
-        await window.pywebview.api.save_user_settings(userSettings);
-    } catch (e) {
-        console.error("Failed to save user settings to backend:", e);
-        toast('⚠️ Could not save settings.');
-    }
-}
-async function loadUserSettings() {
-    try {
-        const storedSettings = await window.pywebview.api.get_user_settings();
-        if (storedSettings) {
-            userSettings = storedSettings;
-        }
-    } catch (e) {
-        console.error("Failed to load user settings from backend:", e);
-        userSettings = { userName: '', discipline: 'Electrical', apiKey: '' };
-    }
-}
-const debouncedSaveUserSettings = debounce(saveUserSettings, 500);
+// ===================== STATE MANAGEMENT =====================
+/** @typedef {{ label:string, url:string, raw?:string }} Link */
+/** @typedef {{ text:string, done?:boolean, links:Link[] }} Task */
+/** @typedef {{ id:string, name:string, nick?:string, notes?:string, due?:string, path?:string, tasks:Task[], refs:Link[], statuses?:string[], statusTags?:string[], status?:string }} Project */
 
-// Add this near the other helper functions
+let db = [];
+let notesDb = {}; // Simplified: flat object
+let noteTabs = [];
+let editIndex = -1;
+let currentSort = { key: 'due', dir: 'desc' };
+let statusFilter = 'all';
+let dueFilter = 'all';
+
+let userSettings = {
+    userName: '',
+    discipline: 'Electrical',
+    apiKey: ''
+};
+
+// Notes State
+let activeNoteTab = null;
+
+// ===================== UTILITIES & HELPERS =====================
+
+/** Create DOM Element helper */
+function el(tag, props = {}, children = []) {
+    const n = document.createElement(tag);
+    Object.entries(props).forEach(([k, v]) => {
+        if (k.startsWith('aria-') || k.startsWith('data-')) {
+            if (v != null) n.setAttribute(k, String(v));
+        } else {
+            n[k] = v;
+        }
+    });
+    children.forEach(c => {
+        if (typeof c === 'string') n.appendChild(document.createTextNode(c));
+        else n.appendChild(c);
+    });
+    return n;
+}
+
+/** Get Input Value helper */
+function val(id) {
+    const el = document.getElementById(id);
+    return el ? el.value.trim() : '';
+}
+
+/** Close Dialog helper */
+function closeDlg(id) {
+    document.getElementById(id).close();
+}
+
+/** Debounce function for search/autosave */
+const debounce = (fn, delay) => {
+    let timeoutId;
+    return (...args) => {
+        clearTimeout(timeoutId);
+        timeoutId = setTimeout(() => fn(...args), delay);
+    };
+};
+
+function parseDueStr(s) {
+    if (!s) return null;
+    s = s.trim();
+    // ISO format
+    let m = s.match(/^\d{4}-\d{2}-\d{2}$/);
+    if (m) return new Date(s + 'T12:00:00');
+    // US Format
+    s = s.replace(/[.]/g, '/').replace(/\s+/g, '');
+    const parts = s.split('/');
+    if (parts.length === 3) {
+        let [mm, dd, yy] = parts;
+        if (yy.length === 2) yy = '20' + yy;
+        const iso = `${yy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}T12:00:00`;
+        const d = new Date(iso);
+        if (!isNaN(d)) return d;
+    }
+    const d2 = new Date(s);
+    return isNaN(d2) ? null : d2;
+}
+
+function dueState(dueStr) {
+    const d = parseDueStr(dueStr);
+    if (!d) return 'ok';
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const dayOfWeek = today.getDay(); // 0 (Sun) to 6 (Sat)
+    // Calculate start of current week (Sunday)
+    const startOfWeek = new Date(today);
+    startOfWeek.setDate(today.getDate() - dayOfWeek);
+    // Calculate end of current week (Saturday)
+    const endOfWeek = new Date(startOfWeek);
+    endOfWeek.setDate(startOfWeek.getDate() + 6);
+    endOfWeek.setHours(23, 59, 59, 999);
+
+    if (d < today) return 'overdue';
+    if (d >= startOfWeek && d <= endOfWeek) return 'dueSoon';
+    return 'ok';
+}
+
+function humanDate(s) {
+    const d = parseDueStr(s);
+    if (!d) return '';
+    return d.toLocaleDateString(undefined, { year: '2-digit', month: '2-digit', day: '2-digit' });
+}
+
+function basename(path) {
+    try {
+        if (!path) return '';
+        const norm = path.replace(/\\/g, '/');
+        const idx = norm.lastIndexOf('/');
+        return idx >= 0 ? norm.slice(idx + 1) : norm;
+    } catch { return path; }
+}
+
+function toFileURL(raw) {
+    if (!raw) return '';
+    let s = raw.trim();
+    if (/^https?:\/\//i.test(s)) return s;
+    if (/^\\\\/.test(s)) return 'file:' + s.replace(/^\\\\/, '/////').replace(/\\/g, '/');
+    if (/^[A-Za-z]:\\/.test(s)) return 'file:///' + s.replace(/\\/g, '/');
+    return s;
+}
+
+function normalizeLink(input) {
+    const raw = (input || '').trim();
+    const url = toFileURL(raw);
+    const label = basename(raw) || raw || 'link';
+    return { label, url, raw };
+}
+
+function convertPath(raw) {
+    // ACies specific mapping
+    if (raw.startsWith('\\\\acies.lan\\cachedrive\\projects2\\')) return raw.replace('\\\\acies.lan\\cachedrive\\projects2\\', 'M:\\');
+    if (raw.startsWith('\\\\acies.lan\\cachedrive\\projects\\')) return raw.replace('\\\\acies.lan\\cachedrive\\projects\\', 'P:\\');
+    return raw;
+}
+
+/** Styled Toast Notification */
+function toast(msg, duration = 2500) {
+    const existing = document.querySelector('.toast-notification');
+    if (existing) existing.remove();
+
+    const t = el('div', {
+        textContent: msg,
+        style: `
+            position: fixed;
+            bottom: 24px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--surface);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--accent);
+            color: var(--text);
+            padding: 0.75rem 1.25rem;
+            border-radius: 12px;
+            z-index: 9999;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            animation: slideUp 0.3s ease-out forwards;
+        `
+    });
+
+    // Add a tiny animation keyframe dynamically if needed, or rely on simple transition
+    document.body.append(t);
+    setTimeout(() => {
+        t.style.opacity = '0';
+        t.style.transform = 'translateX(-50%) translateY(10px)';
+        t.style.transition = 'all 0.3s ease';
+        setTimeout(() => t.remove(), 300);
+    }, duration);
+}
+
 function resetToolStatus(toolId) {
     const card = document.getElementById(toolId);
     if (card) {
@@ -181,54 +252,848 @@ function resetToolStatus(toolId) {
     }
 }
 
-// ===================== BUNDLE MANAGEMENT =====================
+// ===================== SERVER I/O (PYWEBVIEW) =====================
+
+async function load() {
+    try {
+        const arr = await window.pywebview.api.get_tasks();
+        migrateStatuses(arr);
+        return arr;
+    } catch (e) {
+        console.warn('Backend load failed:', e);
+        toast('⚠️ Offline Mode: Could not load data.');
+        return [];
+    }
+}
+
+async function save() {
+    try {
+        const response = await window.pywebview.api.save_tasks(db);
+        if (response.status !== 'success') throw new Error(response.message);
+    } catch (e) {
+        console.warn('Backend save failed:', e);
+        toast('⚠️ Failed to save data.');
+    }
+}
+
+async function loadNotes() {
+    try {
+        const data = await window.pywebview.api.get_notes() || {};
+        noteTabs = Array.isArray(data.tabs) && data.tabs.length > 0 ? data.tabs : ['General'];
+
+        // Migration logic: Flatten Keyed/General into single object
+        notesDb = {};
+        noteTabs.forEach(tab => {
+            const keyedContent = data.keyed && data.keyed[tab] ? data.keyed[tab].trim() : '';
+            const generalContent = data.general && data.general[tab] ? data.general[tab].trim() : '';
+
+            if (keyedContent && generalContent) {
+                notesDb[tab] = `${keyedContent}\n\n--- General Notes ---\n\n${generalContent}`;
+            } else {
+                notesDb[tab] = keyedContent || generalContent;
+            }
+        });
+
+        activeNoteTab = noteTabs[0];
+        return notesDb;
+    } catch (e) {
+        console.warn('Backend notes load failed:', e);
+        noteTabs = ['General'];
+        notesDb = {};
+        activeNoteTab = noteTabs[0];
+        return {};
+    }
+}
+
+async function saveNotes() {
+    try {
+        // Map flat notesDb to 'general' field for backend compatibility
+        const dataToSave = {
+            tabs: noteTabs,
+            keyed: {}, // Deprecated field sent as empty
+            general: notesDb
+        };
+        const response = await window.pywebview.api.save_notes(dataToSave);
+        if (response.status !== 'success') throw new Error(response.message);
+    } catch (e) {
+        console.warn('Backend notes save failed:', e);
+        toast('⚠️ Failed to save notes.');
+    }
+}
+
+async function loadUserSettings() {
+    try {
+        const storedSettings = await window.pywebview.api.get_user_settings();
+        if (storedSettings) userSettings = storedSettings;
+    } catch (e) {
+        console.error("Failed to load settings:", e);
+    }
+}
+
+async function saveUserSettings() {
+    try {
+        await window.pywebview.api.save_user_settings(userSettings);
+    } catch (e) {
+        console.error("Failed to save settings:", e);
+        toast('⚠️ Could not save settings.');
+    }
+}
+const debouncedSaveUserSettings = debounce(saveUserSettings, 500);
+
+// ===================== DATA MIGRATION & LOGIC =====================
+
+function canonStatus(s) {
+    if (!s) return null;
+    const t = String(s).trim().toLowerCase();
+    if (['pending review', 'pending-review', 'review', 'pr'].includes(t)) return 'Pending Review';
+    if (['complete', 'completed', 'done'].includes(t)) return 'Complete';
+    if (['waiting', 'wait'].includes(t)) return 'Waiting';
+    return null;
+}
+
+function hasStatus(p, s) {
+    return Array.isArray(p.statuses) && p.statuses.includes(s);
+}
+
+function toggleStatus(p, label) {
+    if (!Array.isArray(p.statuses)) p.statuses = [];
+    const isOn = p.statuses.includes(label);
+    const key = LABEL_TO_KEY[label];
+    if (key) setTag(p, key, !isOn);
+}
+
+function syncStatusArrays(p) {
+    if (!Array.isArray(p.statuses)) p.statuses = [];
+    const fromTags = Array.isArray(p.statusTags) ? p.statusTags : [];
+    for (const k of fromTags) {
+        const L = KEY_TO_LABEL[k];
+        if (L && !p.statuses.includes(L)) p.statuses.push(L);
+    }
+    p.statuses = [...new Set(p.statuses.filter(s => STATUS_CANON.includes(s)))];
+    p.statusTags = p.statuses.map(s => LABEL_TO_KEY[s]).filter(Boolean);
+
+    // Legacy status string update
+    if (p.statuses.includes('Complete')) p.status = 'Complete';
+    else if (p.statuses.includes('Waiting')) p.status = 'Waiting';
+    else if (p.statuses.includes('Pending Review')) p.status = 'Pending';
+    else p.status = p.status || '';
+}
+
+function migrateStatuses(arr) {
+    for (const p of arr) {
+        if (!Array.isArray(p.statuses)) p.statuses = [];
+        if (p.status) {
+            String(p.status).split(/[,/|;]+/).map(s => s.trim()).filter(Boolean).forEach(piece => {
+                const c = canonStatus(piece);
+                if (c && !p.statuses.includes(c)) p.statuses.push(c);
+            });
+        }
+        p.statuses = p.statuses.filter(s => STATUS_CANON.includes(s));
+        syncStatusArrays(p);
+    }
+}
+
+function setTag(p, key, on) {
+    const tags = getStatusTags(p);
+    const idx = tags.indexOf(key);
+    if (on && idx === -1) tags.push(key);
+    if (!on && idx !== -1) tags.splice(idx, 1);
+    p.statusTags = tags;
+
+    const label = KEY_TO_LABEL[key];
+    if (!Array.isArray(p.statuses)) p.statuses = [];
+    const j = p.statuses.indexOf(label);
+    if (label) {
+        if (on && j === -1) p.statuses.push(label);
+        if (!on && j !== -1) p.statuses.splice(j, 1);
+    }
+
+    if (p.statuses.includes('Complete')) p.status = 'Complete';
+    else if (p.statuses.includes('Waiting')) p.status = 'Waiting';
+    else if (p.statuses.includes('Pending Review')) p.status = 'Pending';
+    else p.status = '';
+}
+
+function getStatusTags(p) {
+    let tags = Array.isArray(p.statusTags) ? [...p.statusTags] : [];
+    const s = (p.status || '').toLowerCase();
+    if (s) {
+        if (s.includes('complete') && !tags.includes('complete')) tags.push('complete');
+        if (s.includes('waiting') && !tags.includes('waiting')) tags.push('waiting');
+        if ((s.includes('pending review') || s === 'pending') && !tags.includes('pendingReview')) tags.push('pendingReview');
+    }
+    return [...new Set(tags)];
+}
+
+// ===================== RENDER LOGIC =====================
+
+function render() {
+    const tbody = document.getElementById('tbody');
+    const emptyState = document.getElementById('emptyState');
+    tbody.innerHTML = '';
+
+    const q = val('search').toLowerCase();
+
+    // Filter items
+    let items = db.filter(p => {
+        if (q && !matches(q, p)) return false;
+
+        // Due Filters
+        if (dueFilter === 'overdue' && (dueState(p.due) !== 'overdue' || hasStatus(p, 'Complete'))) return false;
+        if (dueFilter === 'soon' && dueState(p.due) !== 'dueSoon') return false;
+        if (dueFilter === 'ok' && dueState(p.due) !== 'ok') return false;
+
+        // Status Filters
+        if (statusFilter === 'incomplete') {
+            if (hasStatus(p, 'Complete')) return false;
+        } else if (statusFilter !== 'all' && !hasStatus(p, statusFilter)) {
+            return false;
+        }
+        return true;
+    });
+
+    // Sort items
+    items.sort((a, b) => {
+        const valA = a[currentSort.key];
+        const valB = b[currentSort.key];
+        let comparison = 0;
+        if (currentSort.key === 'due') {
+            const da = parseDueStr(valA), dbb = parseDueStr(valB);
+            if (!da && !dbb) comparison = 0;
+            else if (!da) comparison = 1;
+            else if (!dbb) comparison = -1;
+            else comparison = da - dbb;
+        } else {
+            comparison = String(valA || '').localeCompare(String(valB || ''), undefined, { numeric: true });
+        }
+        return comparison * (currentSort.dir === 'asc' ? 1 : -1);
+    });
+
+    updateSortHeaders();
+
+    // Update KPI
+    const incompleteDueSoon = db.filter(p => dueState(p.due) === 'dueSoon' && !hasStatus(p, 'Complete')).length;
+    document.getElementById('kWeek').textContent = incompleteDueSoon;
+
+    // Empty State Toggle
+    emptyState.style.display = items.length ? 'none' : 'block';
+
+    const rowTemplate = document.getElementById('project-row-template');
+
+    items.forEach(p => {
+        const tr = rowTemplate.content.cloneNode(true).querySelector('tr');
+        const idx = db.indexOf(p);
+
+        // ID (with styled badge)
+        const idCell = tr.querySelector('.cell-id');
+        const idBadge = idCell.querySelector('.id-badge') || idCell; // Fallback if template changed
+        idBadge.textContent = p.id || '—';
+
+        // Name & Path
+        const nameCell = tr.querySelector('.cell-name');
+        if (p.path) {
+            const link = el('button', {
+                className: 'path-link',
+                textContent: p.name || '—',
+                title: `Open: ${p.path}`
+            });
+            link.onclick = async () => {
+                try {
+                    await window.pywebview.api.open_path(convertPath(p.path));
+                    toast('📂 Opening folder...');
+                } catch (e) { toast('Failed to open path.'); }
+            };
+            nameCell.appendChild(link);
+        } else {
+            nameCell.textContent = p.name || '—';
+        }
+        if (p.nick) nameCell.append(el('small', { className: 'muted', textContent: ` (${p.nick})` }));
+
+        // Due Date
+        const dueCell = tr.querySelector('.cell-due');
+        if (p.due) {
+            const ds = dueState(p.due);
+            const pillClass = ds === 'overdue' ? 'pill overdue' : ds === 'dueSoon' ? 'pill dueSoon' : 'pill ok';
+            dueCell.appendChild(el('div', { className: pillClass, textContent: humanDate(p.due) }));
+        } else {
+            dueCell.textContent = '—';
+        }
+
+        // Status Toggles
+        tr.querySelector('.cell-status').appendChild(renderStatusToggles(p));
+
+        // Tasks (Expandable Logic)
+        const taskCell = tr.querySelector('.cell-tasks');
+        if (p.tasks && p.tasks.length) {
+            const renderTasks = (expanded) => {
+                taskCell.innerHTML = '';
+                const tasksToShow = expanded ? p.tasks : p.tasks.slice(0, 2);
+
+                tasksToShow.forEach(t => {
+                    taskCell.appendChild(el('div', {
+                        className: `task-chip ${t.done ? 'done' : ''}`,
+                        textContent: t.text || 'Task'
+                    }));
+                });
+
+                if (!expanded && p.tasks.length > 2) {
+                    const moreBtn = el('button', {
+                        className: 'btn-more-tasks',
+                        textContent: `+${p.tasks.length - 2} more`,
+                        onclick: (e) => {
+                            e.stopPropagation();
+                            renderTasks(true);
+                        }
+                    });
+                    taskCell.appendChild(moreBtn);
+                }
+
+                // New: Minimize button if expanded
+                if (expanded && p.tasks.length > 2) {
+                    const lessBtn = el('button', {
+                        className: 'btn-more-tasks',
+                        textContent: `Show Less`,
+                        style: 'margin-left: 8px',
+                        onclick: (e) => {
+                            e.stopPropagation();
+                            renderTasks(false);
+                        }
+                    });
+                    taskCell.appendChild(lessBtn);
+                }
+            };
+            renderTasks(false);
+        } else {
+            taskCell.textContent = '—';
+        }
+
+        // Actions (Vertical)
+        const actionsCell = tr.querySelector('.cell-actions');
+        actionsCell.append(
+            el('button', { className: 'btn', textContent: 'Edit', onclick: () => openEdit(idx) }),
+            el('button', { className: 'btn', textContent: 'Duplicate', onclick: () => duplicate(idx) }),
+            el('button', { className: 'btn btn-danger', textContent: 'Delete', onclick: () => removeProject(idx) }),
+        );
+
+        tbody.appendChild(tr);
+    });
+}
+
+function renderStatusToggles(p) {
+    const wrap = el('div', { className: 'status-group' });
+    const mk = (cls, label) => {
+        const b = el('button', {
+            className: `st st-${cls}`,
+            type: 'button',
+            textContent: label.replace(' ', '\n'),
+            title: label,
+            'aria-pressed': String(hasStatus(p, label))
+        });
+        b.onclick = async (e) => {
+            e.stopPropagation();
+            toggleStatus(p, label);
+            await save();
+            render();
+        };
+        return b;
+    };
+    wrap.append(mk('pr', 'Pending Review'), mk('comp', 'Complete'), mk('wait', 'Waiting'));
+    return wrap;
+}
+
+function matches(q, p) {
+    if (!q) return true;
+    const str = (val) => (val || '').toLowerCase();
+    return str(p.id).includes(q) ||
+        str(p.name).includes(q) ||
+        str(p.nick).includes(q) ||
+        str(p.notes).includes(q) ||
+        (p.tasks || []).some(t => str(t.text).includes(q)) ||
+        (p.statuses || []).some(s => str(s).includes(q));
+}
+
+function updateSortHeaders() {
+    document.querySelectorAll('th[data-sort]').forEach(th => {
+        th.classList.remove('sort-asc', 'sort-desc');
+        if (th.dataset.sort === currentSort.key) {
+            th.classList.add(`sort-${currentSort.dir}`);
+        }
+    });
+}
+
+// ===================== CRUD OPERATIONS =====================
+
+function openEdit(i) {
+    if (typeof i !== 'number' || i < 0 || !db[i]) return toast('Could not find row.');
+    editIndex = i;
+    const p = db[i];
+    document.getElementById('dlgTitle').textContent = `Edit Project — ${p.id || 'Untitled'}`;
+    document.getElementById('btnSaveProject').textContent = "Save Changes";
+    fillForm(p);
+    document.getElementById('editDlg').showModal();
+}
+
+function openNew() {
+    editIndex = -1;
+    document.getElementById('dlgTitle').textContent = 'New Project';
+    document.getElementById('btnSaveProject').textContent = "Create Project";
+    fillForm({ tasks: [], refs: [], statuses: [] });
+    document.getElementById('editDlg').showModal();
+}
+
+function removeProject(i) {
+    if (!confirm('Delete this project?')) return;
+    const id = db[i]?.id;
+    db.splice(i, 1);
+    save();
+    render();
+    toast(`Deleted project ${id || ''}`);
+}
+
+function duplicate(i) {
+    const original = db[i];
+    const newProjectData = {
+        id: original.id,
+        name: original.name,
+        nick: original.nick,
+        path: original.path,
+        refs: JSON.parse(JSON.stringify(original.refs || [])),
+        due: '',
+        notes: '',
+        tasks: [],
+        statuses: []
+    };
+    editIndex = -1;
+    document.getElementById('dlgTitle').textContent = 'Duplicate Project';
+    document.getElementById('btnSaveProject').textContent = "Create Duplicate";
+    fillForm(newProjectData);
+    document.getElementById('editDlg').showModal();
+}
+
+function markOverdueAsComplete() {
+    let count = 0;
+    db.forEach(p => {
+        if (dueState(p.due) === 'overdue') {
+            setTag(p, 'complete', true);
+            count++;
+        }
+    });
+    if (count > 0) {
+        save();
+        render();
+        toast(`Marked ${count} overdue projects as complete.`);
+    } else {
+        toast('No overdue projects found.');
+    }
+}
+
+// ===================== FORM HANDLING =====================
+
+function fillForm(p) {
+    document.getElementById('f_id').value = p.id || '';
+    document.getElementById('f_name').value = p.name || '';
+    document.getElementById('f_nick').value = p.nick || '';
+    document.getElementById('f_notes').value = p.notes || '';
+    document.getElementById('f_due').value = p.due || '';
+    document.getElementById('f_path').value = p.path || '';
+    setupStatusPicker('f_statuses', p.statuses || []);
+
+    document.getElementById('taskList').innerHTML = '';
+    (p.tasks || []).map(t => typeof t === 'string' ? { text: t } : t).forEach(addTaskRowFrom);
+
+    document.getElementById('refList').innerHTML = '';
+    (p.refs || []).forEach(addRefRowFrom);
+}
+
+function readForm() {
+    const out = {
+        id: val('f_id'),
+        name: val('f_name'),
+        nick: val('f_nick'),
+        notes: val('f_notes'),
+        due: val('f_due'),
+        path: val('f_path'),
+        tasks: [],
+        refs: [],
+        statuses: readStatusPicker('f_statuses')
+    };
+
+    // Tasks
+    document.querySelectorAll('#taskList .task-row').forEach(row => {
+        const text = row.querySelector('.t-text').value.trim();
+        if (!text) return;
+        const done = row.querySelector('.t-done').checked;
+        const links = [row.querySelector('.t-link').value.trim(), row.querySelector('.t-link2').value.trim()]
+            .filter(Boolean).map(normalizeLink);
+        out.tasks.push({ text, done, links });
+    });
+
+    // References
+    document.querySelectorAll('#refList .ref-row').forEach(row => {
+        const label = row.querySelector('.r-label').value.trim();
+        const raw = row.querySelector('.r-url').value.trim();
+        if (!raw) return;
+        const link = normalizeLink(raw);
+        if (label) link.label = label;
+        out.refs.push(link);
+    });
+
+    syncStatusArrays(out);
+    return out;
+}
+
+function onSaveProject() {
+    const data = readForm();
+    if (editIndex >= 0) {
+        db[editIndex] = data;
+        toast('Project updated successfully.');
+    } else {
+        db.push(data);
+        toast('Project created.');
+    }
+    save();
+    render();
+    closeDlg('editDlg');
+}
+
+function setupStatusPicker(containerId, selected) {
+    const elc = document.getElementById(containerId);
+    const setPressed = () => elc.querySelectorAll('.st').forEach(b => b.setAttribute('aria-pressed', String(selected.includes(b.dataset.status))));
+    if (!elc.__wired) {
+        elc.addEventListener('click', e => {
+            if (e.target.matches('.st')) {
+                const s = e.target.dataset.status;
+                const i = selected.indexOf(s);
+                if (i >= 0) selected.splice(i, 1);
+                else selected.push(s);
+                setPressed();
+            }
+        });
+        elc.__wired = true;
+    }
+    setPressed();
+}
+
+function readStatusPicker(containerId) {
+    return Array.from(document.querySelectorAll(`#${containerId} .st[aria-pressed="true"]`)).map(b => b.dataset.status);
+}
+
+function addTaskRowFrom(t = {}) {
+    const template = document.getElementById('task-row-template');
+    const row = template.content.cloneNode(true).querySelector('.task-row');
+    row.querySelector('.t-text').value = t.text || '';
+    row.querySelector('.t-done').checked = !!t.done;
+    row.querySelector('.t-link').value = t.links?.[0]?.raw || '';
+    row.querySelector('.t-link2').value = t.links?.[1]?.raw || '';
+    row.querySelector('.btn-remove').onclick = () => row.remove();
+    document.getElementById('taskList').append(row);
+}
+
+function addRefRowFrom(L = {}) {
+    const template = document.getElementById('ref-row-template');
+    const row = template.content.cloneNode(true).querySelector('.ref-row');
+    row.querySelector('.r-label').value = L.label || '';
+    row.querySelector('.r-url').value = L.raw || L.url || '';
+    row.querySelector('.btn-remove').onclick = () => row.remove();
+    document.getElementById('refList').append(row);
+}
+
+// Global accessors for button onclicks in HTML
+window.addTaskRow = () => addTaskRowFrom({});
+window.addRefRow = () => addRefRowFrom({});
+window.closeDlg = closeDlg;
+
+// ===================== CSV & IMPORT/EXPORT =====================
+
+function parseCSV(text) {
+    // Robust CSV parser handling quotes and newlines
+    const rows = [];
+    let i = 0, field = '', row = [], inQ = false;
+    function pushField() { row.push(field); field = ''; }
+    function pushRow() { rows.push(row); row = []; }
+
+    while (i < text.length) {
+        const ch = text[i];
+        if (inQ) {
+            if (ch === '"') {
+                if (text[i + 1] === '"') { field += '"'; i += 2; continue; }
+                inQ = false; i++; continue;
+            }
+            field += ch; i++; continue;
+        } else {
+            if (ch === '"') { inQ = true; i++; continue; }
+            if (ch === ',') { pushField(); i++; continue; }
+            if (ch === '\n') { pushField(); pushRow(); i++; continue; }
+            if (ch === '\r') { if (text[i + 1] === '\n') { i += 2; pushField(); pushRow(); } else { i++; pushField(); pushRow(); } continue; }
+            field += ch; i++;
+        }
+    }
+    if (field !== '' || row.length) { pushField(); pushRow(); }
+    return rows;
+}
+
+function importRows(rows, hasHeader = true) {
+    if (rows.length && !hasHeader) {
+        const joined = rows[0].map(s => (s || '').toUpperCase()).join(' | ');
+        if (joined.includes('PROJECT NAME') || joined.includes('DUE')) hasHeader = true;
+    }
+    if (hasHeader) rows = rows.slice(1);
+
+    let added = 0;
+    for (const r of rows) {
+        if (!r.length) continue;
+        const [id, name, nick, notes, due, statusCell, tasksStr, path, ...refs] = r;
+        if (!(id || name || tasksStr || refs.some(Boolean))) continue;
+
+        const p = {
+            id: String(id || '').trim(),
+            name: (name || '').trim(),
+            nick: (nick || '').trim(),
+            notes: (notes || '').trim(),
+            due: (due || '').trim(),
+            path: (path || '').trim(),
+            tasks: [],
+            refs: [],
+            statuses: []
+        };
+
+        // Status
+        const parts = String(statusCell || '').split(/[,/|;]+/).map(s => s.trim()).filter(Boolean);
+        for (const s of parts) {
+            const c = canonStatus(s);
+            if (c && !p.statuses.includes(c)) p.statuses.push(c);
+        }
+
+        // Tasks
+        const tparts = (tasksStr || '').replace(/\r/g, '\n').split(/\n|;|\u2022|\r/).map(s => s.trim()).filter(Boolean);
+        for (const t of tparts) p.tasks.push({ text: t, done: false, links: [] });
+
+        // Refs
+        for (const cell of refs) {
+            const s = (cell || '').trim();
+            if (!s) continue;
+            p.refs.push(normalizeLink(s));
+        }
+
+        db.push(p);
+        added++;
+    }
+    save();
+    render();
+    toast(`Imported ${added} rows`);
+}
+
+function exportCSV() {
+    const header = ['ID', 'PROJECT NAME', 'NICKNAME', 'NOTES', 'DUE DATE', 'STATUS', 'TASKS', 'PATH', 'REFERENCE1', 'REFERENCE2', 'REFERENCE3', 'REFERENCE4'];
+    const lines = [header.join(',')];
+    for (const p of db) {
+        const tasks = (p.tasks || []).map(t => t.text).join(' | ');
+        const refs = (p.refs || []).map(L => L.raw || L.url).slice(0, 4);
+        const statusStr = (p.statuses || []).join(' | ');
+        const row = [p.id, p.name, p.nick || '', (p.notes || '').replaceAll('\n', ' '), p.due || '', statusStr, tasks, p.path || '', ...refs];
+        const csv = row.map(cell => {
+            const s = String(cell ?? '');
+            return /[",\n]/.test(s) ? '"' + s.replaceAll('"', '""') + '"' : s;
+        }).join(',');
+        lines.push(csv);
+    }
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = el('a', { href: url, download: 'projects.csv' });
+    document.body.append(a);
+    a.click();
+    a.remove();
+}
+
+function exportJSON() {
+    const blob = new Blob([JSON.stringify(db, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = el('a', { href: url, download: 'projects.json' });
+    document.body.append(a);
+    a.click();
+    a.remove();
+}
+
+// ===================== NOTES SYSTEM =====================
+const debouncedSaveNotes = debounce(saveNotes, 500);
+
+function renderNoteTabs() {
+    const container = document.getElementById('notesTabsContainer');
+    container.innerHTML = '';
+
+    // Render existing tabs
+    noteTabs.forEach(tabName => {
+        const btn = el('button', {
+            className: `inner-tab-btn ${tabName === activeNoteTab ? 'active' : ''}`,
+            textContent: tabName,
+            onclick: () => {
+                activeNoteTab = tabName;
+                renderNoteTabs();
+            }
+        });
+
+        // Delete icon
+        const delIcon = el('span', {
+            className: 'tab-delete-icon',
+            textContent: '🗑️',
+            title: 'Delete Page',
+            onclick: (e) => {
+                e.stopPropagation(); // Prevent switching to the tab we're deleting
+                if (confirm(`Permanently delete page "${tabName}"?`)) {
+                    const idx = noteTabs.indexOf(tabName);
+                    if (idx > -1) {
+                        noteTabs.splice(idx, 1);
+                        delete notesDb[tabName];
+                        // If we deleted the active tab, switch to another one
+                        if (activeNoteTab === tabName) {
+                            activeNoteTab = noteTabs.length > 0 ? noteTabs[Math.max(0, idx - 1)] : null;
+                        }
+                        saveNotes();
+                        renderNoteTabs();
+                    }
+                }
+            }
+        });
+
+        btn.appendChild(delIcon);
+        container.appendChild(btn);
+    });
+
+    // Add Page Button (+)
+    const addBtn = el('button', {
+        className: 'add-tab-btn',
+        textContent: '+',
+        title: 'Add New Page',
+        onclick: () => {
+            const name = prompt('Enter name for new page:');
+            if (name && name.trim()) {
+                if (!noteTabs.includes(name.trim())) {
+                    noteTabs.push(name.trim());
+                    activeNoteTab = name.trim();
+                    saveNotes();
+                    renderNoteTabs();
+                } else {
+                    toast('Page name already exists.');
+                }
+            }
+        }
+    });
+    container.appendChild(addBtn);
+
+    updateActiveNoteTextarea();
+}
+
+function updateActiveNoteTextarea() {
+    const textarea = document.getElementById('notesTextarea');
+    if (!activeNoteTab) {
+        textarea.value = '';
+        textarea.placeholder = 'Create a page to begin.';
+        textarea.disabled = true;
+        return;
+    }
+    textarea.disabled = false;
+    textarea.placeholder = `Enter notes for ${activeNoteTab}...`;
+    textarea.value = notesDb[activeNoteTab] || '';
+}
+
+function handleNoteInput(e) {
+    if (!activeNoteTab) return;
+    notesDb[activeNoteTab] = e.target.value;
+    debouncedSaveNotes();
+}
+
+function renderNoteSearchResults() {
+    const query = val('search').toLowerCase();
+    const resultsContainer = document.getElementById('notesSearchResults');
+    resultsContainer.innerHTML = '';
+    if (!query) return;
+
+    const queryWords = query.split(' ').filter(w => w);
+    if (!queryWords.length) return;
+
+    const seenNotes = new Set();
+
+    for (const plan in notesDb) {
+        const content = notesDb[plan];
+        if (!content) continue;
+
+        const notes = content.split(/\n\s*\n/).filter(note => note.trim() !== '');
+        notes.forEach((noteText) => {
+            const lowerNoteText = noteText.toLowerCase();
+            if (queryWords.every(word => lowerNoteText.includes(word))) {
+                const noteKey = `${plan}:${noteText}`;
+                if (seenNotes.has(noteKey)) return;
+                seenNotes.add(noteKey);
+
+                const location = `${plan}`;
+                const item = el('div', { className: 'note-result-item' });
+                const contentDiv = el('div', { className: 'note-result-content' });
+                const actionsDiv = el('div', { className: 'note-result-actions' });
+
+                contentDiv.append(
+                    el('div', { className: 'location', textContent: location }),
+                    el('div', { className: 'snippet', textContent: noteText })
+                );
+
+                const editBtn = el('button', { className: 'btn tiny', textContent: 'Edit' });
+                editBtn.onclick = () => {
+                    activeNoteTab = plan;
+                    renderNoteTabs();
+                    setTimeout(() => {
+                        const area = document.getElementById('notesTextarea');
+                        if (area) {
+                            area.focus();
+                            const pos = area.value.indexOf(noteText);
+                            if (pos !== -1) area.setSelectionRange(pos, pos);
+                        }
+                    }, 100);
+                };
+
+                const copyBtn = el('button', { className: 'btn tiny', textContent: 'Copy' });
+                copyBtn.onclick = () => {
+                    navigator.clipboard.writeText(noteText).then(() => toast('Copied!'));
+                };
+
+                actionsDiv.append(editBtn, copyBtn);
+                item.append(contentDiv, actionsDiv);
+                resultsContainer.append(item);
+            }
+        });
+    }
+}
+
+// ===================== BUNDLE / PLUGIN MANAGER =====================
+
 function openDetailsModal(asset) {
     const dlg = document.getElementById('commandDetailsDlg');
     if (!dlg || !asset) return;
 
-    const titleEl = document.getElementById('detailsTitle');
+    document.getElementById('detailsTitle').textContent = asset.filename.replace('ElectricalCommands.', '').replace(/-v[\d.]+\.zip$/, '');
+
     const videoEl = document.getElementById('detailsVideo');
-    const commandsEl = document.getElementById('detailsCommands');
-
-    titleEl.textContent = asset.filename.replace('ElectricalCommands.', '').replace(/-v[\d.]+\.zip$/, '');
-
-    // Video
-    videoEl.innerHTML = ''; // Clear previous content
+    videoEl.innerHTML = '';
     if (asset.video_url && asset.video_url.includes('loom.com')) {
         const videoId = asset.video_url.split('/').pop();
-        const iframe = el('iframe', {
-            src: `https://www.loom.com/embed/${videoId}`,
-            allowfullscreen: true
-        });
-        videoEl.append(iframe);
+        videoEl.append(el('iframe', { src: `https://www.loom.com/embed/${videoId}`, allowfullscreen: true }));
     } else {
-        videoEl.innerHTML = '<p>No video available.</p>';
+        videoEl.innerHTML = '<p class="muted" style="padding:1rem;text-align:center">No video available.</p>';
     }
 
-    // Commands
-    commandsEl.innerHTML = ''; // Clear previous content
+    const commandsEl = document.getElementById('detailsCommands');
+    commandsEl.innerHTML = '';
     if (asset.commands && Object.keys(asset.commands).length > 0) {
-        const commandsList = el('ul', {}, Object.entries(asset.commands).map(([cmd, desc]) =>
+        const list = el('ul', {}, Object.entries(asset.commands).map(([cmd, desc]) =>
             el('li', {}, [el('strong', { textContent: cmd }), `: ${desc}`])
         ));
-        commandsEl.append(
-            el('div', { className: 'bundle-commands' }, [
-                el('h4', { textContent: 'Commands:' }),
-                commandsList
-            ])
-        );
-    } else {
-        commandsEl.innerHTML = '<p>No command details available.</p>';
+        commandsEl.append(el('div', { className: 'bundle-commands' }, [el('h4', { textContent: 'Commands' }), list]));
     }
-
     dlg.showModal();
 }
 
 async function loadAndRenderBundles() {
     const container = document.getElementById('commands-container');
     if (!container) return;
-
-    container.innerHTML = '<div class="spinner">Loading commands...</div>';
+    container.innerHTML = '<div class="spinner">Loading...</div>';
 
     try {
         const response = await window.pywebview.api.get_bundle_statuses();
@@ -242,74 +1107,54 @@ async function loadAndRenderBundles() {
 
         response.data.forEach(bundle => {
             const asset = RELEASE_META.assets.find(a => a.filename.includes(bundle.name));
-
             const card = el('div', { className: 'release-card' });
-            const cardHeader = el('div', { className: 'release-card-header' });
-            const cardBody = el('div', { className: 'release-card-body' });
-            const cardFooter = el('div', { className: 'release-card-footer' });
 
-            // --- Determine State ---
+            // Status determination
             let statusClass, statusTitle, btnText, btnClass;
             if (bundle.state === 'installed') {
-                statusClass = 'installed';
-                statusTitle = `Installed (v${bundle.local_version})`;
-                btnText = 'Uninstall';
-                btnClass = 'btn-danger';
+                statusClass = 'installed'; statusTitle = `Installed (v${bundle.local_version})`;
+                btnText = 'Uninstall'; btnClass = 'btn-danger';
             } else if (bundle.state === 'update_available') {
-                statusClass = 'update-available';
-                statusTitle = `Update Available (v${bundle.remote_version})`;
-                btnText = 'Update';
-                btnClass = 'btn-accent';
+                statusClass = 'update-available'; statusTitle = `Update Available (v${bundle.remote_version})`;
+                btnText = 'Update'; btnClass = 'btn-accent';
             } else {
-                statusClass = 'not-installed';
-                statusTitle = 'Not Installed';
-                btnText = 'Install';
-                btnClass = 'btn-primary';
+                statusClass = 'not-installed'; statusTitle = 'Not Installed';
+                btnText = 'Install'; btnClass = 'btn-primary';
             }
 
-            // --- Header ---
-            const title = bundle.name.replace('ElectricalCommands.', '');
-            const statusIndicator = el('div', { className: `bundle-status ${statusClass}`, title: statusTitle });
-            const titleEl = el('div', { className: 'release-card-title' }, [
-                statusIndicator,
-                el('span', { textContent: title })
+            // Header
+            const header = el('div', { className: 'release-card-header' }, [
+                el('div', { className: 'release-card-title' }, [
+                    el('div', { className: `bundle-status ${statusClass}`, title: statusTitle }),
+                    el('span', { textContent: bundle.name.replace('ElectricalCommands.', '') })
+                ]),
+                el('button', {
+                    className: 'info-btn', textContent: '?', title: 'Details',
+                    onclick: () => asset ? openDetailsModal(asset) : toast('No details available')
+                })
             ]);
-            const infoBtn = el('button', { className: 'info-btn', textContent: '?', title: 'Show details' });
-            if (asset) {
-                infoBtn.onclick = () => openDetailsModal(asset);
-            } else {
-                infoBtn.disabled = true;
-                infoBtn.title = 'No details available';
-            }
-            cardHeader.append(titleEl, infoBtn);
 
-            // --- Body (Command Tags) ---
-            const tagsContainer = el('div', { className: 'command-tags' });
-            if (asset && Object.keys(asset.commands).length > 0) {
-                Object.keys(asset.commands).forEach(cmd => {
-                    tagsContainer.append(el('span', { className: 'command-tag', textContent: cmd }));
-                });
-            } else {
-                tagsContainer.append(el('span', { className: 'command-tag', textContent: 'No commands listed' }));
+            // Body (Tags)
+            const body = el('div', { className: 'release-card-body' });
+            const tags = el('div', { className: 'command-tags' });
+            if (asset && asset.commands) {
+                Object.keys(asset.commands).forEach(cmd => tags.append(el('span', { className: 'command-tag', textContent: cmd })));
             }
-            cardBody.append(tagsContainer);
+            body.append(tags);
 
-            // --- Footer (Action Button) ---
-            const actionButton = el('button', { className: `btn ${btnClass}`, textContent: btnText });
-            actionButton.dataset.bundleName = bundle.bundle_name;
-            actionButton.dataset.actionType = btnText;
-            if (bundle.state !== 'installed') {
-                actionButton.dataset.asset = JSON.stringify(bundle.asset);
-            }
-            cardFooter.append(actionButton);
+            // Footer (Action)
+            const footer = el('div', { className: 'release-card-footer' });
+            const btn = el('button', { className: `btn ${btnClass}`, textContent: btnText });
+            btn.dataset.bundleName = bundle.bundle_name;
+            btn.dataset.actionType = btnText;
+            if (bundle.state !== 'installed') btn.dataset.asset = JSON.stringify(bundle.asset);
+            footer.append(btn);
 
-            // --- Assemble & Render ---
-            card.append(cardHeader, cardBody, cardFooter);
+            card.append(header, body, footer);
             container.append(card);
         });
-
     } catch (e) {
-        container.innerHTML = `<div class="error-message">Error loading commands: ${e.message}</div>`;
+        container.innerHTML = `<div class="error-message">Error: ${e.message}</div>`;
     }
 }
 
@@ -318,9 +1163,8 @@ async function handleBundleAction(e) {
     if (!button) return;
 
     const actionType = button.dataset.actionType;
-    const originalText = button.textContent;
     button.disabled = true;
-    button.textContent = actionType === 'Uninstall' ? 'Uninstalling...' : 'Processing...';
+    button.textContent = 'Processing...';
 
     try {
         let response;
@@ -328,17 +1172,10 @@ async function handleBundleAction(e) {
             const asset = JSON.parse(button.dataset.asset);
             response = await window.pywebview.api.install_single_bundle(asset);
         } else {
-            const bundleName = button.dataset.bundleName;
-            response = await window.pywebview.api.uninstall_bundle(bundleName);
+            response = await window.pywebview.api.uninstall_bundle(button.dataset.bundleName);
         }
-
-        if (response.status !== 'success') {
-            throw new Error(response.message);
-        }
-
-        const successVerb = actionType === 'Uninstall' ? 'uninstalled' : (actionType === 'Update' ? 'updated' : 'installed');
-        toast(`Bundle '${response.bundle_name}' ${successVerb} successfully.`);
-
+        if (response.status !== 'success') throw new Error(response.message);
+        toast(`${actionType} successful.`);
     } catch (err) {
         toast(`⚠️ ${err.message}`, 5000);
     } finally {
@@ -347,406 +1184,26 @@ async function handleBundleAction(e) {
     }
 }
 
-// ===================== STATUS MIGRATION & HELPERS =====================
-function canonStatus(s) { if (!s) return null; const t = String(s).trim().toLowerCase(); if (['pending review', 'pending-review', 'review', 'pr'].includes(t)) return 'Pending Review'; if (['complete', 'completed', 'done'].includes(t)) return 'Complete'; if (['waiting', 'wait'].includes(t)) return 'Waiting'; return null; }
-function hasStatus(p, s) { return Array.isArray(p.statuses) && p.statuses.includes(s); }
-function toggleStatus(p, label) { if (!Array.isArray(p.statuses)) p.statuses = []; const isOn = p.statuses.includes(label); const key = LABEL_TO_KEY[label]; if (key) setTag(p, key, !isOn); }
-function syncStatusArrays(p) { if (!Array.isArray(p.statuses)) p.statuses = []; const fromTags = Array.isArray(p.statusTags) ? p.statusTags : []; for (const k of fromTags) { const L = KEY_TO_LABEL[k]; if (L && !p.statuses.includes(L)) p.statuses.push(L); } p.statuses = [...new Set(p.statuses.filter(s => STATUS_CANON.includes(s)))]; p.statusTags = p.statuses.map(s => LABEL_TO_KEY[s]).filter(Boolean); if (p.statuses.includes('Complete')) p.status = 'Complete'; else if (p.statuses.includes('Waiting')) p.status = 'Waiting'; else if (p.statuses.includes('Pending Review')) p.status = 'Pending'; else p.status = p.status || ''; }
-function migrateStatuses(arr) { for (const p of arr) { if (!Array.isArray(p.statuses)) p.statuses = []; if (p.status) { String(p.status).split(/[,/|;]+/).map(s => s.trim()).filter(Boolean).forEach(piece => { const c = canonStatus(piece); if (c && !p.statuses.includes(c)) p.statuses.push(c); }); } p.statuses = p.statuses.filter(s => STATUS_CANON.includes(s)); syncStatusArrays(p); } }
-function setTag(p, key, on) { const tags = getStatusTags(p); const idx = tags.indexOf(key); if (on && idx === -1) tags.push(key); if (!on && idx !== -1) tags.splice(idx, 1); p.statusTags = tags; const label = KEY_TO_LABEL[key]; if (!Array.isArray(p.statuses)) p.statuses = []; const j = p.statuses.indexOf(label); if (label) { if (on && j === -1) p.statuses.push(label); if (!on && j !== -1) p.statuses.splice(j, 1); } if (p.statuses.includes('Complete')) p.status = 'Complete'; else if (p.statuses.includes('Waiting')) p.status = 'Waiting'; else if (p.statuses.includes('Pending Review')) p.status = 'Pending'; else p.status = ''; }
-function getStatusTags(p) { let tags = Array.isArray(p.statusTags) ? [...p.statusTags] : []; const s = (p.status || '').toLowerCase(); if (s) { if (s.includes('complete') && !tags.includes('complete')) tags.push('complete'); if (s.includes('waiting') && !tags.includes('waiting')) tags.push('waiting'); if ((s.includes('pending review') || s === 'pending') && !tags.includes('pendingReview')) tags.push('pendingReview'); } return [...new Set(tags)]; }
-// ===================== RENDER =====================
-function render() {
-    const tbody = document.getElementById('tbody');
-    const emptyState = document.getElementById('emptyState');
-    tbody.innerHTML = '';
-    const q = val('search').toLowerCase();
-    let items = db.filter(p => {
-        if (q && !matches(q, p)) return false;
-        // Due date filters
-        if (dueFilter === 'overdue' && (dueState(p.due) !== 'overdue' || hasStatus(p, 'Complete'))) return false;
-        if (dueFilter === 'soon' && dueState(p.due) !== 'dueSoon') return false;
-        if (dueFilter === 'ok' && dueState(p.due) !== 'ok') return false;
-        // Status filters
-        if (statusFilter === 'incomplete') {
-            if (hasStatus(p, 'Complete')) return false;
-        } else if (statusFilter !== 'all' && !hasStatus(p, statusFilter)) {
-            return false;
-        }
-        return true;
-    });
-    items.sort((a, b) => {
-        const valA = a[currentSort.key];
-        const valB = b[currentSort.key];
-        let comparison = 0;
-        if (currentSort.key === 'due') {
-            const da = parseDueStr(valA), dbb = parseDueStr(valB);
-            if (!da && !dbb) comparison = 0; else if (!da) comparison = 1; else if (!dbb) comparison = -1; else comparison = da - dbb;
-        } else {
-            comparison = String(valA || '').localeCompare(String(valB || ''), undefined, { numeric: true });
-        }
-        return comparison * (currentSort.dir === 'asc' ? 1 : -1);
-    });
-    updateSortHeaders();
-    document.getElementById('kWeek').textContent = db.filter(p => dueState(p.due) === 'dueSoon' && !hasStatus(p, 'Complete')).length;
-    emptyState.style.display = items.length ? 'none' : 'block';
-    const rowTemplate = document.getElementById('project-row-template');
-    items.forEach(p => {
-        const tr = rowTemplate.content.cloneNode(true).querySelector('tr');
-        const idx = db.indexOf(p);
-        tr.querySelector('.cell-id').textContent = p.id || '—';
-        const nameCell = tr.querySelector('.cell-name');
-        if (p.path) {
-            const link = el('button', { className: 'path-link', textContent: p.name || '—', title: `Open: ${p.path}` });
-            link.onclick = async () => { try { await window.pywebview.api.open_path(convertPath(p.path)); toast('Opened in File Explorer'); } catch (e) { toast('Failed to open path.'); } };
-            nameCell.append(link);
-        } else {
-            nameCell.textContent = p.name || '—';
-        }
-        if (p.nick) nameCell.append(el('small', { className: 'muted', textContent: ` (${p.nick})` }));
-        const dueCell = tr.querySelector('.cell-due');
-        if (p.due) {
-            const ds = dueState(p.due);
-            const pillClass = ds === 'overdue' ? 'pill overdue' : ds === 'dueSoon' ? 'pill dueSoon' : 'pill ok';
-            dueCell.append(el('div', { className: pillClass, textContent: humanDate(p.due) }));
-        } else {
-            dueCell.textContent = '—';
-        }
-        tr.querySelector('.cell-status').append(renderStatusToggles(p));
-        const taskCell = tr.querySelector('.cell-tasks');
-        if (p.tasks?.length) {
-            p.tasks.forEach(t => taskCell.append(el('div', { className: `task-chip ${t.done ? 'done' : ''}`, textContent: t.text || '—' })));
-        } else {
-            taskCell.textContent = '—';
-        }
-        const actionsCell = tr.querySelector('.cell-actions');
-        actionsCell.append(
-            el('button', { className: 'btn tiny', textContent: 'Edit', onclick: () => openEdit(idx) }),
-            el('button', { className: 'btn tiny btn-danger', textContent: 'Del', onclick: () => removeProject(idx) }),
-            el('button', { className: 'btn tiny', textContent: 'Dup', onclick: () => duplicate(idx) }),
-        );
-        tbody.append(tr);
-    });
-}
-function renderStatusToggles(p) {
-    const wrap = el('div', { className: 'status-group' });
-    const mk = (cls, label) => {
-        const b = el('button', { className: `st st-${cls}`, type: 'button', textContent: label.replace(' ', '\n'), title: label, 'aria-pressed': String(hasStatus(p, label)) });
-        b.onclick = async (e) => { e.stopPropagation(); toggleStatus(p, label); await save(); render(); };
-        return b;
-    };
-    wrap.append(mk('pr', 'Pending Review'), mk('comp', 'Complete'), mk('wait', 'Waiting'));
-    return wrap;
-}
-function matches(q, p) { if (!q) return true; return ['id', 'name', 'nick', 'notes'].some(k => (p[k] || '').toLowerCase().includes(q)) || (p.tasks || []).some(t => (t.text || '').toLowerCase().includes(q)) || (p.statuses || []).some(s => s.toLowerCase().includes(q)); }
-function updateSortHeaders() { document.querySelectorAll('th[data-sort]').forEach(th => { th.classList.remove('sort-asc', 'sort-desc'); if (th.dataset.sort === currentSort.key) th.classList.add(`sort-${currentSort.dir}`); }); }
-// ===================== CRUD & ACTIONS =====================
-function openEdit(i) { if (typeof i !== 'number' || i < 0 || !db[i]) return toast('Could not find row to edit.'); editIndex = i; const p = db[i]; document.getElementById('dlgTitle').textContent = `Edit Project — ${p.id || ''}`; fillForm(p); document.getElementById('editDlg').showModal(); }
-function openNew() { editIndex = -1; document.getElementById('dlgTitle').textContent = 'New Project'; fillForm({ tasks: [], refs: [], statuses: [] }); document.getElementById('editDlg').showModal(); }
-function removeProject(i) { if (!confirm('Delete this project?')) return; const id = db[i]?.id; db.splice(i, 1); save(); render(); toast(`Deleted ${id || 'project'}`); }
-function duplicate(i) {
-    const original = db[i];
-    const newProjectData = {
-        // Persistent info from original project
-        id: original.id,
-        name: original.name,
-        nick: original.nick,
-        path: original.path,
-        refs: JSON.parse(JSON.stringify(original.refs || [])), // Keep refs, deep copy
+// ===================== TOOLS & SCRIPTS =====================
 
-        // Reset fields that are likely to change for the new assignment
-        due: '',
-        notes: '',
-        tasks: [],
-        statuses: []
-    };
-
-    editIndex = -1; // Ensure we are in "new project" mode
-    document.getElementById('dlgTitle').textContent = 'Create Duplicate Project';
-    fillForm(newProjectData);
-    document.getElementById('editDlg').showModal();
-}
-function markOverdueAsComplete() { let count = 0; db.forEach(p => { if (dueState(p.due) === 'overdue') { setTag(p, 'complete', true); count++; } }); if (count > 0) { save(); render(); toast(`Marked ${count} overdue projects as complete`); } else { toast('No overdue projects found'); } }
-// ===================== FORM HANDLING (EDIT/NEW MODAL) =====================
-function fillForm(p) {
-    document.getElementById('f_id').value = p.id || '';
-    document.getElementById('f_name').value = p.name || '';
-    document.getElementById('f_nick').value = p.nick || '';
-    document.getElementById('f_notes').value = p.notes || '';
-    document.getElementById('f_due').value = p.due || '';
-    document.getElementById('f_path').value = p.path || '';
-    setupStatusPicker('f_statuses', p.statuses || []);
-    document.getElementById('taskList').innerHTML = '';
-    const tasks = (p.tasks || []).map(task => typeof task === 'string' ? { text: task } : task);
-    tasks.forEach(addTaskRowFrom);
-    document.getElementById('refList').innerHTML = '';
-    (p.refs || []).forEach(addRefRowFrom);
-}
-function readForm() {
-    const out = { id: val('f_id'), name: val('f_name'), nick: val('f_nick'), notes: val('f_notes'), due: val('f_due'), path: val('f_path'), tasks: [], refs: [], statuses: readStatusPicker('f_statuses') };
-    document.querySelectorAll('#taskList .task-row').forEach(row => { const text = row.querySelector('.t-text').value.trim(); if (!text) return; const done = row.querySelector('.t-done').checked; const links = [row.querySelector('.t-link').value.trim(), row.querySelector('.t-link2').value.trim()].filter(Boolean).map(normalizeLink); out.tasks.push({ text, done, links }); });
-    document.querySelectorAll('#refList .ref-row').forEach(row => { const label = row.querySelector('.r-label').value.trim(); const raw = row.querySelector('.r-url').value.trim(); if (!raw) return; const link = normalizeLink(raw); if (label) link.label = label; out.refs.push(link); });
-    syncStatusArrays(out);
-    return out;
-}
-function onSaveProject() { const data = readForm(); if (editIndex >= 0) { db[editIndex] = data; toast('Project updated'); } else { db.push(data); toast('Project added'); } save(); render(); closeDlg('editDlg'); }
-function setupStatusPicker(containerId, selected) { const elc = document.getElementById(containerId); const setPressed = () => elc.querySelectorAll('.st').forEach(b => b.setAttribute('aria-pressed', String(selected.includes(b.dataset.status)))); if (!elc.__wired) { elc.addEventListener('click', e => { if (e.target.matches('.st')) { const s = e.target.dataset.status; const i = selected.indexOf(s); if (i >= 0) selected.splice(i, 1); else selected.push(s); setPressed(); } }); elc.__wired = true; } setPressed(); }
-function readStatusPicker(containerId) { return Array.from(document.querySelectorAll(`#${containerId} .st[aria-pressed="true"]`)).map(b => b.dataset.status); }
-function addTaskRow() { addTaskRowFrom({}); }
-function addTaskRowFrom(t = {}) { const template = document.getElementById('task-row-template'); const row = template.content.cloneNode(true).querySelector('.task-row'); row.querySelector('.t-text').value = t.text || ''; row.querySelector('.t-done').checked = !!t.done; row.querySelector('.t-link').value = t.links?.[0]?.raw || ''; row.querySelector('.t-link2').value = t.links?.[1]?.raw || ''; row.querySelector('.btn-remove').onclick = () => row.remove(); document.getElementById('taskList').append(row); }
-function addRefRow() { addRefRowFrom({}); }
-function addRefRowFrom(L = {}) { const template = document.getElementById('ref-row-template'); const row = template.content.cloneNode(true).querySelector('.ref-row'); row.querySelector('.r-label').value = L.label || ''; row.querySelector('.r-url').value = L.raw || L.url || ''; row.querySelector('.btn-remove').onclick = () => row.remove(); document.getElementById('refList').append(row); }
-// ===================== CSV Import/Export =====================
-function parseCSV(text) { const rows = []; let i = 0, field = '', row = [], inQ = false; function pushField() { row.push(field); field = ''; } function pushRow() { rows.push(row); row = []; } while (i < text.length) { const ch = text[i]; if (inQ) { if (ch === '"') { if (text[i + 1] === '"') { field += '"'; i += 2; continue; } inQ = false; i++; continue; } field += ch; i++; continue; } else { if (ch === '"') { inQ = true; i++; continue; } if (ch === ',') { pushField(); i++; continue; } if (ch === '\n') { pushField(); pushRow(); i++; continue; } if (ch === '\r') { if (text[i + 1] === '\n') { i += 2; pushField(); pushRow(); } else { i++; pushField(); pushRow(); } continue; } field += ch; i++; } } if (field !== '' || row.length) { pushField(); pushRow(); } return rows; }
-function importRows(rows, hasHeader = true) { if (rows.length && !hasHeader) { const joined = rows[0].map(s => (s || '').toUpperCase()).join(' | '); if (joined.includes('PROJECT NAME') || joined.includes('DUE')) hasHeader = true; } if (hasHeader) rows = rows.slice(1); let added = 0; for (const r of rows) { if (!r.length) continue; const [id, name, nick, notes, due, statusCell, tasksStr, path, ...refs] = r; if (!(id || name || tasksStr || refs.some(Boolean))) continue; const p = { id: String(id || '').trim(), name: (name || '').trim(), nick: (nick || '').trim(), notes: (notes || '').trim(), due: (due || '').trim(), path: (path || '').trim(), tasks: [], refs: [], statuses: [] }; const parts = String(statusCell || '').split(/[,/|;]+/).map(s => s.trim()).filter(Boolean); for (const s of parts) { const c = canonStatus(s); if (c && !p.statuses.includes(c)) p.statuses.push(c); } const tparts = (tasksStr || '').replace(/\r/g, '\n').split(/\n|;|\u2022|\r/).map(s => s.trim()).filter(Boolean); for (const t of tparts) p.tasks.push({ text: t, done: false, links: [] }); for (const cell of refs) { const s = (cell || '').trim(); if (!s) continue; p.refs.push(normalizeLink(s)); } db.push(p); added++; } save(); render(); toast(`Imported ${added} rows`); }
-function exportCSV() { const header = ['ID', 'PROJECT NAME', 'NICKNAME', 'NOTES', 'DUE DATE', 'STATUS', 'TASKS', 'PATH', 'REFERENCE1', 'REFERENCE2', 'REFERENCE3', 'REFERENCE4']; const lines = [header.join(',')]; for (const p of db) { const tasks = (p.tasks || []).map(t => t.text).join(' | '); const refs = (p.refs || []).map(L => L.raw || L.url).slice(0, 4); const statusStr = (p.statuses || []).join(' | '); const row = [p.id, p.name, p.nick || '', (p.notes || '').replaceAll('\n', ' '), p.due || '', statusStr, tasks, p.path || '', ...refs]; const csv = row.map(cell => { const s = String(cell ?? ''); return /[",\n]/.test(s) ? '"' + s.replaceAll('"', '""') + '"' : s; }).join(','); lines.push(csv); } const blob = new Blob([lines.join('\n')], { type: 'text/csv' }); const url = URL.createObjectURL(blob); const a = el('a', { href: url, download: 'projects.csv' }); document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
-function exportJSON() { const blob = new Blob([JSON.stringify(db, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = el('a', { href: url, download: 'projects.json' }); document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
-// ===================== NOTES MANAGEMENT =====================
-const debouncedSaveNotes = debounce(saveNotes, 500);
-let activeNoteCategory = 'keyed';
-let activeNoteTab = null;
-
-function renderNoteTabs() {
-    const container = document.getElementById('notesTabsContainer');
-    container.innerHTML = '';
-    noteTabs.forEach(tabName => {
-        const btn = el('button', {
-            className: `inner-tab-btn ${tabName === activeNoteTab ? 'active' : ''}`,
-            textContent: tabName,
-            'data-plan-tab': tabName
-        });
-        container.append(btn);
-    });
-    updateActiveNoteTextarea();
-}
-
-function updateActiveNoteTextarea() {
-    const textarea = document.getElementById('notesTextarea');
-    if (!activeNoteTab) {
-        textarea.value = '';
-        textarea.placeholder = 'Create a tab to begin.';
-        textarea.disabled = true;
-        return;
-    }
-    textarea.disabled = false;
-    textarea.placeholder = `Enter ${activeNoteCategory} notes for ${activeNoteTab}...`;
-    textarea.value = notesDb[activeNoteCategory]?.[activeNoteTab] || '';
-}
-
-function handleNoteInput(e) {
-    if (!activeNoteCategory || !activeNoteTab) return;
-    if (!notesDb[activeNoteCategory]) {
-        notesDb[activeNoteCategory] = {};
-    }
-    notesDb[activeNoteCategory][activeNoteTab] = e.target.value;
-    debouncedSaveNotes();
-}
-
-function deleteNoteParagraph(category, plan, index) {
-    if (!confirm('Are you sure you want to delete this note paragraph?')) return;
-    const fullContent = notesDb[category]?.[plan] || '';
-    const notes = fullContent.split(/\n\s*\n/).filter(note => note.trim() !== '');
-    notes.splice(index, 1);
-    const newContent = notes.join('\n\n');
-    if (!notesDb[category]) notesDb[category] = {};
-    notesDb[category][plan] = newContent;
-    saveNotes(); // Save immediately
-    renderNoteTabs(); // Re-render to update textarea
-    renderNoteSearchResults(); // Re-run search
-}
-
-function renderNoteSearchResults() {
-    const query = val('search').toLowerCase();
-    const resultsContainer = document.getElementById('notesSearchResults');
-    resultsContainer.innerHTML = '';
-    if (!query) return;
-
-    const queryWords = query.split(' ').filter(w => w);
-    if (!queryWords.length) return;
-
-    const CATEGORY_LABELS = { keyed: 'Keyed Notes', general: 'General Notes' };
-    const seenNotes = new Set(); // Track unique notes to avoid duplicates
-
-    for (const category in notesDb) {
-        for (const plan in notesDb[category]) {
-            const normalizedPlan = plan.toLowerCase(); // Normalize tab name for comparison
-            const content = notesDb[category][plan];
-            if (!content) continue;
-
-            const notes = content.split(/\n\s*\n/).filter(note => note.trim() !== '');
-            notes.forEach((noteText, index) => {
-                const lowerNoteText = noteText.toLowerCase();
-                if (queryWords.every(word => lowerNoteText.includes(word))) {
-                    // Create a unique key for the note based on category, plan, and content
-                    const noteKey = `${category}:${normalizedPlan}:${noteText}`;
-                    if (seenNotes.has(noteKey)) return; // Skip if already processed
-                    seenNotes.add(noteKey);
-
-                    // Use the original plan name (not normalized) for display
-                    const location = `${CATEGORY_LABELS[category]} - ${plan}`;
-                    const item = el('div', { className: 'note-result-item' });
-                    const contentDiv = el('div', { className: 'note-result-content' });
-                    const actionsDiv = el('div', { className: 'note-result-actions' });
-
-                    contentDiv.append(
-                        el('div', { className: 'location', textContent: location }),
-                        el('div', { className: 'snippet', textContent: noteText })
-                    );
-
-                    const editBtn = el('button', { className: 'btn tiny', textContent: 'Edit' });
-                    editBtn.onclick = () => {
-                        activeNoteCategory = category;
-                        activeNoteTab = plan; // Use original plan name
-                        document.querySelectorAll('[data-category-toggle]').forEach(btn => btn.classList.toggle('active', btn.dataset.categoryToggle === category));
-                        renderNoteTabs(); // Re-render tabs to show the active one
-                        const searchInput = document.getElementById('search');
-                        searchInput.value = '';
-                        renderNoteSearchResults();
-                        setTimeout(() => {
-                            const targetTextarea = document.getElementById('notesTextarea');
-                            if (targetTextarea) {
-                                targetTextarea.focus();
-                                const pos = targetTextarea.value.indexOf(noteText);
-                                if (pos !== -1) {
-                                    targetTextarea.setSelectionRange(pos, pos + noteText.length);
-                                    const textBefore = targetTextarea.value.substring(0, pos);
-                                    const lineBreaks = (textBefore.match(/\n/g) || []).length;
-                                    const lineHeight = targetTextarea.scrollHeight / targetTextarea.value.split('\n').length;
-                                    targetTextarea.scrollTop = lineBreaks * lineHeight;
-                                }
-                            }
-                        }, 50);
-                    };
-
-                    const copyBtn = el('button', { className: 'btn tiny', textContent: 'Copy' });
-                    copyBtn.onclick = () => {
-                        navigator.clipboard.writeText(noteText)
-                            .then(() => toast('Note copied to clipboard!'))
-                            .catch(err => toast('Failed to copy note.'));
-                    };
-
-                    const deleteBtn = el('button', { className: 'btn tiny btn-danger', textContent: 'Delete' });
-                    deleteBtn.onclick = () => deleteNoteParagraph(category, plan, index);
-
-                    actionsDiv.append(editBtn, copyBtn, deleteBtn);
-                    item.append(contentDiv, actionsDiv);
-                    resultsContainer.append(item);
-                }
-            });
-        }
-    }
-}
-// ===================== TAB MANAGEMENT =====================
-function handleMainSearch() {
-    const activeTab = document.querySelector('.main-tab-btn.active')?.dataset.tab || 'projects';
-    if (activeTab === 'notes') {
-        renderNoteSearchResults();
-    } else {
-        render();
-    }
-}
-
-function initTabbedInterfaces() {
-    // Main tabs
-    const mainTabContainer = document.querySelector('.main-nav');
-    const mainSearchInput = document.getElementById('search');
-
-    mainTabContainer.addEventListener('click', e => {
-        if (!e.target.matches('.main-tab-btn')) return;
-        const targetTab = e.target.dataset.tab;
-        mainTabContainer.querySelectorAll('.main-tab-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.tab === targetTab));
-        document.querySelectorAll('.tab-panel').forEach(panel => {
-            panel.hidden = panel.id !== `${targetTab}-panel`;
-            panel.classList.toggle('active', panel.id === `${targetTab}-panel`);
-        });
-
-        if (targetTab === 'plugins') {
-            loadAndRenderBundles();
-            updateCleanDwgToolState();
-        }
-
-        if (targetTab === 'notes') {
-            mainSearchInput.placeholder = 'Search notes...';
-            mainSearchInput.disabled = false;
-        } else if (targetTab === 'plugins') {
-            mainSearchInput.placeholder = 'Search disabled';
-            mainSearchInput.disabled = true;
-        } else { // This covers 'projects' and 'tools'
-            mainSearchInput.placeholder = 'Search projects...';
-            mainSearchInput.disabled = false;
-        }
-        // Clear search and re-render for the new context
-        mainSearchInput.value = '';
-        handleMainSearch();
-    });
-    // Notes Category Toggle
-    const categoryToggle = document.querySelector('.notes-category-toggle');
-    categoryToggle.addEventListener('click', e => {
-        if (!e.target.matches('[data-category-toggle]')) return;
-        activeNoteCategory = e.target.dataset.categoryToggle;
-        categoryToggle.querySelectorAll('[data-category-toggle]').forEach(btn => btn.classList.remove('active'));
-        e.target.classList.add('active');
-        updateActiveNoteTextarea();
-    });
-    // Inner tabs (for notes section)
-    const innerTabContainer = document.getElementById('notesTabsContainer');
-    innerTabContainer.addEventListener('click', e => {
-        if (!e.target.matches('.inner-tab-btn')) return;
-        activeNoteTab = e.target.dataset.planTab;
-        renderNoteTabs();
-    });
-}
-// ===================== TOOL CARD MANAGEMENT =====================
-async function updateCleanDwgToolState() {
-    const toolCard = document.getElementById('toolCleanDwgs');
-    const requiredBundle = 'ElectricalCommands.CleanCADCommands.bundle';
-    if (!toolCard) return;
-
-    try {
-        const response = await window.pywebview.api.check_bundle_installed(requiredBundle);
-
-        if (response.status === 'success' && response.is_installed) {
-            // Enable the card
-            toolCard.classList.remove('disabled');
-            toolCard.title = 'Clean, purge, and process CAD drawings.';
-            toolCard.setAttribute('tabindex', '0');
-        } else {
-            // Disable the card
-            toolCard.classList.add('disabled');
-            toolCard.title = 'Requires "CleanCADCommands" to be installed.';
-            toolCard.setAttribute('tabindex', '-1'); // Remove from keyboard navigation
-        }
-    } catch (e) {
-        console.error('Failed to check prerequisite for Clean DWGs tool:', e);
-        // Fail safe: keep it disabled if the check fails
-        toolCard.classList.add('disabled');
-        toolCard.title = 'Could not verify prerequisites.';
-    }
-}
-// ===================== TOOL STATUS UPDATER =====================
-// This function is called by the Python backend
+// Python Callbacks
 window.updateToolStatus = function (toolId, message) {
     const card = document.getElementById(toolId);
     if (!card) return;
-
     const statusEl = card.querySelector('.tool-card-status');
     const abortBtn = document.getElementById('abortBtn');
 
     statusEl.classList.remove('error');
 
-    // Show/hide abort button for Clean DWGs tool
-    if (toolId === 'toolCleanDwgs') {
+    // Abort button logic
+    if (toolId === 'toolCleanDwgs' && abortBtn) {
         if (message && message !== 'DONE' && !message.startsWith('ERROR:')) {
             abortBtn.style.display = 'inline-block';
+            abortBtn.disabled = false;
             abortBtn.onclick = async () => {
-                try {
-                    await window.pywebview.api.abort_clean_dwgs();
-                    toast('Abort signal sent. Process will stop shortly...');
-                    abortBtn.disabled = true;
-                    setTimeout(() => { abortBtn.disabled = false; }, 5000);
-                } catch (e) {
-                    toast('Failed to send abort signal.');
-                }
+                await window.pywebview.api.abort_clean_dwgs();
+                toast('Aborting...');
+                abortBtn.disabled = true;
             };
         } else {
             abortBtn.style.display = 'none';
@@ -754,8 +1211,7 @@ window.updateToolStatus = function (toolId, message) {
     }
 
     if (message.startsWith('ERROR:')) {
-        const errorMsg = message.substring(6).trim();
-        statusEl.textContent = `Error: ${errorMsg}`;
+        statusEl.textContent = message.substring(6).trim();
         statusEl.classList.add('error');
         card.classList.add('running');
         setTimeout(() => {
@@ -763,7 +1219,7 @@ window.updateToolStatus = function (toolId, message) {
             if (abortBtn) abortBtn.style.display = 'none';
         }, 5000);
     } else if (message === 'DONE') {
-        statusEl.textContent = 'Completed successfully!';
+        statusEl.textContent = 'Done!';
         setTimeout(() => {
             card.classList.remove('running');
             if (abortBtn) abortBtn.style.display = 'none';
@@ -771,342 +1227,248 @@ window.updateToolStatus = function (toolId, message) {
     } else {
         statusEl.textContent = message;
     }
+};
+
+async function updateCleanDwgToolState() {
+    const toolCard = document.getElementById('toolCleanDwgs');
+    if (!toolCard) return;
+    try {
+        const response = await window.pywebview.api.check_bundle_installed('ElectricalCommands.CleanCADCommands.bundle');
+        if (response.status === 'success' && response.is_installed) {
+            toolCard.classList.remove('disabled');
+            toolCard.setAttribute('tabindex', '0');
+        } else {
+            toolCard.classList.add('disabled');
+            toolCard.setAttribute('tabindex', '-1');
+        }
+    } catch (e) {
+        toolCard.classList.add('disabled');
+    }
 }
-// ===================== EVENT WIRING =====================
-function openSettingsModal() {
-    document.getElementById('settings_userName').value = userSettings.userName || '';
-    document.getElementById('settings_apiKey').value = userSettings.apiKey || '';
-    const disciplineRadios = document.querySelectorAll('#settings_discipline input[name="settings_discipline_radio"]');
-    disciplineRadios.forEach(radio => {
-        radio.checked = (radio.value === userSettings.discipline);
+
+// ===================== INITIALIZATION & EVENTS =====================
+
+function initTabbedInterfaces() {
+    // Main Nav Logic
+    const mainTabContainer = document.querySelector('.main-nav');
+    const searchInput = document.getElementById('search');
+
+    mainTabContainer.addEventListener('click', e => {
+        if (!e.target.matches('.main-tab-btn')) return;
+        const tab = e.target.dataset.tab;
+
+        // UI Updates
+        document.querySelectorAll('.main-tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+        document.querySelectorAll('.tab-panel').forEach(p => {
+            p.hidden = p.id !== `${tab}-panel`;
+            p.classList.toggle('active', p.id === `${tab}-panel`);
+        });
+
+        // Context-aware actions
+        if (tab === 'plugins') loadAndRenderBundles();
+
+        if (tab === 'notes') {
+            searchInput.placeholder = 'Search notes...';
+            searchInput.disabled = false;
+        } else if (tab === 'plugins') {
+            searchInput.placeholder = 'Search unavailable';
+            searchInput.disabled = true;
+        } else {
+            searchInput.placeholder = 'Search projects...';
+            searchInput.disabled = false;
+        }
+        searchInput.value = '';
     });
-    document.getElementById('settingsDlg').showModal();
 }
 
 function initEventListeners() {
+    // Global Search
+    document.getElementById('search').addEventListener('input', debounce(() => {
+        const activeTab = document.querySelector('.main-tab-btn.active')?.dataset.tab;
+        if (activeTab === 'notes') renderNoteSearchResults();
+        else render();
+    }, 250));
 
-    console.log('Verifying critical elements...');
-    const criticalElements = ['btnProceedCleanDwgs', 'toolCleanDwgs', 'cleanDwgs_titleblockPath'];
-    criticalElements.forEach(id => {
-        if (!document.getElementById(id)) {
-            console.error(`❌ CRITICAL: Element '${id}' not found!`);
+    // Toolbar Actions
+    document.getElementById('quickNew').onclick = openNew;
+    document.getElementById('btnNew').onclick = openNew;
+    document.getElementById('settingsBtn').onclick = () => document.getElementById('settingsDlg').showModal();
+
+    // Drawer Logic
+    const drawer = document.getElementById('drawer');
+    const backdrop = document.getElementById('backdrop');
+    const toggleDrawer = (open) => {
+        if (open) { drawer.classList.add('open'); backdrop.hidden = false; }
+        else { drawer.classList.remove('open'); backdrop.hidden = true; }
+    };
+    document.getElementById('menuBtn').onclick = () => toggleDrawer(true);
+    document.getElementById('drawerClose').onclick = () => toggleDrawer(false);
+    backdrop.onclick = () => toggleDrawer(false);
+
+    // Filters
+    document.getElementById('dueFilterGroup').addEventListener('click', e => {
+        if (e.target.matches('.filter-chip')) {
+            dueFilter = e.target.dataset.dueFilter;
+            document.querySelectorAll('#dueFilterGroup .filter-chip').forEach(b => b.classList.remove('active'));
+            e.target.classList.add('active');
+            render();
+        }
+    });
+    document.getElementById('statusFilterGroup').addEventListener('click', e => {
+        if (e.target.matches('.filter-chip')) {
+            statusFilter = e.target.dataset.filter;
+            document.querySelectorAll('#statusFilterGroup .filter-chip').forEach(b => b.classList.remove('active'));
+            e.target.classList.add('active');
+            render();
         }
     });
 
-    document.getElementById('quickNew').addEventListener('click', openNew);
-    document.getElementById('settingsBtn').addEventListener('click', openSettingsModal);
-    document.getElementById('menuBtn').addEventListener('click', openDrawer);
-    document.getElementById('drawerClose').addEventListener('click', closeDrawer);
-    document.getElementById('backdrop').addEventListener('click', closeDrawer);
-    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && document.getElementById('drawer').classList.contains('open')) closeDrawer(); });
-    document.getElementById('btnNew').addEventListener('click', openNew);
-    document.getElementById('btnImport').addEventListener('click', async () => { try { const result = await window.pywebview.api.import_and_process_csv(); if (result.status === 'success') { if (result.data?.length > 0) { db.push(...result.data); migrateStatuses(db); await save(); render(); toast(`Successfully imported ${result.data.length} projects.`); } else { toast('No new projects were found in the selected file.'); } } else if (result.status !== 'cancelled') { throw new Error(result.message || 'An unknown error occurred during import.'); } } catch (e) { console.error('CSV Import failed:', e); toast(`⚠️ Import failed: ${e.message}`); } });
-    document.getElementById('btnPaste').addEventListener('click', () => document.getElementById('pasteDlg').showModal());
-    document.getElementById('btnExportCsv').addEventListener('click', exportCSV);
-    document.getElementById('btnExportJson').addEventListener('click', exportJSON);
-    document.getElementById('btnMarkOverdue').addEventListener('click', markOverdueAsComplete);
-    document.getElementById('search').addEventListener('input', debounce(handleMainSearch, 250));
-    document.getElementById('dueFilterGroup').addEventListener('click', (e) => { if (e.target.tagName === 'BUTTON') { dueFilter = e.target.dataset.dueFilter; document.querySelectorAll('#dueFilterGroup .btn').forEach(b => b.classList.remove('active')); e.target.classList.add('active'); render(); } });
-    document.getElementById('statusFilterGroup').addEventListener('click', (e) => { if (e.target.tagName === 'BUTTON') { statusFilter = e.target.dataset.filter; document.querySelectorAll('#statusFilterGroup .btn').forEach(b => b.classList.remove('active')); e.target.classList.add('active'); render(); } });
-    document.querySelector('.table thead').addEventListener('click', e => { const th = e.target.closest('th[data-sort]'); if (!th) return; const key = th.dataset.sort; if (currentSort.key === key) { currentSort.dir = currentSort.dir === 'asc' ? 'desc' : 'asc'; } else { currentSort.key = key; currentSort.dir = key === 'due' ? 'desc' : 'asc'; } render(); });
-    document.getElementById('btnPasteImport').addEventListener('click', () => { const txt = val('pasteArea'); const rows = parseCSV(txt); const hasHeader = document.getElementById('hasHeader').checked; importRows(rows, hasHeader); closeDlg('pasteDlg'); document.getElementById('pasteArea').value = ''; });
-    document.getElementById('btnSaveProject').addEventListener('click', onSaveProject);
-    document.getElementById('btnCreateFolder').addEventListener('click', async () => { const path = val('f_path'); if (!path) return toast('Project path is empty.'); try { const res = await window.pywebview.api.create_folder(path); if (res.status === 'success') toast('Folder created successfully.'); else throw new Error(res.message); } catch (e) { toast(`⚠️ Error creating folder: ${e.message}`); } });
-    document.getElementById('btnDeleteAll').addEventListener('click', () => { document.getElementById('deleteConfirmInput').value = ''; document.getElementById('btnDeleteConfirm').disabled = true; document.getElementById('deleteDlg').showModal(); });
-    document.getElementById('deleteConfirmInput').addEventListener('input', (e) => { document.getElementById('btnDeleteConfirm').disabled = e.target.value !== 'DELETE'; });
-    document.getElementById('btnDeleteConfirm').addEventListener('click', () => { if (val('deleteConfirmInput') === 'DELETE') { db = []; save(); render(); closeDlg('deleteDlg'); toast('All project data has been deleted.'); } });
-    document.getElementById('commands-container').addEventListener('click', handleBundleAction);
+    // Tools
+    document.getElementById('toolPublishDwgs').addEventListener('click', async (e) => {
+        if (e.currentTarget.classList.contains('running')) return;
+        e.currentTarget.classList.add('running');
+        window.updateToolStatus('toolPublishDwgs', 'Initializing...');
+        await window.pywebview.api.run_publish_script();
+    });
 
-    const openAiModal = () => {
-        if (!userSettings.apiKey) {
-            toast('Please set up your Gemini API key in the settings first.');
-            openSettingsModal();
+    document.getElementById('toolCleanDwgs').addEventListener('click', (e) => {
+        if (e.currentTarget.classList.contains('disabled')) {
+            document.getElementById('installPrereqDlg').showModal();
             return;
         }
+        if (e.currentTarget.classList.contains('running')) return;
+        document.getElementById('cleanDwgsDlg').showModal();
+    });
+
+    document.getElementById('btnProceedCleanDwgs').addEventListener('click', async () => {
+        const titleblock = val('cleanDwgs_titleblockPath');
+        if (!titleblock) return toast('Select a titleblock first.');
+
+        const disciplines = Array.from(document.querySelectorAll('input[name="cleanDwgs_discipline"]:checked')).map(c => c.value);
+        closeDlg('cleanDwgsDlg');
+
+        const response = await window.pywebview.api.run_clean_dwgs_script({ titleblock, disciplines });
+        if (response.status === 'success') {
+            window.updateToolStatus('toolCleanDwgs', 'Processing...');
+            document.getElementById('toolCleanDwgs').classList.add('running');
+        } else if (response.status === 'prerequisite_failed') {
+            toast('⚠️ ' + response.message);
+        }
+    });
+
+    // Clean DWGs Browse Button
+    document.getElementById('btnSelectTitleblock').addEventListener('click', async () => {
+        const res = await window.pywebview.api.select_files({ allow_multiple: false, file_types: ['AutoCAD Drawings (*.dwg)'] });
+        if (res.status === 'success' && res.paths.length) {
+            document.getElementById('cleanDwgs_titleblockPath').value = res.paths[0];
+        }
+    });
+
+    // AI / Email Logic
+    const handleAI = () => {
+        if (!userSettings.apiKey) { toast('Setup API Key in Settings first.'); return; }
         document.getElementById('emailArea').value = '';
         document.getElementById('aiSpinner').style.display = 'none';
         document.getElementById('emailDlg').showModal();
     };
-    document.getElementById('btnEmail').addEventListener('click', openAiModal);
-    document.getElementById('aiBtn').addEventListener('click', openAiModal);
-    document.getElementById('settings_howToSetupBtn').addEventListener('click', () => document.getElementById('apiKeyHelpDlg').showModal());
+    document.getElementById('btnEmail').onclick = handleAI;
+    document.getElementById('aiBtn').onclick = handleAI;
 
-    // Settings Dialog listeners
-    document.getElementById('settings_userName').addEventListener('input', (e) => {
-        userSettings.userName = e.target.value;
-        debouncedSaveUserSettings();
-    });
-    document.getElementById('settings_apiKey').addEventListener('input', (e) => {
-        userSettings.apiKey = e.target.value;
-        debouncedSaveUserSettings();
-    });
-    document.getElementById('settings_discipline').addEventListener('change', (e) => {
-        if (e.target.name === 'settings_discipline_radio') {
-            userSettings.discipline = e.target.value;
-            debouncedSaveUserSettings();
-        }
-    });
-
-    document.getElementById('btnProcessEmail').addEventListener('click', async () => {
-        const emailText = val('emailArea');
-        if (!emailText) return toast('Please paste email content first.');
-        if (!userSettings.apiKey) {
-            toast('Please set your Gemini API key in the settings (⚙️).');
-            openSettingsModal();
-            return;
-        }
-        const spinner = document.getElementById('aiSpinner');
-        spinner.style.display = 'block';
+    document.getElementById('btnProcessEmail').onclick = async () => {
+        const txt = val('emailArea');
+        if (!txt) return;
+        document.getElementById('aiSpinner').style.display = 'flex';
         try {
-            const result = await window.pywebview.api.process_email_with_ai(
-                emailText,
-                userSettings.apiKey,
-                userSettings.userName,
-                userSettings.discipline
-            );
-            if (result.status === 'success') {
+            const res = await window.pywebview.api.process_email_with_ai(txt, userSettings.apiKey, userSettings.userName, userSettings.discipline);
+            if (res.status === 'success') {
                 closeDlg('emailDlg');
                 openNew();
-                fillForm(result.data);
-                toast('AI analysis complete. Please review and save.');
-            } else {
-                throw new Error(result.message || 'An unknown AI error occurred.');
-            }
-        } catch (e) {
-            console.error('AI Processing failed:', e);
-            toast(`⚠️ AI Error: ${e.message}`, 5000);
-        } finally {
-            spinner.style.display = 'none';
-        }
-    });
-    // Notes functionality
+                fillForm(res.data);
+            } else throw new Error(res.message);
+        } catch (e) { toast('AI Error: ' + e.message); }
+        document.getElementById('aiSpinner').style.display = 'none';
+    };
+
+    // Notes Logic (Input Handler Only - buttons handled in renderNoteTabs)
     document.getElementById('notesTextarea').addEventListener('input', handleNoteInput);
-    document.getElementById('addNoteTabBtn').addEventListener('click', () => {
-        const newTabName = prompt('Enter a name for the new tab:');
-        if (newTabName && !noteTabs.includes(newTabName)) {
-            noteTabs.push(newTabName);
-            activeNoteTab = newTabName;
-            saveNotes();
-            renderNoteTabs();
-        } else if (newTabName) {
-            toast('A tab with that name already exists.');
+
+    // Settings Inputs
+    document.getElementById('settings_userName').oninput = (e) => { userSettings.userName = e.target.value; debouncedSaveUserSettings(); };
+    document.getElementById('settings_apiKey').oninput = (e) => { userSettings.apiKey = e.target.value; debouncedSaveUserSettings(); };
+
+    // Export/Import
+    document.getElementById('btnExportCsv').onclick = exportCSV;
+    document.getElementById('btnExportJson').onclick = exportJSON;
+    document.getElementById('btnImport').onclick = async () => {
+        const res = await window.pywebview.api.import_and_process_csv();
+        if (res.status === 'success' && res.data) {
+            db.push(...res.data);
+            migrateStatuses(db);
+            save();
+            render();
+            toast(`Imported ${res.data.length} projects.`);
         }
-    });
-    document.getElementById('removeNoteTabBtn').addEventListener('click', () => {
-        if (!activeNoteTab) return toast('No active tab to remove.');
-        if (!confirm(`Are you sure you want to permanently delete the "${activeNoteTab}" tab and all its notes?`)) return;
+    };
 
-        const index = noteTabs.indexOf(activeNoteTab);
-        if (index > -1) {
-            noteTabs.splice(index, 1);
-            delete notesDb.keyed[activeNoteTab];
-            delete notesDb.general[activeNoteTab];
+    // Paste CSV
+    document.getElementById('btnPaste').onclick = () => document.getElementById('pasteDlg').showModal();
+    document.getElementById('btnPasteImport').onclick = () => {
+        const rows = parseCSV(val('pasteArea'));
+        importRows(rows, document.getElementById('hasHeader').checked);
+        closeDlg('pasteDlg');
+    };
 
-            if (noteTabs.length === 0) {
-                activeNoteTab = null;
-            } else {
-                activeNoteTab = noteTabs[Math.max(0, index - 1)];
-            }
-            saveNotes();
-            renderNoteTabs();
-        }
-    });
-    // Tools Tab
-    document.getElementById('toolPublishDwgs').addEventListener('click', async (e) => {
-        const card = e.currentTarget;
-        if (card.classList.contains('running')) return;
-        card.classList.add('running');
-        window.updateToolStatus('toolPublishDwgs', 'Starting...');
-        try {
-            await window.pywebview.api.run_publish_script();
-        } catch (e) {
-            window.updateToolStatus('toolPublishDwgs', `ERROR: ${e.message}`);
-        }
-    });
-    document.getElementById('toolCleanXrefs').addEventListener('click', async (e) => {
-        const card = e.currentTarget;
-        if (card.classList.contains('running')) return;
-        card.classList.add('running');
-        window.updateToolStatus('toolCleanXrefs', 'Starting...');
-        try {
-            await window.pywebview.api.run_clean_xrefs_script();
-        } catch (e) {
-            window.updateToolStatus('toolCleanXrefs', `ERROR: ${e.message}`);
-        }
-    });
-    document.getElementById('toolCleanDwgs').addEventListener('click', (e) => {
-        const card = e.currentTarget;
-        if (card.classList.contains('running')) return;
+    // Deletion
+    document.getElementById('btnDeleteAll').onclick = () => {
+        document.getElementById('deleteConfirmInput').value = '';
+        document.getElementById('btnDeleteConfirm').disabled = true;
+        document.getElementById('deleteDlg').showModal();
+    };
+    document.getElementById('deleteConfirmInput').oninput = (e) => {
+        document.getElementById('btnDeleteConfirm').disabled = e.target.value !== 'DELETE';
+    };
+    document.getElementById('btnDeleteConfirm').onclick = () => {
+        db = []; save(); render(); closeDlg('deleteDlg');
+    };
 
-        if (card.classList.contains('disabled')) {
-            // Instead of a toast, show the installation dialog
-            document.getElementById('installPrereqDlg').showModal();
-            return;
-        }
-        // Reset form
-        document.getElementById('cleanDwgs_titleblockPath').value = '';
-        document.getElementById('cleanDwgsDlg').showModal();
-    });
-
-    // Clean DWGs Dialog - NULL-SAFE
-    const btnSelectTitleblock = document.getElementById('btnSelectTitleblock');
-    if (btnSelectTitleblock) {
-        btnSelectTitleblock.addEventListener('click', async () => {
-            try {
-                const result = await window.pywebview.api.select_files({
-                    allow_multiple: false,
-                    file_types: ['AutoCAD Drawings (*.dwg)']
-                });
-                if (result.status === 'success' && result.paths.length > 0) {
-                    const titleblockPathEl = document.getElementById('cleanDwgs_titleblockPath');
-                    if (titleblockPathEl) titleblockPathEl.value = result.paths[0];
-                }
-            } catch (e) {
-                toast(`⚠️ Error selecting file: ${e.message}`);
-            }
-        });
-    } else {
-        console.error('❌ btnSelectTitleblock not found!');
-    }
-
-    const btnProceedCleanDwgs = document.getElementById('btnProceedCleanDwgs');
-    if (btnProceedCleanDwgs) {
-        btnProceedCleanDwgs.addEventListener('click', async () => {
-            const titleblockPath = val('cleanDwgs_titleblockPath');
-            const selectedDisciplines = Array.from(document.querySelectorAll('input[name="cleanDwgs_discipline"]:checked'))
-                .map(cb => cb.value);
-
-            if (!titleblockPath) {
-                toast('Please select a titleblock DWG.');
-                return;
-            }
-
-            const data = {
-                titleblock: titleblockPath,
-                disciplines: selectedDisciplines
-            };
-
-            // Close the dialog immediately for a better user experience
-            closeDlg('cleanDwgsDlg');
-
-            try {
-                // Call the backend
-                const response = await window.pywebview.api.run_clean_dwgs_script(data);
-
-                // --- START: New Prerequisite Handling ---
-                if (response.status === 'prerequisite_failed') {
-                    // Show a specific, helpful error message
-                    toast(`⚠️ ${response.message}`, 4000); // Show for 4 seconds
-
-                    // Guide the user by scrolling to the bundle manager
-                    const bundleManager = document.querySelector('.bundle-manager');
-                    if (bundleManager) {
-                        bundleManager.scrollIntoView({ behavior: 'smooth', block: 'center' });
-
-                        // Add a temporary highlight to draw attention
-                        bundleManager.style.transition = 'outline 0.1s ease-in-out';
-                        bundleManager.style.outline = '2px solid #f43f5e'; // A red-pink color
-                        setTimeout(() => { bundleManager.style.outline = 'none'; }, 2000);
-                    }
-                    return; // Stop further execution
-                }
-                // --- END: New Prerequisite Handling ---
-
-                // If the call was successful (not a prerequisite failure or other error)
-                if (response.status === 'success') {
-                    const card = document.getElementById('toolCleanDwgs');
-                    if (card) card.classList.add('running');
-                    window.updateToolStatus('toolCleanDwgs', 'Copying files and starting AutoCAD...');
-                } else {
-                    // Handle other potential backend errors that don't throw an exception
-                    throw new Error(response.message || 'An unknown error occurred.');
-                }
-
-            } catch (e) {
-                window.updateToolStatus('toolCleanDwgs', `ERROR: ${e.message}`);
-                setTimeout(() => resetToolStatus('toolCleanDwgs'), 5000);
-            }
-        });
-    } else {
-        console.error('❌ CRITICAL: btnProceedCleanDwgs not found!');
-    }
-
-    document.getElementById('btnInstallPrereq').addEventListener('click', async () => {
-        const installBtn = document.getElementById('btnInstallPrereq');
+    // Bundle Actions
+    document.getElementById('commands-container').addEventListener('click', handleBundleAction);
+    document.getElementById('btnInstallPrereq').onclick = async () => {
+        // Simpler install flow for prereq
         const spinner = document.getElementById('installSpinner');
-        const requiredBundleName = 'CleanCADCommands';
-
-        // Find the full bundle asset from the backend data to pass to the installer
-        let bundleToInstall;
-        try {
-            const response = await window.pywebview.api.get_bundle_statuses();
-            if (response.status !== 'success') throw new Error(response.message);
-            const bundleData = response.data.find(b => b.name.includes(requiredBundleName));
-            if (!bundleData || !bundleData.asset) {
-                throw new Error(`Could not retrieve bundle information for ${requiredBundleName}.`);
-            }
-            bundleToInstall = bundleData.asset;
-        } catch (e) {
-            toast(`⚠️ Error preparing installation: ${e.message}`, 5000);
-            return;
-        }
-
-        installBtn.disabled = true;
         spinner.style.display = 'block';
-
         try {
-            const response = await window.pywebview.api.install_single_bundle(bundleToInstall);
-
-            if (response.status !== 'success') {
-                throw new Error(response.message);
+            const all = await window.pywebview.api.get_bundle_statuses();
+            const bundle = all.data.find(b => b.name.includes('CleanCADCommands'));
+            if (bundle) {
+                await window.pywebview.api.install_single_bundle(bundle.asset);
+                toast('Installed!');
+                closeDlg('installPrereqDlg');
+                updateCleanDwgToolState();
+                loadAndRenderBundles();
             }
-
-            toast(`Bundle '${response.bundle_name}' installed successfully.`);
-            closeDlg('installPrereqDlg');
-
-        } catch (err) {
-            toast(`⚠️ Installation failed: ${err.message}`, 5000);
-        } finally {
-            installBtn.disabled = false;
-            spinner.style.display = 'none';
-            // Refresh UI states
-            await loadAndRenderBundles();
-            await updateCleanDwgToolState();
-        }
-    });
-
-    // Initialize tab functionality
-    initTabbedInterfaces();
+        } catch (e) { toast('Installation failed.'); }
+        spinner.style.display = 'none';
+    };
 }
-// ===================== INITIALIZATION =====================
+
 async function init() {
-    // Wait for the webview Python backend to be ready first.
-    await new Promise(resolve => window.addEventListener('pywebviewready', resolve));
+    // Ensure python backend is ready
+    if (!window.pywebview) await new Promise(r => window.addEventListener('pywebviewready', r));
 
-    try {
-        // Now that the API is ready, set up all event listeners.
-        initEventListeners();
+    initEventListeners();
+    initTabbedInterfaces();
 
-        // Load all data from the backend.
-        await loadUserSettings();
-        db = await load();
-        await loadNotes();
+    await loadUserSettings();
+    db = await load();
+    await loadNotes();
 
-        // Render the UI with the loaded data.
-        renderNoteTabs();
-        render();
-    } catch (error) {
-        console.error("Fatal error during application initialization:", error);
-        document.body.innerHTML = `<div style="padding: 2rem; text-align: center; color: #ef4444;">
-            <h1>Application Failed to Start</h1>
-            <p>Could not load initial data. Please check the console for errors (Right-click > Inspect) and restart the application.</p>
-            <p><b>Error:</b> ${error.message}</p>
-        </div>`;
-    }
+    renderNoteTabs();
+    render();
+
+    // Initial check for tool availability
+    updateCleanDwgToolState();
 }
 
-// Start the application
+// Start
 init();
-
-function openDrawer() { document.getElementById('drawer').classList.add('open'); document.getElementById('backdrop').hidden = false; document.getElementById('menuBtn')?.setAttribute('aria-expanded', 'true'); }
-function closeDrawer() { document.getElementById('drawer').classList.remove('open'); document.getElementById('backdrop').hidden = true; document.getElementById('menuBtn')?.setAttribute('aria-expanded', 'false'); }

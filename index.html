@@ -5,13 +5,16 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Projects</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="styles.css" />
 </head>
 
 <body>
     <header class="app-header">
         <div class="brand">
-            <img src="./acies.png" alt="ACIES Logo" class="logo-img" />
+            <img src="./acies.png" alt="ACIES" class="logo-img" onerror="this.style.display='none'" />
         </div>
         <!-- Centered navigation and search -->
         <div class="header-center">
@@ -22,7 +25,12 @@
                 <button class="main-tab-btn" data-tab="plugins">Plugins</button>
             </nav>
             <div class="nav-search">
-                <input id="search" type="search" placeholder="Search projects..." />
+                <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                </svg>
+                <input id="search" type="search" placeholder="Search..." />
             </div>
         </div>
         <div class="header-actions">
@@ -36,33 +44,37 @@
     </header>
     <aside id="drawer" class="drawer" aria-hidden="true">
         <div class="drawer-header">
+            <div class="title">Menu</div>
             <button class="icon-btn" id="drawerClose" aria-label="Close menu">✕</button>
         </div>
         <div class="drawer-body">
             <div class="toolbar">
-                <button class="btn" id="btnNew">＋ New project</button>
+                <button class="btn btn-primary" id="btnNew">＋ New project</button>
                 <details class="menu">
-                    <summary class="btn">⇪ Import</summary>
+                    <summary class="btn">⇪ Import Data</summary>
                     <div class="menu-list">
-                        <!-- FIX: This is the button that was missing. -->
                         <button class="btn block" id="btnEmail">From Email (AI)...</button>
                         <button class="btn block" id="btnImport">From CSV file…</button>
                         <button class="btn block" id="btnPaste">Paste CSV…</button>
                     </div>
                 </details>
                 <details class="menu">
-                    <summary class="btn">⬇︎ Export</summary>
+                    <summary class="btn">⬇︎ Export Data</summary>
                     <div class="menu-list">
                         <button class="btn block" id="btnExportCsv">Export CSV</button>
                         <button class="btn block" id="btnExportJson">Export JSON</button>
                     </div>
                 </details>
+                <div class="hr"></div>
                 <button class="btn" id="btnMarkOverdue">Mark Overdue as Complete</button>
                 <button class="btn btn-danger" id="btnDeleteAll">☠️ Delete All Data</button>
-                <div class="kpi">
-                    <div class="card">
-                        <div class="tiny muted">Incomplete this week</div>
-                        <div class="num" id="kWeek">0</div>
+
+                <div class="kpi-container">
+                    <div class="kpi">
+                        <div class="card">
+                            <div class="num" id="kWeek">0</div>
+                            <div class="tiny muted">Incomplete this week</div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -74,57 +86,55 @@
         <div id="projects-panel" class="tab-panel active">
             <section class="panel stack">
                 <div class="filter-controls">
+                    <div class="filter-label">Timeframe</div>
                     <div class="due-filter-group" id="dueFilterGroup">
-                        <button class="btn active" data-due-filter="all">All</button>
-                        <button class="btn" data-due-filter="overdue">Overdue</button>
-                        <button class="btn" data-due-filter="soon">This Week</button>
-                        <button class="btn" data-due-filter="ok">Upcoming</button>
+                        <button class="filter-chip active" data-due-filter="all">All</button>
+                        <button class="filter-chip" data-due-filter="overdue">Overdue</button>
+                        <button class="filter-chip" data-due-filter="soon">This Week</button>
+                        <button class="filter-chip" data-due-filter="ok">Upcoming</button>
                     </div>
+                    <div class="filter-label" style="margin-top:0.5rem">Status</div>
                     <div class="status-filter-group" id="statusFilterGroup">
-                        <button class="btn active" data-filter="all">All</button>
-                        <button class="btn" data-filter="incomplete">Incomplete</button>
-                        <button class="btn" data-filter="Pending Review">Pending Review</button>
-                        <button class="btn" data-filter="Complete">Complete</button>
-                        <button class="btn" data-filter="Waiting">Waiting</button>
+                        <button class="filter-chip active" data-filter="all">All</button>
+                        <button class="filter-chip" data-filter="incomplete">Incomplete</button>
+                        <button class="filter-chip" data-filter="Pending Review">Pending Review</button>
+                        <button class="filter-chip" data-filter="Complete">Complete</button>
+                        <button class="filter-chip" data-filter="Waiting">Waiting</button>
                     </div>
                 </div>
                 <table class="table">
                     <thead>
                         <tr>
-                            <th style="width:110px" data-sort="id">ID</th>
-                            <th data-sort="name">Project</th>
-                            <th style="width:140px" data-sort="due">Due</th>
-                            <th style="width:170px">Status</th>
+                            <th style="width:90px" data-sort="id">ID</th>
+                            <th data-sort="name">Project Details</th>
+                            <th style="width:120px" data-sort="due">Due</th>
+                            <th style="width:150px">Status</th>
                             <th>Tasks</th>
-                            <th class="nowrap" style="width:170px;text-align:right">Actions</th>
+                            <th class="nowrap" style="width:120px;text-align:center">Actions</th>
                         </tr>
                     </thead>
                     <tbody id="tbody"></tbody>
                 </table>
                 <div id="emptyState" class="empty" style="display:none">
-                    No projects yet. Import your CSV or add a new one.
+                    <div class="empty-icon">📂</div>
+                    <h3>No projects yet</h3>
+                    <p>Import your CSV or create a new project to get started.</p>
                 </div>
             </section>
         </div>
         <!-- Tab Panel for Notes -->
         <div id="notes-panel" class="tab-panel" hidden>
-            <div class="panel stack">
+            <div class="panel stack full-height">
                 <div class="notes-controls">
-                    <div class="notes-category-toggle">
-                        <button class="btn active" data-category-toggle="keyed">Keyed Notes</button>
-                        <button class="btn" data-category-toggle="general">General Notes</button>
-                    </div>
+                    <h3 class="section-title">Custom Notes</h3>
                     <div class="notes-user-tabs-row">
                         <nav class="inner-tabs" id="notesTabsContainer"></nav>
-                        <div class="notes-tab-actions">
-                            <button class="btn tiny" id="addNoteTabBtn">＋ Add Tab</button>
-                            <button class="btn tiny btn-danger" id="removeNoteTabBtn">－ Remove Tab</button>
-                        </div>
+                        <!-- Add/Remove buttons moved inside inner-tabs via JS -->
                     </div>
                 </div>
                 <div class="inner-tab-content">
                     <textarea id="notesTextarea" class="notes-textarea"
-                        placeholder="Select a tab to start writing notes..."></textarea>
+                        placeholder="Select a page to start writing notes..."></textarea>
                 </div>
                 <!-- Search Results Container -->
                 <div id="notesSearchResults" class="notes-search-results"></div>
@@ -133,20 +143,21 @@
         <!-- Tab Panel for Tools -->
         <div id="tools-panel" class="tab-panel" hidden>
             <section class="panel stack">
-                <div style="text-align: right; margin-bottom: 1rem;">
+                <!-- Combined Header to fix spacing issue -->
+                <div class="autocad-tools-header"
+                    style="display: flex; justify-content: space-between; align-items: flex-start;">
+                    <div class="autocad-tools-section">
+                        <h3 class="section-title">AutoCAD Tools</h3>
+                        <p class="tiny muted">Run scripts to automate common AutoCAD tasks.</p>
+                    </div>
                     <button id="abortBtn" class="btn btn-danger" style="display: none;">⏹ Abort Process</button>
-                </div>
-
-                <!-- AutoCAD Tools Section -->
-                <div class="autocad-tools-section">
-                    <h3 class="bundle-manager-title">AutoCAD Tools</h3>
-                    <p class="tiny muted">Run scripts to automate common AutoCAD tasks.</p>
                 </div>
 
                 <div class="tools-grid">
                     <!-- Card 1: Publish DWGs -->
                     <div id="toolPublishDwgs" class="tool-card" role="button" tabindex="0">
                         <div class="tool-card-content">
+                            <div class="tool-icon">🖨️</div>
                             <div class="tool-card-header">Publish DWGs</div>
                             <div class="tool-card-body">
                                 Plots the layouts of each of the selected DWG files and combines them. Outputs to
@@ -158,6 +169,7 @@
                     <!-- Card 2: Clean XREFs -->
                     <div id="toolCleanXrefs" class="tool-card" role="button" tabindex="0">
                         <div class="tool-card-content">
+                            <div class="tool-icon">🧹</div>
                             <div class="tool-card-header">Clean XREFs</div>
                             <div class="tool-card-body">
                                 Strips saved paths from all external references (XREFs, images, underlays) in selected
@@ -169,6 +181,7 @@
                     <!-- Card 3: Clean DWGs -->
                     <div id="toolCleanDwgs" class="tool-card" role="button" tabindex="0">
                         <div class="tool-card-content">
+                            <div class="tool-icon">✨</div>
                             <div class="tool-card-header">Clean DWGs</div>
                             <div class="tool-card-body">
                                 Duplicates, cleans, and processes a titleblock and selected CAD drawings using
@@ -185,8 +198,8 @@
             <section class="panel stack">
                 <!-- Unified Commands Section -->
                 <div class="commands-section">
-                    <h3 class="bundle-manager-title">AutoCAD Plugins</h3>
-                    <p class="tiny muted">Install, update, or uninstall command bundles. Click a card to see details.</p>
+                    <h3 class="section-title">AutoCAD Plugins</h3>
+                    <p class="tiny muted">Install, update, or uninstall command bundles.</p>
                     <div id="commands-container" class="tools-grid">
                         <!-- Command cards will be dynamically inserted here -->
                         <div class="spinner">Loading commands...</div>
@@ -200,40 +213,40 @@
         <div class="modal-header">
             <div id="dlgTitle" class="title">Edit Project</div>
             <div class="inline">
-                <button class="btn" onclick="closeDlg('editDlg')">✕ Close</button>
-                <button class="btn-primary" id="btnSaveProject">💾 Save</button>
+                <button class="btn ghost" onclick="closeDlg('editDlg')">Cancel</button>
+                <button class="btn-primary" id="btnSaveProject">Save Changes</button>
             </div>
         </div>
         <div class="modal-body stack">
             <div class="modal-grid">
                 <div class="col-4">
-                    <label class="tiny muted">Project ID</label>
+                    <label class="label">Project ID</label>
                     <input id="f_id" placeholder="e.g. 250410" />
                 </div>
                 <div class="col-8">
-                    <label class="tiny muted">Project Name</label>
+                    <label class="label">Project Name</label>
                     <input id="f_name" placeholder="BofA, 121 Windward Ave., Venice, CA" />
                 </div>
                 <div class="col-4">
-                    <label class="tiny muted">Nickname</label>
+                    <label class="label">Nickname</label>
                     <input id="f_nick" placeholder="optional" />
                 </div>
                 <div class="col-4">
-                    <label class="tiny muted">Due Date (MM/DD/YY)</label>
-                    <input id="f_due" placeholder="09/24/25" />
+                    <label class="label">Due Date</label>
+                    <input id="f_due" placeholder="MM/DD/YY" />
                 </div>
                 <div class="col-4">
-                    <label class="tiny muted">Project Path</label>
+                    <label class="label">Project Path</label>
                     <div class="input-with-button">
                         <input id="f_path" placeholder="e.g. M:\Projects\..." />
                         <button class="btn tiny" id="btnCreateFolder" title="Create directory">Create</button>
                     </div>
                 </div>
                 <div class="col-12">
-                    <label class="tiny muted">Status (choose any)</label>
+                    <label class="label">Status</label>
                     <div id="f_statuses" class="status-picker">
                         <button type="button" class="st st-pr" data-status="Pending Review" aria-pressed="false"
-                            title="Pending Review">Pending review</button>
+                            title="Pending Review">Pending Review</button>
                         <button type="button" class="st st-comp" data-status="Complete" aria-pressed="false"
                             title="Complete">Complete</button>
                         <button type="button" class="st st-wait" data-status="Waiting" aria-pressed="false"
@@ -241,40 +254,40 @@
                     </div>
                 </div>
                 <div class="col-12">
-                    <label class="tiny muted">Notes</label>
-                    <textarea id="f_notes" rows="3" placeholder="freeform notes…"></textarea>
+                    <label class="label">Notes</label>
+                    <textarea id="f_notes" rows="3" placeholder="Freeform notes…"></textarea>
                 </div>
             </div>
-            <div class="hr"></div>
+            <div class="section-divider"></div>
             <div class="stack">
                 <div class="inline" style="justify-content:space-between">
-                    <div class="title" style="font-size:16px">Tasks</div>
+                    <div class="title section-header">Tasks</div>
                     <button class="btn-accent tiny" onclick="addTaskRow()">＋ Add Task</button>
                 </div>
                 <div id="taskList" class="stack"></div>
             </div>
-            <div class="hr"></div>
+            <div class="section-divider"></div>
             <div class="stack">
                 <div class="inline" style="justify-content:space-between">
-                    <div class="title" style="font-size:16px">Reference Links</div>
+                    <div class="title section-header">Reference Links</div>
                     <button class="btn-accent tiny" onclick="addRefRow()">＋ Add Link</button>
                 </div>
                 <div id="refList" class="stack"></div>
             </div>
         </div>
     </dialog>
+    <!-- Email Modal -->
     <dialog id="emailDlg">
         <div class="modal-header">
-            <div class="title">Create Project from Email (AI)</div>
+            <div class="title">Create from Email</div>
             <div class="inline">
-                <button class="btn" onclick="closeDlg('emailDlg')">✕ Cancel</button>
-                <button class="btn-primary" id="btnProcessEmail">Create Project</button>
+                <button class="btn ghost" onclick="closeDlg('emailDlg')">Cancel</button>
+                <button class="btn-primary" id="btnProcessEmail">Process with AI</button>
             </div>
         </div>
         <div class="modal-body stack">
-            <p class="tiny muted">Paste the full email content below. The AI will extract the project details for you to
-                review.</p>
-            <textarea id="emailArea" rows="15" placeholder="Paste email here…"></textarea>
+            <p class="tiny muted">Paste the full email content below. The AI will extract the project details.</p>
+            <textarea id="emailArea" rows="15" placeholder="Paste email content here…"></textarea>
             <div id="aiSpinner" class="spinner" style="display:none;">Processing with AI...</div>
         </div>
     </dialog>
@@ -283,7 +296,7 @@
         <div class="modal-header">
             <div class="title">Paste CSV</div>
             <div class="inline">
-                <button class="btn" onclick="closeDlg('pasteDlg')">✕ Close</button>
+                <button class="btn ghost" onclick="closeDlg('pasteDlg')">Close</button>
                 <button class="btn-primary" id="btnPasteImport">Import</button>
             </div>
         </div>
@@ -291,117 +304,111 @@
             <div class="tiny muted">Expected columns: <b>ID, Project Name, Nickname, Notes, Due Date, Status, Tasks,
                     Path, Reference1, Reference2, …</b></div>
             <textarea id="pasteArea" rows="12" placeholder="Paste rows from Excel/CSV here…"></textarea>
-            <label class="inline tiny"><input type="checkbox" id="hasHeader" checked style="width:auto"> First row
+            <label class="inline tiny checkbox-label"><input type="checkbox" id="hasHeader" checked style="width:auto">
+                First row
                 contains headers</label>
         </div>
     </dialog>
     <!-- Delete All Confirmation Modal -->
     <dialog id="deleteDlg">
         <div class="modal-header">
-            <div class="title">Delete All Project Data</div>
-            <button class="btn" onclick="closeDlg('deleteDlg')">✕ Cancel</button>
+            <div class="title text-danger">Delete All Project Data</div>
+            <button class="btn ghost" onclick="closeDlg('deleteDlg')">Cancel</button>
         </div>
         <div class="modal-body stack">
             <p>This is a destructive and irreversible action.</p>
             <p>To confirm, type <b>DELETE</b> into the box below and click the button.</p>
             <input id="deleteConfirmInput" type="text" placeholder="Type DELETE to confirm" autocomplete="off" />
-            <button class="btn-danger" id="btnDeleteConfirm" disabled>Delete All Data</button>
+            <button class="btn-danger full-width" id="btnDeleteConfirm" disabled>Delete All Data</button>
         </div>
     </dialog>
     <!-- Settings Modal -->
     <dialog id="settingsDlg">
         <div class="modal-header">
             <div class="title">Settings</div>
-            <button class="btn" onclick="closeDlg('settingsDlg')">✕ Close</button>
+            <button class="btn ghost" onclick="closeDlg('settingsDlg')">Close</button>
         </div>
         <div class="modal-body stack">
             <div class="modal-grid">
                 <div class="col-6">
-                    <label class="tiny muted">Full Name</label>
+                    <label class="label">Full Name</label>
                     <input id="settings_userName" placeholder="e.g. Jacob Husband" />
                 </div>
                 <div class="col-6">
-                    <label class="tiny muted">Google Gemini API Key</label>
+                    <label class="label">Google Gemini API Key</label>
                     <div class="input-with-button">
                         <input id="settings_apiKey" type="password" placeholder="Enter your API key" />
-                        <button type="button" class="btn tiny" id="settings_howToSetupBtn">How to Setup</button>
+                        <button type="button" class="btn tiny" id="settings_howToSetupBtn">Help</button>
                     </div>
                 </div>
                 <div class="col-12">
-                    <label class="tiny muted">Default Discipline</label>
-                    <div id="settings_discipline" class="inline" style="gap: 1rem;">
-                        <label class="inline tiny"><input type="radio" name="settings_discipline_radio"
-                                value="Electrical" style="width:auto"> Electrical</label>
-                        <label class="inline tiny"><input type="radio" name="settings_discipline_radio"
-                                value="Mechanical" style="width:auto"> Mechanical</label>
-                        <label class="inline tiny"><input type="radio" name="settings_discipline_radio" value="Plumbing"
-                                style="width:auto"> Plumbing</label>
+                    <label class="label">Default Discipline</label>
+                    <div id="settings_discipline" class="inline radio-group">
+                        <label class="radio-label"><input type="radio" name="settings_discipline_radio"
+                                value="Electrical"> Electrical</label>
+                        <label class="radio-label"><input type="radio" name="settings_discipline_radio"
+                                value="Mechanical"> Mechanical</label>
+                        <label class="radio-label"><input type="radio" name="settings_discipline_radio"
+                                value="Plumbing"> Plumbing</label>
                     </div>
                 </div>
             </div>
-            <p class="tiny muted" style="margin-top: 1rem;">Your settings are saved automatically as you type.</p>
+            <p class="tiny muted" style="margin-top: 1rem;">Settings are saved automatically.</p>
         </div>
     </dialog>
     <!-- API Key Help Modal -->
     <dialog id="apiKeyHelpDlg">
         <div class="modal-header">
-            <div class="title">How to Setup Google Gemini API Key</div>
-            <button class="btn" onclick="closeDlg('apiKeyHelpDlg')">✕ Close</button>
+            <div class="title">Setup API Key</div>
+            <button class="btn ghost" onclick="closeDlg('apiKeyHelpDlg')">Close</button>
         </div>
         <div class="modal-body stack">
             <p>To use the AI features, you need a free API key from Google AI Studio.</p>
             <ol style="margin: 0; padding-left: 1.25rem; line-height: 1.6;">
-                <li>Click the button below to open the Google AI Studio API key page in your browser.</li>
-                <li>If you are not logged in, log in with your Google account.</li>
-                <li>Click the "<b>Create API key in new project</b>" button.</li>
-                <li>A new key will be generated. Click the copy icon next to it.</li>
-                <li>Return to this application and paste the key into the "Google Gemini API Key" field in the settings.
-                </li>
+                <li>Click the button below to open Google AI Studio.</li>
+                <li>Log in with your Google account.</li>
+                <li>Click "<b>Create API key in new project</b>".</li>
+                <li>Copy the generated key.</li>
+                <li>Paste the key into the Settings menu in this app.</li>
             </ol>
-            <a href="https://aistudio.google.com/api-keys" target="_blank" class="btn-primary"
-                style="text-align: center; display: block; text-decoration: none; padding: .6rem;">Open Google AI Studio
-                API Keys Page</a>
+            <a href="https://aistudio.google.com/api-keys" target="_blank" class="btn-primary block-center">Open Google
+                AI Studio</a>
         </div>
     </dialog>
     <!-- Clean DWGs Modal -->
     <dialog id="cleanDwgsDlg">
         <div class="modal-header">
             <div class="title">Clean DWGs Tool</div>
-            <button class="btn" onclick="closeDlg('cleanDwgsDlg')">✕ Cancel</button>
+            <button class="btn ghost" onclick="closeDlg('cleanDwgsDlg')">Cancel</button>
         </div>
         <div class="modal-body stack">
-            <p class="tiny muted">Select a titleblock. The titleblock's parent folder (typically "Xrefs") will be
-                automatically included. Choose additional discipline folders to clean.</p>
+            <p class="tiny muted">Select a titleblock. The parent folder (typically "Xrefs") is automatically included.
+            </p>
 
             <div class="modal-grid">
                 <div class="col-12">
-                    <label class="tiny muted">1. Select Titleblock DWG</label>
+                    <label class="label">1. Select Titleblock DWG</label>
                     <div class="input-with-button">
                         <input id="cleanDwgs_titleblockPath" placeholder="No titleblock selected..." readonly />
-                        <button class="btn tiny" id="btnSelectTitleblock">Select...</button>
+                        <button class="btn tiny" id="btnSelectTitleblock">Browse...</button>
                     </div>
                 </div>
 
-                <!-- REMOVED: Titleblock Size selection section -->
-
                 <div class="col-12">
-                    <label class="tiny muted">2. Select Additional Disciplines to Clean</label>
-                    <!-- Renumbered from 3 -->
-                    <div id="cleanDwgs_disciplines" class="inline" style="gap: 1rem; flex-wrap: wrap;">
-                        <label class="inline tiny"><input type="checkbox" name="cleanDwgs_discipline" value="Electrical"
-                                style="width:auto"> Electrical</label>
-                        <label class="inline tiny"><input type="checkbox" name="cleanDwgs_discipline" value="Mechanical"
-                                style="width:auto"> Mechanical</label>
-                        <label class="inline tiny"><input type="checkbox" name="cleanDwgs_discipline" value="Plumbing"
-                                style="width:auto"> Plumbing</label>
+                    <label class="label">2. Additional Disciplines</label>
+                    <div id="cleanDwgs_disciplines" class="inline radio-group" style="flex-wrap: wrap;">
+                        <label class="radio-label"><input type="checkbox" name="cleanDwgs_discipline"
+                                value="Electrical"> Electrical</label>
+                        <label class="radio-label"><input type="checkbox" name="cleanDwgs_discipline"
+                                value="Mechanical"> Mechanical</label>
+                        <label class="radio-label"><input type="checkbox" name="cleanDwgs_discipline" value="Plumbing">
+                            Plumbing</label>
                     </div>
-                    <p class="tiny muted" style="margin-top: 0.5rem;">✓ The titleblock's parent folder is automatically
-                        included.</p>
                 </div>
             </div>
 
-            <div class="modal-footer" style="text-align: right; margin-top: 1rem;">
-                <button class="btn-primary" id="btnProceedCleanDwgs">▶ Proceed</button>
+            <div class="modal-footer">
+                <button class="btn-primary" id="btnProceedCleanDwgs">▶ Run Tool</button>
             </div>
         </div>
     </dialog>
@@ -409,7 +416,7 @@
     <dialog id="commandDetailsDlg">
         <div class="modal-header">
             <div id="detailsTitle" class="title">Command Details</div>
-            <button class="btn" onclick="closeDlg('commandDetailsDlg')">✕ Close</button>
+            <button class="btn ghost" onclick="closeDlg('commandDetailsDlg')">Close</button>
         </div>
         <div class="modal-body stack">
             <div id="detailsVideo" class="video-container"></div>
@@ -420,22 +427,22 @@
     <dialog id="installPrereqDlg">
         <div class="modal-header">
             <div id="installPrereqTitle" class="title">Installation Required</div>
-            <button class="btn" onclick="closeDlg('installPrereqDlg')">✕ Cancel</button>
+            <button class="btn ghost" onclick="closeDlg('installPrereqDlg')">Cancel</button>
         </div>
         <div class="modal-body stack">
-            <p id="installPrereqMessage">To use this tool, the "CleanCADCommands" bundle needs to be installed. Would you like to install it now?</p>
+            <p id="installPrereqMessage">To use this tool, the "CleanCADCommands" bundle needs to be installed.</p>
             <div id="installSpinner" class="spinner" style="display:none;">Installing...</div>
         </div>
-        <div class="modal-footer" style="text-align: right; margin-top: 1rem;">
+        <div class="modal-footer">
             <button class="btn" onclick="closeDlg('installPrereqDlg')">Later</button>
-            <button class="btn-primary" id="btnInstallPrereq">Install</button>
+            <button class="btn-primary" id="btnInstallPrereq">Install Now</button>
         </div>
     </dialog>
 
     <!-- HTML Templates for JS rendering -->
     <template id="project-row-template">
         <tr class="row">
-            <td class="cell-id"></td>
+            <td class="cell-id"><span class="id-badge"></span></td>
             <td class="cell-name"></td>
             <td class="cell-due"></td>
             <td class="cell-status"></td>
@@ -446,10 +453,11 @@
     <template id="task-row-template">
         <div class="task-row modal-grid" style="align-items:center">
             <div class="col-8"><input class="t-text" placeholder="Task description"></div>
-            <div class="col-1"><label class="tiny inline"><input type="checkbox" class="t-done" style="width:auto">
+            <div class="col-1"><label class="tiny inline checkbox-label"><input type="checkbox" class="t-done"
+                        style="width:auto">
                     Done</label></div>
             <div class="col-3 inline" style="justify-content:flex-end; gap:.4rem"><button type="button"
-                    class="btn tiny btn-remove">Remove</button></div>
+                    class="btn tiny btn-remove text-danger">Remove</button></div>
             <div class="col-6"><input class="t-link" placeholder="Optional link or file path"></div>
             <div class="col-6"><input class="t-link2" placeholder="Second link (optional)"></div>
         </div>
@@ -459,7 +467,7 @@
             <div class="col-4"><input class="r-label" placeholder="Label (optional)"></div>
             <div class="col-8"><input class="r-url" placeholder="URL or file path"></div>
             <div class="col-12 inline" style="justify-content:flex-end; gap:.4rem"><button type="button"
-                    class="btn tiny btn-remove">Remove</button></div>
+                    class="btn tiny btn-remove text-danger">Remove</button></div>
         </div>
     </template>
     <script src="script.js"></script>

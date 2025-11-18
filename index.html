@@ -49,32 +49,39 @@
         </div>
         <div class="drawer-body">
             <div class="toolbar">
-                <button class="btn btn-primary" id="btnNew">＋ New project</button>
-                <details class="menu">
-                    <summary class="btn">⇪ Import Data</summary>
-                    <div class="menu-list">
-                        <button class="btn block" id="btnEmail">From Email (AI)...</button>
-                        <button class="btn block" id="btnImport">From CSV file…</button>
-                        <button class="btn block" id="btnPaste">Paste CSV…</button>
-                    </div>
-                </details>
-                <details class="menu">
-                    <summary class="btn">⬇︎ Export Data</summary>
-                    <div class="menu-list">
-                        <button class="btn block" id="btnExportCsv">Export CSV</button>
-                        <button class="btn block" id="btnExportJson">Export JSON</button>
-                    </div>
-                </details>
-                <div class="hr"></div>
-                <button class="btn" id="btnMarkOverdue">Mark Overdue as Complete</button>
-                <button class="btn btn-danger" id="btnDeleteAll">☠️ Delete All Data</button>
+                <button class="btn btn-primary full-width" id="btnNew">＋ New project</button>
 
-                <div class="kpi-container">
-                    <div class="kpi">
-                        <div class="card">
-                            <div class="num" id="kWeek">0</div>
-                            <div class="tiny muted">Incomplete this week</div>
-                        </div>
+                <div class="drawer-section-title">Data Management</div>
+                <div class="drawer-actions">
+                    <button class="btn" id="btnMarkOverdue">Mark Overdue as Complete</button>
+                    <button class="btn btn-danger" id="btnDeleteAll">☠️ Delete All Data</button>
+                </div>
+
+                <div class="drawer-section-title">Statistics</div>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-value" id="statTotal">0</div>
+                        <div class="stat-label">Total Projects</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="statCompleted">0</div>
+                        <div class="stat-label">Completed</div>
+                    </div>
+                    <div class="stat-card full-width">
+                        <div class="stat-value" id="statAvg">0</div>
+                        <div class="stat-label">Avg. Projects / Week</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="statLastWeek">0</div>
+                        <div class="stat-label">Due Last Week</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="statThisWeek">0</div>
+                        <div class="stat-label">Due This Week</div>
+                    </div>
+                    <div class="stat-card full-width">
+                        <div class="stat-value" id="statUpcoming">0</div>
+                        <div class="stat-label">Upcoming (Future)</div>
                     </div>
                 </div>
             </div>
@@ -89,9 +96,9 @@
                     <div class="filter-label">Timeframe</div>
                     <div class="due-filter-group" id="dueFilterGroup">
                         <button class="filter-chip active" data-due-filter="all">All</button>
-                        <button class="filter-chip" data-due-filter="overdue">Overdue</button>
+                        <button class="filter-chip" data-due-filter="past">Past Weeks</button>
                         <button class="filter-chip" data-due-filter="soon">This Week</button>
-                        <button class="filter-chip" data-due-filter="ok">Upcoming</button>
+                        <button class="filter-chip" data-due-filter="future">Upcoming Weeks</button>
                     </div>
                     <div class="filter-label" style="margin-top:0.5rem">Status</div>
                     <div class="status-filter-group" id="statusFilterGroup">
@@ -118,7 +125,7 @@
                 <div id="emptyState" class="empty" style="display:none">
                     <div class="empty-icon">📂</div>
                     <h3>No projects yet</h3>
-                    <p>Import your CSV or create a new project to get started.</p>
+                    <p>Create a new project to get started.</p>
                 </div>
             </section>
         </div>
@@ -237,10 +244,7 @@
                 </div>
                 <div class="col-4">
                     <label class="label">Project Path</label>
-                    <div class="input-with-button">
-                        <input id="f_path" placeholder="e.g. M:\Projects\..." />
-                        <button class="btn tiny" id="btnCreateFolder" title="Create directory">Create</button>
-                    </div>
+                    <input id="f_path" placeholder="e.g. M:\Projects\..." />
                 </div>
                 <div class="col-12">
                     <label class="label">Status</label>
@@ -342,7 +346,7 @@
                     </div>
                 </div>
                 <div class="col-12">
-                    <label class="label">Default Discipline</label>
+                    <label class="label">Discipline</label>
                     <div id="settings_discipline" class="inline radio-group">
                         <label class="radio-label"><input type="radio" name="settings_discipline_radio"
                                 value="Electrical"> Electrical</label>

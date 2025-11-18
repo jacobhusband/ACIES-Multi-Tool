@@ -230,7 +230,6 @@ function toast(msg, duration = 2500) {
         `
     });
 
-    // Add a tiny animation keyframe dynamically if needed, or rely on simple transition
     document.body.append(t);
     setTimeout(() => {
         t.style.opacity = '0';
@@ -438,10 +437,52 @@ function render() {
     let items = db.filter(p => {
         if (q && !matches(q, p)) return false;
 
+        const d = parseDueStr(p.due);
+
         // Due Filters
-        if (dueFilter === 'overdue' && (dueState(p.due) !== 'overdue' || hasStatus(p, 'Complete'))) return false;
-        if (dueFilter === 'soon' && dueState(p.due) !== 'dueSoon') return false;
-        if (dueFilter === 'ok' && dueState(p.due) !== 'ok') return false;
+        if (dueFilter === 'past') {
+            // Past Weeks: Date < Start of Current Week
+            if (!d) return false;
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const dayOfWeek = today.getDay();
+            const startOfWeek = new Date(today);
+            startOfWeek.setDate(today.getDate() - dayOfWeek);
+            startOfWeek.setHours(0, 0, 0, 0);
+
+            if (d >= startOfWeek) return false;
+        }
+        if (dueFilter === 'soon') {
+            // This Week: Date within StartOfWeek and EndOfWeek (Sun-Sat)
+            if (!d) return false;
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const dayOfWeek = today.getDay();
+            const startOfWeek = new Date(today);
+            startOfWeek.setDate(today.getDate() - dayOfWeek);
+            startOfWeek.setHours(0, 0, 0, 0);
+
+            const endOfWeek = new Date(startOfWeek);
+            endOfWeek.setDate(startOfWeek.getDate() + 6);
+            endOfWeek.setHours(23, 59, 59, 999);
+
+            if (d < startOfWeek || d > endOfWeek) return false;
+        }
+        if (dueFilter === 'future') {
+            // Upcoming Weeks: Date > End of Current Week
+            if (!d) return false;
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const dayOfWeek = today.getDay();
+            const startOfWeek = new Date(today);
+            startOfWeek.setDate(today.getDate() - dayOfWeek);
+
+            const endOfWeek = new Date(startOfWeek);
+            endOfWeek.setDate(startOfWeek.getDate() + 6);
+            endOfWeek.setHours(23, 59, 59, 999);
+
+            if (d <= endOfWeek) return false;
+        }
 
         // Status Filters
         if (statusFilter === 'incomplete') {
@@ -471,9 +512,54 @@ function render() {
 
     updateSortHeaders();
 
-    // Update KPI
-    const incompleteDueSoon = db.filter(p => dueState(p.due) === 'dueSoon' && !hasStatus(p, 'Complete')).length;
-    document.getElementById('kWeek').textContent = incompleteDueSoon;
+    // --- Statistics Calculation ---
+    const total = db.length;
+    const completed = db.filter(p => hasStatus(p, 'Complete')).length;
+
+    // Date-based stats
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const dayOfWeek = today.getDay();
+    const startOfWeek = new Date(today); startOfWeek.setDate(today.getDate() - dayOfWeek);
+    const endOfWeek = new Date(startOfWeek); endOfWeek.setDate(startOfWeek.getDate() + 6); endOfWeek.setHours(23, 59, 59, 999);
+
+    const startOfLastWeek = new Date(startOfWeek); startOfLastWeek.setDate(startOfWeek.getDate() - 7);
+    const endOfLastWeek = new Date(endOfWeek); endOfLastWeek.setDate(endOfWeek.getDate() - 7);
+
+    let dueThisWeek = 0;
+    let dueLastWeek = 0;
+    let upcoming = 0;
+    let minDate = null;
+    let maxDate = null;
+
+    db.forEach(p => {
+        const d = parseDueStr(p.due);
+        if (d) {
+            if (d >= startOfWeek && d <= endOfWeek) dueThisWeek++;
+            if (d >= startOfLastWeek && d <= endOfLastWeek) dueLastWeek++;
+            if (d > endOfWeek) upcoming++;
+
+            if (!minDate || d < minDate) minDate = d;
+            if (!maxDate || d > maxDate) maxDate = d;
+        }
+    });
+
+    // Average Calculation
+    let avgPerWeek = 0;
+    if (minDate && maxDate && total > 0) {
+        const diffTime = Math.abs(maxDate - minDate);
+        const diffWeeks = Math.ceil(diffTime / (1000 * 60 * 60 * 24 * 7)) || 1;
+        avgPerWeek = (total / diffWeeks).toFixed(1);
+    }
+
+    // Update DOM (Safe check for elements)
+    const setStat = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+    setStat('statTotal', total);
+    setStat('statCompleted', completed);
+    setStat('statLastWeek', dueLastWeek);
+    setStat('statThisWeek', dueThisWeek);
+    setStat('statUpcoming', upcoming);
+    setStat('statAvg', avgPerWeek);
 
     // Empty State Toggle
     emptyState.style.display = items.length ? 'none' : 'block';
@@ -1270,9 +1356,12 @@ function initTabbedInterfaces() {
         if (tab === 'notes') {
             searchInput.placeholder = 'Search notes...';
             searchInput.disabled = false;
+        } else if (tab === 'tools') {
+            searchInput.placeholder = 'Search tools';
+            searchInput.disabled = false;
         } else if (tab === 'plugins') {
-            searchInput.placeholder = 'Search unavailable';
-            searchInput.disabled = true;
+            searchInput.placeholder = 'Search Plugins';
+            searchInput.disabled = false;
         } else {
             searchInput.placeholder = 'Search projects...';
             searchInput.disabled = false;
@@ -1286,13 +1375,18 @@ function initEventListeners() {
     document.getElementById('search').addEventListener('input', debounce(() => {
         const activeTab = document.querySelector('.main-tab-btn.active')?.dataset.tab;
         if (activeTab === 'notes') renderNoteSearchResults();
-        else render();
+        else if (activeTab === 'projects') render();
+        // Do nothing for tools/plugins search for now as logic wasn't requested, just the UI change.
     }, 250));
 
     // Toolbar Actions
     document.getElementById('quickNew').onclick = openNew;
     document.getElementById('btnNew').onclick = openNew;
     document.getElementById('settingsBtn').onclick = () => document.getElementById('settingsDlg').showModal();
+    document.getElementById('settings_howToSetupBtn').onclick = () => document.getElementById('apiKeyHelpDlg').showModal();
+
+    // Save/Create Project Button
+    document.getElementById('btnSaveProject').onclick = onSaveProject;
 
     // Drawer Logic
     const drawer = document.getElementById('drawer');
@@ -1329,6 +1423,13 @@ function initEventListeners() {
         e.currentTarget.classList.add('running');
         window.updateToolStatus('toolPublishDwgs', 'Initializing...');
         await window.pywebview.api.run_publish_script();
+    });
+
+    document.getElementById('toolCleanXrefs').addEventListener('click', async (e) => {
+        if (e.currentTarget.classList.contains('running')) return;
+        e.currentTarget.classList.add('running');
+        window.updateToolStatus('toolCleanXrefs', 'Initializing...');
+        await window.pywebview.api.run_clean_xrefs_script();
     });
 
     document.getElementById('toolCleanDwgs').addEventListener('click', (e) => {
@@ -1371,7 +1472,7 @@ function initEventListeners() {
         document.getElementById('aiSpinner').style.display = 'none';
         document.getElementById('emailDlg').showModal();
     };
-    document.getElementById('btnEmail').onclick = handleAI;
+    // Removed btnEmail listener as button was deleted
     document.getElementById('aiBtn').onclick = handleAI;
 
     document.getElementById('btnProcessEmail').onclick = async () => {
@@ -1397,21 +1498,10 @@ function initEventListeners() {
     document.getElementById('settings_apiKey').oninput = (e) => { userSettings.apiKey = e.target.value; debouncedSaveUserSettings(); };
 
     // Export/Import
-    document.getElementById('btnExportCsv').onclick = exportCSV;
-    document.getElementById('btnExportJson').onclick = exportJSON;
-    document.getElementById('btnImport').onclick = async () => {
-        const res = await window.pywebview.api.import_and_process_csv();
-        if (res.status === 'success' && res.data) {
-            db.push(...res.data);
-            migrateStatuses(db);
-            save();
-            render();
-            toast(`Imported ${res.data.length} projects.`);
-        }
-    };
+    // Removed listeners for btnExportCsv, btnExportJson, btnImport as buttons were deleted.
 
     // Paste CSV
-    document.getElementById('btnPaste').onclick = () => document.getElementById('pasteDlg').showModal();
+    // Removed listener for btnPaste as button was deleted.
     document.getElementById('btnPasteImport').onclick = () => {
         const rows = parseCSV(val('pasteArea'));
         importRows(rows, document.getElementById('hasHeader').checked);

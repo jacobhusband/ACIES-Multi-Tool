@@ -4,7 +4,19 @@
 
 Write-Host "PROGRESS: Initializing script..."
 
-$acadCore = "C:\Program Files\Autodesk\AutoCAD 2025\accoreconsole.exe"
+# --- AUTOCAD VERSION DETECTION (2025-2020) ---
+$acadCore = $null
+$years = 2025, 2024, 2023, 2022, 2021, 2020
+
+foreach ($year in $years) {
+    $possiblePath = "C:\Program Files\Autodesk\AutoCAD $year\accoreconsole.exe"
+    if (Test-Path -Path $possiblePath) {
+        $acadCore = $possiblePath
+        Write-Host "PROGRESS: Found AutoCAD $year Core Console."
+        break # Stop searching once the latest version is found
+    }
+}
+
 $scriptRoot = $PSScriptRoot
 $dll = Join-Path $scriptRoot "StripRefPaths.dll"
 
@@ -15,8 +27,17 @@ if ([Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') {
   exit
 }
 
-if (-not (Test-Path $acadCore)) { Write-Host "PROGRESS: ERROR: AutoCAD Core Console not found at $acadCore"; exit 1 }
-if (-not (Test-Path $dll)) { Write-Host "PROGRESS: ERROR: Required component 'StripRefPaths.dll' not found."; exit 1 }
+# Validation
+if ([string]::IsNullOrEmpty($acadCore) -or -not (Test-Path $acadCore)) { 
+    Write-Host "PROGRESS: ERROR: AutoCAD Core Console not found for versions 2020-2025."
+    Write-Host "Please ensure AutoCAD is installed in the default 'C:\Program Files\Autodesk' directory."
+    exit 1 
+}
+
+if (-not (Test-Path $dll)) { 
+    Write-Host "PROGRESS: ERROR: Required component 'StripRefPaths.dll' not found at $dll"
+    exit 1 
+}
 
 Write-Host "PROGRESS: Staging cleanup commands..."
 # Stage AutoLISP CLEANUP command so each drawing is tidied after ref paths are stripped

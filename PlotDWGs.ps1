@@ -1,6 +1,17 @@
 # --- SCRIPT CONFIGURATION ---
-# Path to the AutoCAD Core Console executable
-$acadCore = "C:\Program Files\Autodesk\AutoCAD 2025\accoreconsole.exe"
+# Logic to find the latest AutoCAD Core Console (2025 down to 2020)
+$acadCore = $null
+$years = 2025, 2024, 2023, 2022, 2021, 2020
+
+foreach ($year in $years) {
+    $possiblePath = "C:\Program Files\Autodesk\AutoCAD $year\accoreconsole.exe"
+    if (Test-Path -Path $possiblePath) {
+        $acadCore = $possiblePath
+        Write-Host "PROGRESS: Found AutoCAD $year Core Console."
+        break # Stop searching once the latest version is found
+    }
+}
+
 # Name for the combined PDF file
 $combinedPdfName = "combined.pdf"
 # Name of the Python executable (can be python, python3, or a full path)
@@ -35,8 +46,9 @@ if ([System.Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') {
     exit
 }
 # Validate that accoreconsole.exe exists
-if (-not (Test-Path $acadCore)) {
-    Write-Host "PROGRESS: ERROR: AutoCAD Core Console not found at: $acadCore"
+if ([string]::IsNullOrEmpty($acadCore) -or -not (Test-Path $acadCore)) {
+    Write-Host "PROGRESS: ERROR: AutoCAD Core Console not found for versions 2020-2025."
+    Write-Host "Please ensure AutoCAD is installed in the default 'C:\Program Files\Autodesk' directory."
     exit 1
 }
 
@@ -103,6 +115,7 @@ New-Item -ItemType Directory -Force -Path $batchOutputDir | Out-Null
 $logFile = Join-Path $batchOutputDir "_BatchPlotLog.txt"
 "===== Batch Plot Started: $(Get-Date -f 'yyyy-MM-dd HH:mm:ss') =====" | Out-File $logFile
 "Selected Paper Size: $selectedPaperSize" | Out-File $logFile -Append
+"AutoCAD Core Used: $acadCore" | Out-File $logFile -Append
 "Output Folder: $batchOutputDir" | Out-File $logFile -Append
 "Processing $($files.Count) files..." | Out-File $logFile -Append
 

@@ -561,6 +561,7 @@ Return ONLY the JSON object.
             raise Exception("PlotDWGs.ps1 not found in application directory.")
         command = f'powershell.exe -ExecutionPolicy Bypass -File "{script_path}"'
         self._run_script_with_progress(command, 'toolPublishDwgs')
+        return {'status': 'success'}
 
     def run_clean_xrefs_script(self):
         """Runs the removeXREFPaths.ps1 PowerShell script with progress updates."""
@@ -570,6 +571,7 @@ Return ONLY the JSON object.
                 "removeXREFPaths.ps1 not found in application directory.")
         command = f'powershell.exe -ExecutionPolicy Bypass -File "{script_path}"'
         self._run_script_with_progress(command, 'toolCleanXrefs')
+        return {'status': 'success'}
 
     def select_files(self, options):
         """Shows a file dialog and returns selected paths."""

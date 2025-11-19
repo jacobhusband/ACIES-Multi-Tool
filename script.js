@@ -1179,6 +1179,25 @@ function initEventListeners() {
         closeDlg('pasteDlg');
     };
 
+    document.getElementById('btnMarkOverdue').onclick = () => {
+        document.getElementById('markOverdueDlg').showModal();
+    };
+    document.getElementById('btnConfirmMarkOverdue').onclick = async () => {
+        try {
+            const response = await window.pywebview.api.mark_overdue_projects_complete();
+            if (response.status === 'success') {
+                toast(`Marked ${response.count} projects as complete.`);
+                db = await load();
+                render();
+            } else {
+                toast('Failed to mark projects as complete.');
+            }
+        } catch (e) {
+            toast('Error marking projects as complete.');
+        }
+        closeDlg('markOverdueDlg');
+    };
+
     document.getElementById('btnDeleteAll').onclick = () => {
         document.getElementById('deleteConfirmInput').value = '';
         document.getElementById('btnDeleteConfirm').disabled = true;
@@ -1189,6 +1208,64 @@ function initEventListeners() {
     };
     document.getElementById('btnDeleteConfirm').onclick = () => {
         db = []; save(); render(); closeDlg('deleteDlg');
+    };
+
+    document.getElementById('btnDeleteAllNotes').onclick = () => {
+        document.getElementById('deleteNotesConfirmInput').value = '';
+        document.getElementById('btnDeleteNotesConfirm').disabled = true;
+        document.getElementById('deleteNotesDlg').showModal();
+    };
+    document.getElementById('deleteNotesConfirmInput').oninput = (e) => {
+        document.getElementById('btnDeleteNotesConfirm').disabled = e.target.value !== 'DELETE';
+    };
+    document.getElementById('btnDeleteNotesConfirm').onclick = async () => {
+        try {
+            const response = await window.pywebview.api.delete_all_notes();
+            if (response.status === 'success') {
+                toast('All notes data deleted.');
+                notesDb = {};
+                noteTabs = ['General'];
+                activeNoteTab = 'General';
+                renderNoteTabs();
+            } else {
+                toast('Failed to delete notes data.');
+            }
+        } catch (e) {
+            toast('Error deleting notes data.');
+        }
+        closeDlg('deleteNotesDlg');
+    };
+
+    document.getElementById('btnUninstallAllPlugins').onclick = async () => {
+        try {
+            const response = await window.pywebview.api.check_autocad_running();
+            if (response.is_running) {
+                toast('AutoCAD is currently running. Please close AutoCAD and try again.');
+                return;
+            }
+            document.getElementById('uninstallPluginsConfirmInput').value = '';
+            document.getElementById('btnUninstallPluginsConfirm').disabled = true;
+            document.getElementById('uninstallPluginsDlg').showModal();
+        } catch (e) {
+            toast('Error checking AutoCAD status.');
+        }
+    };
+    document.getElementById('uninstallPluginsConfirmInput').oninput = (e) => {
+        document.getElementById('btnUninstallPluginsConfirm').disabled = e.target.value !== 'UNINSTALL';
+    };
+    document.getElementById('btnUninstallPluginsConfirm').onclick = async () => {
+        try {
+            const response = await window.pywebview.api.uninstall_all_plugins();
+            if (response.status === 'success') {
+                toast(`Uninstalled ${response.count} plugins.`);
+                loadAndRenderBundles();
+            } else {
+                toast('Failed to uninstall plugins.');
+            }
+        } catch (e) {
+            toast('Error uninstalling plugins.');
+        }
+        closeDlg('uninstallPluginsDlg');
     };
 
     document.getElementById('commands-container').addEventListener('click', handleBundleAction);

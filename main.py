@@ -1,3 +1,5 @@
+from google.genai import types
+from google import genai
 import webview
 import json
 import os
@@ -14,10 +16,63 @@ import threading
 import requests  # Added for GitHub API calls
 import zipfile   # Added for extracting bundles
 
+# Helper functions for date parsing and status management
+
+
+def parse_due_str(s):
+    """Parse due date string similar to JS parseDueStr."""
+    if not s:
+        return None
+    s = s.strip()
+    try:
+        # Try ISO format first
+        return datetime.datetime.fromisoformat(s.replace('Z', '+00:00'))
+    except:
+        pass
+    s = s.replace('.', '/').replace(' ', '')
+    parts = s.split('/')
+    if len(parts) == 3:
+        try:
+            mm, dd, yy = parts
+            if len(yy) == 2:
+                yy = '20' + yy
+            iso = f"{yy}-{mm.zfill(2)}-{dd.zfill(2)}T12:00:00"
+            return datetime.datetime.fromisoformat(iso)
+        except:
+            pass
+    try:
+        return datetime.datetime.strptime(s, "%m/%d/%Y")
+    except:
+        pass
+    return None
+
+
+def sync_status_arrays(task):
+    """Sync status arrays similar to JS syncStatusArrays."""
+    if not isinstance(task.get('statuses'), list):
+        task['statuses'] = []
+    from_tags = task.get('statusTags', [])
+    for k in from_tags:
+        label = {'pendingReview': 'Pending Review',
+                 'complete': 'Complete', 'waiting': 'Waiting'}.get(k)
+        if label and label not in task['statuses']:
+            task['statuses'].append(label)
+    task['statuses'] = list(set(task['statuses']) & set(
+        ['Pending Review', 'Complete', 'Waiting']))
+    task['statusTags'] = [k for k, v in {'Pending Review': 'pendingReview', 'Complete': 'complete', 'Waiting': 'waiting'}.items(
+    ) if v in [k for k, v in {'Pending Review': 'pendingReview', 'Complete': 'complete', 'Waiting': 'waiting'}.items() if v in task['statuses']]]
+    if 'Complete' in task['statuses']:
+        task['status'] = 'Complete'
+    elif 'Waiting' in task['statuses']:
+        task['status'] = 'Waiting'
+    elif 'Pending Review' in task['statuses']:
+        task['status'] = 'Pending'
+    else:
+        task['status'] = task.get('status', '')
+
+
 # --- Google GenAI (new client) ---
 # Uses GOOGLE_API_KEY from environment/.env
-from google import genai
-from google.genai import types
 
 # --- Helper function to get the application data path ---
 
@@ -519,6 +574,67 @@ Return ONLY the JSON object.
             return {'status': 'success'}
         except Exception as e:
             logging.error(f"Error saving notes: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def mark_overdue_projects_complete(self):
+        """Marks all projects with due dates before today as complete."""
+        try:
+            tasks = self.get_tasks()
+            today = datetime.date.today()
+            count = 0
+            for task in tasks:
+                due_str = task.get('due', '')
+                if due_str:
+                    due_date = parse_due_str(due_str)
+                    if due_date and due_date.date() < today:
+                        # Set status to Complete
+                        task['statuses'] = ['Complete']
+                        task['status'] = 'Complete'
+                        sync_status_arrays(task)
+                        count += 1
+            if count > 0:
+                self.save_tasks(tasks)
+            return {'status': 'success', 'count': count}
+        except Exception as e:
+            logging.error(f"Error marking overdue projects: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def delete_all_notes(self):
+        """Deletes all notes data."""
+        try:
+            if os.path.exists(NOTES_FILE):
+                os.remove(NOTES_FILE)
+            return {'status': 'success'}
+        except Exception as e:
+            logging.error(f"Error deleting notes: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def check_autocad_running(self):
+        """Checks if AutoCAD is running."""
+        is_running = self._is_autocad_running()
+        return {'is_running': is_running}
+
+    def uninstall_all_plugins(self):
+        """Uninstalls all installed plugins."""
+        try:
+            # Check AutoCAD again just in case
+            if self._is_autocad_running():
+                return {'status': 'error', 'message': 'AutoCAD is currently running. Please close AutoCAD before uninstalling.'}
+
+            bundles = os.listdir(self.app_plugins_folder)
+            count = 0
+            for bundle in bundles:
+                if bundle.endswith('.bundle'):
+                    bundle_path = os.path.join(self.app_plugins_folder, bundle)
+                    try:
+                        shutil.rmtree(bundle_path)
+                        count += 1
+                        logging.info(f"Uninstalled bundle: {bundle}")
+                    except Exception as e:
+                        logging.error(f"Failed to uninstall {bundle}: {e}")
+            return {'status': 'success', 'count': count}
+        except Exception as e:
+            logging.error(f"Error uninstalling plugins: {e}")
             return {'status': 'error', 'message': str(e)}
 
     def open_path(self, path):

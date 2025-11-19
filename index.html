@@ -295,6 +295,51 @@
             <button class="btn-danger full-width" id="btnDeleteConfirm" disabled>Delete All Data</button>
         </div>
     </dialog>
+    <!-- Mark Overdue Confirmation Modal -->
+    <dialog id="markOverdueDlg">
+        <div class="modal-header">
+            <div class="title">Mark Past Due Projects as Complete</div>
+            <button class="btn ghost" onclick="closeDlg('markOverdueDlg')">Cancel</button>
+        </div>
+        <div class="modal-body stack">
+            <p>This will change the status of all projects with a due date before today to "Complete".</p>
+            <p>Are you sure you want to proceed?</p>
+            <div class="inline" style="justify-content: flex-end; gap: 1rem;">
+                <button class="btn ghost" onclick="closeDlg('markOverdueDlg')">Cancel</button>
+                <button class="btn-primary" id="btnConfirmMarkOverdue">Yes, Mark as Complete</button>
+            </div>
+        </div>
+    </dialog>
+    <!-- Delete All Notes Confirmation Modal -->
+    <dialog id="deleteNotesDlg">
+        <div class="modal-header">
+            <div class="title text-danger">Delete All Notes Data</div>
+            <button class="btn ghost" onclick="closeDlg('deleteNotesDlg')">Cancel</button>
+        </div>
+        <div class="modal-body stack">
+            <p>This will delete all stored notes and custom notes pages.</p>
+            <p>This is a destructive and irreversible action.</p>
+            <p>To confirm, type <b>DELETE</b> into the box below and click the button.</p>
+            <input id="deleteNotesConfirmInput" type="text" placeholder="Type DELETE to confirm" autocomplete="off" />
+            <button class="btn-danger full-width" id="btnDeleteNotesConfirm" disabled>Delete All Notes Data</button>
+        </div>
+    </dialog>
+    <!-- Uninstall All Plugins Confirmation Modal -->
+    <dialog id="uninstallPluginsDlg">
+        <div class="modal-header">
+            <div class="title text-danger">Uninstall All Plugins</div>
+            <button class="btn ghost" onclick="closeDlg('uninstallPluginsDlg')">Cancel</button>
+        </div>
+        <div class="modal-body stack">
+            <p>This will uninstall all installed AutoCAD plugins from your ApplicationPlugins directory.</p>
+            <p>This is a destructive and irreversible action.</p>
+            <p>To confirm, type <b>UNINSTALL</b> into the box below and click the button.</p>
+            <input id="uninstallPluginsConfirmInput" type="text" placeholder="Type UNINSTALL to confirm"
+                autocomplete="off" />
+            <button class="btn-danger full-width" id="btnUninstallPluginsConfirm" disabled>Uninstall All
+                Plugins</button>
+        </div>
+    </dialog>
     <!-- Settings Modal -->
     <dialog id="settingsDlg">
         <div class="modal-header">
@@ -328,10 +373,24 @@
             </div>
             <div class="section-divider"></div>
             <div class="stack">
-                <div class="title section-header">Data Management</div>
+                <div class="title section-header">Project Data Management</div>
                 <div class="inline" style="gap: 1rem;">
-                    <button class="btn" id="btnMarkOverdue">Mark Overdue as Complete</button>
-                    <button class="btn btn-danger" id="btnDeleteAll">☠️ Delete All Data</button>
+                    <button class="btn" id="btnMarkOverdue">Change Status of All Past Due Projects to Complete</button>
+                    <button class="btn btn-danger" id="btnDeleteAll">☠️ Delete All Project Data</button>
+                </div>
+            </div>
+            <div class="section-divider"></div>
+            <div class="stack">
+                <div class="title section-header">Notes Data Management</div>
+                <div class="inline" style="gap: 1rem;">
+                    <button class="btn btn-danger" id="btnDeleteAllNotes">☠️ Delete All Notes Data</button>
+                </div>
+            </div>
+            <div class="section-divider"></div>
+            <div class="stack">
+                <div class="title section-header">Plugins Data Management</div>
+                <div class="inline" style="gap: 1rem;">
+                    <button class="btn btn-danger" id="btnUninstallAllPlugins">☠️ Uninstall All Plugins</button>
                 </div>
             </div>
             <p class="tiny muted" style="margin-top: 1rem;">Settings are saved automatically.</p>

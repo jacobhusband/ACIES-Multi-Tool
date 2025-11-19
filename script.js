@@ -1109,60 +1109,41 @@ function renderNoteSearchResults() {
     const query = val('search').toLowerCase();
     const resultsContainer = document.getElementById('notesSearchResults');
     resultsContainer.innerHTML = '';
-    if (!query) return;
+
+    if (!query || !activeNoteTab) return;
 
     const queryWords = query.split(' ').filter(w => w);
     if (!queryWords.length) return;
 
-    const seenNotes = new Set();
+    // ONLY search the currently active tab
+    const content = notesDb[activeNoteTab];
+    if (!content) return;
 
-    for (const plan in notesDb) {
-        const content = notesDb[plan];
-        if (!content) continue;
+    const notes = content.split(/\n\s*\n/).filter(note => note.trim() !== '');
 
-        const notes = content.split(/\n\s*\n/).filter(note => note.trim() !== '');
-        notes.forEach((noteText) => {
-            const lowerNoteText = noteText.toLowerCase();
-            if (queryWords.every(word => lowerNoteText.includes(word))) {
-                const noteKey = `${plan}:${noteText}`;
-                if (seenNotes.has(noteKey)) return;
-                seenNotes.add(noteKey);
+    notes.forEach((noteText) => {
+        const lowerNoteText = noteText.toLowerCase();
+        if (queryWords.every(word => lowerNoteText.includes(word))) {
 
-                const location = `${plan}`;
-                const item = el('div', { className: 'note-result-item' });
-                const contentDiv = el('div', { className: 'note-result-content' });
-                const actionsDiv = el('div', { className: 'note-result-actions' });
+            const item = el('div', { className: 'note-result-item' });
+            const contentDiv = el('div', { className: 'note-result-content' });
+            const actionsDiv = el('div', { className: 'note-result-actions' });
 
-                contentDiv.append(
-                    el('div', { className: 'location', textContent: location }),
-                    el('div', { className: 'snippet', textContent: noteText })
-                );
+            contentDiv.append(
+                // Removed the location header since it's always the current page
+                el('div', { className: 'snippet', textContent: noteText })
+            );
 
-                const editBtn = el('button', { className: 'btn tiny', textContent: 'Edit' });
-                editBtn.onclick = () => {
-                    activeNoteTab = plan;
-                    renderNoteTabs();
-                    setTimeout(() => {
-                        const area = document.getElementById('notesTextarea');
-                        if (area) {
-                            area.focus();
-                            const pos = area.value.indexOf(noteText);
-                            if (pos !== -1) area.setSelectionRange(pos, pos);
-                        }
-                    }, 100);
-                };
+            const copyBtn = el('button', { className: 'btn tiny', textContent: 'Copy' });
+            copyBtn.onclick = () => {
+                navigator.clipboard.writeText(noteText).then(() => toast('Copied!'));
+            };
 
-                const copyBtn = el('button', { className: 'btn tiny', textContent: 'Copy' });
-                copyBtn.onclick = () => {
-                    navigator.clipboard.writeText(noteText).then(() => toast('Copied!'));
-                };
-
-                actionsDiv.append(editBtn, copyBtn);
-                item.append(contentDiv, actionsDiv);
-                resultsContainer.append(item);
-            }
-        });
-    }
+            actionsDiv.append(copyBtn);
+            item.append(contentDiv, actionsDiv);
+            resultsContainer.append(item);
+        }
+    });
 }
 
 // ===================== BUNDLE / PLUGIN MANAGER =====================
@@ -1355,6 +1336,7 @@ function initTabbedInterfaces() {
     // Main Nav Logic
     const mainTabContainer = document.querySelector('.main-nav');
     const searchInput = document.getElementById('search');
+    const notesResults = document.getElementById('notesSearchResults');
 
     mainTabContainer.addEventListener('click', e => {
         if (!e.target.matches('.main-tab-btn')) return;
@@ -1367,23 +1349,27 @@ function initTabbedInterfaces() {
             p.classList.toggle('active', p.id === `${tab}-panel`);
         });
 
-        // Context-aware actions
-        if (tab === 'plugins') loadAndRenderBundles();
-
-        if (tab === 'notes') {
-            searchInput.placeholder = 'Search notes...';
-            searchInput.disabled = false;
-        } else if (tab === 'tools') {
-            searchInput.placeholder = 'Search tools';
-            searchInput.disabled = false;
-        } else if (tab === 'plugins') {
-            searchInput.placeholder = 'Search Plugins';
-            searchInput.disabled = false;
-        } else {
-            searchInput.placeholder = 'Search projects...';
-            searchInput.disabled = false;
-        }
+        // Clear Search Input and Results when switching tabs
         searchInput.value = '';
+        if (notesResults) notesResults.innerHTML = '';
+
+        // Context-aware actions & Search Disabling
+        if (tab === 'plugins') {
+            loadAndRenderBundles();
+            searchInput.disabled = true;
+            searchInput.placeholder = 'Search disabled';
+        } else if (tab === 'tools') {
+            searchInput.disabled = true;
+            searchInput.placeholder = 'Search disabled';
+        } else if (tab === 'notes') {
+            searchInput.disabled = false;
+            searchInput.placeholder = 'Search current page...';
+        } else {
+            // Projects
+            searchInput.disabled = false;
+            searchInput.placeholder = 'Search projects...';
+            render(); // Re-render projects to clear any previous search filters
+        }
     });
 }
 

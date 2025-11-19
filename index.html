@@ -166,7 +166,7 @@
         <!-- Tab Panel for Tools -->
         <div id="tools-panel" class="tab-panel" hidden>
             <section class="panel stack">
-                <!-- Combined Header to fix spacing issue -->
+                <!-- Combined Header -->
                 <div class="autocad-tools-header"
                     style="display: flex; justify-content: space-between; align-items: flex-start;">
                     <div class="autocad-tools-section">
@@ -181,10 +181,10 @@
                     <div id="toolPublishDwgs" class="tool-card" role="button" tabindex="0">
                         <div class="tool-card-content">
                             <div class="tool-icon">🖨️</div>
-                            <div class="tool-card-header">Publish DWGs</div>
+                            <div class="tool-card-header">Publish CAD DWGs in Headless Mode</div>
                             <div class="tool-card-body">
                                 Plots the layouts of each of the selected DWG files and combines them. Outputs to
-                                "user/documents/AutoCAD Plots".
+                                local path "user/document/AutoCAD Plots". Opens output folder with plotted PDFs.
                             </div>
                         </div>
                         <div class="tool-card-status"></div>
@@ -193,10 +193,9 @@
                     <div id="toolCleanXrefs" class="tool-card" role="button" tabindex="0">
                         <div class="tool-card-content">
                             <div class="tool-icon">🧹</div>
-                            <div class="tool-card-header">Clean XREFs</div>
+                            <div class="tool-card-header">Prepare CAD DWG for Reference</div>
                             <div class="tool-card-body">
-                                Strips saved paths from all external references (XREFs, images, underlays) in selected
-                                DWG files, forcing AutoCAD to find them in its support paths.
+                                Strips saved XREF paths. Sets all objects color to "by layer". Purges & Audits.
                             </div>
                         </div>
                         <div class="tool-card-status"></div>
@@ -205,10 +204,10 @@
                     <div id="toolCleanDwgs" class="tool-card" role="button" tabindex="0">
                         <div class="tool-card-content">
                             <div class="tool-icon">✨</div>
-                            <div class="tool-card-header">Clean DWGs</div>
+                            <div class="tool-card-header">Prepare CAD DWG for Export</div>
                             <div class="tool-card-body">
-                                Duplicates, cleans, and processes a titleblock and selected CAD drawings using
-                                predefined AutoCAD commands.
+                                Duplicates files to temp location. Cleans the titleblock. Cleans the drawings.
+                                Saves the drawings as layout names. Opens temp folder with clean drawings.
                             </div>
                         </div>
                         <div class="tool-card-status"></div>

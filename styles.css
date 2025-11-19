@@ -1160,3 +1160,148 @@ dialog::backdrop {
     justify-content: flex-end;
     gap: 0.5rem;
 }
+
+/* Danger Zone Styles */
+.danger-zone {
+    margin-top: 2rem;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: var(--radius);
+    padding: 1.5rem;
+    background: rgba(239, 68, 68, 0.05);
+}
+
+.danger-title {
+    color: var(--danger);
+    font-size: 1rem;
+    margin-bottom: 1rem;
+    font-weight: 600;
+}
+
+.danger-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+}
+
+.danger-info {
+    flex: 1;
+}
+
+.danger-label {
+    font-weight: 600;
+    color: var(--text);
+    font-size: 13px;
+    margin-bottom: 2px;
+}
+
+.danger-desc {
+    font-size: 12px;
+    color: var(--muted);
+}
+
+.danger-divider {
+    height: 1px;
+    background: rgba(239, 68, 68, 0.2);
+    margin: 1rem 0;
+}
+
+/* Setting Row (Non-Danger) */
+.setting-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.75rem;
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm);
+}
+
+.setting-label {
+    font-weight: 600;
+    color: var(--text);
+    font-size: 13px;
+}
+
+.setting-desc {
+    font-size: 12px;
+    color: var(--muted);
+}
+
+/* Danger Modal Styles */
+.danger-modal {
+    width: min(400px, 90vw);
+    border-color: rgba(239, 68, 68, 0.4);
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(239, 68, 68, 0.2);
+}
+
+.centered-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    padding: 2rem 1.5rem;
+}
+
+.danger-icon-large {
+    font-size: 3rem;
+    margin-bottom: 1rem;
+    animation: pulse-danger 2s infinite;
+}
+
+@keyframes pulse-danger {
+    0% {
+        transform: scale(1);
+        opacity: 1;
+    }
+
+    50% {
+        transform: scale(1.1);
+        opacity: 0.8;
+    }
+
+    100% {
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+.danger-heading {
+    font-size: 1.25rem;
+    color: var(--text);
+    margin-bottom: 0.5rem;
+}
+
+.confirmation-box {
+    width: 100%;
+    margin: 1.5rem 0;
+    background: rgba(0, 0, 0, 0.2);
+    padding: 1rem;
+    border-radius: var(--radius);
+    border: 1px solid var(--glass-border);
+}
+
+.danger-input {
+    text-align: center;
+    font-weight: bold;
+    letter-spacing: 1px;
+    margin-top: 0.5rem;
+    border-color: rgba(239, 68, 68, 0.3);
+}
+
+.danger-input:focus {
+    border-color: var(--danger);
+    box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.2);
+}
+
+.modal-footer-simple {
+    display: flex;
+    gap: 1rem;
+    width: 100%;
+    justify-content: center;
+}
+
+.modal-footer-simple .btn {
+    flex: 1;
+}

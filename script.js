@@ -1259,7 +1259,11 @@ function initEventListeners() {
         } else {
             userSettings.autocadPath = document.getElementById('autocad_select_custom').value.trim();
         }
-        await saveUserSettings();
+        try {
+            await window.pywebview.api.save_user_settings(userSettings);
+        } catch (e) {
+            toast('⚠️ Could not save settings.');
+        }
         closeDlg('autocadSelectDlg');
     });
 

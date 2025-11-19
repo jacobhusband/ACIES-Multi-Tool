@@ -64,7 +64,7 @@ function dueState(dueStr) {
     if (!d) return 'ok';
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const dayOfWeek = today.getDay(); 
+    const dayOfWeek = today.getDay();
     const startOfWeek = new Date(today);
     startOfWeek.setDate(today.getDate() - dayOfWeek);
     const endOfWeek = new Date(startOfWeek);
@@ -153,7 +153,7 @@ function toast(msg, duration = 2500) {
 
 // State variables
 let db = [];
-let notesDb = {}; 
+let notesDb = {};
 let noteTabs = [];
 let editIndex = -1;
 let currentSort = { key: 'due', dir: 'desc' };
@@ -224,6 +224,15 @@ async function loadUserSettings() {
         const storedSettings = await window.pywebview.api.get_user_settings();
         if (storedSettings) userSettings = storedSettings;
     } catch (e) { console.error("Failed to load settings:", e); }
+}
+
+function populateSettingsModal() {
+    document.getElementById('settings_userName').value = userSettings.userName || '';
+    document.getElementById('settings_apiKey').value = userSettings.apiKey || '';
+    const discipline = userSettings.discipline || 'Electrical';
+    document.querySelectorAll('input[name="settings_discipline_radio"]').forEach(radio => {
+        radio.checked = radio.value === discipline;
+    });
 }
 
 async function saveUserSettings() {
@@ -319,14 +328,14 @@ function render() {
             if (!d) return false;
             const today = new Date(); today.setHours(0, 0, 0, 0);
             const dayOfWeek = today.getDay();
-            const startOfWeek = new Date(today); startOfWeek.setDate(today.getDate() - dayOfWeek); startOfWeek.setHours(0,0,0,0);
+            const startOfWeek = new Date(today); startOfWeek.setDate(today.getDate() - dayOfWeek); startOfWeek.setHours(0, 0, 0, 0);
             if (d >= startOfWeek) return false;
         }
         if (dueFilter === 'soon') {
             if (!d) return false;
             const today = new Date(); today.setHours(0, 0, 0, 0);
             const dayOfWeek = today.getDay();
-            const startOfWeek = new Date(today); startOfWeek.setDate(today.getDate() - dayOfWeek); startOfWeek.setHours(0,0,0,0);
+            const startOfWeek = new Date(today); startOfWeek.setDate(today.getDate() - dayOfWeek); startOfWeek.setHours(0, 0, 0, 0);
             const endOfWeek = new Date(startOfWeek); endOfWeek.setDate(startOfWeek.getDate() + 6); endOfWeek.setHours(23, 59, 59, 999);
             if (d < startOfWeek || d > endOfWeek) return false;
         }
@@ -419,9 +428,9 @@ function render() {
     items.forEach(p => {
         const tr = rowTemplate.content.cloneNode(true).querySelector('tr');
         const idx = db.indexOf(p);
-        
+
         const idCell = tr.querySelector('.cell-id');
-        const idBadge = idCell.querySelector('.id-badge') || idCell; 
+        const idBadge = idCell.querySelector('.id-badge') || idCell;
         idBadge.textContent = p.id || '—';
 
         const nameCell = tr.querySelector('.cell-name');
@@ -741,7 +750,7 @@ function renderNoteTabs() {
         const delIcon = el('span', {
             className: 'tab-delete-icon', textContent: '🗑️', title: 'Delete Page',
             onclick: (e) => {
-                e.stopPropagation(); 
+                e.stopPropagation();
                 if (confirm(`Permanently delete page "${tabName}"?`)) {
                     const idx = noteTabs.indexOf(tabName);
                     if (idx > -1) {
@@ -821,13 +830,13 @@ function renderNoteSearchResults() {
 async function fetchDescriptionForBundle(bundleName) {
     // Remove prefix/suffix to get core name. e.g., "ElectricalCommands.CleanCADCommands.bundle" -> "CleanCADCommands"
     const coreName = bundleName.replace('ElectricalCommands.', '').replace('.bundle', '');
-    
+
     // Check Cache
     if (DESCRIPTION_CACHE[coreName]) return DESCRIPTION_CACHE[coreName];
 
     // Construct RAW URL. Pattern: AutoCADCommands/<CoreName>/<CoreName>_descriptions.json
     const url = `https://raw.githubusercontent.com/jacobhusband/ElectricalCommands/main/AutoCADCommands/${coreName}/${coreName}_descriptions.json`;
-    
+
     try {
         const res = await fetch(url);
         if (!res.ok) throw new Error('Not found');
@@ -847,7 +856,7 @@ function openDetailsModal(name, descriptionData) {
     document.getElementById('detailsTitle').textContent = name;
     const videoEl = document.getElementById('detailsVideo');
     videoEl.innerHTML = '';
-    
+
     if (descriptionData && descriptionData.video && descriptionData.video.includes('loom.com')) {
         const videoId = descriptionData.video.split('/').pop();
         videoEl.append(el('iframe', { src: `https://www.loom.com/embed/${videoId}`, allowfullscreen: true }));
@@ -857,7 +866,7 @@ function openDetailsModal(name, descriptionData) {
 
     const commandsEl = document.getElementById('detailsCommands');
     commandsEl.innerHTML = '';
-    
+
     if (descriptionData && descriptionData.commands) {
         const list = el('ul', {}, Object.entries(descriptionData.commands).map(([cmd, desc]) =>
             el('li', {}, [el('strong', { textContent: cmd }), `: ${desc}`])
@@ -866,7 +875,7 @@ function openDetailsModal(name, descriptionData) {
     } else {
         commandsEl.textContent = "No command details found.";
     }
-    
+
     dlg.showModal();
 }
 
@@ -889,13 +898,13 @@ async function loadAndRenderBundles() {
         for (const bundle of response.data) {
             // Normalize name
             const coreName = bundle.name.replace('ElectricalCommands.', '').replace('.bundle', '');
-            
+
             // Fetch description (background)
             const description = await fetchDescriptionForBundle(bundle.name);
 
             const card = el('div', { className: 'release-card' });
             let statusClass, statusTitle, btnText, btnClass;
-            
+
             if (bundle.state === 'installed') {
                 statusClass = 'installed'; statusTitle = `Installed (v${bundle.local_version})`;
                 btnText = 'Uninstall'; btnClass = 'btn-danger';
@@ -920,9 +929,9 @@ async function loadAndRenderBundles() {
 
             const body = el('div', { className: 'release-card-body' });
             const tags = el('div', { className: 'command-tags' });
-            
+
             if (description && description.commands) {
-                Object.keys(description.commands).forEach(cmd => 
+                Object.keys(description.commands).forEach(cmd =>
                     tags.append(el('span', { className: 'command-tag', textContent: cmd }))
                 );
             }
@@ -932,13 +941,13 @@ async function loadAndRenderBundles() {
             const btn = el('button', { className: `btn ${btnClass}`, textContent: btnText });
             btn.dataset.bundleName = bundle.bundle_name;
             btn.dataset.actionType = btnText;
-            
+
             // Note: We rely on 'bundle.asset' from the backend for installation URL.
             // If backend doesn't provide it, we assume standard release naming.
             if (bundle.state !== 'installed' && bundle.asset) {
                 btn.dataset.asset = JSON.stringify(bundle.asset);
             }
-            
+
             footer.append(btn);
             card.append(header, body, footer);
             container.append(card);
@@ -1064,7 +1073,7 @@ function initTabbedInterfaces() {
         } else {
             searchInput.disabled = false;
             searchInput.placeholder = 'Search projects...';
-            render(); 
+            render();
         }
     });
 }
@@ -1078,7 +1087,10 @@ function initEventListeners() {
 
     document.getElementById('quickNew').onclick = openNew;
     document.getElementById('btnNew').onclick = openNew;
-    document.getElementById('settingsBtn').onclick = () => document.getElementById('settingsDlg').showModal();
+    document.getElementById('settingsBtn').onclick = () => {
+        populateSettingsModal();
+        document.getElementById('settingsDlg').showModal();
+    };
     document.getElementById('settings_howToSetupBtn').onclick = () => document.getElementById('apiKeyHelpDlg').showModal();
     document.getElementById('btnSaveProject').onclick = onSaveProject;
 
@@ -1179,6 +1191,12 @@ function initEventListeners() {
     document.getElementById('notesTextarea').addEventListener('input', handleNoteInput);
     document.getElementById('settings_userName').oninput = (e) => { userSettings.userName = e.target.value; debouncedSaveUserSettings(); };
     document.getElementById('settings_apiKey').oninput = (e) => { userSettings.apiKey = e.target.value; debouncedSaveUserSettings(); };
+    document.querySelectorAll('input[name="settings_discipline_radio"]').forEach(radio => {
+        radio.onchange = (e) => {
+            userSettings.discipline = e.target.value;
+            debouncedSaveUserSettings();
+        };
+    });
 
     document.getElementById('btnPasteImport').onclick = () => {
         const rows = parseCSV(val('pasteArea'));

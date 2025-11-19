@@ -34,10 +34,12 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "`n[2/2] Creating installer with Inno Setup..." -ForegroundColor Yellow
 
 # Define potential paths for ISCC.exe
+# Note: We look for ISCC.exe (Command Line Compiler), not Compil32.exe (GUI)
 $possiblePaths = @(
-    "$env:ProgramFiles(x86)\Inno Setup 6\iscc.exe",           # Standard x64 install
+    "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",           # Explicitly requested location
+    "$env:ProgramFiles(x86)\Inno Setup 6\iscc.exe",           # Standard x64 install (Env Var)
     "$env:ProgramFiles\Inno Setup 6\iscc.exe",                # Standard x86 install
-    "$env:LOCALAPPDATA\Programs\Inno Setup 6\iscc.exe"        # User-level install (Your location)
+    "$env:LOCALAPPDATA\Programs\Inno Setup 6\iscc.exe"        # User-level install
 )
 
 $isccPath = $null
@@ -49,7 +51,7 @@ foreach ($path in $possiblePaths) {
 }
 
 if (-not $isccPath) {
-    Write-Error "Inno Setup Compiler (iscc.exe) not found in standard locations."
+    Write-Error "Inno Setup Compiler (iscc.exe) not found."
     Write-Host "Checked paths:"
     $possiblePaths | ForEach-Object { Write-Host " - $_" }
     exit 1

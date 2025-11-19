@@ -819,7 +819,7 @@ function renderNoteTabs() {
         const btn = el('button', {
             className: `inner-tab-btn ${tabName === activeNoteTab ? 'active' : ''}`,
             textContent: tabName,
-            onclick: () => { activeNoteTab = tabName; renderNoteTabs(); }
+            onclick: () => { activeNoteTab = tabName; renderNoteTabs(); renderNoteSearchResults(); }
         });
         const delIcon = el('span', {
             className: 'tab-delete-icon', textContent: '🗑️', title: 'Delete Page',
@@ -876,23 +876,78 @@ function renderNoteSearchResults() {
     const query = val('notesSearch').toLowerCase();
     const resultsContainer = document.getElementById('notesSearchResults');
     resultsContainer.innerHTML = '';
+
     if (!query || !activeNoteTab) return;
+
     const queryWords = query.split(' ').filter(w => w);
     if (!queryWords.length) return;
+
     const content = notesDb[activeNoteTab];
     if (!content) return;
+
     const notes = content.split(/\n\s*\n/).filter(note => note.trim() !== '');
+
     notes.forEach((noteText) => {
         const lowerNoteText = noteText.toLowerCase();
+
         if (queryWords.every(word => lowerNoteText.includes(word))) {
-            const item = el('div', { className: 'note-result-item' });
+            const item = el('div', { className: 'note-result-item', style: 'position: relative;' });
             const contentDiv = el('div', { className: 'note-result-content' });
-            const actionsDiv = el('div', { className: 'note-result-actions' });
             contentDiv.append(el('div', { className: 'snippet', textContent: noteText }));
-            const copyBtn = el('button', { className: 'btn tiny', textContent: 'Copy' });
-            copyBtn.onclick = () => { navigator.clipboard.writeText(noteText).then(() => toast('Copied!')); };
-            actionsDiv.append(copyBtn);
-            item.append(contentDiv, actionsDiv);
+
+            const copyIcon = el('button', { className: 'note-action-icon copy-icon', textContent: '📋', title: 'Copy' });
+            copyIcon.onclick = () => { navigator.clipboard.writeText(noteText).then(() => toast('Copied!')); };
+
+            const editIcon = el('button', { className: 'note-action-icon edit-icon', textContent: '✏️', title: 'Edit' });
+
+            editIcon.onclick = () => {
+                // 1. Scroll the main Page View to the top immediately
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+
+                const textarea = document.getElementById('notesTextarea');
+                const currentVal = textarea.value;
+                const start = currentVal.indexOf(noteText);
+
+                if (start !== -1) {
+                    const end = start + noteText.length;
+
+                    // 2. Focus and Select Text
+                    textarea.blur();
+                    textarea.setSelectionRange(start, end);
+                    textarea.focus();
+
+                    // 3. Calculate Exact Position using Mirror Div (Precision Scroll)
+                    const mirror = document.createElement('div');
+                    const style = window.getComputedStyle(textarea);
+
+                    mirror.style.visibility = 'hidden';
+                    mirror.style.position = 'absolute';
+                    mirror.style.top = '-9999px';
+                    mirror.style.whiteSpace = 'pre-wrap';
+                    mirror.style.wordWrap = 'break-word';
+
+                    ['fontFamily', 'fontSize', 'fontWeight', 'lineHeight', 'letterSpacing', 'padding'].forEach(p => {
+                        mirror.style[p] = style[p];
+                    });
+
+                    mirror.style.boxSizing = 'border-box';
+                    mirror.style.width = `${textarea.clientWidth}px`;
+                    mirror.style.border = 'none';
+
+                    mirror.textContent = currentVal.substring(0, start);
+
+                    document.body.appendChild(mirror);
+                    const targetY = mirror.clientHeight;
+                    document.body.removeChild(mirror);
+
+                    // 4. Scroll the Textarea internally to the specific line
+                    textarea.scrollTop = Math.max(0, targetY - (textarea.clientHeight * 0.3));
+                } else {
+                    toast('Note content changed. Please refresh search.');
+                }
+            };
+
+            item.append(contentDiv, copyIcon, editIcon);
             resultsContainer.append(item);
         }
     });

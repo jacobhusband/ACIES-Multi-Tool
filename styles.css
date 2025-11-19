@@ -264,21 +264,24 @@ main {
     padding: 1.5rem;
 }
 
-/* Panel Header */
-.panel-header {
+/* Panel Toolbar (Integrated) */
+.panel-toolbar {
     display: flex;
-    justify-content: flex-end;
-    margin-bottom: 1rem;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.5rem;
+    gap: 1rem;
 }
 
-.panel-actions {
+.toolbar-actions {
     display: flex;
     gap: 0.5rem;
     align-items: center;
 }
 
-.panel-actions .nav-search {
-    width: 200px;
+.nav-search.expanded-search {
+    width: 320px;
+    flex-grow: 0;
 }
 
 .tab-panel {
@@ -1025,6 +1028,35 @@ dialog::backdrop {
     border-radius: var(--radius);
     padding: 1rem;
     margin-bottom: 0.5rem;
+    position: relative;
+}
+
+.note-result-content {
+    padding-right: 80px;
+}
+
+.note-action-icon {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    font-size: 16px;
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    transition: all 0.2s;
+}
+
+.note-action-icon:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text);
+}
+
+.note-action-icon.copy-icon {
+    right: 40px;
+    /* Position copy icon to the left of edit */
 }
 
 /* Release Cards (Plugins) - Layout Fixes */

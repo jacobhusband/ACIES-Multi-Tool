@@ -32,9 +32,9 @@
     <main>
         <!-- Tab Panel for Projects -->
         <div id="projects-panel" class="tab-panel active">
-            <div class="panel-header">
-                <div class="panel-actions">
-                    <div class="nav-search">
+            <section class="panel stack">
+                <div class="panel-toolbar">
+                    <div class="nav-search expanded-search">
                         <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none"
                             stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <circle cx="11" cy="11" r="8"></circle>
@@ -42,14 +42,15 @@
                         </svg>
                         <input id="search" type="search" placeholder="Search projects..." />
                     </div>
-                    <button class="icon-btn quick-add" id="quickNew" aria-label="New project"
-                        title="New project">＋</button>
-                    <button class="icon-btn" id="aiBtn" aria-label="AI Project"
-                        title="Create project with AI">🤖</button>
-                    <button class="icon-btn" id="statsBtn" aria-label="Statistics" title="View Statistics">📊</button>
+                    <div class="toolbar-actions">
+                        <button class="icon-btn quick-add" id="quickNew" aria-label="New project"
+                            title="New project">＋</button>
+                        <button class="icon-btn" id="aiBtn" aria-label="AI Project"
+                            title="Create project with AI">🤖</button>
+                        <button class="icon-btn" id="statsBtn" aria-label="Statistics"
+                            title="View Statistics">📊</button>
+                    </div>
                 </div>
-            </div>
-            <section class="panel stack">
                 <div class="filter-controls">
                     <div class="filter-label">Timeframe</div>
                     <div class="due-filter-group" id="dueFilterGroup">
@@ -89,9 +90,9 @@
         </div>
         <!-- Tab Panel for Notes -->
         <div id="notes-panel" class="tab-panel" hidden>
-            <div class="panel-header">
-                <div class="panel-actions">
-                    <div class="nav-search">
+            <div class="panel stack full-height">
+                <div class="panel-toolbar">
+                    <div class="nav-search expanded-search">
                         <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none"
                             stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <circle cx="11" cy="11" r="8"></circle>
@@ -100,8 +101,6 @@
                         <input id="notesSearch" type="search" placeholder="Search notes..." />
                     </div>
                 </div>
-            </div>
-            <div class="panel stack full-height">
                 <div class="notes-controls">
                     <h3 class="section-title">Custom Notes</h3>
                     <div class="notes-user-tabs-row">

@@ -1,20 +1,30 @@
+param(
+  [string]$AcadCore
+)
+
 # removeXrefPaths.ps1
 # Select DWGs -> accoreconsole loads your .NET DLL via NETLOAD -> runs STRIPREFPATHS
 # All feedback is sent to the console for the main application to display.
 
 Write-Host "PROGRESS: Initializing script..."
 
-# --- AUTOCAD VERSION DETECTION (2025-2020) ---
-$acadCore = $null
-$years = 2025, 2024, 2023, 2022, 2021, 2020
+# --- AUTOCAD VERSION DETECTION ---
+if ($AcadCore -and (Test-Path -Path $AcadCore)) {
+  $acadCore = $AcadCore
+  Write-Host "PROGRESS: Using specified AutoCAD Core Console: $AcadCore"
+}
+else {
+  $acadCore = $null
+  $years = 2025, 2024, 2023, 2022, 2021, 2020
 
-foreach ($year in $years) {
+  foreach ($year in $years) {
     $possiblePath = "C:\Program Files\Autodesk\AutoCAD $year\accoreconsole.exe"
     if (Test-Path -Path $possiblePath) {
-        $acadCore = $possiblePath
-        Write-Host "PROGRESS: Found AutoCAD $year Core Console."
-        break # Stop searching once the latest version is found
+      $acadCore = $possiblePath
+      Write-Host "PROGRESS: Found AutoCAD $year Core Console."
+      break # Stop searching once the latest version is found
     }
+  }
 }
 
 $scriptRoot = $PSScriptRoot
@@ -29,14 +39,14 @@ if ([Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') {
 
 # Validation
 if ([string]::IsNullOrEmpty($acadCore) -or -not (Test-Path $acadCore)) { 
-    Write-Host "PROGRESS: ERROR: AutoCAD Core Console not found for versions 2020-2025."
-    Write-Host "Please ensure AutoCAD is installed in the default 'C:\Program Files\Autodesk' directory."
-    exit 1 
+  Write-Host "PROGRESS: ERROR: AutoCAD Core Console not found for versions 2020-2025."
+  Write-Host "Please ensure AutoCAD is installed in the default 'C:\Program Files\Autodesk' directory."
+  exit 1 
 }
 
 if (-not (Test-Path $dll)) { 
-    Write-Host "PROGRESS: ERROR: Required component 'StripRefPaths.dll' not found at $dll"
-    exit 1 
+  Write-Host "PROGRESS: ERROR: Required component 'StripRefPaths.dll' not found at $dll"
+  exit 1 
 }
 
 Write-Host "PROGRESS: Staging cleanup commands..."
@@ -130,6 +140,7 @@ Write-Progress -Activity "Processing DWGs" -Completed
 
 if ($failed.Count) {
   Write-Host "PROGRESS: ERROR: $($failed.Count) of $($files.Count) file(s) failed to process."
-} else {
+}
+else {
   Write-Host "PROGRESS: Successfully processed $($files.Count) drawing(s)."
 }

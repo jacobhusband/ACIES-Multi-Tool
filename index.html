@@ -393,6 +393,21 @@
                 </div>
             </div>
 
+            <!-- AutoCAD Version Section -->
+            <h3 class="section-title" style="margin-top: 1rem;">AutoCAD Version</h3>
+            <div class="modal-grid">
+                <div class="col-12">
+                    <label class="label">Select Preferred AutoCAD Version</label>
+                    <div id="autocad_versions_container" class="radio-group" style="flex-wrap: wrap;">
+                        <!-- Detected versions will be inserted here -->
+                    </div>
+                    <div class="input-with-button" style="margin-top: 0.5rem;">
+                        <input id="settings_autocadPath" placeholder="Custom AutoCAD executable path..." readonly />
+                        <button class="btn tiny" id="btnBrowseAutocad">Browse...</button>
+                    </div>
+                </div>
+            </div>
+
             <!-- Actions Section -->
             <h3 class="section-title" style="margin-top: 1rem;">Actions</h3>
             <div class="stack">
@@ -439,6 +454,31 @@
             </div>
 
             <p class="tiny muted" style="margin-top: 1rem;">Settings are saved automatically.</p>
+        </div>
+    </dialog>
+    <!-- AutoCAD Selection Modal -->
+    <dialog id="autocadSelectDlg">
+        <div class="modal-header">
+            <div class="title">Select AutoCAD Version</div>
+            <button class="btn ghost" onclick="closeDlg('autocadSelectDlg')">Cancel</button>
+        </div>
+        <div class="modal-body stack">
+            <p class="tiny muted">Please select your preferred AutoCAD version to use with the tools.</p>
+            <div class="modal-grid">
+                <div class="col-12">
+                    <label class="label">Detected Versions</label>
+                    <div id="autocad_select_container" class="radio-group" style="flex-wrap: wrap;">
+                        <!-- Detected versions will be inserted here -->
+                    </div>
+                    <div class="input-with-button" style="margin-top: 0.5rem;">
+                        <input id="autocad_select_custom" placeholder="Custom AutoCAD executable path..." readonly />
+                        <button class="btn tiny" id="btnBrowseAutocadSelect">Browse...</button>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-primary" id="btnSaveAutocadSelect">Save Selection</button>
+            </div>
         </div>
     </dialog>
     <!-- Statistics Modal -->

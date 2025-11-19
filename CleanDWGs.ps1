@@ -2,7 +2,8 @@ param(
     [string]$TitleblockPath,
     [string]$Disciplines,
     [string]$OutputFolder,
-    [string]$ProjectRoot
+    [string]$ProjectRoot,
+    [string]$AcadPath
 )
 
 #--- WINDOW MANAGEMENT ---
@@ -126,7 +127,19 @@ function Wait-For-Command-Complete {
 
 #--- ROBUST AUTOCAD INITIALIZATION ---
 function Initialize-AutoCAD {
-    $progIds = @("AutoCAD.Application.25", "AutoCAD.Application.24", "AutoCAD.Application.23", "AutoCAD.Application.22", "AutoCAD.Application")
+    # Determine preferred progId from AcadPath
+    $preferredProgId = $null
+    if ($AcadPath) {
+        if ($AcadPath -match "AutoCAD (\d{4})") {
+            $year = $matches[1]
+            $suffix = ($year - 2000).ToString()
+            $preferredProgId = "AutoCAD.Application.$suffix"
+        }
+    }
+    $progIds = @()
+    if ($preferredProgId) { $progIds += $preferredProgId }
+    $progIds += @("AutoCAD.Application.25", "AutoCAD.Application.24", "AutoCAD.Application.23", "AutoCAD.Application.22", "AutoCAD.Application")
+    $progIds = $progIds | Select-Object -Unique
     $script:AcadWasStarted = $false
     
     Write-Log "Searching for a running instance of AutoCAD (2025 preferred)..."

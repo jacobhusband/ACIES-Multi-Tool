@@ -1,14 +1,23 @@
-# --- SCRIPT CONFIGURATION ---
-# Logic to find the latest AutoCAD Core Console (2025 down to 2020)
-$acadCore = $null
-$years = 2025, 2024, 2023, 2022, 2021, 2020
+param(
+    [string]$AcadCore
+)
 
-foreach ($year in $years) {
-    $possiblePath = "C:\Program Files\Autodesk\AutoCAD $year\accoreconsole.exe"
-    if (Test-Path -Path $possiblePath) {
-        $acadCore = $possiblePath
-        Write-Host "PROGRESS: Found AutoCAD $year Core Console."
-        break # Stop searching once the latest version is found
+# --- SCRIPT CONFIGURATION ---
+# Logic to find AutoCAD Core Console
+if ($AcadCore -and (Test-Path -Path $AcadCore)) {
+    $acadCore = $AcadCore
+    Write-Host "PROGRESS: Using specified AutoCAD Core Console: $AcadCore"
+} else {
+    $acadCore = $null
+    $years = 2025, 2024, 2023, 2022, 2021, 2020
+
+    foreach ($year in $years) {
+        $possiblePath = "C:\Program Files\Autodesk\AutoCAD $year\accoreconsole.exe"
+        if (Test-Path -Path $possiblePath) {
+            $acadCore = $possiblePath
+            Write-Host "PROGRESS: Found AutoCAD $year Core Console."
+            break # Stop searching once the latest version is found
+        }
     }
 }
 

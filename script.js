@@ -163,7 +163,8 @@ let dueFilter = 'all';
 let userSettings = {
     userName: '',
     discipline: 'Electrical',
-    apiKey: ''
+    apiKey: '',
+    autocadPath: ''
 };
 let activeNoteTab = null;
 
@@ -226,16 +227,89 @@ async function loadUserSettings() {
     } catch (e) { console.error("Failed to load settings:", e); }
 }
 
-function populateSettingsModal() {
+async function populateSettingsModal() {
     document.getElementById('settings_userName').value = userSettings.userName || '';
     document.getElementById('settings_apiKey').value = userSettings.apiKey || '';
+    document.getElementById('settings_autocadPath').value = userSettings.autocadPath || '';
     const discipline = userSettings.discipline || 'Electrical';
     document.querySelectorAll('input[name="settings_discipline_radio"]').forEach(radio => {
         radio.checked = radio.value === discipline;
     });
+
+    // Populate AutoCAD versions
+    const container = document.getElementById('autocad_versions_container');
+    container.innerHTML = '<div class="spinner">Detecting versions...</div>';
+    try {
+        const response = await window.pywebview.api.get_installed_autocad_versions();
+        if (response.status === 'success') {
+            container.innerHTML = '';
+            response.versions.forEach(version => {
+                const radio = el('input', {
+                    type: 'radio',
+                    name: 'autocad_version_radio',
+                    value: version.path,
+                    checked: userSettings.autocadPath === version.path
+                });
+                radio.onchange = () => {
+                    userSettings.autocadPath = radio.value;
+                    debouncedSaveUserSettings();
+                };
+                const label = el('label', { className: 'radio-label' }, [radio, ` AutoCAD ${version.year}`]);
+                container.appendChild(label);
+            });
+            if (response.versions.length === 0) {
+                container.innerHTML = '<p class="tiny muted">No AutoCAD versions detected in default location.</p>';
+            }
+        } else {
+            container.innerHTML = '<p class="tiny muted">Error detecting versions.</p>';
+        }
+    } catch (e) {
+        container.innerHTML = '<p class="tiny muted">Error detecting versions.</p>';
+    }
+}
+
+async function populateAutocadSelectModal() {
+    document.getElementById('autocad_select_custom').value = userSettings.autocadPath || '';
+    const container = document.getElementById('autocad_select_container');
+    container.innerHTML = '<div class="spinner">Detecting versions...</div>';
+    try {
+        const response = await window.pywebview.api.get_installed_autocad_versions();
+        if (response.status === 'success') {
+            container.innerHTML = '';
+            response.versions.forEach(version => {
+                const radio = el('input', {
+                    type: 'radio',
+                    name: 'autocad_select_radio',
+                    value: version.path,
+                    checked: userSettings.autocadPath === version.path
+                });
+                const label = el('label', { className: 'radio-label' }, [radio, ` AutoCAD ${version.year}`]);
+                container.appendChild(label);
+            });
+            if (response.versions.length === 0) {
+                container.innerHTML = '<p class="tiny muted">No AutoCAD versions detected in default location.</p>';
+            }
+        } else {
+            container.innerHTML = '<p class="tiny muted">Error detecting versions.</p>';
+        }
+    } catch (e) {
+        container.innerHTML = '<p class="tiny muted">Error detecting versions.</p>';
+    }
+}
+
+async function showAutocadSelectModal() {
+    await populateAutocadSelectModal();
+    document.getElementById('autocadSelectDlg').showModal();
 }
 
 async function saveUserSettings() {
+    // Update autocadPath from UI
+    const selectedRadio = document.querySelector('input[name="autocad_version_radio"]:checked');
+    if (selectedRadio) {
+        userSettings.autocadPath = selectedRadio.value;
+    } else {
+        userSettings.autocadPath = document.getElementById('settings_autocadPath').value.trim();
+    }
     try { await window.pywebview.api.save_user_settings(userSettings); }
     catch (e) { toast('⚠️ Could not save settings.'); }
 }
@@ -1071,8 +1145,8 @@ function initEventListeners() {
     document.getElementById('notesSearch').addEventListener('input', debounce(() => renderNoteSearchResults(), 250));
 
     document.getElementById('quickNew').onclick = openNew;
-    document.getElementById('settingsBtn').onclick = () => {
-        populateSettingsModal();
+    document.getElementById('settingsBtn').onclick = async () => {
+        await populateSettingsModal();
         document.getElementById('settingsDlg').showModal();
     };
     document.getElementById('statsBtn').onclick = () => document.getElementById('statsDlg').showModal();
@@ -1098,6 +1172,10 @@ function initEventListeners() {
 
     document.getElementById('toolPublishDwgs').addEventListener('click', async (e) => {
         if (e.currentTarget.classList.contains('running')) return;
+        if (!userSettings.autocadPath) {
+            await showAutocadSelectModal();
+            return;
+        }
         e.currentTarget.classList.add('running');
         window.updateToolStatus('toolPublishDwgs', 'Initializing...');
         await window.pywebview.api.run_publish_script();
@@ -1105,6 +1183,10 @@ function initEventListeners() {
 
     document.getElementById('toolCleanXrefs').addEventListener('click', async (e) => {
         if (e.currentTarget.classList.contains('running')) return;
+        if (!userSettings.autocadPath) {
+            await showAutocadSelectModal();
+            return;
+        }
         e.currentTarget.classList.add('running');
         window.updateToolStatus('toolCleanXrefs', 'Initializing...');
         await window.pywebview.api.run_clean_xrefs_script();
@@ -1122,6 +1204,10 @@ function initEventListeners() {
     document.getElementById('btnProceedCleanDwgs').addEventListener('click', async () => {
         const titleblock = val('cleanDwgs_titleblockPath');
         if (!titleblock) return toast('Select a titleblock first.');
+        if (!userSettings.autocadPath) {
+            await showAutocadSelectModal();
+            return;
+        }
         const disciplines = Array.from(document.querySelectorAll('input[name="cleanDwgs_discipline"]:checked')).map(c => c.value);
         closeDlg('cleanDwgsDlg');
         const response = await window.pywebview.api.run_clean_dwgs_script({ titleblock, disciplines });
@@ -1138,6 +1224,43 @@ function initEventListeners() {
         if (res.status === 'success' && res.paths.length) {
             document.getElementById('cleanDwgs_titleblockPath').value = res.paths[0];
         }
+    });
+
+    document.getElementById('btnBrowseAutocad').addEventListener('click', async () => {
+        const res = await window.pywebview.api.select_files({
+            allow_multiple: false,
+            file_types: ['Executable Files (*.exe)'],
+            directory: 'C:\\Program Files\\Autodesk'
+        });
+        if (res.status === 'success' && res.paths.length) {
+            document.getElementById('settings_autocadPath').value = res.paths[0];
+            // Uncheck radio buttons
+            document.querySelectorAll('input[name="autocad_version_radio"]').forEach(radio => radio.checked = false);
+        }
+    });
+
+    document.getElementById('btnBrowseAutocadSelect').addEventListener('click', async () => {
+        const res = await window.pywebview.api.select_files({
+            allow_multiple: false,
+            file_types: ['Executable Files (*.exe)'],
+            directory: 'C:\\Program Files\\Autodesk'
+        });
+        if (res.status === 'success' && res.paths.length) {
+            document.getElementById('autocad_select_custom').value = res.paths[0];
+            // Uncheck radio buttons
+            document.querySelectorAll('input[name="autocad_select_radio"]').forEach(radio => radio.checked = false);
+        }
+    });
+
+    document.getElementById('btnSaveAutocadSelect').addEventListener('click', async () => {
+        const selectedRadio = document.querySelector('input[name="autocad_select_radio"]:checked');
+        if (selectedRadio) {
+            userSettings.autocadPath = selectedRadio.value;
+        } else {
+            userSettings.autocadPath = document.getElementById('autocad_select_custom').value.trim();
+        }
+        await saveUserSettings();
+        closeDlg('autocadSelectDlg');
     });
 
     const handleAI = () => {

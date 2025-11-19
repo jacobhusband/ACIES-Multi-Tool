@@ -350,7 +350,7 @@ class Api:
             with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except (FileNotFoundError, json.JSONDecodeError):
-            return {'userName': '', 'discipline': 'Electrical', 'apiKey': ''}
+            return {'userName': '', 'discipline': 'Electrical', 'apiKey': '', 'autocadPath': ''}
 
     def save_user_settings(self, data):
         """Saves user settings to settings.json."""
@@ -361,6 +361,22 @@ class Api:
         except Exception as e:
             logging.error(f"Error saving user settings: {e}")
             return {'status': 'error', 'message': str(e)}
+
+    def get_installed_autocad_versions(self):
+        """Scans for installed AutoCAD versions in the typical directory."""
+        versions = []
+        base_dir = r"C:\Program Files\Autodesk"
+        if not os.path.exists(base_dir):
+            return {'status': 'success', 'versions': []}
+
+        for year in range(2022, 2027):  # 2022 to 2026
+            folder_name = f"AutoCAD {year}"
+            folder_path = os.path.join(base_dir, folder_name)
+            exe_path = os.path.join(folder_path, "accoreconsole.exe")
+            if os.path.exists(exe_path):
+                versions.append({'year': year, 'path': exe_path})
+
+        return {'status': 'success', 'versions': versions}
 
     def get_chat_response(self, chat_history):
         settings = self.get_user_settings()
@@ -675,7 +691,11 @@ Return ONLY the JSON object.
         script_path = os.path.join(BASE_DIR, "PlotDWGs.ps1")
         if not os.path.exists(script_path):
             raise Exception("PlotDWGs.ps1 not found in application directory.")
-        command = f'powershell.exe -ExecutionPolicy Bypass -File "{script_path}"'
+        settings = self.get_user_settings()
+        acad_path = settings.get('autocadPath', '')
+        if not acad_path:
+            raise Exception("No AutoCAD version selected in settings.")
+        command = f'powershell.exe -ExecutionPolicy Bypass -File "{script_path}" -AcadCore "{acad_path}"'
         self._run_script_with_progress(command, 'toolPublishDwgs')
         return {'status': 'success'}
 
@@ -685,7 +705,11 @@ Return ONLY the JSON object.
         if not os.path.exists(script_path):
             raise Exception(
                 "removeXREFPaths.ps1 not found in application directory.")
-        command = f'powershell.exe -ExecutionPolicy Bypass -File "{script_path}"'
+        settings = self.get_user_settings()
+        acad_path = settings.get('autocadPath', '')
+        if not acad_path:
+            raise Exception("No AutoCAD version selected in settings.")
+        command = f'powershell.exe -ExecutionPolicy Bypass -File "{script_path}" -AcadCore "{acad_path}"'
         self._run_script_with_progress(command, 'toolCleanXrefs')
         return {'status': 'success'}
 
@@ -788,6 +812,8 @@ Return ONLY the JSON object.
             # We only need to pass the discipline names, not the Xref folder name
             disciplines_arg = ','.join(sorted(selected_disciplines))
 
+            settings = self.get_user_settings()
+            acad_path = settings.get('autocadPath', '')
             command = [
                 'powershell.exe',
                 '-ExecutionPolicy', 'Bypass',
@@ -796,7 +822,8 @@ Return ONLY the JSON object.
                 '-Disciplines', disciplines_arg,
                 '-OutputFolder', output_root,
                 # Pass original root for context if needed
-                '-ProjectRoot', str(project_root)
+                '-ProjectRoot', str(project_root),
+                '-AcadPath', acad_path
             ]
 
             self._run_script_with_progress(command, 'toolCleanDwgs')

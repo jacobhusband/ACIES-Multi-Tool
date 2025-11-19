@@ -799,7 +799,7 @@ function handleNoteInput(e) {
 }
 
 function renderNoteSearchResults() {
-    const query = val('search').toLowerCase();
+    const query = val('notesSearch').toLowerCase();
     const resultsContainer = document.getElementById('notesSearchResults');
     resultsContainer.innerHTML = '';
     if (!query || !activeNoteTab) return;
@@ -1044,7 +1044,6 @@ async function updateCleanDwgToolState() {
 
 function initTabbedInterfaces() {
     const mainTabContainer = document.querySelector('.main-nav');
-    const searchInput = document.getElementById('search');
     const notesResults = document.getElementById('notesSearchResults');
 
     mainTabContainer.addEventListener('click', e => {
@@ -1057,52 +1056,28 @@ function initTabbedInterfaces() {
             p.classList.toggle('active', p.id === `${tab}-panel`);
         });
 
-        searchInput.value = '';
         if (notesResults) notesResults.innerHTML = '';
 
         if (tab === 'plugins') {
             loadAndRenderBundles();
-            searchInput.disabled = true;
-            searchInput.placeholder = 'Search disabled';
-        } else if (tab === 'tools') {
-            searchInput.disabled = true;
-            searchInput.placeholder = 'Search disabled';
-        } else if (tab === 'notes') {
-            searchInput.disabled = false;
-            searchInput.placeholder = 'Search current page...';
-        } else {
-            searchInput.disabled = false;
-            searchInput.placeholder = 'Search projects...';
+        } else if (tab === 'projects') {
             render();
         }
     });
 }
 
 function initEventListeners() {
-    document.getElementById('search').addEventListener('input', debounce(() => {
-        const activeTab = document.querySelector('.main-tab-btn.active')?.dataset.tab;
-        if (activeTab === 'notes') renderNoteSearchResults();
-        else if (activeTab === 'projects') render();
-    }, 250));
+    document.getElementById('search').addEventListener('input', debounce(() => render(), 250));
+    document.getElementById('notesSearch').addEventListener('input', debounce(() => renderNoteSearchResults(), 250));
 
     document.getElementById('quickNew').onclick = openNew;
-    document.getElementById('btnNew').onclick = openNew;
     document.getElementById('settingsBtn').onclick = () => {
         populateSettingsModal();
         document.getElementById('settingsDlg').showModal();
     };
+    document.getElementById('statsBtn').onclick = () => document.getElementById('statsDlg').showModal();
     document.getElementById('settings_howToSetupBtn').onclick = () => document.getElementById('apiKeyHelpDlg').showModal();
     document.getElementById('btnSaveProject').onclick = onSaveProject;
-
-    const drawer = document.getElementById('drawer');
-    const backdrop = document.getElementById('backdrop');
-    const toggleDrawer = (open) => {
-        if (open) { drawer.classList.add('open'); backdrop.hidden = false; }
-        else { drawer.classList.remove('open'); backdrop.hidden = true; }
-    };
-    document.getElementById('menuBtn').onclick = () => toggleDrawer(true);
-    document.getElementById('drawerClose').onclick = () => toggleDrawer(false);
-    backdrop.onclick = () => toggleDrawer(false);
 
     document.getElementById('dueFilterGroup').addEventListener('click', e => {
         if (e.target.matches('.filter-chip')) {

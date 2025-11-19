@@ -16,7 +16,7 @@
         <div class="brand">
             <img src="./acies.png" alt="ACIES" class="logo-img" onerror="this.style.display='none'" />
         </div>
-        <!-- Centered navigation and search -->
+        <!-- Centered navigation -->
         <div class="header-center">
             <nav class="main-nav">
                 <button class="main-tab-btn active" data-tab="projects">Projects</button>
@@ -24,89 +24,31 @@
                 <button class="main-tab-btn" data-tab="tools">Tools</button>
                 <button class="main-tab-btn" data-tab="plugins">Plugins</button>
             </nav>
-            <div class="nav-search">
-                <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <circle cx="11" cy="11" r="8"></circle>
-                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-                </svg>
-                <input id="search" type="search" placeholder="Search..." />
-            </div>
         </div>
         <div class="header-actions">
-            <button class="icon-btn quick-add" id="quickNew" aria-label="New project" title="New project">＋</button>
-            <button class="icon-btn" id="aiBtn" aria-label="AI Project" title="Create project with AI">🤖</button>
             <button class="icon-btn" id="settingsBtn" aria-label="Settings" title="Settings">⚙️</button>
-            <button class="hamburger" id="menuBtn" aria-label="Open menu" aria-controls="drawer" aria-expanded="false">
-                <span></span><span></span><span></span>
-            </button>
         </div>
     </header>
-    <aside id="drawer" class="drawer" aria-hidden="true">
-        <div class="drawer-header">
-            <div class="title">Menu</div>
-            <button class="icon-btn" id="drawerClose" aria-label="Close menu">✕</button>
-        </div>
-        <div class="drawer-body">
-            <div class="toolbar">
-                <button class="btn btn-primary full-width" id="btnNew">＋ New project</button>
-
-                <div class="drawer-section-title">Data Management</div>
-                <div class="drawer-actions">
-                    <button class="btn" id="btnMarkOverdue">Mark Overdue as Complete</button>
-                    <button class="btn btn-danger" id="btnDeleteAll">☠️ Delete All Data</button>
-                </div>
-
-                <div class="drawer-section-title">Statistics</div>
-                <div class="stats-grid">
-                    <div class="stat-card">
-                        <div class="stat-value" id="statTotal">0</div>
-                        <div class="stat-label">Total Projects</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value" id="statCompleted">0</div>
-                        <div class="stat-label">Completed</div>
-                    </div>
-
-                    <div class="stat-card">
-                        <div class="stat-value" id="statAvg">0</div>
-                        <div class="stat-label">Avg. Projects / Week</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value" id="statAvgMonth">0</div>
-                        <div class="stat-label">Avg. Projects / Month</div>
-                    </div>
-
-                    <div class="stat-card">
-                        <div class="stat-value" id="statLastWeek">0</div>
-                        <div class="stat-label">Due Last Week</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value" id="statThisWeek">0</div>
-                        <div class="stat-label">Due This Week</div>
-                    </div>
-
-                    <div class="stat-card">
-                        <div class="stat-value" id="statCompletedLastYear">0</div>
-                        <div class="stat-label">Completed Last Year</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value" id="statCompletedThisYear">0</div>
-                        <div class="stat-label">Completed This Year</div>
-                    </div>
-
-                    <div class="stat-card full-width">
-                        <div class="stat-value" id="statUpcoming">0</div>
-                        <div class="stat-label">Upcoming (Future)</div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </aside>
-    <div id="backdrop" class="backdrop" hidden></div>
     <main>
         <!-- Tab Panel for Projects -->
         <div id="projects-panel" class="tab-panel active">
+            <div class="panel-header">
+                <div class="panel-actions">
+                    <div class="nav-search">
+                        <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="11" cy="11" r="8"></circle>
+                            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                        </svg>
+                        <input id="search" type="search" placeholder="Search projects..." />
+                    </div>
+                    <button class="icon-btn quick-add" id="quickNew" aria-label="New project"
+                        title="New project">＋</button>
+                    <button class="icon-btn" id="aiBtn" aria-label="AI Project"
+                        title="Create project with AI">🤖</button>
+                    <button class="icon-btn" id="statsBtn" aria-label="Statistics" title="View Statistics">📊</button>
+                </div>
+            </div>
             <section class="panel stack">
                 <div class="filter-controls">
                     <div class="filter-label">Timeframe</div>
@@ -147,6 +89,18 @@
         </div>
         <!-- Tab Panel for Notes -->
         <div id="notes-panel" class="tab-panel" hidden>
+            <div class="panel-header">
+                <div class="panel-actions">
+                    <div class="nav-search">
+                        <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="11" cy="11" r="8"></circle>
+                            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                        </svg>
+                        <input id="notesSearch" type="search" placeholder="Search notes..." />
+                    </div>
+                </div>
+            </div>
             <div class="panel stack full-height">
                 <div class="notes-controls">
                     <h3 class="section-title">Custom Notes</h3>
@@ -372,7 +326,66 @@
                     </div>
                 </div>
             </div>
+            <div class="section-divider"></div>
+            <div class="stack">
+                <div class="title section-header">Data Management</div>
+                <div class="inline" style="gap: 1rem;">
+                    <button class="btn" id="btnMarkOverdue">Mark Overdue as Complete</button>
+                    <button class="btn btn-danger" id="btnDeleteAll">☠️ Delete All Data</button>
+                </div>
+            </div>
             <p class="tiny muted" style="margin-top: 1rem;">Settings are saved automatically.</p>
+        </div>
+    </dialog>
+    <!-- Statistics Modal -->
+    <dialog id="statsDlg">
+        <div class="modal-header">
+            <div class="title">Project Statistics</div>
+            <button class="btn ghost" onclick="closeDlg('statsDlg')">Close</button>
+        </div>
+        <div class="modal-body stack">
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-value" id="statTotal">0</div>
+                    <div class="stat-label">Total Projects</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="statCompleted">0</div>
+                    <div class="stat-label">Completed</div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-value" id="statAvg">0</div>
+                    <div class="stat-label">Avg. Projects / Week</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="statAvgMonth">0</div>
+                    <div class="stat-label">Avg. Projects / Month</div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-value" id="statLastWeek">0</div>
+                    <div class="stat-label">Due Last Week</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="statThisWeek">0</div>
+                    <div class="stat-label">Due This Week</div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-value" id="statCompletedLastYear">0</div>
+                    <div class="stat-label">Completed Last Year</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="statCompletedThisYear">0</div>
+                    <div class="stat-label">Completed This Year</div>
+                </div>
+
+                <div class="stat-card full-width">
+                    <div class="stat-value" id="statUpcoming">0</div>
+                    <div class="stat-label">Upcoming (Future)</div>
+                </div>
+            </div>
         </div>
     </dialog>
     <!-- API Key Help Modal -->

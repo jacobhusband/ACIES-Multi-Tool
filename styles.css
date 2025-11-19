@@ -264,6 +264,23 @@ main {
     padding: 1.5rem;
 }
 
+/* Panel Header */
+.panel-header {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 1rem;
+}
+
+.panel-actions {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.panel-actions .nav-search {
+    width: 200px;
+}
+
 .tab-panel {
     animation: fadeIn 0.3s ease-out;
 }

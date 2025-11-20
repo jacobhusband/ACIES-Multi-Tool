@@ -67,6 +67,11 @@
                         <button class="filter-chip" data-filter="Complete">Complete</button>
                         <button class="filter-chip" data-filter="Waiting">Waiting</button>
                     </div>
+                    <div class="filter-label" style="margin-top:0.5rem">Column Content</div>
+                    <div class="task-notes-toggle" id="taskColumnToggle">
+                        <button class="filter-chip active" data-task-mode="tasks">Tasks</button>
+                        <button class="filter-chip" data-task-mode="notes">Notes</button>
+                    </div>
                 </div>
                 <table class="table">
                     <thead>
@@ -75,7 +80,7 @@
                             <th data-sort="name">Project Details</th>
                             <th style="width:120px" data-sort="due">Due</th>
                             <th style="width:150px">Status</th>
-                            <th>Tasks</th>
+                            <th id="tasksHeader">Tasks</th>
                             <th class="nowrap" style="width:120px;text-align:center">Actions</th>
                         </tr>
                     </thead>

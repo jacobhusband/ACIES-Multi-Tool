@@ -31,6 +31,9 @@
     --glow: 0 0 15px rgba(16, 185, 129, 0.15);
 
     /* Metrics */
+    --header-height: 64px;
+    --toolbar-height: 0px;
+    --sticky-gap: 0px;
     --radius-sm: 6px;
     --radius: 12px;
     --radius-lg: 16px;
@@ -43,7 +46,7 @@
 
 html,
 body {
-    height: 100%;
+    min-height: 100vh;
 }
 
 body {
@@ -101,7 +104,7 @@ h4 {
     position: sticky;
     top: 0;
     z-index: 50;
-    height: 64px;
+    height: var(--header-height);
     background: rgba(1, 24, 20, 0.85);
     backdrop-filter: blur(16px);
     -webkit-backdrop-filter: blur(16px);
@@ -269,8 +272,17 @@ main {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 1.5rem;
     gap: 1rem;
+    position: sticky;
+    top: var(--header-height);
+    z-index: 45;
+    margin: 0 -1.5rem 1rem;
+    padding: 0.75rem 1.5rem;
+    background: rgba(2, 36, 30, 0.9);
+    backdrop-filter: blur(10px);
+    border: 1px solid var(--glass-border);
+    border-radius: 0;
+    box-shadow: var(--shadow-md);
 }
 
 .toolbar-actions {
@@ -369,6 +381,17 @@ main {
     font-weight: 600;
 }
 
+.task-notes-toggle {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.task-notes-toggle .filter-chip {
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
 /* Table */
 .table {
     width: 100%;
@@ -386,6 +409,12 @@ main {
     font-weight: 600;
     cursor: pointer;
     user-select: none;
+    position: sticky;
+    top: calc(var(--header-height) + var(--toolbar-height));
+    background: rgba(2, 36, 30, 0.95);
+    backdrop-filter: blur(10px);
+    z-index: 30;
+    height: 50px;
 }
 
 .table th:hover {
@@ -478,6 +507,18 @@ main {
 .path-link:hover {
     color: var(--accent-hover);
     text-decoration: underline;
+}
+
+.cell-tasks.notes-mode {
+    vertical-align: top;
+}
+
+.note-snippet {
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text);
+    white-space: pre-line;
+    word-break: break-word;
 }
 
 /* Status Pills */

@@ -149,6 +149,16 @@ function toast(msg, duration = 2500) {
     }, duration);
 }
 
+const updateStickyOffsets = () => {
+    const header = document.querySelector('.app-header');
+    const toolbar = document.querySelector('#projects-panel .panel-toolbar');
+    if (header) document.documentElement.style.setProperty('--header-height', `${header.offsetHeight}px`);
+    if (toolbar) document.documentElement.style.setProperty('--toolbar-height', `${toolbar.offsetHeight}px`);
+};
+
+const debouncedStickyOffsets = debounce(updateStickyOffsets, 150);
+window.addEventListener('resize', debouncedStickyOffsets);
+
 // ===================== SERVER I/O =====================
 
 // State variables
@@ -159,6 +169,7 @@ let editIndex = -1;
 let currentSort = { key: 'due', dir: 'desc' };
 let statusFilter = 'all';
 let dueFilter = 'all';
+let taskColumnMode = 'tasks';
 
 let userSettings = {
     userName: '',
@@ -390,6 +401,8 @@ function getStatusTags(p) {
 function render() {
     const tbody = document.getElementById('tbody');
     const emptyState = document.getElementById('emptyState');
+    const tasksHeader = document.getElementById('tasksHeader');
+    if (tasksHeader) tasksHeader.textContent = taskColumnMode === 'tasks' ? 'Tasks' : 'Notes';
     tbody.innerHTML = '';
 
     const q = val('search').toLowerCase();
@@ -536,7 +549,17 @@ function render() {
         tr.querySelector('.cell-status').appendChild(renderStatusToggles(p));
 
         const taskCell = tr.querySelector('.cell-tasks');
-        if (p.tasks && p.tasks.length) {
+        taskCell.classList.toggle('notes-mode', taskColumnMode === 'notes');
+        taskCell.classList.toggle('tasks-mode', taskColumnMode === 'tasks');
+        taskCell.innerHTML = '';
+        if (taskColumnMode === 'notes') {
+            const notesText = (p.notes || '').trim();
+            if (notesText) {
+                taskCell.appendChild(el('div', { className: 'note-snippet', textContent: notesText }));
+            } else {
+                taskCell.textContent = '--';
+            }
+        } else if (p.tasks && p.tasks.length) {
             const renderTasks = (expanded) => {
                 taskCell.innerHTML = '';
                 const tasksToShow = expanded ? p.tasks : p.tasks.slice(0, 2);
@@ -566,7 +589,7 @@ function render() {
             };
             renderTasks(false);
         } else {
-            taskCell.textContent = '—';
+            taskCell.textContent = '--';
         }
 
         const actionsCell = tr.querySelector('.cell-actions');
@@ -614,6 +637,18 @@ function updateSortHeaders() {
     });
 }
 
+function setTaskColumnMode(mode) {
+    if (!['tasks', 'notes'].includes(mode)) return;
+    const changed = mode !== taskColumnMode;
+    taskColumnMode = mode;
+    document.querySelectorAll('[data-task-mode]').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.taskMode === mode);
+    });
+    const header = document.getElementById('tasksHeader');
+    if (header) header.textContent = mode === 'tasks' ? 'Tasks' : 'Notes';
+    if (changed) render();
+}
+
 // ===================== CRUD OPERATIONS =====================
 function openEdit(i) {
     editIndex = i;
@@ -638,7 +673,17 @@ function removeProject(i) {
 }
 function duplicate(i) {
     const original = db[i];
-    const newProjectData = { ...original, id: original.id, refs: JSON.parse(JSON.stringify(original.refs || [])) };
+    const newProjectData = {
+        id: original?.id || '',
+        name: original?.name || '',
+        path: original?.path || '',
+        nick: '',
+        notes: '',
+        due: '',
+        tasks: [],
+        refs: [],
+        statuses: []
+    };
     editIndex = -1;
     document.getElementById('dlgTitle').textContent = 'Duplicate Project';
     document.getElementById('btnSaveProject').textContent = "Create Duplicate";
@@ -1225,6 +1270,15 @@ function initEventListeners() {
         }
     });
 
+    const taskColumnToggle = document.getElementById('taskColumnToggle');
+    if (taskColumnToggle) {
+        taskColumnToggle.addEventListener('click', e => {
+            const btn = e.target.closest('[data-task-mode]');
+            if (!btn) return;
+            setTaskColumnMode(btn.dataset.taskMode);
+        });
+    }
+
     document.getElementById('toolPublishDwgs').addEventListener('click', async (e) => {
         if (e.currentTarget.classList.contains('running')) return;
         if (!userSettings.autocadPath) {
@@ -1473,6 +1527,8 @@ async function init() {
     if (!window.pywebview) await new Promise(r => window.addEventListener('pywebviewready', r));
     initEventListeners();
     initTabbedInterfaces();
+    updateStickyOffsets();
+    setTaskColumnMode(taskColumnMode);
     await loadUserSettings();
     db = await load();
     await loadNotes();

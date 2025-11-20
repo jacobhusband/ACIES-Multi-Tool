@@ -169,7 +169,6 @@ let editIndex = -1;
 let currentSort = { key: 'due', dir: 'desc' };
 let statusFilter = 'all';
 let dueFilter = 'all';
-let taskColumnMode = 'tasks';
 
 let userSettings = {
     userName: '',
@@ -401,8 +400,6 @@ function getStatusTags(p) {
 function render() {
     const tbody = document.getElementById('tbody');
     const emptyState = document.getElementById('emptyState');
-    const tasksHeader = document.getElementById('tasksHeader');
-    if (tasksHeader) tasksHeader.textContent = taskColumnMode === 'tasks' ? 'Tasks' : 'Notes';
     tbody.innerHTML = '';
 
     const q = val('search').toLowerCase();
@@ -549,48 +546,50 @@ function render() {
         tr.querySelector('.cell-status').appendChild(renderStatusToggles(p));
 
         const taskCell = tr.querySelector('.cell-tasks');
-        taskCell.classList.toggle('notes-mode', taskColumnMode === 'notes');
-        taskCell.classList.toggle('tasks-mode', taskColumnMode === 'tasks');
         taskCell.innerHTML = '';
-        if (taskColumnMode === 'notes') {
-            const notesText = (p.notes || '').trim();
-            if (notesText) {
-                taskCell.appendChild(el('div', { className: 'note-snippet', textContent: notesText }));
-            } else {
-                taskCell.textContent = '--';
-            }
-        } else if (p.tasks && p.tasks.length) {
+        const tasksNotesWrap = el('div', { className: 'tasks-notes-grid' });
+
+        const tasksCol = el('div', { className: 'tn-col tasks-col' });
+        tasksCol.appendChild(el('div', { className: 'tn-heading', textContent: 'Tasks' }));
+        const tasksBody = el('div', { className: 'tn-body tasks-body' });
+        if (p.tasks && p.tasks.length) {
             const renderTasks = (expanded) => {
-                taskCell.innerHTML = '';
+                tasksBody.innerHTML = '';
                 const tasksToShow = expanded ? p.tasks : p.tasks.slice(0, 2);
                 tasksToShow.forEach(t => {
-                    taskCell.appendChild(el('div', {
+                    tasksBody.appendChild(el('div', {
                         className: `task-chip ${t.done ? 'done' : ''}`,
                         textContent: t.text || 'Task'
                     }));
                 });
-                if (!expanded && p.tasks.length > 2) {
+                if (p.tasks.length > 2) {
                     const moreBtn = el('button', {
                         className: 'btn-more-tasks',
-                        textContent: `+${p.tasks.length - 2} more`,
-                        onclick: (e) => { e.stopPropagation(); renderTasks(true); }
+                        textContent: expanded ? 'Show Less' : `+${p.tasks.length - 2} more`,
+                        onclick: (e) => { e.stopPropagation(); renderTasks(!expanded); }
                     });
-                    taskCell.appendChild(moreBtn);
-                }
-                if (expanded && p.tasks.length > 2) {
-                    const lessBtn = el('button', {
-                        className: 'btn-more-tasks',
-                        textContent: `Show Less`,
-                        style: 'margin-left: 8px',
-                        onclick: (e) => { e.stopPropagation(); renderTasks(false); }
-                    });
-                    taskCell.appendChild(lessBtn);
+                    tasksBody.appendChild(moreBtn);
                 }
             };
             renderTasks(false);
         } else {
-            taskCell.textContent = '--';
+            tasksBody.textContent = '--';
         }
+        tasksCol.appendChild(tasksBody);
+
+        const notesCol = el('div', { className: 'tn-col notes-col' });
+        notesCol.appendChild(el('div', { className: 'tn-heading', textContent: 'Notes' }));
+        const notesBody = el('div', { className: 'tn-body notes-body' });
+        const notesText = (p.notes || '').trim();
+        if (notesText) {
+            notesBody.appendChild(el('div', { className: 'note-snippet', textContent: notesText }));
+        } else {
+            notesBody.textContent = '--';
+        }
+        notesCol.appendChild(notesBody);
+
+        tasksNotesWrap.append(tasksCol, notesCol);
+        taskCell.appendChild(tasksNotesWrap);
 
         const actionsCell = tr.querySelector('.cell-actions');
         actionsCell.append(
@@ -635,18 +634,6 @@ function updateSortHeaders() {
         th.classList.remove('sort-asc', 'sort-desc');
         if (th.dataset.sort === currentSort.key) th.classList.add(`sort-${currentSort.dir}`);
     });
-}
-
-function setTaskColumnMode(mode) {
-    if (!['tasks', 'notes'].includes(mode)) return;
-    const changed = mode !== taskColumnMode;
-    taskColumnMode = mode;
-    document.querySelectorAll('[data-task-mode]').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.taskMode === mode);
-    });
-    const header = document.getElementById('tasksHeader');
-    if (header) header.textContent = mode === 'tasks' ? 'Tasks' : 'Notes';
-    if (changed) render();
 }
 
 // ===================== CRUD OPERATIONS =====================
@@ -1270,15 +1257,6 @@ function initEventListeners() {
         }
     });
 
-    const taskColumnToggle = document.getElementById('taskColumnToggle');
-    if (taskColumnToggle) {
-        taskColumnToggle.addEventListener('click', e => {
-            const btn = e.target.closest('[data-task-mode]');
-            if (!btn) return;
-            setTaskColumnMode(btn.dataset.taskMode);
-        });
-    }
-
     document.getElementById('toolPublishDwgs').addEventListener('click', async (e) => {
         if (e.currentTarget.classList.contains('running')) return;
         if (!userSettings.autocadPath) {
@@ -1528,7 +1506,6 @@ async function init() {
     initEventListeners();
     initTabbedInterfaces();
     updateStickyOffsets();
-    setTaskColumnMode(taskColumnMode);
     await loadUserSettings();
     db = await load();
     await loadNotes();

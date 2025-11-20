@@ -381,17 +381,6 @@ main {
     font-weight: 600;
 }
 
-.task-notes-toggle {
-    display: flex;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-}
-
-.task-notes-toggle .filter-chip {
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-}
-
 /* Table */
 .table {
     width: 100%;
@@ -435,19 +424,14 @@ main {
 .row td {
     padding: 1rem;
     border-top: 1px solid var(--glass-border);
-    border-bottom: 1px solid var(--glass-border);
 }
 
 .row td:first-child {
     border-left: 1px solid var(--glass-border);
-    border-top-left-radius: var(--radius);
-    border-bottom-left-radius: var(--radius);
 }
 
 .row td:last-child {
     border-right: 1px solid var(--glass-border);
-    border-top-right-radius: var(--radius);
-    border-bottom-right-radius: var(--radius);
 }
 
 /* Updated Actions Column */
@@ -509,8 +493,42 @@ main {
     text-decoration: underline;
 }
 
-.cell-tasks.notes-mode {
+.tasks-notes-header {
+    text-align: center;
+}
+
+.cell-tasks {
     vertical-align: top;
+}
+
+.tasks-notes-grid {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    align-items: flex-start;
+}
+
+.tn-col {
+    flex: 1;
+    min-width: 220px;
+    padding: 0.75rem;
+    background: rgba(0, 0, 0, 0.15);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm);
+}
+
+.tn-heading {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+    margin-bottom: 6px;
+}
+
+.tn-body {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
 }
 
 .note-snippet {

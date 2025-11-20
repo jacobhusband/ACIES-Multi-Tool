@@ -1227,6 +1227,28 @@ dialog::backdrop {
     /* Prevent squished text inside tags */
 }
 
+.commands-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 0.5rem;
+}
+
+.command-tag.command-link {
+    cursor: pointer;
+    color: var(--accent);
+    border-color: var(--accent);
+    background: rgba(16, 185, 129, 0.08);
+    appearance: none;
+}
+
+.command-tag.command-link:hover {
+    color: var(--text);
+    border-color: var(--accent-hover);
+    background: rgba(16, 185, 129, 0.16);
+}
+
 .info-btn {
     width: 24px;
     height: 24px;

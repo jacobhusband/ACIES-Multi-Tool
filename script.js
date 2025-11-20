@@ -3,6 +3,13 @@ const STATUS_CANON = ["Waiting", "Working", "Pending Review", "Complete", "Deliv
 const STATUS_PRIORITY = ['Delivered', 'Complete', 'Pending Review', 'Working', 'Waiting'];
 const LABEL_TO_KEY = { 'Waiting': 'waiting', 'Working': 'working', 'Pending Review': 'pendingReview', 'Complete': 'complete', 'Delivered': 'delivered' };
 const KEY_TO_LABEL = { waiting: 'Waiting', working: 'Working', pendingReview: 'Pending Review', complete: 'Complete', delivered: 'Delivered' };
+const HELP_LINKS = {
+    main: 'https://brainy-seahorse-3c5.notion.site/ACIES-Desktop-Application-2b03fdbb662c80afa61af555bddc9e61?pvs=74',
+    projects: 'https://brainy-seahorse-3c5.notion.site/Projects-2b13fdbb662c803b9898d86ec9389e41',
+    notes: 'https://brainy-seahorse-3c5.notion.site/Notes-2b13fdbb662c80dd86c8e9d3f0d65081',
+    tools: 'https://brainy-seahorse-3c5.notion.site/Tools-2b13fdbb662c80afbab9d68204f9cd23',
+    plugins: 'https://brainy-seahorse-3c5.notion.site/Plugins-2b13fdbb662c801abfe9cc46927eb73a'
+};
 
 // Cache for loaded descriptions to prevent re-fetching
 const DESCRIPTION_CACHE = {};
@@ -106,6 +113,16 @@ function normalizeLink(input) {
     const url = toFileURL(raw);
     const label = basename(raw) || raw || 'link';
     return { label, url, raw };
+}
+
+function openExternalUrl(url) {
+    try {
+        if (window.pywebview?.api?.open_url) {
+            window.pywebview.api.open_url(url);
+            return;
+        }
+    } catch { /* fallthrough */ }
+    window.open(url, '_blank', 'noreferrer');
 }
 
 function convertPath(raw) {
@@ -1022,36 +1039,6 @@ async function fetchDescriptionForBundle(bundleName) {
     }
 }
 
-function openDetailsModal(name, descriptionData) {
-    const dlg = document.getElementById('commandDetailsDlg');
-    if (!dlg) return;
-
-    document.getElementById('detailsTitle').textContent = name;
-    const videoEl = document.getElementById('detailsVideo');
-    videoEl.innerHTML = '';
-
-    if (descriptionData && descriptionData.video && descriptionData.video.includes('loom.com')) {
-        const videoId = descriptionData.video.split('/').pop();
-        videoEl.append(el('iframe', { src: `https://www.loom.com/embed/${videoId}`, allowfullscreen: true }));
-    } else {
-        videoEl.innerHTML = '<p class="muted" style="padding:1rem;text-align:center">No video available.</p>';
-    }
-
-    const commandsEl = document.getElementById('detailsCommands');
-    commandsEl.innerHTML = '';
-
-    if (descriptionData && descriptionData.commands) {
-        const list = el('ul', {}, Object.entries(descriptionData.commands).map(([cmd, desc]) =>
-            el('li', {}, [el('strong', { textContent: cmd }), `: ${desc}`])
-        ));
-        commandsEl.append(el('div', { className: 'bundle-commands' }, [el('h4', { textContent: 'Commands' }), list]));
-    } else {
-        commandsEl.textContent = "No command details found.";
-    }
-
-    dlg.showModal();
-}
-
 async function loadAndRenderBundles() {
     const container = document.getElementById('commands-container');
     if (!container) return;
@@ -1093,20 +1080,26 @@ async function loadAndRenderBundles() {
                 el('div', { className: 'release-card-title' }, [
                     el('div', { className: `bundle-status ${statusClass}`, title: statusTitle }),
                     el('span', { textContent: coreName })
-                ]),
-                el('button', {
-                    className: 'info-btn', textContent: '?', title: 'Details',
-                    onclick: () => openDetailsModal(coreName, description)
-                })
+                ])
             ]);
 
             const body = el('div', { className: 'release-card-body' });
             const tags = el('div', { className: 'command-tags' });
 
             if (description && description.commands) {
-                Object.keys(description.commands).forEach(cmd =>
-                    tags.append(el('span', { className: 'command-tag', textContent: cmd }))
-                );
+                Object.keys(description.commands).forEach(cmd => {
+                    const link = description.links?.[cmd];
+                    const title = description.commands[cmd] || (link ? 'Open documentation' : '');
+                    const tagEl = link
+                        ? el('button', {
+                            className: 'command-tag command-link',
+                            textContent: cmd,
+                            title,
+                            onclick: () => openExternalUrl(link)
+                        })
+                        : el('span', { className: 'command-tag', textContent: cmd, title });
+                    tags.append(tagEl);
+                });
             }
             body.append(tags);
 
@@ -1242,6 +1235,12 @@ function initTabbedInterfaces() {
 function initEventListeners() {
     document.getElementById('search').addEventListener('input', debounce(() => render(), 250));
     document.getElementById('notesSearch').addEventListener('input', debounce(() => renderNoteSearchResults(), 250));
+
+    document.getElementById('mainHelpBtn').onclick = () => openExternalUrl(HELP_LINKS.main);
+    document.getElementById('projectsHelpBtn').onclick = () => openExternalUrl(HELP_LINKS.projects);
+    document.getElementById('notesHelpBtn').onclick = () => openExternalUrl(HELP_LINKS.notes);
+    document.getElementById('toolsHelpBtn').onclick = () => openExternalUrl(HELP_LINKS.tools);
+    document.getElementById('pluginsHelpBtn').onclick = () => openExternalUrl(HELP_LINKS.plugins);
 
     document.getElementById('quickNew').onclick = openNew;
     document.getElementById('settingsBtn').onclick = async () => {

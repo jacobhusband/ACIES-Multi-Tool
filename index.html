@@ -27,6 +27,7 @@
         </div>
         <div class="header-actions">
             <button class="icon-btn" id="settingsBtn" aria-label="Settings" title="Settings">⚙️</button>
+            <button class="icon-btn" id="mainHelpBtn" aria-label="Help" title="Help">?</button>
         </div>
     </header>
     <main>
@@ -49,6 +50,8 @@
                             title="Create project with AI">🤖</button>
                         <button class="icon-btn" id="statsBtn" aria-label="Statistics"
                             title="View Statistics">📊</button>
+                        <button class="icon-btn" id="projectsHelpBtn" aria-label="Projects help"
+                            title="Projects help">?</button>
                     </div>
                 </div>
                 <div class="filter-controls">
@@ -102,6 +105,9 @@
                         </svg>
                         <input id="notesSearch" type="search" placeholder="Search notes..." />
                     </div>
+                    <div class="toolbar-actions">
+                        <button class="icon-btn" id="notesHelpBtn" aria-label="Notes help" title="Notes help">?</button>
+                    </div>
                 </div>
                 <div class="notes-controls">
                     <h3 class="section-title">Custom Notes</h3>
@@ -128,7 +134,10 @@
                         <h3 class="section-title">AutoCAD Tools</h3>
                         <p class="tiny muted">Run scripts to automate common AutoCAD tasks.</p>
                     </div>
-                    <button id="abortBtn" class="btn btn-danger" style="display: none;">⏹ Abort Process</button>
+                    <div class="toolbar-actions">
+                        <button class="icon-btn" id="toolsHelpBtn" aria-label="Tools help" title="Tools help">?</button>
+                        <button id="abortBtn" class="btn btn-danger" style="display: none;">⏹ Abort Process</button>
+                    </div>
                 </div>
 
                 <div class="tools-grid">
@@ -175,8 +184,16 @@
             <section class="panel stack">
                 <!-- Unified Commands Section -->
                 <div class="commands-section">
-                    <h3 class="section-title">AutoCAD Plugins</h3>
-                    <p class="tiny muted">Install, update, or uninstall command bundles.</p>
+                    <div class="commands-header">
+                        <div>
+                            <h3 class="section-title">AutoCAD Plugins</h3>
+                            <p class="tiny muted">Install, update, or uninstall command bundles.</p>
+                        </div>
+                        <div class="toolbar-actions">
+                            <button class="icon-btn" id="pluginsHelpBtn" aria-label="Plugins help"
+                                title="Plugins help">?</button>
+                        </div>
+                    </div>
                     <div id="commands-container" class="tools-grid">
                         <!-- Command cards will be dynamically inserted here -->
                         <div class="spinner">Loading commands...</div>
@@ -223,8 +240,8 @@
                             title="Waiting">Waiting</button>
                         <button type="button" class="st status-btn st-work" data-status="Working" aria-pressed="false"
                             title="Working">Working</button>
-                        <button type="button" class="st status-btn st-pr" data-status="Pending Review" aria-pressed="false"
-                            title="Pending Review">Pending Review</button>
+                        <button type="button" class="st status-btn st-pr" data-status="Pending Review"
+                            aria-pressed="false" title="Pending Review">Pending Review</button>
                         <button type="button" class="st status-btn st-comp" data-status="Complete" aria-pressed="false"
                             title="Complete">Complete</button>
                         <button type="button" class="st status-btn st-del" data-status="Delivered" aria-pressed="false"
@@ -613,17 +630,6 @@
             <div class="modal-footer">
                 <button class="btn-primary" id="btnProceedCleanDwgs">▶ Run Tool</button>
             </div>
-        </div>
-    </dialog>
-    <!-- Command Details Modal -->
-    <dialog id="commandDetailsDlg">
-        <div class="modal-header">
-            <div id="detailsTitle" class="title">Command Details</div>
-            <button class="btn ghost" onclick="closeDlg('commandDetailsDlg')">Close</button>
-        </div>
-        <div class="modal-body stack">
-            <div id="detailsVideo" class="video-container"></div>
-            <div id="detailsCommands" class="stack"></div>
         </div>
     </dialog>
     <!-- Install Prerequisite Modal -->

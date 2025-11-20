@@ -596,11 +596,13 @@ function render() {
         taskCell.appendChild(tasksNotesWrap);
 
         const actionsCell = tr.querySelector('.cell-actions');
-        actionsCell.append(
+        const actionsStack = el('div', { className: 'actions-stack' });
+        actionsStack.append(
             el('button', { className: 'btn', textContent: 'Edit', onclick: () => openEdit(idx) }),
             el('button', { className: 'btn', textContent: 'Duplicate', onclick: () => duplicate(idx) }),
             el('button', { className: 'btn btn-danger', textContent: 'Delete', onclick: () => removeProject(idx) }),
         );
+        actionsCell.append(actionsStack);
         tbody.appendChild(tr);
     });
 }

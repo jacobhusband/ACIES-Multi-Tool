@@ -424,6 +424,7 @@ main {
 .row td {
     padding: 1rem;
     border-top: 1px solid var(--glass-border);
+    vertical-align: middle;
 }
 
 .row td:first-child {
@@ -436,10 +437,18 @@ main {
 
 /* Updated Actions Column */
 .row .actions {
+    padding: 1rem;
+    vertical-align: middle;
+}
+
+.actions-stack {
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
     align-items: stretch;
+    justify-content: center;
+    height: 100%;
+    width: 100%;
 }
 
 /* Remove any potential shadows on action buttons to prevent "group glow" */
@@ -584,8 +593,8 @@ main {
     align-items: center;
     justify-content: center;
     gap: 0.35rem;
-    font-size: 12px;
-    padding: 0.45rem 0.85rem;
+    font-size: 11px;
+    padding: 4px 10px;
     border-radius: var(--radius-sm);
     background: var(--surface);
     border: 1px solid var(--glass-border);

@@ -17,6 +17,16 @@ import requests  # Added for GitHub API calls
 import zipfile   # Added for extracting bundles
 
 # Helper functions for date parsing and status management
+STATUS_CANON = ["Waiting", "Working", "Pending Review", "Complete", "Delivered"]
+STATUS_PRIORITY = ['Delivered', 'Complete', 'Pending Review', 'Working', 'Waiting']
+LABEL_TO_KEY = {
+    "Waiting": "waiting",
+    "Working": "working",
+    "Pending Review": "pendingReview",
+    "Complete": "complete",
+    "Delivered": "delivered"
+}
+KEY_TO_LABEL = {v: k for k, v in LABEL_TO_KEY.items()}
 
 
 def parse_due_str(s):
@@ -52,23 +62,15 @@ def sync_status_arrays(task):
     if not isinstance(task.get('statuses'), list):
         task['statuses'] = []
     from_tags = task.get('statusTags', [])
-    for k in from_tags:
-        label = {'pendingReview': 'Pending Review',
-                 'complete': 'Complete', 'waiting': 'Waiting'}.get(k)
+    for key in from_tags:
+        label = KEY_TO_LABEL.get(key)
         if label and label not in task['statuses']:
             task['statuses'].append(label)
-    task['statuses'] = list(set(task['statuses']) & set(
-        ['Pending Review', 'Complete', 'Waiting']))
-    task['statusTags'] = [k for k, v in {'Pending Review': 'pendingReview', 'Complete': 'complete', 'Waiting': 'waiting'}.items(
-    ) if v in [k for k, v in {'Pending Review': 'pendingReview', 'Complete': 'complete', 'Waiting': 'waiting'}.items() if v in task['statuses']]]
-    if 'Complete' in task['statuses']:
-        task['status'] = 'Complete'
-    elif 'Waiting' in task['statuses']:
-        task['status'] = 'Waiting'
-    elif 'Pending Review' in task['statuses']:
-        task['status'] = 'Pending'
-    else:
-        task['status'] = task.get('status', '')
+    task['statuses'] = list({s for s in task['statuses'] if s in STATUS_CANON})
+    task['statusTags'] = [LABEL_TO_KEY[s]
+                          for s in task['statuses'] if LABEL_TO_KEY.get(s)]
+    task['status'] = next(
+        (label for label in STATUS_PRIORITY if label in task['statuses']), '')
 
 
 # --- Google GenAI (new client) ---
@@ -613,6 +615,28 @@ Return ONLY the JSON object.
             return {'status': 'success', 'count': count}
         except Exception as e:
             logging.error(f"Error marking overdue projects: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def mark_overdue_projects_delivered(self):
+        """Marks all projects with due dates before today as delivered."""
+        try:
+            tasks = self.get_tasks()
+            today = datetime.date.today()
+            count = 0
+            for task in tasks:
+                due_str = task.get('due', '')
+                if due_str:
+                    due_date = parse_due_str(due_str)
+                    if due_date and due_date.date() < today:
+                        task['statuses'] = ['Delivered']
+                        task['status'] = 'Delivered'
+                        sync_status_arrays(task)
+                        count += 1
+            if count > 0:
+                self.save_tasks(tasks)
+            return {'status': 'success', 'count': count}
+        except Exception as e:
+            logging.error(f"Error marking overdue projects delivered: {e}")
             return {'status': 'error', 'message': str(e)}
 
     def delete_all_notes(self):

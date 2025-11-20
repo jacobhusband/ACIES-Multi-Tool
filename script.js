@@ -1,7 +1,8 @@
 // ===================== CONFIGURATION & CONSTANTS =====================
-const STATUS_CANON = ["Pending Review", "Complete", "Waiting"];
-const LABEL_TO_KEY = { 'Pending Review': 'pendingReview', 'Complete': 'complete', 'Waiting': 'waiting' };
-const KEY_TO_LABEL = { pendingReview: 'Pending Review', complete: 'Complete', waiting: 'Waiting' };
+const STATUS_CANON = ["Waiting", "Working", "Pending Review", "Complete", "Delivered"];
+const STATUS_PRIORITY = ['Delivered', 'Complete', 'Pending Review', 'Working', 'Waiting'];
+const LABEL_TO_KEY = { 'Waiting': 'waiting', 'Working': 'working', 'Pending Review': 'pendingReview', 'Complete': 'complete', 'Delivered': 'delivered' };
+const KEY_TO_LABEL = { waiting: 'Waiting', working: 'Working', pendingReview: 'Pending Review', complete: 'Complete', delivered: 'Delivered' };
 
 // Cache for loaded descriptions to prevent re-fetching
 const DESCRIPTION_CACHE = {};
@@ -329,12 +330,19 @@ const debouncedSaveUserSettings = debounce(saveUserSettings, 500);
 function canonStatus(s) {
     if (!s) return null;
     const t = String(s).trim().toLowerCase();
-    if (['pending review', 'pending-review', 'review', 'pr'].includes(t)) return 'Pending Review';
+    if (['waiting', 'wait', 'blocked'].includes(t)) return 'Waiting';
+    if (['working', 'work', 'in progress', 'in-progress', 'doing', 'active'].includes(t)) return 'Working';
+    if (['pending review', 'pending-review', 'review', 'pr', 'pending'].includes(t)) return 'Pending Review';
     if (['complete', 'completed', 'done'].includes(t)) return 'Complete';
-    if (['waiting', 'wait'].includes(t)) return 'Waiting';
+    if (['delivered', 'sent', 'shipped'].includes(t)) return 'Delivered';
     return null;
 }
 function hasStatus(p, s) { return Array.isArray(p.statuses) && p.statuses.includes(s); }
+function isFinished(p) { return hasStatus(p, 'Complete') || hasStatus(p, 'Delivered'); }
+function applyPrimaryStatus(p) {
+    const primary = STATUS_PRIORITY.find(status => hasStatus(p, status));
+    p.status = primary || '';
+}
 function toggleStatus(p, label) {
     if (!Array.isArray(p.statuses)) p.statuses = [];
     const key = LABEL_TO_KEY[label];
@@ -349,10 +357,7 @@ function syncStatusArrays(p) {
     }
     p.statuses = [...new Set(p.statuses.filter(s => STATUS_CANON.includes(s)))];
     p.statusTags = p.statuses.map(s => LABEL_TO_KEY[s]).filter(Boolean);
-    if (p.statuses.includes('Complete')) p.status = 'Complete';
-    else if (p.statuses.includes('Waiting')) p.status = 'Waiting';
-    else if (p.statuses.includes('Pending Review')) p.status = 'Pending';
-    else p.status = p.status || '';
+    applyPrimaryStatus(p);
 }
 function migrateStatuses(arr) {
     for (const p of arr) {
@@ -380,10 +385,7 @@ function setTag(p, key, on) {
         if (on && j === -1) p.statuses.push(label);
         if (!on && j !== -1) p.statuses.splice(j, 1);
     }
-    if (p.statuses.includes('Complete')) p.status = 'Complete';
-    else if (p.statuses.includes('Waiting')) p.status = 'Waiting';
-    else if (p.statuses.includes('Pending Review')) p.status = 'Pending';
-    else p.status = '';
+    applyPrimaryStatus(p);
 }
 function getStatusTags(p) {
     let tags = Array.isArray(p.statusTags) ? [...p.statusTags] : [];
@@ -391,7 +393,9 @@ function getStatusTags(p) {
     if (s) {
         if (s.includes('complete') && !tags.includes('complete')) tags.push('complete');
         if (s.includes('waiting') && !tags.includes('waiting')) tags.push('waiting');
+        if ((s.includes('working') || s.includes('in progress')) && !tags.includes('working')) tags.push('working');
         if ((s.includes('pending review') || s === 'pending') && !tags.includes('pendingReview')) tags.push('pendingReview');
+        if (s.includes('deliver') && !tags.includes('delivered')) tags.push('delivered');
     }
     return [...new Set(tags)];
 }
@@ -432,7 +436,7 @@ function render() {
             if (d <= endOfWeek) return false;
         }
         if (statusFilter === 'incomplete') {
-            if (hasStatus(p, 'Complete')) return false;
+            if (isFinished(p)) return false;
         } else if (statusFilter !== 'all' && !hasStatus(p, statusFilter)) {
             return false;
         }
@@ -458,7 +462,7 @@ function render() {
     updateSortHeaders();
 
     const total = db.length;
-    const completed = db.filter(p => hasStatus(p, 'Complete')).length;
+    const completed = db.filter(p => isFinished(p)).length;
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const dayOfWeek = today.getDay();
     const startOfWeek = new Date(today); startOfWeek.setDate(today.getDate() - dayOfWeek);
@@ -479,7 +483,7 @@ function render() {
             if (d > endOfWeek) upcoming++;
             if (!minDate || d < minDate) minDate = d;
             if (!maxDate || d > maxDate) maxDate = d;
-            if (hasStatus(p, 'Complete')) {
+            if (isFinished(p)) {
                 if (d.getFullYear() === currentYear) completedThisYear++;
                 if (d.getFullYear() === lastYear) completedLastYear++;
             }
@@ -605,9 +609,9 @@ function renderStatusToggles(p) {
     const wrap = el('div', { className: 'status-group' });
     const mk = (cls, label) => {
         const b = el('button', {
-            className: `st st-${cls}`,
+            className: `st status-btn st-${cls}`,
             type: 'button',
-            textContent: label.replace(' ', '\n'),
+            textContent: label,
             title: label,
             'aria-pressed': String(hasStatus(p, label))
         });
@@ -619,7 +623,13 @@ function renderStatusToggles(p) {
         };
         return b;
     };
-    wrap.append(mk('pr', 'Pending Review'), mk('comp', 'Complete'), mk('wait', 'Waiting'));
+    [
+        ['wait', 'Waiting'],
+        ['work', 'Working'],
+        ['pr', 'Pending Review'],
+        ['comp', 'Complete'],
+        ['del', 'Delivered']
+    ].forEach(([cls, label]) => wrap.append(mk(cls, label)));
     return wrap;
 }
 
@@ -1410,6 +1420,24 @@ function initEventListeners() {
             toast('Error marking projects as complete.');
         }
         closeDlg('markOverdueDlg');
+    };
+    document.getElementById('btnMarkOverdueDelivered').onclick = () => {
+        document.getElementById('markOverdueDeliveredDlg').showModal();
+    };
+    document.getElementById('btnConfirmMarkOverdueDelivered').onclick = async () => {
+        try {
+            const response = await window.pywebview.api.mark_overdue_projects_delivered();
+            if (response.status === 'success') {
+                toast(`Marked ${response.count} projects as delivered.`);
+                db = await load();
+                render();
+            } else {
+                toast('Failed to mark projects as delivered.');
+            }
+        } catch (e) {
+            toast('Error marking projects as delivered.');
+        }
+        closeDlg('markOverdueDeliveredDlg');
     };
 
     document.getElementById('btnDeleteAll').onclick = () => {

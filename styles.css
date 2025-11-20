@@ -569,23 +569,75 @@ main {
 }
 
 .status-group button {
-    margin-right: 4px;
+    margin-right: 0;
+}
+
+.status-group,
+.status-picker {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
 }
 
 .st {
-    font-size: 11px;
-    padding: 2px 8px;
-    border-radius: 12px;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid transparent;
-    color: var(--muted);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+    font-size: 12px;
+    padding: 0.45rem 0.85rem;
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    border: 1px solid var(--glass-border);
+    color: var(--text-secondary);
     cursor: pointer;
+    transition: all 0.2s ease;
+    min-width: 120px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    box-shadow: none;
+}
+
+.st:hover {
+    background: var(--surface-hover);
+    border-color: var(--accent);
+    color: var(--text);
+    transform: translateY(-1px);
 }
 
 .st[aria-pressed="true"] {
-    background: var(--accent-dim);
+    box-shadow: var(--shadow-sm), var(--glow);
+}
+
+.st-wait[aria-pressed="true"] {
+    background: var(--bg-secondary);
+    color: var(--muted);
+    border-color: var(--glass-border);
+    box-shadow: none;
+}
+
+.st-work[aria-pressed="true"] {
+    background: var(--accent);
     border-color: var(--accent);
-    color: var(--text);
+    color: #022c22;
+}
+
+.st-pr[aria-pressed="true"] {
+    background: var(--warning-bg);
+    color: #fcd34d;
+    border-color: rgba(245, 158, 11, 0.6);
+}
+
+.st-comp[aria-pressed="true"] {
+    background: linear-gradient(135deg, var(--accent), var(--accent-hover));
+    border-color: var(--accent);
+    color: #022c22;
+}
+
+.st-del[aria-pressed="true"] {
+    background: linear-gradient(135deg, #34d399, #10b981);
+    border-color: #a7f3d0;
+    color: #022c22;
 }
 
 /* Buttons */

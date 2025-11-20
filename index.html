@@ -63,9 +63,11 @@
                     <div class="status-filter-group" id="statusFilterGroup">
                         <button class="filter-chip active" data-filter="all">All</button>
                         <button class="filter-chip" data-filter="incomplete">Incomplete</button>
+                        <button class="filter-chip" data-filter="Waiting">Waiting</button>
+                        <button class="filter-chip" data-filter="Working">Working</button>
                         <button class="filter-chip" data-filter="Pending Review">Pending Review</button>
                         <button class="filter-chip" data-filter="Complete">Complete</button>
-                        <button class="filter-chip" data-filter="Waiting">Waiting</button>
+                        <button class="filter-chip" data-filter="Delivered">Delivered</button>
                     </div>
                 </div>
                 <table class="table">
@@ -217,12 +219,16 @@
                 <div class="col-12">
                     <label class="label">Status</label>
                     <div id="f_statuses" class="status-picker">
-                        <button type="button" class="st st-pr" data-status="Pending Review" aria-pressed="false"
-                            title="Pending Review">Pending Review</button>
-                        <button type="button" class="st st-comp" data-status="Complete" aria-pressed="false"
-                            title="Complete">Complete</button>
-                        <button type="button" class="st st-wait" data-status="Waiting" aria-pressed="false"
+                        <button type="button" class="st status-btn st-wait" data-status="Waiting" aria-pressed="false"
                             title="Waiting">Waiting</button>
+                        <button type="button" class="st status-btn st-work" data-status="Working" aria-pressed="false"
+                            title="Working">Working</button>
+                        <button type="button" class="st status-btn st-pr" data-status="Pending Review" aria-pressed="false"
+                            title="Pending Review">Pending Review</button>
+                        <button type="button" class="st status-btn st-comp" data-status="Complete" aria-pressed="false"
+                            title="Complete">Complete</button>
+                        <button type="button" class="st status-btn st-del" data-status="Delivered" aria-pressed="false"
+                            title="Delivered">Delivered</button>
                     </div>
                 </div>
                 <div class="col-12">
@@ -312,6 +318,21 @@
             <div class="inline" style="justify-content: flex-end; gap: 1rem;">
                 <button class="btn ghost" onclick="closeDlg('markOverdueDlg')">Cancel</button>
                 <button class="btn-primary" id="btnConfirmMarkOverdue">Yes, Mark as Complete</button>
+            </div>
+        </div>
+    </dialog>
+    <!-- Mark Overdue as Delivered Confirmation Modal -->
+    <dialog id="markOverdueDeliveredDlg">
+        <div class="modal-header">
+            <div class="title">Mark Past Due Projects as Delivered</div>
+            <button class="btn ghost" onclick="closeDlg('markOverdueDeliveredDlg')">Cancel</button>
+        </div>
+        <div class="modal-body stack">
+            <p>This will change the status of all projects with a due date before today to "Delivered".</p>
+            <p>Are you sure you want to proceed?</p>
+            <div class="inline" style="justify-content: flex-end; gap: 1rem;">
+                <button class="btn ghost" onclick="closeDlg('markOverdueDeliveredDlg')">Cancel</button>
+                <button class="btn-primary" id="btnConfirmMarkOverdueDelivered">Yes, Mark as Delivered</button>
             </div>
         </div>
     </dialog>
@@ -416,6 +437,13 @@
                         <div class="setting-desc">Change status of all past due projects to "Complete"</div>
                     </div>
                     <button class="btn" id="btnMarkOverdue">Run Action</button>
+                </div>
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <div class="setting-label">Mark Overdue as Delivered</div>
+                        <div class="setting-desc">Change status of all past due projects to "Delivered"</div>
+                    </div>
+                    <button class="btn" id="btnMarkOverdueDelivered">Run Action</button>
                 </div>
             </div>
 

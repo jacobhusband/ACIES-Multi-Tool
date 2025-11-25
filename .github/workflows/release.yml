@@ -12,6 +12,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Read version
+        id: version
+        shell: pwsh
+        run: |
+          $v = (Get-Content -Raw VERSION).Trim()
+          if (-not $v) { Write-Error "VERSION file is empty." }
+          "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -41,7 +49,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/setup/acies-scheduler-setup.exe
-          name: ${{ github.ref_name }}
+          name: ${{ steps.version.outputs.version }}
           tag_name: ${{ github.ref_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

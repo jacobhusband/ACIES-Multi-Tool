@@ -18,8 +18,10 @@ import requests  # Added for GitHub API calls
 import zipfile   # Added for extracting bundles
 
 # Helper functions for date parsing and status management
-STATUS_CANON = ["Waiting", "Working", "Pending Review", "Complete", "Delivered"]
-STATUS_PRIORITY = ['Delivered', 'Complete', 'Pending Review', 'Working', 'Waiting']
+STATUS_CANON = ["Waiting", "Working",
+                "Pending Review", "Complete", "Delivered"]
+STATUS_PRIORITY = ['Delivered', 'Complete',
+                   'Pending Review', 'Working', 'Waiting']
 LABEL_TO_KEY = {
     "Waiting": "waiting",
     "Working": "working",
@@ -31,7 +33,6 @@ KEY_TO_LABEL = {v: k for k, v in LABEL_TO_KEY.items()}
 
 APP_UPDATE_REPO = "jacobhusband/ACIES-Multi-Tool"
 APP_INSTALLER_NAME = "acies-scheduler-setup.exe"
-BUNDLE_RELEASE_TAG = "v0.0.0"
 GITHUB_API_BASE = "https://api.github.com"
 
 
@@ -46,6 +47,7 @@ def load_app_version():
 
 
 APP_VERSION = load_app_version()
+BUNDLE_RELEASE_TAG = f"v{APP_VERSION}"
 
 
 def _normalize_version(raw):
@@ -189,7 +191,8 @@ class Api:
                     continue
                 response.raise_for_status()
                 payload = response.json()
-                data = payload[0] if isinstance(payload, list) and payload else payload
+                data = payload[0] if isinstance(
+                    payload, list) and payload else payload
                 if data:
                     break
             except Exception as e:

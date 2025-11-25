@@ -157,7 +157,8 @@ class Api:
     def __init__(self):
         # --- Configuration for Bundle Management ---
         self.github_repo = "jacobhusband/ElectricalCommands"
-        self.release_tag = BUNDLE_RELEASE_TAG
+        # AutoCAD plugin releases are tracked in a separate repo; resolved dynamically.
+        self.release_tag = None
         self.app_version = APP_VERSION
         self.app_update_repo = APP_UPDATE_REPO
         self.app_installer_name = APP_INSTALLER_NAME
@@ -249,6 +250,74 @@ class Api:
                 'current_version': self.app_version
             }
 
+    def _fetch_latest_bundle_release(self):
+        """Fetch latest AutoCAD plugin release (or latest tag as fallback)."""
+        endpoints = [
+            f"{GITHUB_API_BASE}/repos/{self.github_repo}/releases/latest",
+            f"{GITHUB_API_BASE}/repos/{self.github_repo}/releases?per_page=1"
+        ]
+
+        data = None
+        last_error = None
+
+        for url in endpoints:
+            try:
+                response = requests.get(url, timeout=10)
+                if response.status_code == 404:
+                    continue
+                response.raise_for_status()
+                payload = response.json()
+                data = payload[0] if isinstance(
+                    payload, list) and payload else payload
+                if data:
+                    break
+            except Exception as e:
+                last_error = e
+
+        if data:
+            return {
+                'tag': data.get('tag_name') or '',
+                'assets': data.get('assets', []),
+                'release_notes': data.get('body') or '',
+                'html_url': data.get('html_url') or ''
+            }
+
+        # Fallback: look at tags if no releases are published yet.
+        try:
+            tag_resp = requests.get(
+                f"{GITHUB_API_BASE}/repos/{self.github_repo}/tags?per_page=1",
+                timeout=10
+            )
+            tag_resp.raise_for_status()
+            tags = tag_resp.json()
+            if isinstance(tags, list) and tags:
+                tag_name = tags[0].get('name') or ''
+                release_data = {}
+                try:
+                    rel_resp = requests.get(
+                        f"{GITHUB_API_BASE}/repos/{self.github_repo}/releases/tags/{tag_name}",
+                        timeout=10
+                    )
+                    if rel_resp.status_code != 404:
+                        rel_resp.raise_for_status()
+                        release_data = rel_resp.json() or {}
+                except Exception as inner:
+                    logging.warning(
+                        f"Could not fetch release data for tag {tag_name}: {inner}")
+
+                return {
+                    'tag': tag_name,
+                    'assets': release_data.get('assets', []),
+                    'release_notes': release_data.get('body', ''),
+                    'html_url': release_data.get('html_url', '')
+                }
+        except Exception as e:
+            last_error = e
+
+        raise Exception(
+            "No published AutoCAD plugin releases or tags found in the plugin repository."
+        ) from last_error
+
     def download_and_install_app_update(self, download_url=None):
         """Download the newest installer and launch it silently."""
         if not download_url:
@@ -333,12 +402,24 @@ class Api:
             # 1. Get local bundles
             local_bundles = os.listdir(self.app_plugins_folder)
 
-            # 2. Get remote assets
-            # NOTE: Ensure your repo is public or you have the token logic here
-            api_url = f"https://api.github.com/repos/{self.github_repo}/releases/tags/{self.release_tag}"
-            response = requests.get(api_url, timeout=10)
-            response.raise_for_status()
-            assets = response.json().get('assets', [])
+            # 2. Resolve the latest AutoCAD plugin release/tag from its repo
+            release_info = self._fetch_latest_bundle_release()
+            self.release_tag = release_info.get('tag') or BUNDLE_RELEASE_TAG
+            release_tag = self.release_tag
+
+            # Fetch assets either from the release payload or via the tag endpoint
+            assets = release_info.get('assets', []) or []
+            if not assets and release_tag:
+                api_url = f"{GITHUB_API_BASE}/repos/{self.github_repo}/releases/tags/{release_tag}"
+                tag_response = requests.get(api_url, timeout=10)
+                tag_response.raise_for_status()
+                assets = tag_response.json().get('assets', [])
+
+            if not release_tag:
+                raise Exception("Latest AutoCAD plugin release tag is empty.")
+            if not assets:
+                raise Exception(
+                    f"No assets found for AutoCAD plugin release/tag '{release_tag}'. Publish bundle zip assets.")
 
             statuses = []
             for asset in assets:
@@ -347,7 +428,9 @@ class Api:
                     continue
 
                 bundle_name = asset_name.replace(
-                    f"-{self.release_tag}.zip", ".bundle")
+                    f"-{release_tag}.zip", ".bundle")
+                if bundle_name == asset_name:
+                    bundle_name = asset_name.replace(".zip", ".bundle")
                 bundle_path = os.path.join(
                     self.app_plugins_folder, bundle_name)
 
@@ -364,7 +447,7 @@ class Api:
                 # Determine Status
                 if not is_installed:
                     state = 'not_installed'
-                elif local_version != self.release_tag:
+                elif local_version != release_tag:
                     # Installed, but version mismatch (or missing version file) -> Update
                     state = 'update_available'
                 else:
@@ -375,7 +458,7 @@ class Api:
                     'bundle_name': bundle_name,
                     'state': state,  # 'installed', 'not_installed', 'update_available'
                     'local_version': local_version or 'unknown',
-                    'remote_version': self.release_tag,
+                    'remote_version': release_tag,
                     'asset': asset
                 }
                 statuses.append(status)
@@ -398,7 +481,10 @@ class Api:
 
         asset_name = asset.get('name')
         download_url = asset.get('browser_download_url')
-        bundle_name = asset_name.replace(f"-{self.release_tag}.zip", ".bundle")
+        release_tag = self.release_tag or BUNDLE_RELEASE_TAG
+        bundle_name = asset_name.replace(f"-{release_tag}.zip", ".bundle")
+        if bundle_name == asset_name:
+            bundle_name = asset_name.replace(".zip", ".bundle")
         extract_path = os.path.join(self.app_plugins_folder, bundle_name)
 
         logging.info(f"Installing bundle: {bundle_name}")
@@ -413,10 +499,10 @@ class Api:
 
             # --- NEW: Write version.txt ---
             with open(os.path.join(extract_path, 'version.txt'), 'w') as f:
-                f.write(self.release_tag)
+                f.write(release_tag)
 
             logging.info(
-                f"Successfully installed {bundle_name} version {self.release_tag}")
+                f"Successfully installed {bundle_name} version {release_tag}")
             return {'status': 'success', 'bundle_name': bundle_name}
         except Exception as e:
             logging.error(f"Failed to install {bundle_name}: {e}")

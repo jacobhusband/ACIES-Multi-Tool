@@ -5,6 +5,16 @@ Write-Host "###################################" -ForegroundColor Cyan
 # 1. Run PyInstaller
 Write-Host "`n[1/2] Bundling application with PyInstaller..." -ForegroundColor Yellow
 
+# Clean previous installer output to avoid file locks/resource errors
+$setupOutput = Join-Path $PSScriptRoot "dist\\setup"
+if (Test-Path $setupOutput) {
+    try {
+        Remove-Item -Recurse -Force $setupOutput
+    } catch {
+        Write-Warning "Could not clean dist\\setup: $_"
+    }
+}
+
 # Read version from VERSION file
 $versionPath = Join-Path $PSScriptRoot "VERSION"
 if (!(Test-Path $versionPath)) {

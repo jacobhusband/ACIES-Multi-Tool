@@ -1,7 +1,9 @@
 ; SEE THE DOCUMENTATION FOR DETAILS ON CREATING INNO SETUP SCRIPT FILES!
 
 #define MyAppName "ACIES Scheduler"
-#define MyAppVersion "1.0.0"
+#ifndef MyAppVersion
+#define MyAppVersion "0.0.0"
+#endif
 #define MyAppPublisher "ACIES Engineering"
 #define MyAppURL "https://acies.net/"
 #define MyAppExeName "ACIES Scheduler.exe"

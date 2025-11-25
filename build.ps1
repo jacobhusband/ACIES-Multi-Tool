@@ -5,12 +5,25 @@ Write-Host "###################################" -ForegroundColor Cyan
 # 1. Run PyInstaller
 Write-Host "`n[1/2] Bundling application with PyInstaller..." -ForegroundColor Yellow
 
+# Read version from VERSION file
+$versionPath = Join-Path $PSScriptRoot "VERSION"
+if (!(Test-Path $versionPath)) {
+    Write-Error "VERSION file not found at $versionPath"
+    exit 1
+}
+$appVersion = (Get-Content -Raw $versionPath).Trim()
+if (-not $appVersion) {
+    Write-Error "VERSION file is empty."
+    exit 1
+}
+
 # --noconfirm: Overwrites output directory without asking
 # --clean: Cleans PyInstaller cache
 $pyInstallerArgs = @(
     "main.py", "--noconfirm", "--clean", "--noconsole", 
     "--name", "ACIES Scheduler", 
     "--icon=acies.ico",
+    "--add-data", "VERSION;.",
     "--add-data", "index.html;.",
     "--add-data", "styles.css;.",
     "--add-data", "script.js;.",
@@ -60,7 +73,7 @@ if (-not $isccPath) {
 Write-Host "Found Inno Setup at: $isccPath" -ForegroundColor Gray
 
 # Run Inno Setup
-& $isccPath "setup.iss"
+& $isccPath "/DMyAppVersion=$appVersion" "setup.iss"
 if ($LASTEXITCODE -ne 0) {
     Write-Error "Inno Setup compilation failed!"
     exit 1

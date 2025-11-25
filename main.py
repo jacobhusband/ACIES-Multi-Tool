@@ -9,6 +9,7 @@ import shutil
 import csv
 import io
 import logging
+import tempfile
 from pathlib import Path
 from dotenv import load_dotenv
 import datetime
@@ -27,6 +28,43 @@ LABEL_TO_KEY = {
     "Delivered": "delivered"
 }
 KEY_TO_LABEL = {v: k for k, v in LABEL_TO_KEY.items()}
+
+APP_UPDATE_REPO = "jacobhusband/ACIES-Multi-Tool"
+APP_INSTALLER_NAME = "acies-scheduler-setup.exe"
+BUNDLE_RELEASE_TAG = "v0.0.0"
+GITHUB_API_BASE = "https://api.github.com"
+
+
+def load_app_version():
+    """Read version from VERSION file; fallback to '0.0.0'."""
+    version_file = Path(__file__).resolve().parent / "VERSION"
+    try:
+        return version_file.read_text(encoding="utf-8").strip() or "0.0.0"
+    except Exception as e:
+        logging.warning(f"Could not read VERSION file: {e}")
+        return "0.0.0"
+
+
+APP_VERSION = load_app_version()
+
+
+def _normalize_version(raw):
+    """Turn a version string like 'v1.2.3' into '1.2.3'."""
+    return str(raw or '').strip().lstrip('vV')
+
+
+def _version_tuple(raw):
+    parts = []
+    for chunk in _normalize_version(raw).split('.'):
+        try:
+            parts.append(int(chunk))
+        except ValueError:
+            break
+    return tuple(parts or [0])
+
+
+def _is_remote_newer(remote, current):
+    return _version_tuple(remote) > _version_tuple(current)
 
 
 def parse_due_str(s):
@@ -116,7 +154,10 @@ class Api:
     def __init__(self):
         # --- Configuration for Bundle Management ---
         self.github_repo = "jacobhusband/ElectricalCommands"
-        self.release_tag = "v0.0.0"
+        self.release_tag = BUNDLE_RELEASE_TAG
+        self.app_version = APP_VERSION
+        self.app_update_repo = APP_UPDATE_REPO
+        self.app_installer_name = APP_INSTALLER_NAME
 
         appdata_path = os.getenv('APPDATA')
         if not appdata_path:
@@ -125,6 +166,120 @@ class Api:
         self.app_plugins_folder = os.path.join(
             appdata_path, 'Autodesk', 'ApplicationPlugins')
         os.makedirs(self.app_plugins_folder, exist_ok=True)
+
+    # --- Application update helpers ---
+    def _fetch_latest_release(self):
+        """Fetch latest release metadata for this application.
+
+        GitHub returns 404 for /releases/latest when no published release exists,
+        so we fall back to the first item from /releases.
+        """
+        endpoints = [
+            f"{GITHUB_API_BASE}/repos/{self.app_update_repo}/releases/latest",
+            f"{GITHUB_API_BASE}/repos/{self.app_update_repo}/releases?per_page=1"
+        ]
+
+        data = None
+        last_error = None
+
+        for url in endpoints:
+            try:
+                response = requests.get(url, timeout=10)
+                if response.status_code == 404:
+                    continue
+                response.raise_for_status()
+                payload = response.json()
+                data = payload[0] if isinstance(payload, list) and payload else payload
+                if data:
+                    break
+            except Exception as e:
+                last_error = e
+
+        if not data:
+            raise Exception(
+                "No published releases found for the updater repo. "
+                "Publish a release on GitHub so the updater can find it."
+            ) from last_error
+
+        tag_name = data.get('tag_name') or ''
+        latest_version = _normalize_version(tag_name)
+
+        asset = None
+        for a in data.get('assets', []):
+            if a.get('name', '').lower() == self.app_installer_name.lower():
+                asset = a
+                break
+
+        download_url = asset.get('browser_download_url') if asset else None
+
+        return {
+            'tag': tag_name,
+            'latest_version': latest_version,
+            'download_url': download_url,
+            'release_notes': data.get('body') or '',
+            'html_url': data.get('html_url') or ''
+        }
+
+    def get_app_update_status(self):
+        """Check GitHub for a newer installer."""
+        try:
+            release = self._fetch_latest_release()
+            latest_version = release['latest_version']
+            download_url = release['download_url']
+            update_available = bool(download_url) and _is_remote_newer(
+                latest_version, self.app_version)
+            return {
+                'status': 'success',
+                'current_version': self.app_version,
+                'latest_version': latest_version,
+                'update_available': update_available,
+                'download_url': download_url,
+                'release_notes': release['release_notes'],
+                'release_page': release['html_url'],
+            }
+        except Exception as e:
+            logging.error(f"Update check failed: {e}")
+            return {
+                'status': 'error',
+                'message': str(e),
+                'current_version': self.app_version
+            }
+
+    def download_and_install_app_update(self, download_url=None):
+        """Download the newest installer and launch it silently."""
+        if not download_url:
+            return {'status': 'error', 'message': 'No download URL provided (publish a release asset named acies-scheduler-setup.exe).'}
+
+        target = Path(tempfile.gettempdir()) / self.app_installer_name
+
+        try:
+            with requests.get(download_url, stream=True, timeout=60) as r:
+                r.raise_for_status()
+                with open(target, 'wb') as f:
+                    for chunk in r.iter_content(chunk_size=8192):
+                        if chunk:
+                            f.write(chunk)
+
+            subprocess.Popen(
+                [
+                    str(target),
+                    "/VERYSILENT",
+                    "/NORESTART",
+                    "/SUPPRESSMSGBOXES",
+                    "/CLOSEAPPLICATIONS",
+                    "/RESTARTAPPLICATIONS"
+                ],
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+
+            return {
+                'status': 'success',
+                'message': 'Installer launched. Follow prompts to finish.',
+                'installer_path': str(target)
+            }
+        except Exception as e:
+            logging.error(f"Failed to download/install update: {e}")
+            return {'status': 'error', 'message': str(e)}
 
     def check_bundle_installed(self, bundle_name):
         """

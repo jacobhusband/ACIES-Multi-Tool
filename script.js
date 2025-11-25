@@ -195,6 +195,7 @@ let userSettings = {
     autocadPath: ''
 };
 let activeNoteTab = null;
+let latestAppUpdate = null;
 
 async function load() {
     try {
@@ -214,6 +215,73 @@ async function save() {
     } catch (e) {
         console.warn('Backend save failed:', e);
         toast('⚠️ Failed to save data.');
+    }
+}
+
+async function refreshAppUpdateStatus({ manual = false } = {}) {
+    const versionLabel = document.getElementById('appVersionLabel');
+    const versionChip = document.getElementById('versionChip');
+    const updateBtn = document.getElementById('appUpdateBtn');
+
+    try {
+        const res = await window.pywebview.api.get_app_update_status();
+        if (versionLabel && res.current_version) {
+            versionLabel.textContent = `v${res.current_version}`;
+        }
+
+        if (res.status !== 'success') throw new Error(res.message || 'Update check failed');
+
+        if (res.update_available) {
+            latestAppUpdate = res;
+            if (updateBtn) {
+                updateBtn.style.display = 'inline-flex';
+                updateBtn.textContent = `Update to v${res.latest_version}`;
+                updateBtn.dataset.downloadUrl = res.download_url || '';
+            }
+            versionChip?.classList.add('has-update');
+            if (manual) toast(`Update available (v${res.latest_version}).`);
+        } else {
+            latestAppUpdate = null;
+            if (updateBtn) {
+                updateBtn.style.display = 'none';
+                updateBtn.removeAttribute('data-download-url');
+                updateBtn.textContent = 'Update';
+            }
+            versionChip?.classList.remove('has-update');
+            if (manual) toast('You are on the latest version.');
+        }
+    } catch (e) {
+        console.warn('Update check failed:', e);
+        if (manual) toast('Update check failed.');
+    }
+}
+
+async function installAppUpdate() {
+    const updateBtn = document.getElementById('appUpdateBtn');
+    const downloadUrl = updateBtn?.dataset.downloadUrl || latestAppUpdate?.download_url;
+    if (!downloadUrl) {
+        toast('No update available.');
+        return;
+    }
+
+    try {
+        if (updateBtn) {
+            updateBtn.disabled = true;
+            updateBtn.textContent = 'Downloading...';
+        }
+        const res = await window.pywebview.api.download_and_install_app_update(downloadUrl);
+        if (res.status !== 'success') throw new Error(res.message);
+        toast('Installer launched. Follow the prompts to finish.');
+    } catch (e) {
+        console.warn('Update install failed:', e);
+        toast(`Update failed: ${e.message || e}`);
+    } finally {
+        if (updateBtn) {
+            updateBtn.disabled = false;
+            const label = latestAppUpdate?.latest_version ? `Update to v${latestAppUpdate.latest_version}` : 'Update';
+            updateBtn.textContent = label;
+            if (!latestAppUpdate) updateBtn.style.display = 'none';
+        }
     }
 }
 
@@ -1242,6 +1310,9 @@ function initEventListeners() {
     document.getElementById('toolsHelpBtn').onclick = () => openExternalUrl(HELP_LINKS.tools);
     document.getElementById('pluginsHelpBtn').onclick = () => openExternalUrl(HELP_LINKS.plugins);
 
+    document.getElementById('checkUpdateBtn').onclick = () => refreshAppUpdateStatus({ manual: true });
+    document.getElementById('appUpdateBtn').onclick = installAppUpdate;
+
     document.getElementById('quickNew').onclick = openNew;
     document.getElementById('settingsBtn').onclick = async () => {
         await populateSettingsModal();
@@ -1535,6 +1606,7 @@ async function init() {
     initEventListeners();
     initTabbedInterfaces();
     updateStickyOffsets();
+    await refreshAppUpdateStatus();
     await loadUserSettings();
     db = await load();
     await loadNotes();

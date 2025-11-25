@@ -203,8 +203,40 @@ h4 {
 .header-actions {
     display: flex;
     gap: 0.5rem;
-    width: 200px;
+    min-width: 260px;
     justify-content: flex-end;
+    align-items: center;
+}
+
+.version-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    background: linear-gradient(135deg, var(--bg-secondary), var(--bg-tertiary));
+    border: 1px solid var(--glass-border);
+    border-radius: 999px;
+    font-weight: 600;
+    color: var(--text);
+    box-shadow: var(--shadow-sm);
+}
+
+.version-chip .version-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.2);
+}
+
+.version-chip.has-update {
+    border-color: var(--warning);
+    color: var(--warning);
+}
+
+.version-chip.has-update .version-dot {
+    background: var(--warning);
+    box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.2);
 }
 
 .icon-btn {
@@ -218,6 +250,15 @@ h4 {
     place-items: center;
     cursor: pointer;
     transition: all 0.2s;
+}
+
+.icon-btn.mini {
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
 }
 
 .icon-btn:hover {

@@ -265,11 +265,14 @@ class Api:
                         if chunk:
                             f.write(chunk)
 
-            # Use a small helper process to run installer and relaunch app after completion
+            # Use a small helper process to show a message, run installer (visible), and relaunch app after completion
             ps_script = (
+                '$msg = "Updating ACIES Scheduler...' + "`n" + 'Installer will run and the app will reopen automatically." ; '
+                'Add-Type -AssemblyName PresentationFramework; '
+                '[System.Windows.MessageBox]::Show($msg, "Updating", "OK", "Information") | Out-Null; '
                 f'Start-Process -FilePath "{target}" '
-                f'-ArgumentList \'/VERYSILENT /NORESTART /SUPPRESSMSGBOXES /CLOSEAPPLICATIONS\' -Wait; '
-                f'Start-Sleep -Seconds 2; '
+                f'-ArgumentList \'/SILENT /NORESTART /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS\' -Wait; '
+                'Start-Sleep -Seconds 2; '
                 f'{f"Start-Process -FilePath \"{app_path}\"" if app_path else ""}'
             )
             subprocess.Popen(

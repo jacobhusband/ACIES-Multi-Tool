@@ -269,9 +269,10 @@ async function installAppUpdate() {
             updateBtn.disabled = true;
             updateBtn.textContent = 'Downloading...';
         }
+        toast('Updating... the app will restart when finished.');
         const res = await window.pywebview.api.download_and_install_app_update(downloadUrl);
         if (res.status !== 'success') throw new Error(res.message);
-        toast('Installer launched. Follow the prompts to finish.');
+        toast('Installer is running. The app will reopen after the update.');
     } catch (e) {
         console.warn('Update install failed:', e);
         toast(`Update failed: ${e.message || e}`);

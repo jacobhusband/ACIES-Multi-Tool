@@ -10,6 +10,7 @@ import csv
 import io
 import logging
 import tempfile
+import time
 from pathlib import Path
 from dotenv import load_dotenv
 import datetime
@@ -254,6 +255,7 @@ class Api:
             return {'status': 'error', 'message': 'No download URL provided (publish a release asset named acies-scheduler-setup.exe).'}
 
         target = Path(tempfile.gettempdir()) / self.app_installer_name
+        app_path = sys.executable if getattr(sys, "frozen", False) else None
 
         try:
             with requests.get(download_url, stream=True, timeout=60) as r:
@@ -263,17 +265,21 @@ class Api:
                         if chunk:
                             f.write(chunk)
 
+            # Use a small helper process to run installer and relaunch app after completion
+            ps_script = (
+                f'Start-Process -FilePath "{target}" '
+                f'-ArgumentList \'/VERYSILENT /NORESTART /SUPPRESSMSGBOXES /CLOSEAPPLICATIONS\' -Wait; '
+                f'Start-Sleep -Seconds 2; '
+                f'{f"Start-Process -FilePath \"{app_path}\"" if app_path else ""}'
+            )
             subprocess.Popen(
-                [
-                    str(target),
-                    "/VERYSILENT",
-                    "/NORESTART",
-                    "/SUPPRESSMSGBOXES",
-                    "/CLOSEAPPLICATIONS",
-                    "/RESTARTAPPLICATIONS"
-                ],
+                ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_script],
                 creationflags=subprocess.CREATE_NO_WINDOW
             )
+
+            # Exit current app shortly to free files for installer
+            if app_path:
+                threading.Thread(target=lambda: (time.sleep(1), os._exit(0)), daemon=True).start()
 
             return {
                 'status': 'success',

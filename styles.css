@@ -422,6 +422,20 @@ main {
   font-weight: 600;
 }
 
+.filter-chip.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  background: var(--bg-secondary);
+  color: var(--muted);
+  border-color: var(--glass-border);
+}
+
+.filter-chip.disabled:hover {
+  border-color: var(--glass-border);
+  color: var(--muted);
+  background: var(--bg-secondary);
+}
+
 /* Table */
 .table {
   width: 100%;

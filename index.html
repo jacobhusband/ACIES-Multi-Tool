@@ -653,17 +653,26 @@
             </div>
 
             <!-- Controls -->
-            <div class="stats-controls">
-                <div class="slider-container">
-                    <div class="slider-labels">
-                        <span>Daily</span>
-                        <span>Weekly</span>
-                        <span>Monthly</span>
-                        <span>Qtr</span>
-                        <span>Yearly</span>
-                        <span>All</span>
+            <div class="filter-controls" style="margin-bottom: 1rem;">
+                <div class="modal-grid">
+                    <div class="col-6">
+                        <div class="filter-label">Timeframe</div>
+                        <div class="due-filter-group" id="statsRangeGroup">
+                            <button class="filter-chip" data-range="1W">1 Week</button>
+                            <button class="filter-chip" data-range="1M">1 Month</button>
+                            <button class="filter-chip active" data-range="1Y">1 Year</button>
+                            <button class="filter-chip" data-range="3Y">3 Years</button>
+                        </div>
                     </div>
-                    <input type="range" id="statsTimeSlider" min="0" max="5" value="2" step="1" class="time-slider">
+                    <div class="col-6">
+                        <div class="filter-label">Aggregation</div>
+                        <div class="status-filter-group" id="statsAggGroup">
+                            <button class="filter-chip" data-agg="day">Days</button>
+                            <button class="filter-chip" data-agg="week">Weeks</button>
+                            <button class="filter-chip active" data-agg="month">Months</button>
+                            <button class="filter-chip" data-agg="quarter">Quarters</button>
+                        </div>
+                    </div>
                 </div>
             </div>
 

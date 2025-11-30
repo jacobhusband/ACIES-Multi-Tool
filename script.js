@@ -249,8 +249,15 @@ let userSettings = {
 };
 let activeNoteTab = null;
 let latestAppUpdate = null;
-let currentStatsView = "numbers";
-let currentStatsTimespan = "monthly";
+let currentStatsTimespan = "1Y";
+let currentStatsAggregation = "month";
+
+const allowedAggregations = {
+  "1W": ["day", "week"],
+  "1M": ["day", "week", "month"],
+  "1Y": ["week", "month", "quarter"],
+  "3Y": ["month", "quarter"],
+};
 
 async function load() {
   try {
@@ -1772,8 +1779,36 @@ function hideMainApp() {
   document.querySelector(".app-header").style.display = "none";
 }
 
+function updateAggregationOptions() {
+  const allowed = allowedAggregations[currentStatsTimespan] || [];
+  document.querySelectorAll("#statsAggGroup .filter-chip").forEach((btn) => {
+    const agg = btn.dataset.agg;
+    if (allowed.includes(agg)) {
+      btn.removeAttribute("disabled");
+      btn.classList.remove("disabled");
+    } else {
+      btn.setAttribute("disabled", "true");
+      btn.classList.add("disabled");
+    }
+  });
+  // If current aggregation not allowed, switch to first allowed
+  if (!allowed.includes(currentStatsAggregation)) {
+    currentStatsAggregation = allowed[0];
+    // Update active class
+    document
+      .querySelectorAll("#statsAggGroup .filter-chip")
+      .forEach((b) => b.classList.remove("active"));
+    document
+      .querySelector(
+        `#statsAggGroup .filter-chip[data-agg="${currentStatsAggregation}"]`
+      )
+      ?.classList.add("active");
+  }
+}
+
 function showStatsModal() {
   document.getElementById("statsDlg").showModal();
+  updateAggregationOptions();
   renderStats();
 }
 
@@ -1782,20 +1817,17 @@ function getTimespanDateRange(timespan) {
   const start = new Date(now);
 
   switch (timespan) {
-    case "daily":
-      start.setDate(now.getDate() - 1);
-      break;
-    case "weekly":
+    case "1W":
       start.setDate(now.getDate() - 7);
       break;
-    case "monthly":
+    case "1M":
       start.setMonth(now.getMonth() - 1);
       break;
-    case "quarterly":
-      start.setMonth(now.getMonth() - 3);
-      break;
-    case "yearly":
+    case "1Y":
       start.setFullYear(now.getFullYear() - 1);
+      break;
+    case "3Y":
+      start.setFullYear(now.getFullYear() - 3);
       break;
     case "all":
       // Find the earliest date in the DB
@@ -1922,11 +1954,11 @@ function renderStats() {
   setStat("statCompletedLastYear", completedLastYear);
   setStat("statCompletedThisYear", completedThisYear);
 
-  // Always render chart
-  renderStatsChart(filteredProjects, start, end);
+  // Always render chart with explicit aggregation
+  renderStatsChart(filteredProjects, start, end, currentStatsAggregation);
 }
 
-function renderStatsChart(projects, start, end) {
+function renderStatsChart(projects, start, end, aggregation) {
   const canvas = document.getElementById("statsChart");
   const ctx = canvas.getContext("2d");
 
@@ -1940,30 +1972,6 @@ function renderStatsChart(projects, start, end) {
     .filter((p) => isFinished(p))
     .map((p) => ({ date: parseDueStr(p.due), ...p }))
     .filter((p) => p.date);
-
-  console.log("DEBUG renderStatsChart:");
-  console.log("- Total projects passed:", projects.length);
-  console.log("- Completed projects with dates:", completedProjects.length);
-  console.log("- Date range:", start, "to", end);
-  console.log("- Current timespan:", currentStatsTimespan);
-
-  // Determine aggregation level based on timespan
-  let aggregation = "day"; // default
-  if (currentStatsTimespan === "daily" || currentStatsTimespan === "weekly") {
-    aggregation = "day";
-  } else if (
-    currentStatsTimespan === "monthly" ||
-    currentStatsTimespan === "quarterly"
-  ) {
-    aggregation = "week";
-  } else if (
-    currentStatsTimespan === "yearly" ||
-    currentStatsTimespan === "all"
-  ) {
-    aggregation = "month";
-  }
-
-  console.log("- Aggregation type:", aggregation);
 
   // Helper function to get period key for a date
   function getPeriodKey(date, aggregationType) {
@@ -1989,6 +1997,10 @@ function renderStatsChart(projects, start, end) {
         2,
         "0"
       )}`;
+    } else if (aggregationType === "quarter") {
+      const year = date.getFullYear();
+      const quarter = Math.floor(date.getMonth() / 3) + 1;
+      return `${year}-Q${quarter}`;
     }
   }
 
@@ -2012,6 +2024,9 @@ function renderStatsChart(projects, start, end) {
         year: "numeric",
         month: "short",
       });
+    } else if (aggregationType === "quarter") {
+      const [year, q] = key.split("-Q");
+      return `${year} Q${q}`;
     }
   }
 
@@ -2021,9 +2036,6 @@ function renderStatsChart(projects, start, end) {
     const periodKey = getPeriodKey(p.date, aggregation);
     periodCounts[periodKey] = (periodCounts[periodKey] || 0) + 1;
   });
-
-  console.log("- Period counts:", periodCounts);
-  console.log("- Total periods with data:", Object.keys(periodCounts).length);
 
   // Generate all periods in the range
   const labels = [];
@@ -2067,6 +2079,19 @@ function renderStatsChart(projects, start, end) {
       labels.push(formatPeriodLabel(key, aggregation));
       data.push(periodCounts[key] || 0);
       current.setMonth(current.getMonth() + 1);
+    }
+  } else if (aggregation === "quarter") {
+    // Start from the beginning of the quarter
+    const currentQuarter = Math.floor(current.getMonth() / 3);
+    current.setMonth(currentQuarter * 3, 1);
+
+    while (current <= end) {
+      const year = current.getFullYear();
+      const quarter = Math.floor(current.getMonth() / 3) + 1;
+      const key = `${year}-Q${quarter}`;
+      labels.push(formatPeriodLabel(key, aggregation));
+      data.push(periodCounts[key] || 0);
+      current.setMonth(current.getMonth() + 3);
     }
   }
 
@@ -2251,19 +2276,37 @@ function initEventListeners() {
     document.getElementById("apiKeyHelpDlg").showModal();
 
   // Statistics modal controls
-  const statsSlider = document.getElementById("statsTimeSlider");
-  if (statsSlider) {
-    statsSlider.addEventListener("input", (e) => {
-      const steps = [
-        "daily",
-        "weekly",
-        "monthly",
-        "quarterly",
-        "yearly",
-        "all",
-      ];
-      currentStatsTimespan = steps[parseInt(e.target.value)] || "monthly";
-      renderStats();
+  const statsRangeGroup = document.getElementById("statsRangeGroup");
+  if (statsRangeGroup) {
+    statsRangeGroup.addEventListener("click", (e) => {
+      if (e.target.matches(".filter-chip")) {
+        currentStatsTimespan = e.target.dataset.range;
+        // Update active class
+        document
+          .querySelectorAll("#statsRangeGroup .filter-chip")
+          .forEach((b) => b.classList.remove("active"));
+        e.target.classList.add("active");
+        updateAggregationOptions();
+        renderStats();
+      }
+    });
+  }
+
+  const statsAggGroup = document.getElementById("statsAggGroup");
+  if (statsAggGroup) {
+    statsAggGroup.addEventListener("click", (e) => {
+      if (
+        e.target.matches(".filter-chip") &&
+        !e.target.hasAttribute("disabled")
+      ) {
+        currentStatsAggregation = e.target.dataset.agg;
+        // Update active class
+        document
+          .querySelectorAll("#statsAggGroup .filter-chip")
+          .forEach((b) => b.classList.remove("active"));
+        e.target.classList.add("active");
+        renderStats();
+      }
     });
   }
 

@@ -1663,6 +1663,54 @@ function updateOnboardingUI() {
   } else {
     nextBtn.textContent = "Next";
   }
+
+  // Add Enter key navigation for quick advancement
+  setupOnboardingEnterKeyListeners();
+}
+
+function setupOnboardingEnterKeyListeners() {
+  // Remove existing listeners to avoid duplicates
+  const modal = document.getElementById("onboardingDlg");
+  const nameInput = document.getElementById("onboarding_userName");
+  const apiKeyInput = document.getElementById("onboarding_apiKey");
+
+  // Remove previous listeners
+  modal.removeEventListener("keydown", handleOnboardingModalKeydown);
+  if (nameInput)
+    nameInput.removeEventListener("keydown", handleOnboardingInputKeydown);
+  if (apiKeyInput)
+    apiKeyInput.removeEventListener("keydown", handleOnboardingInputKeydown);
+
+  // Add listeners based on current step
+  if (currentOnboardingStep === 1) {
+    // Step 1: Welcome - Enter on modal to proceed
+    modal.addEventListener("keydown", handleOnboardingModalKeydown);
+  } else if (currentOnboardingStep === 2) {
+    // Step 2: Name input - Enter to validate and proceed
+    if (nameInput)
+      nameInput.addEventListener("keydown", handleOnboardingInputKeydown);
+  } else if (currentOnboardingStep === 3) {
+    // Step 3: Discipline checkboxes - Enter on modal to validate and proceed
+    modal.addEventListener("keydown", handleOnboardingModalKeydown);
+  } else if (currentOnboardingStep === 4) {
+    // Step 4: API key input - Enter to validate and proceed
+    if (apiKeyInput)
+      apiKeyInput.addEventListener("keydown", handleOnboardingInputKeydown);
+  }
+}
+
+function handleOnboardingModalKeydown(e) {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    nextOnboardingStep();
+  }
+}
+
+function handleOnboardingInputKeydown(e) {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    nextOnboardingStep();
+  }
 }
 
 function nextOnboardingStep() {

@@ -40,6 +40,22 @@
             <button class="icon-btn" id="mainHelpBtn" aria-label="Help" title="Help">?</button>
         </div>
     </header>
+    <!-- Setup Help Notification -->
+    <div id="setupHelpBanner" class="setup-help-banner" style="display: none;">
+        <div class="setup-help-content">
+            <div class="setup-help-icon">💡</div>
+            <div class="setup-help-text">
+                <strong>Need help setting up the application?</strong>
+                <p>Configure your profile and API keys to get the most out of ACIES.</p>
+            </div>
+            <div class="setup-help-actions">
+                <button class="btn btn-primary tiny" onclick="startSetupHelp()">Yes</button>
+                <button class="btn ghost tiny" onclick="dismissSetupHelp('later')">Not right now</button>
+                <button class="btn ghost tiny" onclick="dismissSetupHelp('never')">Do not ask again</button>
+            </div>
+            <button class="setup-help-close" onclick="dismissSetupHelp('later')" aria-label="Close">×</button>
+        </div>
+    </div>
     <main>
         <!-- Tab Panel for Projects -->
         <div id="projects-panel" class="tab-panel active">
@@ -508,6 +524,94 @@
             </div>
 
             <p class="tiny muted" style="margin-top: 1rem;">Settings are saved automatically.</p>
+        </div>
+    </dialog>
+    <!-- Onboarding Modal -->
+    <dialog id="onboardingDlg">
+        <div class="modal-header">
+            <div id="onboardingTitle" class="title">Welcome to ACIES!</div>
+            <button class="btn ghost" onclick="skipOnboarding()">Skip Setup</button>
+        </div>
+        <div class="onboarding-progress">
+            <div class="progress-step active" data-step="1"></div>
+            <div class="progress-step" data-step="2"></div>
+            <div class="progress-step" data-step="3"></div>
+            <div class="progress-step" data-step="4"></div>
+        </div>
+        <div class="modal-body stack">
+            <!-- Step 1: Welcome -->
+            <div id="onboardingStep1" class="onboarding-step active">
+                <div class="onboarding-content">
+                    <div class="onboarding-icon">🚀</div>
+                    <h2>Welcome to ACIES Desktop Application</h2>
+                    <p>Your project management tool for engineering workflows. Let's get you set up with a few quick steps.</p>
+                    <div class="onboarding-features">
+                        <div class="feature-item">
+                            <span class="feature-icon">📋</span>
+                            <span>Manage projects and tasks</span>
+                        </div>
+                        <div class="feature-item">
+                            <span class="feature-icon">🤖</span>
+                            <span>AI-powered email processing</span>
+                        </div>
+                        <div class="feature-item">
+                            <span class="feature-icon">🔧</span>
+                            <span>AutoCAD automation tools</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 2: Full Name -->
+            <div id="onboardingStep2" class="onboarding-step">
+                <div class="onboarding-content">
+                    <div class="onboarding-icon">👤</div>
+                    <h2>What's your full name?</h2>
+                    <p>This helps personalize your experience and is used in AI processing.</p>
+                    <div class="onboarding-input-group">
+                        <label class="label">Full Name</label>
+                        <input id="onboarding_userName" type="text" placeholder="e.g. Jacob Husband" />
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 3: Discipline -->
+            <div id="onboardingStep3" class="onboarding-step">
+                <div class="onboarding-content">
+                    <div class="onboarding-icon">⚡</div>
+                    <h2>What's your engineering discipline?</h2>
+                    <p>This helps tailor AI responses to your specific field of work.</p>
+                    <div class="onboarding-input-group">
+                        <label class="label">Discipline</label>
+                        <div id="onboarding_discipline" class="radio-group">
+                            <label class="radio-label"><input type="radio" name="onboarding_discipline_radio" value="Electrical"> Electrical</label>
+                            <label class="radio-label"><input type="radio" name="onboarding_discipline_radio" value="Mechanical"> Mechanical</label>
+                            <label class="radio-label"><input type="radio" name="onboarding_discipline_radio" value="Plumbing"> Plumbing</label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 4: API Key -->
+            <div id="onboardingStep4" class="onboarding-step">
+                <div class="onboarding-content">
+                    <div class="onboarding-icon">🔑</div>
+                    <h2>Set up your AI assistant</h2>
+                    <p>Add your Google Gemini API key to enable AI features like email processing and project creation.</p>
+                    <div class="onboarding-input-group">
+                        <label class="label">Google Gemini API Key</label>
+                        <div class="input-with-button">
+                            <input id="onboarding_apiKey" type="password" placeholder="Enter your API key" />
+                            <button type="button" class="btn tiny" onclick="showApiKeyHelp()">Help</button>
+                        </div>
+                        <p class="tiny muted">Your API key is stored locally and never sent to our servers.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn ghost" id="onboardingPrevBtn" onclick="prevOnboardingStep()" disabled>Previous</button>
+            <button class="btn-primary" id="onboardingNextBtn" onclick="nextOnboardingStep()">Next</button>
         </div>
     </dialog>
     <!-- AutoCAD Selection Modal -->

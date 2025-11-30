@@ -608,7 +608,7 @@ class Api:
             with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except (FileNotFoundError, json.JSONDecodeError):
-            return {'userName': '', 'discipline': 'Electrical', 'apiKey': '', 'autocadPath': ''}
+            return {'userName': '', 'discipline': 'Electrical', 'apiKey': '', 'autocadPath': '', 'showSetupHelp': True}
 
     def save_user_settings(self, data):
         """Saves user settings to settings.json."""

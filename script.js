@@ -237,7 +237,7 @@ let dueFilter = "all";
 
 let userSettings = {
   userName: "",
-  discipline: "Electrical",
+  discipline: ["Electrical"],
   apiKey: "",
   autocadPath: "",
   showSetupHelp: true,
@@ -395,11 +395,13 @@ async function populateSettingsModal() {
   document.getElementById("settings_apiKey").value = userSettings.apiKey || "";
   document.getElementById("settings_autocadPath").value =
     userSettings.autocadPath || "";
-  const discipline = userSettings.discipline || "Electrical";
+  const disciplines = Array.isArray(userSettings.discipline)
+    ? userSettings.discipline
+    : ["Electrical"];
   document
-    .querySelectorAll('input[name="settings_discipline_radio"]')
-    .forEach((radio) => {
-      radio.checked = radio.value === discipline;
+    .querySelectorAll('input[name="settings_discipline_checkbox"]')
+    .forEach((checkbox) => {
+      checkbox.checked = disciplines.includes(checkbox.value);
     });
 
   // Populate AutoCAD versions
@@ -1692,14 +1694,16 @@ function validateCurrentStep() {
       userSettings.userName = name;
       break;
     case 3: // Discipline step
-      const selectedDiscipline = document.querySelector(
-        'input[name="onboarding_discipline_radio"]:checked'
+      const selectedDisciplines = document.querySelectorAll(
+        'input[name="onboarding_discipline_checkbox"]:checked'
       );
-      if (!selectedDiscipline) {
-        toast("Please select your engineering discipline.");
+      if (selectedDisciplines.length === 0) {
+        toast("Please select at least one engineering discipline.");
         return false;
       }
-      userSettings.discipline = selectedDiscipline.value;
+      userSettings.discipline = Array.from(selectedDisciplines).map(
+        (cb) => cb.value
+      );
       break;
     case 4: // API Key step
       const apiKey = val("onboarding_apiKey").trim();
@@ -2037,10 +2041,13 @@ function initEventListeners() {
     debouncedSaveUserSettings();
   };
   document
-    .querySelectorAll('input[name="settings_discipline_radio"]')
-    .forEach((radio) => {
-      radio.onchange = (e) => {
-        userSettings.discipline = e.target.value;
+    .querySelectorAll('input[name="settings_discipline_checkbox"]')
+    .forEach((checkbox) => {
+      checkbox.onchange = () => {
+        const checked = document.querySelectorAll(
+          'input[name="settings_discipline_checkbox"]:checked'
+        );
+        userSettings.discipline = Array.from(checked).map((cb) => cb.value);
         debouncedSaveUserSettings();
       };
     });

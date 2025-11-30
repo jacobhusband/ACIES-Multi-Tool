@@ -608,7 +608,7 @@ class Api:
             with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except (FileNotFoundError, json.JSONDecodeError):
-            return {'userName': '', 'discipline': 'Electrical', 'apiKey': '', 'autocadPath': '', 'showSetupHelp': True}
+            return {'userName': '', 'discipline': ['Electrical'], 'apiKey': '', 'autocadPath': '', 'showSetupHelp': True}
 
     def save_user_settings(self, data):
         """Saves user settings to settings.json."""
@@ -743,14 +743,15 @@ class Api:
             }
 
         current_date = datetime.date.today().strftime("%m/%d/%Y")
+        disciplines_str = ', '.join(discipline) if isinstance(discipline, list) else discipline
         prompt = f"""
-You are an intelligent assistant for {user_name}, a(n) {discipline} engineering project manager. Your task is to analyze an email and extract specific project details. Focus ONLY on the primary {discipline} engineering tasks mentioned. Ignore tasks for other disciplines.
+You are an intelligent assistant for {user_name}, a(n) {disciplines_str} engineering project manager. Your task is to analyze an email and extract specific project details. Focus ONLY on the primary {disciplines_str} engineering tasks mentioned. Ignore tasks for other disciplines.
 Analyze the following email text and extract the information into a valid JSON object with the following keys: "id", "name", "due", "path", "tasks", "notes".
 - "id": Find a project number (e.g., "250597"). If none, leave it empty.
 - "name": Determine the project name, typically including the client and address (e.g., "BofA, 22004 Sherman Way, Canoga Park, CA").
 - "due": Find the due date and format it as "MM/DD/YY". The current date is {current_date}. If the year is not specified in the email, assume the current year or the next year if the date would be in the past. Ensure the due date is on or after today. If multiple dates, choose the most relevant upcoming one.
 - "path": Find the main project file path (e.g., "M:\\\\Gensler\\\\...").
-- "tasks": Create a JSON array of strings listing only the key {discipline} engineering action items. Be concise. Examples: ["Update CAD per architect's comments", "Fill out permit forms", "Prepare binded CADs for IFP submission"].
+- "tasks": Create a JSON array of strings listing only the key {disciplines_str} engineering action items. Be concise. Examples: ["Update CAD per architect's comments", "Fill out permit forms", "Prepare binded CADs for IFP submission"].
 - "notes": Provide a brief, one-sentence summary of the email's main request.
 If a piece of information is not found, the value should be an empty string "" for strings, or an empty array [] for tasks.
 Here is the email:

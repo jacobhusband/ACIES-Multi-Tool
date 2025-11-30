@@ -65,6 +65,11 @@ function val(id) {
   return el ? el.value.trim() : "";
 }
 
+function setStat(id, value) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = value;
+}
+
 function closeDlg(id) {
   document.getElementById(id).close();
 }
@@ -729,29 +734,8 @@ function render() {
     }
   });
 
-  let avgPerWeek = 0,
-    avgPerMonth = 0;
-  if (minDate && maxDate && total > 0) {
-    const diffTime = Math.abs(maxDate - minDate);
-    const diffWeeks = Math.ceil(diffTime / (1000 * 60 * 60 * 24 * 7)) || 1;
-    avgPerWeek = (total / diffWeeks).toFixed(1);
-    const diffMonths = diffTime / (1000 * 60 * 60 * 24 * 30.44) || 1;
-    avgPerMonth = (total / diffMonths).toFixed(1);
-  }
-
-  const setStat = (id, val) => {
-    const el = document.getElementById(id);
-    if (el) el.textContent = val;
-  };
-  setStat("statTotal", total);
-  setStat("statCompleted", completed);
-  setStat("statLastWeek", dueLastWeek);
-  setStat("statThisWeek", dueThisWeek);
-  setStat("statUpcoming", upcoming);
-  setStat("statAvg", avgPerWeek);
-  setStat("statAvgMonth", avgPerMonth);
-  setStat("statCompletedLastYear", completedLastYear);
-  setStat("statCompletedThisYear", completedThisYear);
+  // Stats are now handled exclusively by the Statistics Modal (renderStats)
+  // We do not update them here to avoid conflicts or incorrect "All Time" overwrites.
 
   emptyState.style.display = items.length ? "none" : "block";
   const rowTemplate = document.getElementById("project-row-template");
@@ -1813,6 +1797,14 @@ function getTimespanDateRange(timespan) {
     case "yearly":
       start.setFullYear(now.getFullYear() - 1);
       break;
+    case "all":
+      // Find the earliest date in the DB
+      let earliest = now;
+      db.forEach((p) => {
+        const d = parseDueStr(p.due);
+        if (d && d < earliest) earliest = d;
+      });
+      return { start: earliest, end: now };
   }
 
   return { start, end: now };
@@ -1827,19 +1819,56 @@ function renderStats() {
     return dueDate && dueDate >= start && dueDate <= end;
   });
 
-  // Calculate stats from filtered projects
-  const total = filteredProjects.length;
-  const completed = filteredProjects.filter((p) => isFinished(p)).length;
+  // Calculate stats from entire history
+  const total = db.length;
+  const completed = db.filter((p) => isFinished(p)).length;
 
-  // Calculate averages (simplified for timespan)
-  const diffTime = end - start;
-  const diffWeeks = Math.max(
-    1,
-    Math.ceil(diffTime / (1000 * 60 * 60 * 24 * 7))
-  );
-  const avgPerWeek = total > 0 ? (total / diffWeeks).toFixed(1) : 0;
-  const diffMonths = Math.max(1, diffTime / (1000 * 60 * 60 * 24 * 30.44));
-  const avgPerMonth = total > 0 ? (total / diffMonths).toFixed(1) : 0;
+  // Calculate averages for weeks/months with completions
+  const allCompletedProjects = db
+    .filter((p) => isFinished(p))
+    .map((p) => ({
+      date: parseDueStr(p.due),
+      ...p,
+    }))
+    .filter((p) => p.date);
+
+  // Group completions by week
+  const weeklyCompletions = {};
+  allCompletedProjects.forEach((p) => {
+    const weekStart = new Date(p.date);
+    weekStart.setDate(p.date.getDate() - p.date.getDay());
+    weekStart.setHours(0, 0, 0, 0);
+    const weekKey = weekStart.getTime();
+    weeklyCompletions[weekKey] = (weeklyCompletions[weekKey] || 0) + 1;
+  });
+
+  // Group completions by month
+  const monthlyCompletions = {};
+  allCompletedProjects.forEach((p) => {
+    const monthKey = `${p.date.getFullYear()}-${String(
+      p.date.getMonth() + 1
+    ).padStart(2, "0")}`;
+    monthlyCompletions[monthKey] = (monthlyCompletions[monthKey] || 0) + 1;
+  });
+
+  // Calculate averages for active periods
+  const activeWeeks = Object.values(weeklyCompletions);
+  const avgPerWeek =
+    activeWeeks.length > 0
+      ? (
+          activeWeeks.reduce((sum, count) => sum + count, 0) /
+          activeWeeks.length
+        ).toFixed(1)
+      : "0";
+
+  const activeMonths = Object.values(monthlyCompletions);
+  const avgPerMonth =
+    activeMonths.length > 0
+      ? (
+          activeMonths.reduce((sum, count) => sum + count, 0) /
+          activeMonths.length
+        ).toFixed(1)
+      : "0";
 
   // Calculate due stats
   const now = new Date();
@@ -1851,7 +1880,9 @@ function renderStats() {
   let dueThisWeek = 0,
     dueLastWeek = 0,
     upcoming = 0;
-  filteredProjects.forEach((p) => {
+
+  // Use global DB for forecast stats, not filtered
+  db.forEach((p) => {
     const d = parseDueStr(p.due);
     if (d) {
       if (d >= weekStart && d <= weekEnd) dueThisWeek++;
@@ -1864,12 +1895,13 @@ function renderStats() {
     }
   });
 
-  // Calculate year stats (from filtered projects)
+  // Calculate year stats (global)
   const currentYear = now.getFullYear();
   const lastYear = currentYear - 1;
   let completedThisYear = 0,
     completedLastYear = 0;
-  filteredProjects.forEach((p) => {
+
+  db.forEach((p) => {
     if (isFinished(p)) {
       const d = parseDueStr(p.due);
       if (d) {
@@ -1880,19 +1912,18 @@ function renderStats() {
   });
 
   // Update numbers view
-  if (currentStatsView === "numbers") {
-    setStat("statTotal", total);
-    setStat("statCompleted", completed);
-    setStat("statAvg", avgPerWeek);
-    setStat("statAvgMonth", avgPerMonth);
-    setStat("statLastWeek", dueLastWeek);
-    setStat("statThisWeek", dueThisWeek);
-    setStat("statUpcoming", upcoming);
-    setStat("statCompletedLastYear", completedLastYear);
-    setStat("statCompletedThisYear", completedThisYear);
-  } else if (currentStatsView === "graph") {
-    renderStatsChart(filteredProjects, start, end);
-  }
+  setStat("statTotal", total);
+  setStat("statCompleted", completed);
+  setStat("statAvg", avgPerWeek);
+  setStat("statAvgMonth", avgPerMonth);
+  setStat("statLastWeek", dueLastWeek);
+  setStat("statThisWeek", dueThisWeek);
+  setStat("statUpcoming", upcoming);
+  setStat("statCompletedLastYear", completedLastYear);
+  setStat("statCompletedThisYear", completedThisYear);
+
+  // Always render chart
+  renderStatsChart(filteredProjects, start, end);
 }
 
 function renderStatsChart(projects, start, end) {
@@ -1904,51 +1935,153 @@ function renderStatsChart(projects, start, end) {
     window.statsChartInstance.destroy();
   }
 
-  // Get completed projects sorted by completion date
+  // Get completed projects with dates
   const completedProjects = projects
     .filter((p) => isFinished(p))
     .map((p) => ({ date: parseDueStr(p.due), ...p }))
-    .filter((p) => p.date)
-    .sort((a, b) => a.date - b.date);
+    .filter((p) => p.date);
 
-  // Generate date labels for the period
+  console.log("DEBUG renderStatsChart:");
+  console.log("- Total projects passed:", projects.length);
+  console.log("- Completed projects with dates:", completedProjects.length);
+  console.log("- Date range:", start, "to", end);
+  console.log("- Current timespan:", currentStatsTimespan);
+
+  // Determine aggregation level based on timespan
+  let aggregation = "day"; // default
+  if (currentStatsTimespan === "daily" || currentStatsTimespan === "weekly") {
+    aggregation = "day";
+  } else if (
+    currentStatsTimespan === "monthly" ||
+    currentStatsTimespan === "quarterly"
+  ) {
+    aggregation = "week";
+  } else if (
+    currentStatsTimespan === "yearly" ||
+    currentStatsTimespan === "all"
+  ) {
+    aggregation = "month";
+  }
+
+  console.log("- Aggregation type:", aggregation);
+
+  // Helper function to get period key for a date
+  function getPeriodKey(date, aggregationType) {
+    if (aggregationType === "day") {
+      // Use ISO date format for consistency
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, "0");
+      const day = String(date.getDate()).padStart(2, "0");
+      return `${year}-${month}-${day}`;
+    } else if (aggregationType === "week") {
+      // Get the start of the week (Sunday)
+      const d = new Date(date);
+      const day = d.getDay();
+      const diff = d.getDate() - day;
+      const weekStart = new Date(d.setDate(diff));
+      weekStart.setHours(0, 0, 0, 0);
+      const year = weekStart.getFullYear();
+      const month = String(weekStart.getMonth() + 1).padStart(2, "0");
+      const dayOfMonth = String(weekStart.getDate()).padStart(2, "0");
+      return `${year}-${month}-${dayOfMonth}`;
+    } else if (aggregationType === "month") {
+      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(
+        2,
+        "0"
+      )}`;
+    }
+  }
+
+  // Helper function to format period label
+  function formatPeriodLabel(key, aggregationType) {
+    if (aggregationType === "day") {
+      const [year, month, day] = key.split("-");
+      const date = new Date(year, parseInt(month) - 1, parseInt(day));
+      return date.toLocaleDateString();
+    } else if (aggregationType === "week") {
+      const [year, month, day] = key.split("-");
+      const weekStart = new Date(year, parseInt(month) - 1, parseInt(day));
+      return `Week of ${weekStart.toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+      })}`;
+    } else if (aggregationType === "month") {
+      const [year, month] = key.split("-");
+      const date = new Date(year, parseInt(month) - 1, 1);
+      return date.toLocaleDateString(undefined, {
+        year: "numeric",
+        month: "short",
+      });
+    }
+  }
+
+  // Aggregate projects by period
+  const periodCounts = {};
+  completedProjects.forEach((p) => {
+    const periodKey = getPeriodKey(p.date, aggregation);
+    periodCounts[periodKey] = (periodCounts[periodKey] || 0) + 1;
+  });
+
+  console.log("- Period counts:", periodCounts);
+  console.log("- Total periods with data:", Object.keys(periodCounts).length);
+
+  // Generate all periods in the range
   const labels = [];
   const data = [];
-  let cumulative = 0;
-
   const current = new Date(start);
-  while (current <= end) {
-    labels.push(current.toLocaleDateString());
+  current.setHours(0, 0, 0, 0);
 
-    // Count completed projects up to this date
-    while (
-      completedProjects.length > 0 &&
-      completedProjects[0].date <= current
-    ) {
-      cumulative++;
-      completedProjects.shift();
+  if (aggregation === "day") {
+    while (current <= end) {
+      const year = current.getFullYear();
+      const month = String(current.getMonth() + 1).padStart(2, "0");
+      const day = String(current.getDate()).padStart(2, "0");
+      const key = `${year}-${month}-${day}`;
+      labels.push(formatPeriodLabel(key, aggregation));
+      data.push(periodCounts[key] || 0);
+      current.setDate(current.getDate() + 1);
     }
+  } else if (aggregation === "week") {
+    // Start from the beginning of the week
+    const day = current.getDay();
+    const diff = current.getDate() - day;
+    current.setDate(diff);
 
-    data.push(cumulative);
+    while (current <= end) {
+      const year = current.getFullYear();
+      const month = String(current.getMonth() + 1).padStart(2, "0");
+      const dayOfMonth = String(current.getDate()).padStart(2, "0");
+      const key = `${year}-${month}-${dayOfMonth}`;
+      labels.push(formatPeriodLabel(key, aggregation));
+      data.push(periodCounts[key] || 0);
+      current.setDate(current.getDate() + 7);
+    }
+  } else if (aggregation === "month") {
+    // Start from the beginning of the month
+    current.setDate(1);
 
-    // Increment by day
-    current.setDate(current.getDate() + 1);
+    while (current <= end) {
+      const key = `${current.getFullYear()}-${String(
+        current.getMonth() + 1
+      ).padStart(2, "0")}`;
+      labels.push(formatPeriodLabel(key, aggregation));
+      data.push(periodCounts[key] || 0);
+      current.setMonth(current.getMonth() + 1);
+    }
   }
 
   window.statsChartInstance = new Chart(ctx, {
-    type: "line",
+    type: "bar",
     data: {
       labels: labels,
       datasets: [
         {
-          label: "Completed Projects",
+          label: "Projects Completed",
           data: data,
+          backgroundColor: "rgba(16, 185, 129, 0.6)",
           borderColor: "var(--accent)",
-          backgroundColor: "rgba(16, 185, 129, 0.1)",
-          fill: true,
-          tension: 0.4,
-          pointRadius: 3,
-          pointHoverRadius: 5,
+          borderWidth: 1,
+          borderRadius: 4,
         },
       ],
     },
@@ -1961,36 +2094,51 @@ function renderStatsChart(projects, start, end) {
         },
         tooltip: {
           backgroundColor: "var(--surface)",
-          titleColor: "var(--text)",
-          bodyColor: "var(--text)",
+          titleColor: "white",
+          bodyColor: "white",
           borderColor: "var(--glass-border)",
           borderWidth: 1,
+          callbacks: {
+            label: function (context) {
+              const count = context.parsed.y;
+              return `${count} project${count !== 1 ? "s" : ""} completed`;
+            },
+          },
         },
       },
       scales: {
         x: {
+          title: {
+            display: true,
+            text: "Time Period",
+            color: "white",
+          },
           grid: {
             color: "var(--glass-border)",
+            display: false,
           },
           ticks: {
-            color: "var(--muted)",
-            maxTicksLimit: 10,
+            color: "white",
+            maxTicksLimit: 12,
+            maxRotation: 45,
+            minRotation: 0,
           },
         },
         y: {
+          title: {
+            display: true,
+            text: "Projects Completed",
+            color: "white",
+          },
           beginAtZero: true,
           grid: {
             color: "var(--glass-border)",
           },
           ticks: {
-            color: "var(--muted)",
+            color: "white",
             stepSize: 1,
+            precision: 0,
           },
-        },
-      },
-      elements: {
-        point: {
-          backgroundColor: "var(--accent)",
         },
       },
     },
@@ -2103,31 +2251,22 @@ function initEventListeners() {
     document.getElementById("apiKeyHelpDlg").showModal();
 
   // Statistics modal controls
-  document.querySelectorAll(".view-tab").forEach((tab) => {
-    tab.addEventListener("click", (e) => {
-      currentStatsView = e.target.dataset.view;
-      document
-        .querySelectorAll(".view-tab")
-        .forEach((t) => t.classList.remove("active"));
-      e.target.classList.add("active");
-      document
-        .querySelectorAll(".stats-view")
-        .forEach((v) => v.classList.remove("active"));
-      document
-        .getElementById(
-          `stats${
-            currentStatsView.charAt(0).toUpperCase() + currentStatsView.slice(1)
-          }View`
-        )
-        .classList.add("active");
+  const statsSlider = document.getElementById("statsTimeSlider");
+  if (statsSlider) {
+    statsSlider.addEventListener("input", (e) => {
+      const steps = [
+        "daily",
+        "weekly",
+        "monthly",
+        "quarterly",
+        "yearly",
+        "all",
+      ];
+      currentStatsTimespan = steps[parseInt(e.target.value)] || "monthly";
       renderStats();
     });
-  });
+  }
 
-  document.getElementById("statsTimespan").addEventListener("change", (e) => {
-    currentStatsTimespan = e.target.value;
-    renderStats();
-  });
   document.getElementById("btnSaveProject").onclick = onSaveProject;
 
   document.getElementById("dueFilterGroup").addEventListener("click", (e) => {

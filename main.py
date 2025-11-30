@@ -334,6 +334,9 @@ class Api:
                         if chunk:
                             f.write(chunk)
 
+            # Prepare the restart command separately to avoid f-string backslash syntax error
+            restart_cmd = f'Start-Process -FilePath "{app_path}"' if app_path else ""
+
             # Use a small helper process to show a message, run installer (visible), and relaunch app after completion
             ps_script = (
                 '$msg = "Updating ACIES Scheduler...' + "`n" + 'Installer will run and the app will reopen automatically." ; '
@@ -342,7 +345,7 @@ class Api:
                 f'Start-Process -FilePath "{target}" '
                 f'-ArgumentList \'/SILENT /NORESTART /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS\' -Wait; '
                 'Start-Sleep -Seconds 2; '
-                f'{f"Start-Process -FilePath \"{app_path}\"" if app_path else ""}'
+                f'{restart_cmd}'
             )
             subprocess.Popen(
                 ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_script],

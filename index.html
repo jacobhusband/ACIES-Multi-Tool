@@ -9,6 +9,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="styles.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 
 <body>
@@ -646,47 +647,73 @@
             <button class="btn ghost" onclick="closeDlg('statsDlg')">Close</button>
         </div>
         <div class="modal-body stack">
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <div class="stat-value" id="statTotal">0</div>
-                    <div class="stat-label">Total Projects</div>
+            <!-- View Tabs -->
+            <div class="stats-controls">
+                <div class="view-tabs">
+                    <button class="view-tab active" data-view="numbers">Numbers</button>
+                    <button class="view-tab" data-view="graph">Graph</button>
                 </div>
-                <div class="stat-card">
-                    <div class="stat-value" id="statCompleted">0</div>
-                    <div class="stat-label">Completed</div>
+                <div class="timespan-control">
+                    <label class="label">Timespan:</label>
+                    <select id="statsTimespan">
+                        <option value="daily">Daily</option>
+                        <option value="weekly">Weekly</option>
+                        <option value="monthly" selected>Monthly</option>
+                        <option value="quarterly">Quarterly</option>
+                        <option value="yearly">Yearly</option>
+                    </select>
                 </div>
+            </div>
 
-                <div class="stat-card">
-                    <div class="stat-value" id="statAvg">0</div>
-                    <div class="stat-label">Avg. Projects / Week</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value" id="statAvgMonth">0</div>
-                    <div class="stat-label">Avg. Projects / Month</div>
-                </div>
+            <!-- Numbers View -->
+            <div id="statsNumbersView" class="stats-view active">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-value" id="statTotal">0</div>
+                        <div class="stat-label">Total Projects</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="statCompleted">0</div>
+                        <div class="stat-label">Completed</div>
+                    </div>
 
-                <div class="stat-card">
-                    <div class="stat-value" id="statLastWeek">0</div>
-                    <div class="stat-label">Due Last Week</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value" id="statThisWeek">0</div>
-                    <div class="stat-label">Due This Week</div>
-                </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="statAvg">0</div>
+                        <div class="stat-label">Avg. Projects / Week</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="statAvgMonth">0</div>
+                        <div class="stat-label">Avg. Projects / Month</div>
+                    </div>
 
-                <div class="stat-card">
-                    <div class="stat-value" id="statCompletedLastYear">0</div>
-                    <div class="stat-label">Completed Last Year</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value" id="statCompletedThisYear">0</div>
-                    <div class="stat-label">Completed This Year</div>
-                </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="statLastWeek">0</div>
+                        <div class="stat-label">Due Last Week</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="statThisWeek">0</div>
+                        <div class="stat-label">Due This Week</div>
+                    </div>
 
-                <div class="stat-card full-width">
-                    <div class="stat-value" id="statUpcoming">0</div>
-                    <div class="stat-label">Upcoming (Future)</div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="statCompletedLastYear">0</div>
+                        <div class="stat-label">Completed Last Year</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="statCompletedThisYear">0</div>
+                        <div class="stat-label">Completed This Year</div>
+                    </div>
+
+                    <div class="stat-card full-width">
+                        <div class="stat-value" id="statUpcoming">0</div>
+                        <div class="stat-label">Upcoming (Future)</div>
+                    </div>
                 </div>
+            </div>
+
+            <!-- Graph View -->
+            <div id="statsGraphView" class="stats-view">
+                <canvas id="statsChart" width="400" height="200"></canvas>
             </div>
         </div>
     </dialog>

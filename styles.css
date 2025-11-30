@@ -972,6 +972,82 @@ select:focus {
   gap: 0.75rem;
 }
 
+/* Statistics Controls */
+.stats-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.view-tabs {
+  display: flex;
+  background: var(--bg-secondary);
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--glass-border);
+}
+
+.view-tab {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  padding: 6px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.view-tab:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.view-tab.active {
+  background: var(--bg-tertiary);
+  color: var(--accent);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.timespan-control {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.timespan-control select {
+  background: var(--bg-secondary);
+  border: 1px solid var(--glass-border);
+  color: var(--text);
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.timespan-control select:focus {
+  background: var(--bg-tertiary);
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-dim);
+}
+
+/* Statistics Views */
+.stats-view {
+  display: none;
+  animation: fadeIn 0.3s ease-out;
+}
+
+.stats-view.active {
+  display: block;
+}
+
 /* Statistics Grid */
 .stats-grid {
   display: grid;

@@ -244,6 +244,8 @@ let userSettings = {
 };
 let activeNoteTab = null;
 let latestAppUpdate = null;
+let currentStatsView = "numbers";
+let currentStatsTimespan = "monthly";
 
 async function load() {
   try {
@@ -1786,6 +1788,215 @@ function hideMainApp() {
   document.querySelector(".app-header").style.display = "none";
 }
 
+function showStatsModal() {
+  document.getElementById("statsDlg").showModal();
+  renderStats();
+}
+
+function getTimespanDateRange(timespan) {
+  const now = new Date();
+  const start = new Date(now);
+
+  switch (timespan) {
+    case "daily":
+      start.setDate(now.getDate() - 1);
+      break;
+    case "weekly":
+      start.setDate(now.getDate() - 7);
+      break;
+    case "monthly":
+      start.setMonth(now.getMonth() - 1);
+      break;
+    case "quarterly":
+      start.setMonth(now.getMonth() - 3);
+      break;
+    case "yearly":
+      start.setFullYear(now.getFullYear() - 1);
+      break;
+  }
+
+  return { start, end: now };
+}
+
+function renderStats() {
+  const { start, end } = getTimespanDateRange(currentStatsTimespan);
+
+  // Filter projects within the timespan
+  const filteredProjects = db.filter((p) => {
+    const dueDate = parseDueStr(p.due);
+    return dueDate && dueDate >= start && dueDate <= end;
+  });
+
+  // Calculate stats from filtered projects
+  const total = filteredProjects.length;
+  const completed = filteredProjects.filter((p) => isFinished(p)).length;
+
+  // Calculate averages (simplified for timespan)
+  const diffTime = end - start;
+  const diffWeeks = Math.max(
+    1,
+    Math.ceil(diffTime / (1000 * 60 * 60 * 24 * 7))
+  );
+  const avgPerWeek = total > 0 ? (total / diffWeeks).toFixed(1) : 0;
+  const diffMonths = Math.max(1, diffTime / (1000 * 60 * 60 * 24 * 30.44));
+  const avgPerMonth = total > 0 ? (total / diffMonths).toFixed(1) : 0;
+
+  // Calculate due stats
+  const now = new Date();
+  const weekStart = new Date(now);
+  weekStart.setDate(now.getDate() - now.getDay());
+  const weekEnd = new Date(weekStart);
+  weekEnd.setDate(weekStart.getDate() + 6);
+
+  let dueThisWeek = 0,
+    dueLastWeek = 0,
+    upcoming = 0;
+  filteredProjects.forEach((p) => {
+    const d = parseDueStr(p.due);
+    if (d) {
+      if (d >= weekStart && d <= weekEnd) dueThisWeek++;
+      else if (
+        d >= new Date(weekStart.getTime() - 7 * 24 * 60 * 60 * 1000) &&
+        d < weekStart
+      )
+        dueLastWeek++;
+      else if (d > weekEnd) upcoming++;
+    }
+  });
+
+  // Calculate year stats (from filtered projects)
+  const currentYear = now.getFullYear();
+  const lastYear = currentYear - 1;
+  let completedThisYear = 0,
+    completedLastYear = 0;
+  filteredProjects.forEach((p) => {
+    if (isFinished(p)) {
+      const d = parseDueStr(p.due);
+      if (d) {
+        if (d.getFullYear() === currentYear) completedThisYear++;
+        if (d.getFullYear() === lastYear) completedLastYear++;
+      }
+    }
+  });
+
+  // Update numbers view
+  if (currentStatsView === "numbers") {
+    setStat("statTotal", total);
+    setStat("statCompleted", completed);
+    setStat("statAvg", avgPerWeek);
+    setStat("statAvgMonth", avgPerMonth);
+    setStat("statLastWeek", dueLastWeek);
+    setStat("statThisWeek", dueThisWeek);
+    setStat("statUpcoming", upcoming);
+    setStat("statCompletedLastYear", completedLastYear);
+    setStat("statCompletedThisYear", completedThisYear);
+  } else if (currentStatsView === "graph") {
+    renderStatsChart(filteredProjects, start, end);
+  }
+}
+
+function renderStatsChart(projects, start, end) {
+  const canvas = document.getElementById("statsChart");
+  const ctx = canvas.getContext("2d");
+
+  // Destroy existing chart if any
+  if (window.statsChartInstance) {
+    window.statsChartInstance.destroy();
+  }
+
+  // Get completed projects sorted by completion date
+  const completedProjects = projects
+    .filter((p) => isFinished(p))
+    .map((p) => ({ date: parseDueStr(p.due), ...p }))
+    .filter((p) => p.date)
+    .sort((a, b) => a.date - b.date);
+
+  // Generate date labels for the period
+  const labels = [];
+  const data = [];
+  let cumulative = 0;
+
+  const current = new Date(start);
+  while (current <= end) {
+    labels.push(current.toLocaleDateString());
+
+    // Count completed projects up to this date
+    while (
+      completedProjects.length > 0 &&
+      completedProjects[0].date <= current
+    ) {
+      cumulative++;
+      completedProjects.shift();
+    }
+
+    data.push(cumulative);
+
+    // Increment by day
+    current.setDate(current.getDate() + 1);
+  }
+
+  window.statsChartInstance = new Chart(ctx, {
+    type: "line",
+    data: {
+      labels: labels,
+      datasets: [
+        {
+          label: "Completed Projects",
+          data: data,
+          borderColor: "var(--accent)",
+          backgroundColor: "rgba(16, 185, 129, 0.1)",
+          fill: true,
+          tension: 0.4,
+          pointRadius: 3,
+          pointHoverRadius: 5,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          display: false,
+        },
+        tooltip: {
+          backgroundColor: "var(--surface)",
+          titleColor: "var(--text)",
+          bodyColor: "var(--text)",
+          borderColor: "var(--glass-border)",
+          borderWidth: 1,
+        },
+      },
+      scales: {
+        x: {
+          grid: {
+            color: "var(--glass-border)",
+          },
+          ticks: {
+            color: "var(--muted)",
+            maxTicksLimit: 10,
+          },
+        },
+        y: {
+          beginAtZero: true,
+          grid: {
+            color: "var(--glass-border)",
+          },
+          ticks: {
+            color: "var(--muted)",
+            stepSize: 1,
+          },
+        },
+      },
+      elements: {
+        point: {
+          backgroundColor: "var(--accent)",
+        },
+      },
+    },
+  });
+}
+
 function showApiKeyHelp() {
   document.getElementById("apiKeyHelpDlg").showModal();
 }
@@ -1887,10 +2098,36 @@ function initEventListeners() {
     await populateSettingsModal();
     document.getElementById("settingsDlg").showModal();
   };
-  document.getElementById("statsBtn").onclick = () =>
-    document.getElementById("statsDlg").showModal();
+  document.getElementById("statsBtn").onclick = () => showStatsModal();
   document.getElementById("settings_howToSetupBtn").onclick = () =>
     document.getElementById("apiKeyHelpDlg").showModal();
+
+  // Statistics modal controls
+  document.querySelectorAll(".view-tab").forEach((tab) => {
+    tab.addEventListener("click", (e) => {
+      currentStatsView = e.target.dataset.view;
+      document
+        .querySelectorAll(".view-tab")
+        .forEach((t) => t.classList.remove("active"));
+      e.target.classList.add("active");
+      document
+        .querySelectorAll(".stats-view")
+        .forEach((v) => v.classList.remove("active"));
+      document
+        .getElementById(
+          `stats${
+            currentStatsView.charAt(0).toUpperCase() + currentStatsView.slice(1)
+          }View`
+        )
+        .classList.add("active");
+      renderStats();
+    });
+  });
+
+  document.getElementById("statsTimespan").addEventListener("change", (e) => {
+    currentStatsTimespan = e.target.value;
+    renderStats();
+  });
   document.getElementById("btnSaveProject").onclick = onSaveProject;
 
   document.getElementById("dueFilterGroup").addEventListener("click", (e) => {

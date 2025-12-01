@@ -75,55 +75,56 @@
 }
 
 [data-theme="light"] {
-  /* Clean, Premium Light Base */
-  --bg: #f8fafc; /* Slate 50 */
+  /* Warm, Premium Light Base - Ivory & Cream Tones */
+  --bg: #fafaf9; /* Warm stone 50 - softer than pure white */
   --bg-secondary: #ffffff;
-  --bg-tertiary: #f1f5f9; /* Slate 100 */
+  --bg-tertiary: #f5f5f4; /* Stone 100 - warm neutral */
   
-  /* Subtle gradient with a hint of the brand green */
-  --bg-gradient: radial-gradient(circle at top right, rgba(16, 185, 129, 0.1) 0%, rgba(248, 250, 252, 0) 60%),
-                 radial-gradient(circle at bottom left, rgba(56, 189, 248, 0.05) 0%, rgba(248, 250, 252, 0) 60%);
+  /* Elegant gradient with warm sophistication */
+  --bg-gradient: radial-gradient(circle at top right, rgba(14, 165, 233, 0.08) 0%, rgba(250, 250, 249, 0) 50%),
+                 radial-gradient(circle at bottom left, rgba(168, 85, 247, 0.05) 0%, rgba(250, 250, 249, 0) 50%),
+                 linear-gradient(180deg, #fafaf9 0%, #fefdfb 100%);
 
-  /* Surface & Glass */
+  /* Surface & Glass - Crisp whites with warm undertones */
   --surface: #ffffff;
-  --surface-hover: #f1f5f9;
-  --glass-border: #e2e8f0; /* Slate 200 */
+  --surface-hover: #f8f8f7;
+  --glass-border: #e7e5e4; /* Stone 200 - warm border */
 
-  /* Structural Backgrounds - Light Mode */
-  --header-bg: rgba(255, 255, 255, 0.85);
-  --toolbar-bg: rgba(255, 255, 255, 0.9);
-  --panel-bg: rgba(255, 255, 255, 0.7);
-  --th-bg: rgba(255, 255, 255, 0.95);
+  /* Structural Backgrounds - Light Mode with enhanced depth */
+  --header-bg: rgba(255, 255, 255, 0.92);
+  --toolbar-bg: rgba(255, 255, 255, 0.95);
+  --panel-bg: rgba(255, 255, 255, 0.85);
+  --th-bg: rgba(250, 250, 249, 0.98);
 
-  /* Text - High contrast Slate */
-  --text: #0f172a; /* Slate 900 */
-  --text-secondary: #475569; /* Slate 600 */
-  --muted: #94a3b8; /* Slate 400 */
+  /* Text - Rich charcoal hierarchy for better readability */
+  --text: #1c1917; /* Stone 900 - deep charcoal */
+  --text-secondary: #57534e; /* Stone 700 - warm gray */
+  --muted: #a8a29e; /* Stone 400 - refined muted */
 
-  /* Accents - Emerald */
-  --accent: #059669; /* Emerald 600 */
-  --accent-hover: #047857; /* Emerald 700 */
-  --accent-dim: rgba(5, 150, 105, 0.1);
+  /* Accents - Professional Blue-Teal (more sophisticated than plain green) */
+  --accent: #0ea5e9; /* Sky 500 - vibrant but professional */
+  --accent-hover: #0284c7; /* Sky 600 - deeper on hover */
+  --accent-dim: rgba(14, 165, 233, 0.12);
   
   /* Button Text on Accent */
   --btn-text-on-accent: #ffffff;
 
-  /* Status Colors */
-  --danger: #dc2626;
-  --danger-bg: #fee2e2;
-  --warning: #d97706;
-  --warning-bg: #fef3c7;
+  /* Status Colors - Vibrant yet professional */
+  --danger: #ef4444; /* Red 500 - brighter */
+  --danger-bg: #fee2e2; /* Red 100 */
+  --warning: #f59e0b; /* Amber 500 - warmer */
+  --warning-bg: #fef3c7; /* Amber 100 */
 
-  /* Shadows - Soft and layered */
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
-  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-  --glow: 0 0 0 rgba(0, 0, 0, 0);
+  /* Shadows - Enhanced depth and sophistication */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.1);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+  --glow: 0 0 20px rgba(14, 165, 233, 0.15);
 
-  /* Modals & Inputs - Light Mode */
+  /* Modals & Inputs - Light Mode with warmth */
   --modal-bg: #ffffff;
-  --backdrop-bg: rgba(255, 255, 255, 0.6);
-  --input-bg: #ffffff;
-  --input-border: #cbd5e1; /* Slate 300 */
+  --backdrop-bg: rgba(28, 25, 23, 0.4); /* Warmer backdrop */
+  --input-bg: #fafafa;
+  --input-border: #d6d3d1; /* Stone 300 */
 }
 
 * {

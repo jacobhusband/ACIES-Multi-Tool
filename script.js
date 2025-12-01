@@ -2339,6 +2339,10 @@ function initEventListeners() {
   document.getElementById("statsBtn").onclick = () => showStatsModal();
   document.getElementById("settings_howToSetupBtn").onclick = () =>
     document.getElementById("apiKeyHelpDlg").showModal();
+  document.getElementById("btnStartSetupGuide").onclick = () => {
+    closeDlg("settingsDlg");
+    startSetupHelp();
+  };
 
   // Statistics modal controls
   const statsRangeGroup = document.getElementById("statsRangeGroup");

@@ -3,9 +3,28 @@
   --bg: #011814;
   --bg-secondary: #02241e;
   --bg-tertiary: #043029;
+  --bg-gradient: radial-gradient(circle at top right, #064e3b 0%, var(--bg) 40%);
 
   /* Surface & Glass */
   --surface: rgba(6, 78, 59, 0.4);
+  --surface-hover: rgba(6, 78, 59, 0.6);
+  --glass-border: rgba(255, 255, 255, 0.08);
+
+  /* Text */
+  --text: #ecfdf5;
+  --text-secondary: #a7f3d0;
+  --muted: #6ee7b7;
+
+  /* Accents */
+  --accent: #10b981;
+  --accent-hover: #34d399;
+  --accent-dim: rgba(16, 185, 129, 0.2);
+
+  /* Status Colors */
+  --danger: #ef4444;
+  --danger-bg: rgba(239, 68, 68, 0.15);
+  --warning: #f59e0b;
+  --warning-bg: rgba(245, 158, 11, 0.15);
   --surface-hover: rgba(6, 78, 59, 0.6);
   --glass-border: rgba(255, 255, 255, 0.08);
 
@@ -38,6 +57,73 @@
   --radius: 12px;
   --radius-lg: 16px;
   --font-main: "Inter", system-ui, sans-serif;
+
+  /* Structural Backgrounds (Dark Mode Defaults) */
+  --header-bg: rgba(1, 24, 20, 0.85);
+  --toolbar-bg: rgba(2, 36, 30, 0.9);
+  --panel-bg: rgba(2, 36, 30, 0.7);
+  --th-bg: rgba(2, 36, 30, 0.95);
+  
+  /* Button Text on Accent */
+  --btn-text-on-accent: #022c22;
+
+  /* Modals & Inputs */
+  --modal-bg: #022c22;
+  --backdrop-bg: rgba(0, 0, 0, 0.7);
+  --input-bg: rgba(0, 0, 0, 0.2);
+  --input-border: rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="light"] {
+  /* Clean, Premium Light Base */
+  --bg: #f8fafc; /* Slate 50 */
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #f1f5f9; /* Slate 100 */
+  
+  /* Subtle gradient with a hint of the brand green */
+  --bg-gradient: radial-gradient(circle at top right, rgba(16, 185, 129, 0.1) 0%, rgba(248, 250, 252, 0) 60%),
+                 radial-gradient(circle at bottom left, rgba(56, 189, 248, 0.05) 0%, rgba(248, 250, 252, 0) 60%);
+
+  /* Surface & Glass */
+  --surface: #ffffff;
+  --surface-hover: #f1f5f9;
+  --glass-border: #e2e8f0; /* Slate 200 */
+
+  /* Structural Backgrounds - Light Mode */
+  --header-bg: rgba(255, 255, 255, 0.85);
+  --toolbar-bg: rgba(255, 255, 255, 0.9);
+  --panel-bg: rgba(255, 255, 255, 0.7);
+  --th-bg: rgba(255, 255, 255, 0.95);
+
+  /* Text - High contrast Slate */
+  --text: #0f172a; /* Slate 900 */
+  --text-secondary: #475569; /* Slate 600 */
+  --muted: #94a3b8; /* Slate 400 */
+
+  /* Accents - Emerald */
+  --accent: #059669; /* Emerald 600 */
+  --accent-hover: #047857; /* Emerald 700 */
+  --accent-dim: rgba(5, 150, 105, 0.1);
+  
+  /* Button Text on Accent */
+  --btn-text-on-accent: #ffffff;
+
+  /* Status Colors */
+  --danger: #dc2626;
+  --danger-bg: #fee2e2;
+  --warning: #d97706;
+  --warning-bg: #fef3c7;
+
+  /* Shadows - Soft and layered */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  --glow: 0 0 0 rgba(0, 0, 0, 0);
+
+  /* Modals & Inputs - Light Mode */
+  --modal-bg: #ffffff;
+  --backdrop-bg: rgba(255, 255, 255, 0.6);
+  --input-bg: #ffffff;
+  --input-border: #cbd5e1; /* Slate 300 */
 }
 
 * {
@@ -55,7 +141,8 @@ body {
   font-size: 14px;
   line-height: 1.5;
   color: var(--text);
-  background: radial-gradient(circle at top right, #064e3b 0%, var(--bg) 40%);
+  background: var(--bg-gradient);
+  background-color: var(--bg);
   background-attachment: fixed;
   scrollbar-width: thin;
   scrollbar-color: var(--bg-tertiary) var(--bg);
@@ -105,7 +192,7 @@ h4 {
   top: 0;
   z-index: 50;
   height: var(--header-height);
-  background: rgba(1, 24, 20, 0.85);
+  background: var(--header-bg);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border-bottom: 1px solid var(--glass-border);
@@ -267,16 +354,27 @@ h4 {
   border-color: var(--accent);
 }
 
+.theme-toggle {
+  font-size: 16px;
+  border-color: var(--glass-border);
+  transition: transform 120ms ease;
+}
+
+.theme-toggle:hover {
+  transform: translateY(-1px);
+}
+
 .quick-add {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #000;
+  background: var(--surface);
+  border-color: var(--glass-border);
+  color: var(--accent);
   font-weight: bold;
 }
 
 .quick-add:hover {
-  background: var(--accent-hover);
-  color: #000;
+  background: var(--surface-hover);
+  color: var(--accent-hover);
+  border-color: var(--accent);
   box-shadow: var(--glow);
 }
 
@@ -319,7 +417,7 @@ main {
   z-index: 45;
   margin: 0 -1.5rem 1rem;
   padding: 0.75rem 1.5rem;
-  background: rgba(2, 36, 30, 0.9);
+  background: var(--toolbar-bg);
   backdrop-filter: blur(10px);
   border: 1px solid var(--glass-border);
   border-radius: 0;
@@ -354,7 +452,7 @@ main {
 }
 
 .panel {
-  background: rgba(2, 36, 30, 0.7);
+  background: var(--panel-bg);
   backdrop-filter: blur(10px);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-lg);
@@ -455,7 +553,7 @@ main {
   user-select: none;
   position: sticky;
   top: calc(var(--header-height) + var(--toolbar-height));
-  background: rgba(2, 36, 30, 0.95);
+  background: var(--th-bg);
   backdrop-filter: blur(10px);
   z-index: 30;
   height: 50px;
@@ -530,7 +628,7 @@ main {
 
 .id-badge {
   font-family: monospace;
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--bg-tertiary);
   padding: 2px 6px;
   border-radius: 4px;
   color: var(--muted);
@@ -576,7 +674,7 @@ main {
   flex: 1;
   min-width: 220px;
   padding: 0.75rem;
-  background: rgba(0, 0, 0, 0.15);
+  background: var(--bg-tertiary);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-sm);
 }
@@ -616,13 +714,13 @@ main {
 
 .pill.overdue {
   background: var(--danger-bg);
-  color: #fca5a5;
+  color: var(--danger);
   border-color: rgba(239, 68, 68, 0.3);
 }
 
 .pill.dueSoon {
   background: var(--warning-bg);
-  color: #fcd34d;
+  color: var(--warning);
   border-color: rgba(245, 158, 11, 0.3);
 }
 
@@ -683,25 +781,25 @@ main {
 .st-work[aria-pressed="true"] {
   background: var(--accent);
   border-color: var(--accent);
-  color: #022c22;
+  color: var(--btn-text-on-accent);
 }
 
 .st-pr[aria-pressed="true"] {
   background: var(--warning-bg);
-  color: #fcd34d;
+  color: var(--warning);
   border-color: rgba(245, 158, 11, 0.6);
 }
 
 .st-comp[aria-pressed="true"] {
   background: linear-gradient(135deg, var(--accent), var(--accent-hover));
   border-color: var(--accent);
-  color: #022c22;
+  color: var(--btn-text-on-accent);
 }
 
 .st-del[aria-pressed="true"] {
   background: linear-gradient(135deg, #34d399, #10b981);
   border-color: #a7f3d0;
-  color: #022c22;
+  color: var(--btn-text-on-accent);
 }
 
 /* Buttons */
@@ -729,36 +827,41 @@ main {
 .btn-primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #022c22;
+  color: var(--btn-text-on-accent);
   font-weight: 600;
-  box-shadow: 0 2px 4px rgba(16, 185, 129, 0.25);
+  box-shadow: var(--shadow-sm);
 }
 
 .btn-primary:hover {
   background: var(--accent-hover);
   border-color: var(--accent-hover);
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.35);
+  box-shadow: var(--shadow-md);
 }
 
 .btn-accent {
   background: var(--accent-dim);
   color: var(--accent);
-  border-color: rgba(16, 185, 129, 0.3);
+  border-color: var(--accent);
+  font-weight: 600;
 }
 
 .btn-accent:hover {
-  background: rgba(16, 185, 129, 0.3);
+  background: var(--accent);
+  color: var(--btn-text-on-accent);
+  border-color: var(--accent-hover);
 }
 
 .btn-danger {
-  background: rgba(239, 68, 68, 0.1);
-  color: #fca5a5;
-  border-color: rgba(239, 68, 68, 0.3);
+  background: var(--danger-bg);
+  color: var(--danger);
+  border-color: var(--danger);
+  font-weight: 600;
 }
 
 .btn-danger:hover {
-  background: rgba(239, 68, 68, 0.2);
+  background: var(--danger);
+  color: #ffffff;
   border-color: var(--danger);
 }
 
@@ -882,9 +985,9 @@ main {
 
 .task-chip.done {
   text-decoration: line-through;
-  opacity: 0.6;
-  background-color: rgba(0, 0, 0, 0.3);
-  color: var(--muted);
+  opacity: 0.8;
+  background-color: var(--bg-tertiary);
+  color: var(--text-secondary);
   border-color: transparent;
 }
 
@@ -907,8 +1010,8 @@ main {
 input,
 textarea,
 select {
-  background: rgba(0, 0, 0, 0.2);
-  border: 1px solid var(--glass-border);
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
   color: var(--text);
   padding: 0.6rem 0.75rem;
   border-radius: var(--radius-sm);
@@ -941,7 +1044,7 @@ select:focus {
   right: 0;
   bottom: 0;
   width: 350px;
-  background: #022c22;
+  background: var(--bg-secondary);
   border-left: 1px solid var(--glass-border);
   box-shadow: -10px 0 30px rgba(0, 0, 0, 0.5);
   transform: translateX(100%);
@@ -1011,6 +1114,7 @@ select:focus {
 
 .time-slider {
   -webkit-appearance: none;
+  appearance: none;
   width: 100%;
   height: 6px;
   background: var(--bg-secondary);
@@ -1162,7 +1266,7 @@ select:focus {
 
 /* Modals */
 dialog {
-  background: #022c22;
+  background: var(--modal-bg);
   color: var(--text);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-lg);
@@ -1172,12 +1276,12 @@ dialog {
 }
 
 dialog::backdrop {
-  background: rgba(0, 0, 0, 0.7);
+  background: var(--backdrop-bg);
   backdrop-filter: blur(4px);
 }
 
 .modal-header {
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--bg-tertiary);
   padding: 1rem 1.5rem;
   border-bottom: 1px solid var(--glass-border);
   display: flex;
@@ -1247,7 +1351,7 @@ dialog::backdrop {
 }
 
 .radio-group {
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--bg-tertiary);
   padding: 4px;
   border-radius: var(--radius-sm);
   display: inline-flex;
@@ -1295,7 +1399,7 @@ dialog::backdrop {
 }
 
 .note-result-item {
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--bg-tertiary);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius);
   padding: 1rem;
@@ -1369,7 +1473,7 @@ dialog::backdrop {
 }
 
 .command-tag {
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--bg-tertiary);
   border: 1px solid var(--glass-border);
   padding: 2px 8px;
   border-radius: 4px;

@@ -38,6 +38,7 @@ const HELP_LINKS = {
   plugins:
     "https://brainy-seahorse-3c5.notion.site/Plugins-2b13fdbb662c801abfe9cc46927eb73a",
 };
+const THEME_STORAGE_KEY = "acies-theme";
 
 // Cache for loaded descriptions to prevent re-fetching
 const DESCRIPTION_CACHE = {};
@@ -246,6 +247,7 @@ let userSettings = {
   apiKey: "",
   autocadPath: "",
   showSetupHelp: true,
+  theme: "dark",
 };
 let activeNoteTab = null;
 let latestAppUpdate = null;
@@ -258,6 +260,56 @@ const allowedAggregations = {
   "1Y": ["week", "month", "quarter"],
   "3Y": ["month", "quarter"],
 };
+
+// ===================== THEMING =====================
+function readLocalTheme() {
+  try {
+    return localStorage.getItem(THEME_STORAGE_KEY);
+  } catch (e) {
+    return null;
+  }
+}
+
+function applyTheme(theme) {
+  const resolved = theme === "light" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", resolved);
+  const toggle = document.getElementById("themeToggleBtn");
+  if (toggle) {
+    const isLight = resolved === "light";
+    const label = isLight ? "Switch to dark mode" : "Switch to light mode";
+    toggle.textContent = isLight ? "🌙" : "☀️";
+    toggle.setAttribute("aria-label", label);
+    toggle.title = label;
+  }
+  try {
+    localStorage.setItem(THEME_STORAGE_KEY, resolved);
+  } catch (e) {
+    // Ignore storage errors (private mode, etc.)
+  }
+  userSettings.theme = resolved;
+  return resolved;
+}
+
+async function persistThemePreference(theme) {
+  const resolved = applyTheme(theme);
+  if (window.pywebview && window.pywebview.api?.save_user_settings) {
+    try {
+      await window.pywebview.api.save_user_settings(userSettings);
+    } catch (e) {
+      console.warn("Failed to persist theme preference:", e);
+    }
+  }
+  return resolved;
+}
+
+function initThemeFromPreferences() {
+  const storedSetting = userSettings.theme;
+  const localPref = readLocalTheme();
+  const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  const nextTheme =
+    storedSetting || localPref || (prefersDark ? "dark" : "light");
+  applyTheme(nextTheme);
+}
 
 async function load() {
   try {
@@ -397,7 +449,7 @@ async function saveNotes() {
 async function loadUserSettings() {
   try {
     const storedSettings = await window.pywebview.api.get_user_settings();
-    if (storedSettings) userSettings = storedSettings;
+    if (storedSettings) userSettings = { ...userSettings, ...storedSettings };
   } catch (e) {
     console.error("Failed to load settings:", e);
   }
@@ -2095,6 +2147,12 @@ function renderStatsChart(projects, start, end, aggregation) {
     }
   }
 
+  // Get current theme colors
+  const style = getComputedStyle(document.body);
+  const textColor = style.getPropertyValue("--text").trim();
+  const gridColor = style.getPropertyValue("--glass-border").trim();
+  const surfaceColor = style.getPropertyValue("--bg-secondary").trim(); // Use bg-secondary for better opacity
+
   window.statsChartInstance = new Chart(ctx, {
     type: "bar",
     data: {
@@ -2118,11 +2176,13 @@ function renderStatsChart(projects, start, end, aggregation) {
           display: false,
         },
         tooltip: {
-          backgroundColor: "var(--surface)",
-          titleColor: "white",
-          bodyColor: "white",
-          borderColor: "var(--glass-border)",
+          backgroundColor: surfaceColor,
+          titleColor: textColor,
+          bodyColor: textColor,
+          borderColor: gridColor,
           borderWidth: 1,
+          padding: 10,
+          displayColors: false,
           callbacks: {
             label: function (context) {
               const count = context.parsed.y;
@@ -2136,14 +2196,14 @@ function renderStatsChart(projects, start, end, aggregation) {
           title: {
             display: true,
             text: "Time Period",
-            color: "white",
+            color: textColor,
           },
           grid: {
-            color: "var(--glass-border)",
+            color: gridColor,
             display: false,
           },
           ticks: {
-            color: "white",
+            color: textColor,
             maxTicksLimit: 12,
             maxRotation: 45,
             minRotation: 0,
@@ -2153,14 +2213,14 @@ function renderStatsChart(projects, start, end, aggregation) {
           title: {
             display: true,
             text: "Projects Completed",
-            color: "white",
+            color: textColor,
           },
           beginAtZero: true,
           grid: {
-            color: "var(--glass-border)",
+            color: gridColor,
           },
           ticks: {
-            color: "white",
+            color: textColor,
             stepSize: 1,
             precision: 0,
           },
@@ -2169,7 +2229,6 @@ function renderStatsChart(projects, start, end, aggregation) {
     },
   });
 }
-
 function showApiKeyHelp() {
   document.getElementById("apiKeyHelpDlg").showModal();
 }
@@ -2264,6 +2323,12 @@ function initEventListeners() {
   document.getElementById("checkUpdateBtn").onclick = () =>
     refreshAppUpdateStatus({ manual: true });
   document.getElementById("appUpdateBtn").onclick = installAppUpdate;
+  document.getElementById("themeToggleBtn").onclick = () => {
+    const currentTheme =
+      document.documentElement.getAttribute("data-theme") || "dark";
+    const nextTheme = currentTheme === "light" ? "dark" : "light";
+    persistThemePreference(nextTheme);
+  };
 
   document.getElementById("quickNew").onclick = openNew;
   document.getElementById("settingsBtn").onclick = async () => {
@@ -2674,6 +2739,7 @@ async function init() {
   updateStickyOffsets();
   await refreshAppUpdateStatus();
   await loadUserSettings();
+  initThemeFromPreferences();
 
   if (isNewUser()) {
     hideMainApp();

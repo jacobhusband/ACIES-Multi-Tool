@@ -2,7 +2,7 @@
 
 #define MyAppName "ACIES Scheduler"
 #ifndef MyAppVersion
-#define MyAppVersion "0.0.0"
+#define MyAppVersion "0.0.7"
 #endif
 #define MyAppPublisher "ACIES Engineering"
 #define MyAppURL "https://acies.net/"

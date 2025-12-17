@@ -339,7 +339,8 @@ class Api:
 
             # Use a small helper process to show a message, run installer (visible), and relaunch app after completion
             ps_script = (
-                '$msg = "Updating ACIES Scheduler...' + "`n" + 'Installer will run and the app will reopen automatically." ; '
+                '$msg = "Updating ACIES Scheduler...' + "`n" +
+                'Installer will run and the app will reopen automatically." ; '
                 'Add-Type -AssemblyName PresentationFramework; '
                 '[System.Windows.MessageBox]::Show($msg, "Updating", "OK", "Information") | Out-Null; '
                 f'Start-Process -FilePath "{target}" '
@@ -348,13 +349,15 @@ class Api:
                 f'{restart_cmd}'
             )
             subprocess.Popen(
-                ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_script],
+                ["powershell", "-NoProfile", "-WindowStyle",
+                    "Hidden", "-Command", ps_script],
                 creationflags=subprocess.CREATE_NO_WINDOW
             )
 
             # Exit current app shortly to free files for installer
             if app_path:
-                threading.Thread(target=lambda: (time.sleep(1), os._exit(0)), daemon=True).start()
+                threading.Thread(target=lambda: (
+                    time.sleep(1), os._exit(0)), daemon=True).start()
 
             return {
                 'status': 'success',
@@ -664,7 +667,7 @@ class Api:
                 }
 
             client = genai.Client(api_key=api_key)
-            model = "gemini-2.5-pro"
+            model = "gemini-3-flash-preview"
 
             # Convert JavaScript chat history to Gemini API format
             contents = []
@@ -743,7 +746,8 @@ class Api:
             }
 
         current_date = datetime.date.today().strftime("%m/%d/%Y")
-        disciplines_str = ', '.join(discipline) if isinstance(discipline, list) else discipline
+        disciplines_str = ', '.join(discipline) if isinstance(
+            discipline, list) else discipline
         prompt = f"""
 You are an intelligent assistant for {user_name}, a(n) {disciplines_str} engineering project manager. Your task is to analyze an email and extract specific project details. Focus ONLY on the primary {disciplines_str} engineering tasks mentioned. Ignore tasks for other disciplines.
 Analyze the following email text and extract the information into a valid JSON object with the following keys: "id", "name", "due", "path", "tasks", "notes".
@@ -762,7 +766,7 @@ Return ONLY the JSON object.
 """.strip()
         try:
             client = genai.Client(api_key=final_api_key)
-            model = "gemini-2.5-pro"
+            model = "gemini-3-flash-preview"
 
             contents = [
                 types.Content(

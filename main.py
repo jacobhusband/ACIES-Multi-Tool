@@ -639,6 +639,26 @@ class Api:
 
         return {'status': 'success', 'versions': versions}
 
+    def _ensure_aiohttp(self):
+        """
+        Validate that aiohttp is available with ClientSession. This prevents
+        cryptic AttributeErrors during GenAI calls when the dependency is
+        missing or only partially installed.
+        """
+        try:
+            import aiohttp  # type: ignore
+        except Exception as exc:
+            raise RuntimeError(
+                "Missing dependency: aiohttp. Install/upgrade it (e.g. "
+                "pip install \"aiohttp>=3.13\") and rebuild the app."
+            ) from exc
+
+        if not hasattr(aiohttp, "ClientSession"):
+            raise RuntimeError(
+                "aiohttp is installed but ClientSession is unavailable. "
+                "Reinstall it with `pip install --force-reinstall aiohttp>=3.13`."
+            )
+
     def get_chat_response(self, chat_history):
         settings = self.get_user_settings()
         api_key = settings.get('apiKey', '').strip()
@@ -663,9 +683,10 @@ class Api:
             if len(chat_history) == 0:
                 return {
                     'status': 'error',
-                    'response': 'Chat history is empty.'
-                }
+                'response': 'Chat history is empty.'
+            }
 
+            self._ensure_aiohttp()
             client = genai.Client(api_key=api_key)
             model = "gemini-3-flash-preview"
 
@@ -745,6 +766,7 @@ class Api:
                 'message': 'AI API key is not configured. Please provide it in the app settings or set GOOGLE_API_KEY in your .env file.'
             }
 
+        self._ensure_aiohttp()
         current_date = datetime.date.today().strftime("%m/%d/%Y")
         disciplines_str = ', '.join(discipline) if isinstance(
             discipline, list) else discipline

@@ -146,9 +146,45 @@ foreach ($dwgPath in $files) {
     $lispFile = Join-Path $env:TEMP "plot_layouts.lsp"
     $lispOutputDir = $batchOutputDir -replace '\\', '\\'
     $lispContent = @"
+(defun UpdateBlockOLELinks (blk / res)
+  (vlax-for obj blk
+    (if (equal (vla-get-ObjectName obj) "AcDbOle2Frame")
+      (progn
+        (setq res (vl-catch-all-apply 'vla-Update (list obj)))
+        (if (vl-catch-all-error-p res)
+          (princ (strcat "\nOLE update failed: " (vl-catch-all-error-message res)))
+          (setq *ole-updated-count* (1+ *ole-updated-count*))
+        )
+      )
+    )
+  )
+)
+
+(defun RefreshLinkedOLEs (/ acad doc)
+  (vl-load-com)
+  (setq acad (vlax-get-acad-object))
+  (setq doc (vla-get-ActiveDocument acad))
+  (setq *ole-updated-count* 0)
+  (UpdateBlockOLELinks (vla-get-ModelSpace doc))
+  (vlax-for lay (vla-get-Layouts doc)
+    (if (/= (strcase (vla-get-Name lay)) "MODEL")
+      (UpdateBlockOLELinks (vla-get-Block lay))
+    )
+  )
+  (princ (strcat "\nOLE links refreshed: " (itoa *ole-updated-count*)))
+)
+
+(defun SafeRefreshLinkedOLEs (/ res)
+  (setq res (vl-catch-all-apply 'RefreshLinkedOLEs '()))
+  (if (vl-catch-all-error-p res)
+    (princ (strcat "\nOLE refresh skipped: " (vl-catch-all-error-message res)))
+  )
+)
+
 (defun c:PlotAllLayouts ()
   (setvar "BACKGROUNDPLOT" 0)
   (setvar "FILEDIA" 0)
+  (SafeRefreshLinkedOLEs)
   (setq main-dict (namedobjdict))
   (setq layout-dict (dictsearch main-dict "ACAD_LAYOUT"))
   (foreach item layout-dict

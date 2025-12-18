@@ -995,6 +995,7 @@ main {
   box-shadow: 0 1px 3px var(--shadow);
   transition: all 0.2s ease;
   margin-bottom: 4px;
+  cursor: pointer;
 }
 
 .task-chip.done {
@@ -1003,6 +1004,11 @@ main {
   background-color: var(--bg-tertiary);
   color: var(--text-secondary);
   border-color: transparent;
+}
+
+.task-chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .btn-more-tasks {

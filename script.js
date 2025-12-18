@@ -861,14 +861,39 @@ function render() {
     if (p.tasks && p.tasks.length) {
       const renderTasks = (expanded) => {
         tasksBody.innerHTML = "";
-        const tasksToShow = expanded ? p.tasks : p.tasks.slice(0, 2);
-        tasksToShow.forEach((t) => {
-          tasksBody.appendChild(
-            el("div", {
-              className: `task-chip ${t.done ? "done" : ""}`,
-              textContent: t.text || "Task",
-            })
-          );
+        const tasksToShow = expanded
+          ? p.tasks.map((task, index) => ({ task, index }))
+          : p.tasks.slice(0, 2).map((task, index) => ({ task, index }));
+        tasksToShow.forEach(({ task, index }) => {
+          const taskObj =
+            typeof task === "string"
+              ? { text: task, done: false, links: [] }
+              : task;
+          if (task !== taskObj) p.tasks[index] = taskObj;
+          const taskChip = el("div", {
+            className: `task-chip ${taskObj.done ? "done" : ""}`,
+            textContent: taskObj.text || "Task",
+            role: "button",
+            tabIndex: 0,
+            "aria-pressed": String(!!taskObj.done),
+          });
+          const toggleTask = () => {
+            taskObj.done = !taskObj.done;
+            taskChip.classList.toggle("done", taskObj.done);
+            taskChip.setAttribute("aria-pressed", String(!!taskObj.done));
+            save();
+          };
+          taskChip.onclick = (e) => {
+            e.stopPropagation();
+            toggleTask();
+          };
+          taskChip.onkeydown = (e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              toggleTask();
+            }
+          };
+          tasksBody.appendChild(taskChip);
         });
         if (p.tasks.length > 2) {
           const moreBtn = el("button", {

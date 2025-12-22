@@ -177,6 +177,42 @@ function convertPath(raw) {
   return raw;
 }
 
+function parseProjectFromPath(rawPath) {
+  if (!rawPath) return null;
+  let s = String(rawPath).trim();
+  if (!s) return null;
+  s = s.replace(/^['"]+|['"]+$/g, "");
+  const norm = s.replace(/\\/g, "/").replace(/\/+$/g, "");
+  const parts = norm.split("/").filter(Boolean);
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const segment = parts[i].trim();
+    const match = segment.match(/^(\d{5,})\s*(?:[-_]\s*)?(.+)$/);
+    if (match) {
+      const id = match[1];
+      const name = match[2].trim();
+      if (name) return { id, name };
+    }
+  }
+  return null;
+}
+
+function applyProjectFromPath(path, { force = false } = {}) {
+  const parsed = parseProjectFromPath(path);
+  if (!parsed) return false;
+  const idInput = document.getElementById("f_id");
+  const nameInput = document.getElementById("f_name");
+  if (!idInput || !nameInput) return false;
+
+  const currentId = idInput.value.trim();
+  const currentName = nameInput.value.trim();
+  const shouldSetId = force || !currentId;
+  const shouldSetName = force || !currentName;
+
+  if (shouldSetId) idInput.value = parsed.id;
+  if (shouldSetName) nameInput.value = parsed.name;
+  return shouldSetId || shouldSetName;
+}
+
 function toast(msg, duration = 2500) {
   const existing = document.querySelector(".toast-notification");
   if (existing) existing.remove();
@@ -2413,6 +2449,16 @@ function initEventListeners() {
   }
 
   document.getElementById("btnSaveProject").onclick = onSaveProject;
+
+  const pathInput = document.getElementById("f_path");
+  if (pathInput) {
+    pathInput.addEventListener("input", () =>
+      applyProjectFromPath(pathInput.value)
+    );
+    pathInput.addEventListener("paste", () => {
+      setTimeout(() => applyProjectFromPath(pathInput.value, { force: true }), 0);
+    });
+  }
 
   document.getElementById("dueFilterGroup").addEventListener("click", (e) => {
     if (e.target.matches(".filter-chip")) {

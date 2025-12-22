@@ -42,6 +42,7 @@ const THEME_STORAGE_KEY = "acies-theme";
 
 // Cache for loaded descriptions to prevent re-fetching
 const DESCRIPTION_CACHE = {};
+let bundlesPrefetchStarted = false;
 
 // ===================== UTILITIES & HELPERS =====================
 
@@ -1593,6 +1594,14 @@ async function loadAndRenderBundles() {
   }
 }
 
+function prefetchBundles() {
+  if (bundlesPrefetchStarted) return;
+  bundlesPrefetchStarted = true;
+  setTimeout(() => {
+    loadAndRenderBundles();
+  }, 0);
+}
+
 async function handleBundleAction(e) {
   const button = e.target.closest("[data-action-type]");
   if (!button) return;
@@ -2725,7 +2734,7 @@ async function init() {
     initEventListeners();
     initTabbedInterfaces();
     updateStickyOffsets();
-    await refreshAppUpdateStatus();
+    refreshAppUpdateStatus();
     await loadUserSettings();
     initThemeFromPreferences();
 
@@ -2734,8 +2743,8 @@ async function init() {
       showOnboardingModal();
     } else {
       showMainApp();
-      db = await load();
-      await loadNotes();
+      const [loadedDb] = await Promise.all([load(), loadNotes()]);
+      db = loadedDb;
       renderNoteTabs();
       render();
 
@@ -2745,6 +2754,7 @@ async function init() {
         setTimeout(() => showSetupHelpBanner(), 1000);
       }
     }
+    prefetchBundles();
   } finally {
     hideAppLoader();
   }

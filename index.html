@@ -42,14 +42,17 @@
             <div class="version-chip" id="versionChip" title="Current version">
                 <span class="version-dot" id="versionDot"></span>
                 <span id="appVersionLabel">v0.0.0</span>
-                <button class="icon-btn mini" id="checkUpdateBtn" aria-label="Check for updates" title="Check for updates">
+                <button class="icon-btn mini" id="checkUpdateBtn" aria-label="Check for updates"
+                    title="Check for updates">
                     <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
-                        <path fill="currentColor" d="M12 4a8 8 0 1 0 7.45 10.67 1 1 0 1 1 1.9.66A10 10 0 1 1 12 2a1 1 0 1 1 0 2Zm6.71-3.29a1 1 0 0 0-1.42 0l-3 3a1 1 0 0 0 1.42 1.42L17 5.41V10a1 1 0 1 0 2 0V3.41l1.29 1.3a1 1 0 0 0 1.42-1.42Z"/>
+                        <path fill="currentColor"
+                            d="M12 4a8 8 0 1 0 7.45 10.67 1 1 0 1 1 1.9.66A10 10 0 1 1 12 2a1 1 0 1 1 0 2Zm6.71-3.29a1 1 0 0 0-1.42 0l-3 3a1 1 0 0 0 1.42 1.42L17 5.41V10a1 1 0 1 0 2 0V3.41l1.29 1.3a1 1 0 0 0 1.42-1.42Z" />
                     </svg>
                 </button>
             </div>
             <button class="btn btn-primary tiny" id="appUpdateBtn" style="display:none;">Update</button>
-            <button class="icon-btn theme-toggle" id="themeToggleBtn" aria-label="Toggle theme" title="Toggle light/dark mode">☀️</button>
+            <button class="icon-btn theme-toggle" id="themeToggleBtn" aria-label="Toggle theme"
+                title="Toggle light/dark mode">☀️</button>
             <button class="icon-btn" id="settingsBtn" aria-label="Settings" title="Settings">⚙️</button>
             <button class="icon-btn" id="mainHelpBtn" aria-label="Help" title="Help">?</button>
         </div>
@@ -204,18 +207,7 @@
                         </div>
                         <div class="tool-card-status"></div>
                     </div>
-                    <!-- Card 3: Clean DWGs -->
-                    <div id="toolCleanDwgs" class="tool-card" role="button" tabindex="0">
-                        <div class="tool-card-content">
-                            <div class="tool-icon">✨</div>
-                            <div class="tool-card-header">Prepare CAD DWG for Export</div>
-                            <div class="tool-card-body">
-                                Duplicates files to temp location. Cleans the titleblock. Cleans the drawings.
-                                Saves the drawings as layout names. Opens temp folder with clean drawings.
-                            </div>
-                        </div>
-                        <div class="tool-card-status"></div>
-                    </div>
+
                 </div>
             </section>
         </div>
@@ -491,7 +483,8 @@
                 <div class="setting-row">
                     <div class="setting-info">
                         <div class="setting-label">Run Setup Guide</div>
-                        <div class="setting-desc">Launch the 4-step introduction to configure your name, discipline, and API key.</div>
+                        <div class="setting-desc">Launch the 4-step introduction to configure your name, discipline, and
+                            API key.</div>
                     </div>
                     <button class="btn" id="btnStartSetupGuide">Start Guide</button>
                 </div>
@@ -565,7 +558,8 @@
                 <div class="onboarding-content">
                     <div class="onboarding-icon">🚀</div>
                     <h2>Welcome to ACIES Desktop Application</h2>
-                    <p>Your project management tool for engineering workflows. Let's get you set up with a few quick steps.</p>
+                    <p>Your project management tool for engineering workflows. Let's get you set up with a few quick
+                        steps.</p>
                     <div class="onboarding-features">
                         <div class="feature-item">
                             <span class="feature-icon">📋</span>
@@ -605,9 +599,12 @@
                     <div class="onboarding-input-group">
                         <label class="label">Discipline</label>
                         <div id="onboarding_discipline" class="radio-group">
-                            <label class="radio-label"><input type="checkbox" name="onboarding_discipline_checkbox" value="Electrical"> Electrical</label>
-                            <label class="radio-label"><input type="checkbox" name="onboarding_discipline_checkbox" value="Mechanical"> Mechanical</label>
-                            <label class="radio-label"><input type="checkbox" name="onboarding_discipline_checkbox" value="Plumbing"> Plumbing</label>
+                            <label class="radio-label"><input type="checkbox" name="onboarding_discipline_checkbox"
+                                    value="Electrical"> Electrical</label>
+                            <label class="radio-label"><input type="checkbox" name="onboarding_discipline_checkbox"
+                                    value="Mechanical"> Mechanical</label>
+                            <label class="radio-label"><input type="checkbox" name="onboarding_discipline_checkbox"
+                                    value="Plumbing"> Plumbing</label>
                         </div>
                     </div>
                 </div>
@@ -618,7 +615,8 @@
                 <div class="onboarding-content">
                     <div class="onboarding-icon">🔑</div>
                     <h2>Set up your AI assistant</h2>
-                    <p>Add your Google Gemini API key to enable AI features like email processing and project creation.</p>
+                    <p>Add your Google Gemini API key to enable AI features like email processing and project creation.
+                    </p>
                     <div class="onboarding-input-group">
                         <label class="label">Google Gemini API Key</label>
                         <div class="input-with-button">
@@ -767,43 +765,9 @@
                 AI Studio</a>
         </div>
     </dialog>
-    <!-- Clean DWGs Modal -->
-    <dialog id="cleanDwgsDlg">
-        <div class="modal-header">
-            <div class="title">Clean DWGs Tool</div>
-            <button class="btn ghost" onclick="closeDlg('cleanDwgsDlg')">Cancel</button>
-        </div>
-        <div class="modal-body stack">
-            <p class="tiny muted">Select a titleblock. The parent folder (typically "Xrefs") is automatically included.
-            </p>
 
-            <div class="modal-grid">
-                <div class="col-12">
-                    <label class="label">1. Select Titleblock DWG</label>
-                    <div class="input-with-button">
-                        <input id="cleanDwgs_titleblockPath" placeholder="No titleblock selected..." readonly />
-                        <button class="btn tiny" id="btnSelectTitleblock">Browse...</button>
-                    </div>
-                </div>
 
-                <div class="col-12">
-                    <label class="label">2. Additional Disciplines</label>
-                    <div id="cleanDwgs_disciplines" class="inline radio-group" style="flex-wrap: wrap;">
-                        <label class="radio-label"><input type="checkbox" name="cleanDwgs_discipline"
-                                value="Electrical"> Electrical</label>
-                        <label class="radio-label"><input type="checkbox" name="cleanDwgs_discipline"
-                                value="Mechanical"> Mechanical</label>
-                        <label class="radio-label"><input type="checkbox" name="cleanDwgs_discipline" value="Plumbing">
-                            Plumbing</label>
-                    </div>
-                </div>
-            </div>
 
-            <div class="modal-footer">
-                <button class="btn-primary" id="btnProceedCleanDwgs">▶ Run Tool</button>
-            </div>
-        </div>
-    </dialog>
     <!-- Install Prerequisite Modal -->
     <dialog id="installPrereqDlg">
         <div class="modal-header">

@@ -838,8 +838,8 @@ function render() {
         ds === "overdue"
           ? "pill overdue"
           : ds === "dueSoon"
-          ? "pill dueSoon"
-          : "pill ok";
+            ? "pill dueSoon"
+            : "pill ok";
       dueCell.appendChild(
         el("div", { className: pillClass, textContent: humanDate(p.due) })
       );
@@ -1008,9 +1008,8 @@ function updateSortHeaders() {
 function openEdit(i) {
   editIndex = i;
   const p = db[i];
-  document.getElementById("dlgTitle").textContent = `Edit Project — ${
-    p.id || "Untitled"
-  }`;
+  document.getElementById("dlgTitle").textContent = `Edit Project — ${p.id || "Untitled"
+    }`;
   document.getElementById("btnSaveProject").textContent = "Save Changes";
   fillForm(p);
   document.getElementById("editDlg").showModal();
@@ -1560,11 +1559,11 @@ async function loadAndRenderBundles() {
             description.commands[cmd] || (link ? "Open documentation" : "");
           const tagEl = link
             ? el("button", {
-                className: "command-tag command-link",
-                textContent: cmd,
-                title,
-                onclick: () => openExternalUrl(link),
-              })
+              className: "command-tag command-link",
+              textContent: cmd,
+              title,
+              onclick: () => openExternalUrl(link),
+            })
             : el("span", { className: "command-tag", textContent: cmd, title });
           tags.append(tagEl);
         });
@@ -1619,7 +1618,7 @@ async function handleBundleAction(e) {
     toast(`⚠️ ${err.message}`, 5000);
   } finally {
     await loadAndRenderBundles();
-    await updateCleanDwgToolState();
+
   }
 }
 
@@ -1662,24 +1661,8 @@ window.updateToolStatus = function (toolId, message) {
   }
 };
 
-async function updateCleanDwgToolState() {
-  const toolCard = document.getElementById("toolCleanDwgs");
-  if (!toolCard) return;
-  try {
-    const response = await window.pywebview.api.check_bundle_installed(
-      "ElectricalCommands.CleanCADCommands.bundle"
-    );
-    if (response.status === "success" && response.is_installed) {
-      toolCard.classList.remove("disabled");
-      toolCard.setAttribute("tabindex", "0");
-    } else {
-      toolCard.classList.add("disabled");
-      toolCard.setAttribute("tabindex", "-1");
-    }
-  } catch (e) {
-    toolCard.classList.add("disabled");
-  }
-}
+
+
 
 // ===================== ONBOARDING SYSTEM =====================
 
@@ -1965,18 +1948,18 @@ function renderStats() {
   const avgPerWeek =
     activeWeeks.length > 0
       ? (
-          activeWeeks.reduce((sum, count) => sum + count, 0) /
-          activeWeeks.length
-        ).toFixed(1)
+        activeWeeks.reduce((sum, count) => sum + count, 0) /
+        activeWeeks.length
+      ).toFixed(1)
       : "0";
 
   const activeMonths = Object.values(monthlyCompletions);
   const avgPerMonth =
     activeMonths.length > 0
       ? (
-          activeMonths.reduce((sum, count) => sum + count, 0) /
-          activeMonths.length
-        ).toFixed(1)
+        activeMonths.reduce((sum, count) => sum + count, 0) /
+        activeMonths.length
+      ).toFixed(1)
       : "0";
 
   // Calculate due stats
@@ -2455,52 +2438,10 @@ function initEventListeners() {
       await window.pywebview.api.run_clean_xrefs_script();
     });
 
-  document.getElementById("toolCleanDwgs").addEventListener("click", (e) => {
-    if (e.currentTarget.classList.contains("disabled")) {
-      document.getElementById("installPrereqDlg").showModal();
-      return;
-    }
-    if (e.currentTarget.classList.contains("running")) return;
-    document.getElementById("cleanDwgsDlg").showModal();
-  });
 
-  document
-    .getElementById("btnProceedCleanDwgs")
-    .addEventListener("click", async () => {
-      const titleblock = val("cleanDwgs_titleblockPath");
-      if (!titleblock) return toast("Select a titleblock first.");
-      if (!userSettings.autocadPath) {
-        await showAutocadSelectModal();
-        return;
-      }
-      const disciplines = Array.from(
-        document.querySelectorAll('input[name="cleanDwgs_discipline"]:checked')
-      ).map((c) => c.value);
-      closeDlg("cleanDwgsDlg");
-      const response = await window.pywebview.api.run_clean_dwgs_script({
-        titleblock,
-        disciplines,
-      });
-      if (response.status === "success") {
-        window.updateToolStatus("toolCleanDwgs", "Processing...");
-        document.getElementById("toolCleanDwgs").classList.add("running");
-      } else if (response.status === "prerequisite_failed") {
-        toast("⚠️ " + response.message);
-      }
-    });
 
-  document
-    .getElementById("btnSelectTitleblock")
-    .addEventListener("click", async () => {
-      const res = await window.pywebview.api.select_files({
-        allow_multiple: false,
-        file_types: ["AutoCAD Drawings (*.dwg)"],
-      });
-      if (res.status === "success" && res.paths.length) {
-        document.getElementById("cleanDwgs_titleblockPath").value =
-          res.paths[0];
-      }
-    });
+
+
 
   document
     .getElementById("btnBrowseAutocad")
@@ -2779,7 +2720,6 @@ async function init() {
     await loadNotes();
     renderNoteTabs();
     render();
-    updateCleanDwgToolState();
 
     // Show setup help banner for returning users who haven't disabled it
     if (userSettings.showSetupHelp !== false) {

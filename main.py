@@ -1036,113 +1036,11 @@ Return ONLY the JSON object.
             logging.error(f"Error in file dialog: {e}")
             return {'status': 'error', 'message': str(e)}
 
-    def abort_clean_dwgs(self):
-        """Creates an abort signal file to stop the Clean DWGs process."""
-        try:
-            abort_file = os.path.join(os.environ.get(
-                'TEMP', ''), "abort_cleandwgs.flag")
-            with open(abort_file, 'w') as f:
-                f.write('abort')
-            logging.info("Abort signal created for Clean DWGs process")
-            return {'status': 'success'}
-        except Exception as e:
-            logging.error(f"Error creating abort file: {e}")
-            return {'status': 'error', 'message': str(e)}
 
-    def run_clean_dwgs_script(self, data):
-        """Prepares files and runs the CleanDWGs.ps1 PowerShell script."""
 
-        required_bundle = "ElectricalCommands.CleanCADCommands.bundle"
-        bundle_path = os.path.join(self.app_plugins_folder, required_bundle)
 
-        if not os.path.isdir(bundle_path):
-            logging.warning(
-                f"Prerequisite not met: '{required_bundle}' is not installed.")
-            return {
-                'status': 'prerequisite_failed',
-                'message': f'The "{required_bundle.replace(".bundle", "")}" bundle is required. Please install it from the manager above.'
-            }
 
-        try:
-            titleblock_path = data.get('titleblock')
-            selected_disciplines = data.get('disciplines', [])
 
-            if not titleblock_path:
-                raise ValueError("Missing titleblock path.")
-
-            # Resolve paths
-            titleblock_full = Path(titleblock_path).resolve()
-            titleblock_parent = titleblock_full.parent
-            project_root = titleblock_parent.parent
-
-            if not project_root or not project_root.exists():
-                raise ValueError(
-                    "Could not determine project root from titleblock path.")
-
-            # Create output directory with timestamp
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            project_name = project_root.name
-            documents_folder = os.path.join(
-                os.path.expanduser('~'), 'Documents')
-            output_root = os.path.join(
-                documents_folder, "AutoCAD Clean DWGs", f"{project_name}_{timestamp}")
-            os.makedirs(output_root, exist_ok=True)
-
-            # Determine all folders to copy
-            folders_to_copy = set()
-            folders_to_copy.add(titleblock_parent.name)  # e.g., "Xref"
-            # e.g., "Electrical", "Mechanical"
-            folders_to_copy.update(selected_disciplines)
-
-            # Copy the entire contents of each required folder
-            for folder in folders_to_copy:
-                src_folder = project_root / folder
-                if src_folder.exists() and src_folder.is_dir():
-                    dest_folder = Path(output_root) / folder
-                    shutil.copytree(src_folder, dest_folder,
-                                    dirs_exist_ok=True)
-                    logging.info(
-                        f"Copied folder: {src_folder} to {dest_folder}")
-                else:
-                    logging.warning(
-                        f"Folder not found or is not a directory: {src_folder}")
-
-            # Determine the path of the titleblock in the new copied location
-            new_titleblock_path = str(
-                Path(output_root) / titleblock_full.relative_to(project_root))
-
-            # Build the PowerShell command
-            script_path = os.path.join(BASE_DIR, "CleanDWGs.ps1")
-            if not os.path.exists(script_path):
-                raise FileNotFoundError("CleanDWGs.ps1 not found.")
-
-            # We only need to pass the discipline names, not the Xref folder name
-            disciplines_arg = ','.join(sorted(selected_disciplines))
-
-            settings = self.get_user_settings()
-            acad_path = settings.get('autocadPath', '')
-            command = [
-                'powershell.exe',
-                '-ExecutionPolicy', 'Bypass',
-                '-File', script_path,
-                '-TitleblockPath', new_titleblock_path,
-                '-Disciplines', disciplines_arg,
-                '-OutputFolder', output_root,
-                # Pass original root for context if needed
-                '-ProjectRoot', str(project_root),
-                '-AcadPath', acad_path
-            ]
-
-            self._run_script_with_progress(command, 'toolCleanDwgs')
-            return {'status': 'success'}
-
-        except Exception as e:
-            logging.error(f"Error in run_clean_dwgs_script: {e}")
-            window = webview.windows[0]
-            js_error = json.dumps(str(e))
-            window.evaluate_js(
-                f'window.updateToolStatus("toolCleanDwgs", "ERROR: " + {js_error})')
-            return {'status': 'error', 'message': str(e)}
 
     def import_and_process_csv(self):
         """Handles CSV file import dialog."""

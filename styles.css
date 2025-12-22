@@ -63,7 +63,7 @@
   --toolbar-bg: rgba(2, 36, 30, 0.9);
   --panel-bg: rgba(2, 36, 30, 0.7);
   --th-bg: rgba(2, 36, 30, 0.95);
-  
+
   /* Button Text on Accent */
   --btn-text-on-accent: #022c22;
 
@@ -79,11 +79,11 @@
   --bg: #f7f8f3;
   --bg-secondary: #ffffff;
   --bg-tertiary: #f4f6ef;
-  
+
   /* Gentle green-forward gradient */
   --bg-gradient: radial-gradient(circle at top right, rgba(34, 197, 94, 0.14) 0%, rgba(247, 248, 243, 0) 45%),
-                 radial-gradient(circle at bottom left, rgba(190, 242, 100, 0.12) 0%, rgba(247, 248, 243, 0) 45%),
-                 linear-gradient(180deg, #f9fbf5 0%, #f4f6ef 100%);
+    radial-gradient(circle at bottom left, rgba(190, 242, 100, 0.12) 0%, rgba(247, 248, 243, 0) 45%),
+    linear-gradient(180deg, #f9fbf5 0%, #f4f6ef 100%);
 
   /* Surface & Glass */
   --surface: #ffffff;
@@ -105,7 +105,7 @@
   --accent: #22c55e;
   --accent-hover: #16a34a;
   --accent-dim: rgba(34, 197, 94, 0.14);
-  
+
   /* Button Text on Accent */
   --btn-text-on-accent: #ffffff;
 
@@ -147,6 +147,83 @@ body {
   background-attachment: fixed;
   scrollbar-width: thin;
   scrollbar-color: var(--bg-tertiary) var(--bg);
+}
+
+body.app-loading {
+  overflow: hidden;
+}
+
+.app-loader {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-gradient);
+  background-color: var(--bg);
+  transition: opacity 0.3s ease, visibility 0.3s ease;
+}
+
+.app-loader.hidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.app-loader-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.app-loader-logo {
+  width: 140px;
+  height: auto;
+  filter: drop-shadow(0 10px 30px rgba(0, 0, 0, 0.25));
+}
+
+.app-loader-dots {
+  display: flex;
+  gap: 0.45rem;
+}
+
+.app-loader-dots span {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0.4;
+  animation: loader-dot 1.2s ease-in-out infinite;
+}
+
+.app-loader-dots span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.app-loader-dots span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes loader-dot {
+  0%,
+  80%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.35;
+  }
+  40% {
+    transform: translateY(-6px);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-loader-dots span {
+    animation: none;
+    opacity: 0.7;
+  }
 }
 
 /* Scrollbar Customization */
@@ -1901,7 +1978,7 @@ dialog::backdrop {
   background: rgba(255, 255, 255, 0.05);
 }
 
-.onboarding-input-group input[type="radio"]:checked + .radio-label {
+.onboarding-input-group input[type="radio"]:checked+.radio-label {
   background: var(--accent-dim);
   color: var(--accent);
   border-color: var(--accent);
@@ -1926,11 +2003,9 @@ dialog::backdrop {
 
 /* Setup Help Banner */
 .setup-help-banner {
-  background: linear-gradient(
-    135deg,
-    var(--accent-dim),
-    rgba(16, 185, 129, 0.08)
-  );
+  background: linear-gradient(135deg,
+      var(--accent-dim),
+      rgba(16, 185, 129, 0.08));
   border: 1px solid var(--accent);
   border-radius: var(--radius);
   margin: 1rem 1.5rem;
@@ -2002,6 +2077,7 @@ dialog::backdrop {
     opacity: 0;
     transform: translateY(-10px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);

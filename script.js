@@ -1839,6 +1839,22 @@ function hideMainApp() {
   document.querySelector(".app-header").style.display = "none";
 }
 
+function showAppLoader() {
+  const loader = document.getElementById("appLoader");
+  if (!loader) return;
+  loader.classList.remove("hidden");
+  loader.removeAttribute("aria-hidden");
+  document.body.classList.add("app-loading");
+}
+
+function hideAppLoader() {
+  const loader = document.getElementById("appLoader");
+  if (!loader) return;
+  loader.classList.add("hidden");
+  loader.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("app-loading");
+}
+
 function updateAggregationOptions() {
   const allowed = allowedAggregations[currentStatsTimespan] || [];
   document.querySelectorAll("#statsAggGroup .filter-chip").forEach((btn) => {
@@ -2702,30 +2718,35 @@ function initEventListeners() {
 }
 
 async function init() {
-  if (!window.pywebview)
-    await new Promise((r) => window.addEventListener("pywebviewready", r));
-  initEventListeners();
-  initTabbedInterfaces();
-  updateStickyOffsets();
-  await refreshAppUpdateStatus();
-  await loadUserSettings();
-  initThemeFromPreferences();
+  showAppLoader();
+  try {
+    if (!window.pywebview)
+      await new Promise((r) => window.addEventListener("pywebviewready", r));
+    initEventListeners();
+    initTabbedInterfaces();
+    updateStickyOffsets();
+    await refreshAppUpdateStatus();
+    await loadUserSettings();
+    initThemeFromPreferences();
 
-  if (isNewUser()) {
-    hideMainApp();
-    showOnboardingModal();
-  } else {
-    showMainApp();
-    db = await load();
-    await loadNotes();
-    renderNoteTabs();
-    render();
+    if (isNewUser()) {
+      hideMainApp();
+      showOnboardingModal();
+    } else {
+      showMainApp();
+      db = await load();
+      await loadNotes();
+      renderNoteTabs();
+      render();
 
-    // Show setup help banner for returning users who haven't disabled it
-    if (userSettings.showSetupHelp !== false) {
-      // Delay showing the banner slightly so the UI is fully loaded
-      setTimeout(() => showSetupHelpBanner(), 1000);
+      // Show setup help banner for returning users who haven't disabled it
+      if (userSettings.showSetupHelp !== false) {
+        // Delay showing the banner slightly so the UI is fully loaded
+        setTimeout(() => showSetupHelpBanner(), 1000);
+      }
     }
+  } finally {
+    hideAppLoader();
   }
 }
 

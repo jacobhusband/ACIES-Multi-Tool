@@ -1006,6 +1006,20 @@ Return ONLY the JSON object.
         self._run_script_with_progress(command, 'toolPublishDwgs')
         return {'status': 'success'}
 
+    def run_freeze_layers_script(self):
+        """Runs the FreezeLayersDWGs.ps1 PowerShell script with progress updates."""
+        script_path = os.path.join(BASE_DIR, "FreezeLayersDWGs.ps1")
+        if not os.path.exists(script_path):
+            raise Exception(
+                "FreezeLayersDWGs.ps1 not found in application directory.")
+        settings = self.get_user_settings()
+        acad_path = settings.get('autocadPath', '')
+        if not acad_path:
+            raise Exception("No AutoCAD version selected in settings.")
+        command = f'powershell.exe -ExecutionPolicy Bypass -File "{script_path}" -AcadCore "{acad_path}"'
+        self._run_script_with_progress(command, 'toolFreezeLayers')
+        return {'status': 'success'}
+
     def run_clean_xrefs_script(self):
         """Runs the removeXREFPaths.ps1 PowerShell script with progress updates."""
         script_path = os.path.join(BASE_DIR, "removeXREFPaths.ps1")

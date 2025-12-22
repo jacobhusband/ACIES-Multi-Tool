@@ -2497,6 +2497,19 @@ function initEventListeners() {
     });
 
   document
+    .getElementById("toolFreezeLayers")
+    .addEventListener("click", async (e) => {
+      if (e.currentTarget.classList.contains("running")) return;
+      if (!userSettings.autocadPath) {
+        await showAutocadSelectModal();
+        return;
+      }
+      e.currentTarget.classList.add("running");
+      window.updateToolStatus("toolFreezeLayers", "Initializing...");
+      await window.pywebview.api.run_freeze_layers_script();
+    });
+
+  document
     .getElementById("toolCleanXrefs")
     .addEventListener("click", async (e) => {
       if (e.currentTarget.classList.contains("running")) return;

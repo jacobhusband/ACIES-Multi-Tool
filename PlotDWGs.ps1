@@ -62,304 +62,33 @@ if ([string]::IsNullOrEmpty($acadCore) -or -not (Test-Path $acadCore)) {
   exit 1
 }
 
-# --- Let the user select DWGs via a file explorer dialog ---
+# --- Let the user select a paper size ---
+Write-Host "PROGRESS: Waiting for user input..."
 Add-Type -AssemblyName System.Windows.Forms
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
-$dlg = New-Object System.Windows.Forms.OpenFileDialog
-$dlg.Title = "Select DWG file(s) to plot"
-$dlg.Filter = "DWG files (*.dwg)|*.dwg|All files (*.*)|*.*"
-$dlg.Multiselect = $true
-$dlg.InitialDirectory = [Environment]::GetFolderPath("Desktop")
-if ($dlg.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK -or -not $dlg.FileNames) {
-  Write-Host "PROGRESS: ERROR: No files selected."; exit
-}
-$files = $dlg.FileNames
-
-# --- Extract Layers from ALL selected files ---
-$tempExtractDir = Join-Path $env:TEMP "acad_extract"
-if (Test-Path $tempExtractDir) { Remove-Item $tempExtractDir -Recurse -Force }
-New-Item -ItemType Directory -Path $tempExtractDir | Out-Null
-
-$extractLisp = Join-Path $tempExtractDir "extract_layers.lsp"
-$extractLispContent = @"
-(vl-load-com)
-(setvar "CMDECHO" 0)
-(setvar "FILEDIA" 0)
-(defun c:ExtractLayers (/ lay flags frozen)
-  (princ "\nDEBUG_LISP_START\n")
-  (setq lay (tblnext "LAYER" T))
-  (while lay
-    (setq flags (cdr (assoc 70 lay)))
-    (if (null flags) (setq flags 0))
-    (setq frozen (if (= (logand flags 1) 1) "FROZEN" "THAWED"))
-    (princ (strcat "\nLAYER_FOUND:" (cdr (assoc 2 lay)) "|" frozen))
-    (setq lay (tblnext "LAYER"))
-  )
-  (command "_QUIT" "Y")
-)
-"@
-Set-Content -Encoding ASCII -Path $extractLisp -Value $extractLispContent
-
-$extractScr = Join-Path $tempExtractDir "extract_layers.scr"
-$extractScrContent = "(load `"$($extractLisp -replace '\\', '/')`")`nExtractLayers`n"
-Set-Content -Encoding ASCII -Path $extractScr -Value $extractScrContent
-
-$fileIndex = 0
-$extractionOutputs = @()
-foreach ($file in $files) {
-  $fileIndex++
-  Write-Host "PROGRESS: Scanning layers ($fileIndex of $($files.Count)): $(Split-Path $file -Leaf)"
-    
-  # Run accoreconsole and capture output to variable
-  $pInfo = New-Object System.Diagnostics.ProcessStartInfo
-  $pInfo.FileName = $acadCore
-  $pInfo.Arguments = "/i `"$file`" /s `"$extractScr`""
-  $pInfo.RedirectStandardOutput = $true
-  $pInfo.RedirectStandardError = $true
-  $pInfo.StandardOutputEncoding = [System.Text.Encoding]::Unicode
-  $pInfo.StandardErrorEncoding = [System.Text.Encoding]::Unicode
-  $pInfo.UseShellExecute = $false
-  $pInfo.CreateNoWindow = $true
-    
-  $p = New-Object System.Diagnostics.Process
-  $p.StartInfo = $pInfo
-  [void]$p.Start()
-    
-  $output = $p.StandardOutput.ReadToEnd()
-  $err = $p.StandardError.ReadToEnd()
-  $p.WaitForExit()
-
-  # Strip nulls in case the console output is UTF-16 interpreted as ANSI
-  $cleanOutput = $output -replace '\0', ''
-  $cleanErr = $err -replace '\0', ''
-  $extractionOutputs += $cleanOutput
-  $extractionOutputs += $cleanErr
-}
-
-# Aggregate unique layers
-# --- DEBUG: DUMP RAW OUTPUT ---
-$debugDumpPath = Join-Path $env:TEMP "debug_raw_output.txt"
-"--- RAW OUTPUT DUMP START ---" | Out-File $debugDumpPath
-foreach ($o in $extractionOutputs) {
-  "--- CHUNK ---" | Out-File $debugDumpPath -Append
-  $o | Out-File $debugDumpPath -Append
-}
-"--- RAW OUTPUT DUMP END ---" | Out-File $debugDumpPath -Append
-Write-Host "DEBUG: Raw output dumped to $debugDumpPath"
-
-# Aggregate unique layers + frozen state
-$keepLayers = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-$frozenLayers = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-foreach ($output in $extractionOutputs) {
-  if ($output) {
-    # Split by lines (handles LF or CRLF)
-    $lines = $output -split "\r?\n"
-    foreach ($line in $lines) {
-      # Match our specific prefix
-      if ($line -match "LAYER_FOUND:(.+)") {
-        $payload = $matches[1].Trim()
-        $parts = $payload -split "\|", 2
-        $layerName = $parts[0].Trim()
-        if (-not [string]::IsNullOrWhiteSpace($layerName)) {
-          $state = if ($parts.Count -gt 1) { $parts[1].Trim().ToUpperInvariant() } else { "THAWED" }
-          if ($state.StartsWith("FROZEN")) {
-            [void]$frozenLayers.Add($layerName)
-          }
-          else {
-            [void]$keepLayers.Add($layerName)
-          }
-        }
-      }
-    }
-  }
-}
-
-# If a layer appears thawed anywhere, default it to Keep.
-foreach ($lay in $keepLayers) {
-  [void]$frozenLayers.Remove($lay)
-}
-
-$availableLayers = @($keepLayers | Sort-Object)
-$availableFrozenLayers = @($frozenLayers | Sort-Object)
-
-if ($availableLayers.Count -eq 0 -and $availableFrozenLayers.Count -eq 0) {
-  Write-Host "PROGRESS: WARNING: No layers were extracted. The list will be empty."
-}
-
-$allKeepLayers = [System.Collections.Generic.List[string]]::new()
-foreach ($lay in $availableLayers) {
-  if (-not [string]::IsNullOrWhiteSpace($lay)) {
-    [void]$allKeepLayers.Add([string]$lay)
-  }
-}
-$allFreezeLayers = [System.Collections.Generic.List[string]]::new()
-foreach ($lay in $availableFrozenLayers) {
-  if (-not [string]::IsNullOrWhiteSpace($lay)) {
-    [void]$allFreezeLayers.Add([string]$lay)
-  }
-}
-
-# --- Let the user select settings (Paper Size + Layers to Freeze) ---
-Write-Host "PROGRESS: Waiting for user input..."
 $form = New-Object System.Windows.Forms.Form
-$form.Text = "Plotting Settings"
-$form.Size = New-Object System.Drawing.Size(600, 500)
+$form.Text = "Select Paper Size"
+$form.Size = New-Object System.Drawing.Size(400, 150)
 $form.StartPosition = "CenterScreen"
 
-# Paper Size
-$labelSize = New-Object System.Windows.Forms.Label
-$labelSize.Location = New-Object System.Drawing.Point(10, 10)
-$labelSize.Size = New-Object System.Drawing.Size(200, 20)
-$labelSize.Text = "Select Paper Size:"
-$form.Controls.Add($labelSize)
+$label = New-Object System.Windows.Forms.Label
+$label.Location = New-Object System.Drawing.Point(10, 20)
+$label.Size = New-Object System.Drawing.Size(280, 20)
+$label.Text = "Please select a paper size for plotting:"
+$form.Controls.Add($label)
 
 $comboBox = New-Object System.Windows.Forms.ComboBox
-$comboBox.Location = New-Object System.Drawing.Point(10, 30)
-$comboBox.Size = New-Object System.Drawing.Size(560, 20)
+$comboBox.Location = New-Object System.Drawing.Point(10, 40)
+$comboBox.Size = New-Object System.Drawing.Size(360, 20)
 $comboBox.DropDownStyle = "DropDownList"
 $paperSizes | ForEach-Object { [void] $comboBox.Items.Add($_) }
 $comboBox.SelectedIndex = 0
 $form.Controls.Add($comboBox)
 
-# List Labels
-$lblKeep = New-Object System.Windows.Forms.Label
-$lblKeep.Location = New-Object System.Drawing.Point(10, 95)
-$lblKeep.Text = "Layers to KEEP (Unfrozen)"
-$lblKeep.Size = New-Object System.Drawing.Size(200, 20)
-$form.Controls.Add($lblKeep)
-
-$lblFreeze = New-Object System.Windows.Forms.Label
-$lblFreeze.Location = New-Object System.Drawing.Point(320, 95)
-$lblFreeze.Text = "Layers to FREEZE"
-$lblFreeze.Size = New-Object System.Drawing.Size(200, 20)
-$form.Controls.Add($lblFreeze)
-
-# Filter box
-$lblLayerFilter = New-Object System.Windows.Forms.Label
-$lblLayerFilter.Location = New-Object System.Drawing.Point(10, 70)
-$lblLayerFilter.Text = "Filter layers:"
-$lblLayerFilter.Size = New-Object System.Drawing.Size(80, 20)
-$form.Controls.Add($lblLayerFilter)
-
-$txtLayerFilter = New-Object System.Windows.Forms.TextBox
-$txtLayerFilter.Location = New-Object System.Drawing.Point(95, 68)
-$txtLayerFilter.Size = New-Object System.Drawing.Size(475, 20)
-$form.Controls.Add($txtLayerFilter)
-
-# ListBoxes
-$listKeep = New-Object System.Windows.Forms.ListBox
-$listKeep.Location = New-Object System.Drawing.Point(10, 120)
-$listKeep.Size = New-Object System.Drawing.Size(250, 270)
-$listKeep.SelectionMode = "MultiExtended"
-$form.Controls.Add($listKeep)
-
-$listFreeze = New-Object System.Windows.Forms.ListBox
-$listFreeze.Location = New-Object System.Drawing.Point(320, 120)
-$listFreeze.Size = New-Object System.Drawing.Size(250, 270)
-$listFreeze.SelectionMode = "MultiExtended"
-$form.Controls.Add($listFreeze)
-
-function Remove-Layer {
-  param(
-    [System.Collections.Generic.List[string]]$list,
-    [string]$item
-  )
-  for ($i = $list.Count - 1; $i -ge 0; $i--) {
-    if ($list[$i] -ieq $item) {
-      $list.RemoveAt($i)
-      return
-    }
-  }
-}
-
-function Add-LayerUnique {
-  param(
-    [System.Collections.Generic.List[string]]$list,
-    [string]$item
-  )
-  if ($list -notcontains $item) {
-    [void]$list.Add($item)
-  }
-}
-
-function Update-LayerList {
-  param(
-    [System.Windows.Forms.ListBox]$listBox,
-    [System.Collections.Generic.List[string]]$source,
-    [string]$filterText
-  )
-  $listBox.BeginUpdate()
-  try {
-    $listBox.Items.Clear()
-    $items = $source
-    if (-not [string]::IsNullOrWhiteSpace($filterText)) {
-      $needle = $filterText.Trim()
-      $items = $source | Where-Object {
-        $_.IndexOf($needle, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
-      }
-    }
-    foreach ($item in ($items | Sort-Object)) {
-      [void]$listBox.Items.Add($item)
-    }
-  }
-  finally {
-    $listBox.EndUpdate()
-  }
-}
-
-$refreshLayerLists = {
-  Update-LayerList $listKeep $allKeepLayers $txtLayerFilter.Text
-  Update-LayerList $listFreeze $allFreezeLayers $txtLayerFilter.Text
-}
-
-$txtLayerFilter.Add_TextChanged({ & $refreshLayerLists })
-& $refreshLayerLists
-
-$moveToFreeze = {
-  $selected = @($listKeep.SelectedItems)
-  foreach ($item in $selected) {
-    Remove-Layer $allKeepLayers $item
-    Add-LayerUnique $allFreezeLayers $item
-  }
-  & $refreshLayerLists
-}
-
-$moveToKeep = {
-  $selected = @($listFreeze.SelectedItems)
-  foreach ($item in $selected) {
-    Remove-Layer $allFreezeLayers $item
-    Add-LayerUnique $allKeepLayers $item
-  }
-  & $refreshLayerLists
-}
-
-# Buttons to move
-$btnToFreeze = New-Object System.Windows.Forms.Button
-$btnToFreeze.Text = ">"
-$btnToFreeze.Location = New-Object System.Drawing.Point(275, 210)
-$btnToFreeze.Size = New-Object System.Drawing.Size(35, 30)
-$btnToFreeze.Add_Click({ & $moveToFreeze })
-$form.Controls.Add($btnToFreeze)
-
-$btnToKeep = New-Object System.Windows.Forms.Button
-$btnToKeep.Text = "<"
-$btnToKeep.Location = New-Object System.Drawing.Point(275, 250)
-$btnToKeep.Size = New-Object System.Drawing.Size(35, 30)
-$btnToKeep.Add_Click({ & $moveToKeep })
-$form.Controls.Add($btnToKeep)
-
-# Double-click handlers
-$listKeep.Add_MouseDoubleClick({
-    & $moveToFreeze
-  })
-$listFreeze.Add_MouseDoubleClick({
-    & $moveToKeep
-  })
-
 $okButton = New-Object System.Windows.Forms.Button
-$okButton.Location = New-Object System.Drawing.Point(260, 410)
-$okButton.Size = New-Object System.Drawing.Size(80, 30)
+$okButton.Location = New-Object System.Drawing.Point(150, 70)
+$okButton.Size = New-Object System.Drawing.Size(75, 23)
 $okButton.Text = "OK"
 $okButton.DialogResult = [System.Windows.Forms.DialogResult]::OK
 $form.AcceptButton = $okButton
@@ -371,9 +100,18 @@ $result = $form.ShowDialog()
 if ($result -ne [System.Windows.Forms.DialogResult]::OK) {
   Write-Host "PROGRESS: ERROR: Operation cancelled by user."; exit
 }
-
 $selectedPaperSize = $comboBox.SelectedItem
-$layersToFreeze = @($allFreezeLayers | Sort-Object)
+
+# --- Let the user select DWGs via a file explorer dialog ---
+$dlg = New-Object System.Windows.Forms.OpenFileDialog
+$dlg.Title = "Select DWG file(s) to plot"
+$dlg.Filter = "DWG files (*.dwg)|*.dwg|All files (*.*)|*.*"
+$dlg.Multiselect = $true
+$dlg.InitialDirectory = [Environment]::GetFolderPath("Desktop")
+if ($dlg.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK -or -not $dlg.FileNames) {
+  Write-Host "PROGRESS: ERROR: No files selected."; exit
+}
+$files = $dlg.FileNames
 
 # --- BATCH PROCESSING SETUP ---
 Write-Host "PROGRESS: Preparing to plot $($files.Count) file(s)..."
@@ -408,23 +146,6 @@ foreach ($dwgPath in $files) {
   # Create AutoLISP file for plotting
   $lispFile = Join-Path $env:TEMP "plot_layouts.lsp"
   $lispOutputDir = $batchOutputDir -replace '\\', '\\'
-  
-  $lispFreezeLogic = ""
-  if ($layersToFreeze.Count -gt 0) {
-    $lispFreezeLogic = "(setq freezeList '("
-    foreach ($lay in $layersToFreeze) {
-      # Escape backslashes and double quotes for LISP string
-      $escapedLay = $lay -replace '\\', '\\\\' -replace '"', '\"'
-      $lispFreezeLogic += "`"$escapedLay`" "
-    }
-    $lispFreezeLogic += "))"
-    # Safely freeze if layer exists
-    $lispFreezeLogic += "`n  (foreach lay freezeList "
-    $lispFreezeLogic += " (if (tblsearch `"LAYER`" lay)"
-    $lispFreezeLogic += " (vl-catch-all-apply 'vla-put-Freeze (list (vla-item (vla-get-Layers (vla-get-ActiveDocument (vlax-get-acad-object))) lay) :vlax-true))"
-    $lispFreezeLogic += " ))"
-  }
-
   $lispContent = @"
 (defun UpdateBlockOLELinks (blk / res)
   (vlax-for obj blk
@@ -461,13 +182,10 @@ foreach ($dwgPath in $files) {
   )
 )
 
-
-
 (defun c:PlotAllLayouts ()
   (setvar "BACKGROUNDPLOT" 0)
   (setvar "FILEDIA" 0)
   (SafeRefreshLinkedOLEs)
-  $lispFreezeLogic
   (setq main-dict (namedobjdict))
   (setq layout-dict (dictsearch main-dict "ACAD_LAYOUT"))
   (foreach item layout-dict

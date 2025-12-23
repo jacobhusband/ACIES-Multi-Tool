@@ -40,6 +40,8 @@ if ([System.Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') {
 }
 
 Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
 $dlg = New-Object System.Windows.Forms.OpenFileDialog
 $dlg.Title = "Select DWG file(s)"
 $dlg.Filter = "DWG files (*.dwg)|*.dwg"
@@ -126,7 +128,7 @@ N
 Set-Content -Path $extractScr -Value $extractScrContent -Encoding ASCII
 
 Write-Host "PROGRESS: Scanning $($files.Count) files for layers..."
-$allLayers = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+$allLayers = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
 
 foreach ($file in $files) {
   Write-Host -NoNewline "."
@@ -158,34 +160,120 @@ if ($allLayers.Count -eq 0) {
   exit 1
 }
 
-# ---------------- 5) USER SELECTION (GUI) ----------------
+# ---------------- 5) USER SELECTION (GUI with FILTER + nicer button) ----------------
+$allSorted = @($allLayers | Sort-Object)
+
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "Select Layers to FREEZE"
-$form.Size = New-Object System.Drawing.Size(420, 540)
 $form.StartPosition = "CenterScreen"
+$form.Size = New-Object System.Drawing.Size(520, 640)
+$form.MinimumSize = New-Object System.Drawing.Size(520, 640)
+$form.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::Font
 
 $lbl = New-Object System.Windows.Forms.Label
-$lbl.Text = "Found $($allLayers.Count) unique layers:"
-$lbl.Location = New-Object System.Drawing.Point(10, 10)
-$lbl.Size = New-Object System.Drawing.Size(380, 20)
+$lbl.Location = New-Object System.Drawing.Point(12, 12)
+$lbl.Size = New-Object System.Drawing.Size(488, 20)
+$lbl.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
 $form.Controls.Add($lbl)
 
+$lblFilter = New-Object System.Windows.Forms.Label
+$lblFilter.Text = "Filter:"
+$lblFilter.Location = New-Object System.Drawing.Point(12, 40)
+$lblFilter.Size = New-Object System.Drawing.Size(40, 22)
+$form.Controls.Add($lblFilter)
+
+$txtFilter = New-Object System.Windows.Forms.TextBox
+$txtFilter.Location = New-Object System.Drawing.Point(60, 38)
+$txtFilter.Size = New-Object System.Drawing.Size(360, 26)
+$txtFilter.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+$form.Controls.Add($txtFilter)
+
+$btnClear = New-Object System.Windows.Forms.Button
+$btnClear.Text = "Clear"
+$btnClear.Location = New-Object System.Drawing.Point(430, 36)
+$btnClear.Size = New-Object System.Drawing.Size(70, 28)
+$btnClear.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Right
+$btnClear.FlatStyle = [System.Windows.Forms.FlatStyle]::System
+$form.Controls.Add($btnClear)
+
 $listBox = New-Object System.Windows.Forms.ListBox
-$listBox.Location = New-Object System.Drawing.Point(10, 35)
-$listBox.Size = New-Object System.Drawing.Size(380, 410)
+$listBox.Location = New-Object System.Drawing.Point(12, 72)
+$listBox.Size = New-Object System.Drawing.Size(488, 460)
+$listBox.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
 $listBox.SelectionMode = "MultiExtended"
-$sortedLayers = $allLayers | Sort-Object
-$listBox.Items.AddRange([object[]]$sortedLayers)
+$listBox.IntegralHeight = $false
 $form.Controls.Add($listBox)
 
 $btnOk = New-Object System.Windows.Forms.Button
 $btnOk.Text = "Freeze Selected"
-$btnOk.DialogResult = 'OK'
-$btnOk.Location = New-Object System.Drawing.Point(10, 460)
+$btnOk.DialogResult = [System.Windows.Forms.DialogResult]::OK
+$btnOk.Size = New-Object System.Drawing.Size(190, 48)  # larger to prevent clipping
+$btnOk.Location = New-Object System.Drawing.Point(310, 548)
+$btnOk.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Right
+$btnOk.Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
+$btnOk.FlatStyle = [System.Windows.Forms.FlatStyle]::System
 $form.Controls.Add($btnOk)
 $form.AcceptButton = $btnOk
 
-if ($form.ShowDialog() -ne 'OK') { exit }
+$btnCancel = New-Object System.Windows.Forms.Button
+$btnCancel.Text = "Cancel"
+$btnCancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+$btnCancel.Size = New-Object System.Drawing.Size(110, 48)
+$btnCancel.Location = New-Object System.Drawing.Point(190, 548)
+$btnCancel.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Right
+$btnCancel.Font = New-Object System.Drawing.Font("Segoe UI", 10)
+$btnCancel.FlatStyle = [System.Windows.Forms.FlatStyle]::System
+$form.Controls.Add($btnCancel)
+$form.CancelButton = $btnCancel
+
+function Update-LayerList {
+  param([string]$filterText)
+
+  # PS 5.1-safe null handling
+  if ($null -eq $filterText) { $filterText = "" }
+  $filterText = $filterText.Trim()
+
+  # Remember selections so filtering doesn't wipe them out
+  $selected = @()
+  foreach ($item in $listBox.SelectedItems) { $selected += $item.ToString() }
+
+  if ([string]::IsNullOrWhiteSpace($filterText)) {
+    $filtered = $allSorted
+  }
+  else {
+    # Case-insensitive contains
+    $filtered = @($allSorted | Where-Object { $_.IndexOf($filterText, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 })
+  }
+
+  $listBox.BeginUpdate()
+  $listBox.Items.Clear()
+  if ($filtered.Count -gt 0) {
+    $listBox.Items.AddRange([object[]]$filtered)
+  }
+  $listBox.EndUpdate()
+
+  # Restore selections that are still visible
+  foreach ($s in $selected) {
+    $idx = $listBox.Items.IndexOf($s)
+    if ($idx -ge 0) { $listBox.SetSelected($idx, $true) }
+  }
+
+  $lbl.Text = "Layers shown: $($filtered.Count) / $($allSorted.Count)   (type to filter)"
+}
+
+# Initial load
+Update-LayerList ""
+
+# Live filter
+$txtFilter.add_TextChanged({ Update-LayerList $txtFilter.Text })
+
+$btnClear.add_Click({
+    $txtFilter.Text = ""
+    $txtFilter.Focus()
+  })
+
+if ($form.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { exit }
+
 $layersToFreeze = @($listBox.SelectedItems)
 if ($layersToFreeze.Count -eq 0) { Write-Host "No layers selected. Exiting."; exit }
 
@@ -199,7 +287,6 @@ $freezeReportForLisp = ($freezeReport -replace '\\', '/')
 $updateLsp = Join-Path $ToolDir "update_layers.lsp"
 $updateLspForLisp = ($updateLsp -replace '\\', '/')
 
-# Build Lisp list: "Lay1" "Lay2"
 $lispLayerList = $layersToFreeze | ForEach-Object { "`"$_`"" }
 $lispLayerListStr = $lispLayerList -join " "
 
@@ -225,7 +312,7 @@ $updateLspContent = @"
 )
 
 (defun _offp (rec)
-  (< (_color62 rec) 0) ; group code 62 negative => off
+  (< (_color62 rec) 0)
 )
 
 (defun _log (f dwg lay exists wasCur wasOff wasFroz wasLock action resFroz saveStat / tab)
@@ -248,7 +335,7 @@ $updateLspContent = @"
   tmp
 )
 
-(defun c:BatchFreeze (/ f dwg saveBefore saveAfter saveStatus layName rec exists wasCur wasOff wasFroz wasLock action rec2 resFroz)
+(defun c:BatchFreeze (/ f dwg layName rec exists wasCur wasOff wasFroz wasLock action rec2 resFroz saveAfter saveStatus)
 
   (setvar "CMDECHO" 0)
   (setq dwg (getvar "DWGNAME"))
@@ -279,31 +366,17 @@ $updateLspContent = @"
         (setq resFroz "?")
       )
       (wasFroz
-        ; Already frozen: do not alter anything
         (setq action "SKIP_ALREADY_FROZEN")
         (setq resFroz "T")
       )
       (T
-        ; If current, switch to a safe layer first
-        (if wasCur
-          (progn (_ensure-temp-current-layer) (setq action (strcat action "SWITCH_CLAYER;")))
-        )
+        (if wasCur (progn (_ensure-temp-current-layer) (setq action (strcat action "SWITCH_CLAYER;"))))
+        (if wasLock (progn (command "_.-LAYER" "_Unlock" layName "") (setq action (strcat action "UNLOCK;"))))
 
-        ; If locked, unlock then freeze
-        (if wasLock
-          (progn
-            (command "_.-LAYER" "_Unlock" layName "")
-            (setq action (strcat action "UNLOCK;"))
-          )
-        )
-
-        ; Freeze (do not change ON/OFF)
         (command "_.-LAYER" "_Freeze" layName "")
         (setq action (strcat action "FREEZE;"))
-
         (if wasOff (setq action (strcat action "LEFT_OFF;")))
 
-        ; Re-check frozen result
         (setq rec2 (tblsearch "LAYER" layName))
         (setq resFroz (if (and rec2 (_frozenp rec2)) "T" "F"))
       )
@@ -315,22 +388,13 @@ $updateLspContent = @"
     )
   )
 
-  ; Save attempt + verification via DBMOD
-  (setq saveBefore (getvar "DBMOD"))
   (command "_.QSAVE")
   (setq saveAfter (getvar "DBMOD"))
+  (setq saveStatus (if (= saveAfter 0) "SAVE_OK" (strcat "SAVE_FAILED_DBMOD=" (itoa saveAfter))))
 
-  (cond
-    ((= saveAfter 0) (setq saveStatus "SAVE_OK"))
-    (T (setq saveStatus (strcat "SAVE_FAILED_DBMOD=" (itoa saveAfter))))
-  )
-
-  ; Write one save status line
   (_log f dwg "<DWG_SAVE>" "T" "?" "?" "?" "?" "QSAVE" "?" saveStatus)
 
   (close f)
-
-  ; Exit without further prompts (avoid hangs)
   (command "_.QUIT" "_N")
   (princ)
 )

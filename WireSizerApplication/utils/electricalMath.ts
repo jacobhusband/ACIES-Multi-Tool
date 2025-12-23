@@ -1,8 +1,20 @@
 import { WIRE_DATA, GROUND_DATA, CONDUIT_EMT_40_PERCENT, K_FACTOR_CU, K_FACTOR_AL } from '../constants';
 import { AppState, CalculationResult, WireSizeData } from '../types';
 
+export const isThreePhaseAllowed = (voltage: number) => voltage !== 120 && voltage !== 277;
+
+export const getHotCount = (phase: number, voltage: number) => {
+  if (phase === 3) return 3;
+  if (phase === 1) {
+    if (voltage === 120 || voltage === 277) return 1;
+    if (voltage === 208 || voltage === 240 || voltage === 480) return 2;
+  }
+  return phase === 3 ? 3 : 2;
+};
+
 export const calculateEverything = (state: AppState): CalculationResult => {
   const { voltage, phase, material, oversizeConduit } = state;
+  const effectivePhase = isThreePhaseAllowed(voltage) ? phase : 1;
   
   // Sanitize inputs (handle empty strings)
   const amperage = state.amperage === '' ? 0 : state.amperage;
@@ -38,7 +50,7 @@ export const calculateEverything = (state: AppState): CalculationResult => {
   const tempRatingUsed = selectedIndex < indexOf1_0 ? 60 : 75;
 
   // 2. Voltage Drop Calculation
-  const phaseFactor = phase === 3 ? 1.732 : 2;
+  const phaseFactor = effectivePhase === 3 ? 1.732 : 2;
   const maxDropVolts = voltage * (maxVoltageDrop / 100);
   
   const requiredCM = maxDropVolts > 0 
@@ -76,7 +88,8 @@ export const calculateEverything = (state: AppState): CalculationResult => {
     : "See Eng.";
 
   // 4. Conduit Fill Calculation
-  const numCurrentCarrying = phase === 3 ? 4 : 3;
+  const hotCount = getHotCount(effectivePhase, voltage);
+  const numCurrentCarrying = hotCount + 1;
   const totalWiresPerSet = numCurrentCarrying; 
   
   const groundWireObj = WIRE_DATA.find(w => w.size === groundWireSize);

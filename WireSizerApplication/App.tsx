@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Settings, Zap, ArrowRight, Cable, AlertTriangle, Info, Ruler, Activity, Copy, CheckCircle2 } from 'lucide-react';
 import { AppState, CalculationResult } from './types';
-import { calculateEverything } from './utils/electricalMath';
+import { calculateEverything, getHotCount, isThreePhaseAllowed } from './utils/electricalMath';
 import { InputGroup } from './components/InputGroup';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip } from 'recharts';
 
@@ -31,7 +31,21 @@ function App() {
   }, [state]);
 
   const handleChange = (field: keyof AppState, value: any) => {
-    setState(prev => ({ ...prev, [field]: value }));
+    setState(prev => {
+      if (field === 'voltage') {
+        const nextVoltage = value;
+        const nextPhase = isThreePhaseAllowed(nextVoltage) ? prev.phase : 1;
+        return { ...prev, voltage: nextVoltage, phase: nextPhase };
+      }
+      if (field === 'phase') {
+        const nextPhase = value;
+        if (nextPhase === 3 && !isThreePhaseAllowed(prev.voltage)) {
+          return { ...prev, phase: 1 };
+        }
+        return { ...prev, phase: nextPhase };
+      }
+      return { ...prev, [field]: value };
+    });
   };
 
   const handleNumChange = (field: keyof AppState, value: string) => {
@@ -47,7 +61,8 @@ function App() {
     
     // Format: 3/4"C., 3#8 H, 1#8 N, 1#12 G
     const conduit = `${results.conduitSize}"C.`;
-    const numHots = state.phase === 3 ? 3 : 2;
+    const effectivePhase = isThreePhaseAllowed(state.voltage) ? state.phase : 1;
+    const numHots = getHotCount(effectivePhase, state.voltage);
     const wireSize = results.recommendedSize;
     const gndSize = results.groundWireSize;
     
@@ -116,7 +131,7 @@ function App() {
                       className={selectClass}
                     >
                       <option value={1}>1 Phase</option>
-                      <option value={3}>3 Phase</option>
+                      <option value={3} disabled={!isThreePhaseAllowed(state.voltage)}>3 Phase</option>
                     </select>
                   </InputGroup>
                   <InputGroup label="Voltage">

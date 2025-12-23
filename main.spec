@@ -5,7 +5,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('index.html', '.'), ('styles.css', '.'), ('script.js', '.'), ('.env', '.'), ('acies.png', '.')],
+    datas=[('index.html', '.'), ('styles.css', '.'), ('script.js', '.'), ('.env', '.'), ('acies.png', '.'), ('WireSizerApplication/dist', 'WireSizerApplication/dist')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

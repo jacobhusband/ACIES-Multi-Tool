@@ -180,12 +180,10 @@
         <!-- Tab Panel for Tools -->
         <div id="tools-panel" class="tab-panel" hidden>
             <section class="panel stack">
-                <!-- Combined Header -->
-                <div class="autocad-tools-header"
-                    style="display: flex; justify-content: space-between; align-items: flex-start;">
-                    <div class="autocad-tools-section">
-                        <h3 class="section-title">AutoCAD Tools</h3>
-                        <p class="tiny muted">Run scripts to automate common AutoCAD tasks.</p>
+                <div class="tools-panel-header">
+                    <div class="tools-panel-heading">
+                        <h3 class="section-title">Tools</h3>
+                        <p class="tiny muted">Utilities and automation tools for ACIES workflows.</p>
                     </div>
                     <div class="toolbar-actions">
                         <button class="icon-btn" id="toolsHelpBtn" aria-label="Tools help" title="Tools help">?</button>
@@ -193,43 +191,67 @@
                     </div>
                 </div>
 
-                <div class="tools-grid">
-                    <!-- Card 1: Publish DWGs -->
-                    <div id="toolPublishDwgs" class="tool-card" role="button" tabindex="0">
-                        <div class="tool-card-content">
-                            <div class="tool-icon">🖨️</div>
-                            <div class="tool-card-header">Publish CAD DWGs in Headless Mode</div>
-                            <div class="tool-card-body">
-                                Plots the layouts of each of the selected DWG files and combines them. Outputs to
-                                local path "user/document/AutoCAD Plots". Opens output folder with plotted PDFs.
-                            </div>
-                        </div>
-                        <div class="tool-card-status"></div>
+                <div class="tools-section">
+                    <div class="tools-section-header">
+                        <h4 class="tools-section-title">General</h4>
+                        <p class="tiny muted tools-section-desc">Shared tools for any discipline.</p>
                     </div>
-                    <!-- Card 2: Freeze Layers -->
-                    <div id="toolFreezeLayers" class="tool-card" role="button" tabindex="0">
-                        <div class="tool-card-content">
-                            <div class="tool-icon">❄️</div>
-                            <div class="tool-card-header">Freeze Layers in CAD DWGs Headless Mode</div>
-                            <div class="tool-card-body">
-                                Scans selected DWGs for layers, lets you freeze or thaw them, then saves updates in
-                                headless mode.
+                    <div class="tools-grid">
+                        <!-- Card 1: Publish DWGs -->
+                        <div id="toolPublishDwgs" class="tool-card" role="button" tabindex="0">
+                            <div class="tool-card-content">
+                                <div class="tool-icon">🖨️</div>
+                                <div class="tool-card-header">Publish CAD DWGs in Headless Mode</div>
+                                <div class="tool-card-body">
+                                    Plots the layouts of each of the selected DWG files and combines them. Outputs to
+                                    local path "user/document/AutoCAD Plots". Opens output folder with plotted PDFs.
+                                </div>
                             </div>
+                            <div class="tool-card-status"></div>
                         </div>
-                        <div class="tool-card-status"></div>
-                    </div>
-                    <!-- Card 3: Clean XREFs -->
-                    <div id="toolCleanXrefs" class="tool-card" role="button" tabindex="0">
-                        <div class="tool-card-content">
-                            <div class="tool-icon">🧹</div>
-                            <div class="tool-card-header">Prepare CAD DWG for Reference</div>
-                            <div class="tool-card-body">
-                                Strips saved XREF paths. Sets all objects color to "by layer". Purges & Audits.
+                        <!-- Card 2: Freeze Layers -->
+                        <div id="toolFreezeLayers" class="tool-card" role="button" tabindex="0">
+                            <div class="tool-card-content">
+                                <div class="tool-icon">❄️</div>
+                                <div class="tool-card-header">Freeze Layers in CAD DWGs Headless Mode</div>
+                                <div class="tool-card-body">
+                                    Scans selected DWGs for layers, lets you freeze or thaw them, then saves updates in
+                                    headless mode.
+                                </div>
                             </div>
+                            <div class="tool-card-status"></div>
                         </div>
-                        <div class="tool-card-status"></div>
+                        <!-- Card 3: Clean XREFs -->
+                        <div id="toolCleanXrefs" class="tool-card" role="button" tabindex="0">
+                            <div class="tool-card-content">
+                                <div class="tool-icon">🧹</div>
+                                <div class="tool-card-header">Prepare CAD DWG for Reference</div>
+                                <div class="tool-card-body">
+                                    Strips saved XREF paths. Sets all objects color to "by layer". Purges & Audits.
+                                </div>
+                            </div>
+                            <div class="tool-card-status"></div>
+                        </div>
                     </div>
+                </div>
 
+                <div class="tools-section">
+                    <div class="tools-section-header">
+                        <h4 class="tools-section-title">Electrical</h4>
+                        <p class="tiny muted tools-section-desc">Calculators and electrical utilities.</p>
+                    </div>
+                    <div class="tools-grid">
+                        <div id="toolWireSizer" class="tool-card" role="button" tabindex="0">
+                            <div class="tool-card-content">
+                                <div class="tool-icon">⚡</div>
+                                <div class="tool-card-header">Wire Sizer</div>
+                                <div class="tool-card-body">
+                                    Size conductors, voltage drop, and conduit fill with the ACIES wire sizing tool.
+                                </div>
+                            </div>
+                            <div class="tool-card-status"></div>
+                        </div>
+                    </div>
                 </div>
             </section>
         </div>
@@ -803,6 +825,22 @@
         <div class="modal-footer">
             <button class="btn" onclick="closeDlg('installPrereqDlg')">Later</button>
             <button class="btn-primary" id="btnInstallPrereq">Install Now</button>
+        </div>
+    </dialog>
+
+    <dialog id="wireSizerDlg" class="wire-sizer-dialog">
+        <div class="wire-sizer-shell">
+            <div class="wire-sizer-header">
+                <div class="wire-sizer-title">
+                    <div class="title">Wire Sizer</div>
+                    <p class="tiny muted">Electrical wire sizing and voltage drop calculator.</p>
+                </div>
+                <button class="icon-btn" id="wireSizerCloseBtn" aria-label="Close Wire Sizer" title="Close">X</button>
+            </div>
+            <div class="wire-sizer-body">
+                <div id="wireSizerEmptyState" class="wire-sizer-empty" hidden></div>
+                <iframe id="wireSizerFrame" class="wire-sizer-frame" title="Wire Sizer"></iframe>
+            </div>
         </div>
     </dialog>
 

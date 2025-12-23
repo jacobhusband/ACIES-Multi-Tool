@@ -2,8 +2,32 @@ Write-Host "###################################" -ForegroundColor Cyan
 Write-Host "#      Building ACIES Scheduler     #" -ForegroundColor Cyan
 Write-Host "###################################" -ForegroundColor Cyan
 
-# 1. Run PyInstaller
-Write-Host "`n[1/2] Bundling application with PyInstaller..." -ForegroundColor Yellow
+# 1. Build Wire Sizer frontend (if present)
+$wireSizerDir = Join-Path $PSScriptRoot "WireSizerApplication"
+$wireSizerDist = Join-Path $wireSizerDir "dist"
+if (Test-Path $wireSizerDir) {
+    Write-Host "`n[1/3] Building Wire Sizer frontend..." -ForegroundColor Yellow
+    $npmCmd = Get-Command npm -ErrorAction SilentlyContinue
+    if (-not $npmCmd) {
+        Write-Warning "npm not found. Skipping Wire Sizer build."
+    } else {
+        Push-Location $wireSizerDir
+        if (Test-Path "package.json") {
+            if (-not (Test-Path "node_modules")) {
+                npm install
+            }
+            npm run build
+        } else {
+            Write-Warning "WireSizerApplication package.json not found. Skipping build."
+        }
+        Pop-Location
+    }
+} else {
+    Write-Warning "WireSizerApplication folder not found. Skipping build."
+}
+
+# 2. Run PyInstaller
+Write-Host "`n[2/3] Bundling application with PyInstaller..." -ForegroundColor Yellow
 
 # Clean previous installer output to avoid file locks/resource errors
 $setupOutput = Join-Path $PSScriptRoot "dist\\setup"
@@ -46,6 +70,12 @@ $pyInstallerArgs = @(
     "--add-data", "StripRefPaths.dll;."
 )
 
+if (Test-Path $wireSizerDist) {
+    $pyInstallerArgs += @("--add-data", "WireSizerApplication\\dist;WireSizerApplication\\dist")
+} else {
+    Write-Warning "WireSizerApplication\\dist not found. Wire Sizer tool will be unavailable."
+}
+
 # Run PyInstaller and check for errors
 & pyinstaller $pyInstallerArgs
 if ($LASTEXITCODE -ne 0) {
@@ -53,8 +83,8 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-# 2. Run Inno Setup
-Write-Host "`n[2/2] Creating installer with Inno Setup..." -ForegroundColor Yellow
+# 3. Run Inno Setup
+Write-Host "`n[3/3] Creating installer with Inno Setup..." -ForegroundColor Yellow
 
 # Define potential paths for ISCC.exe
 # Note: We look for ISCC.exe (Command Line Compiler), not Compil32.exe (GUI)

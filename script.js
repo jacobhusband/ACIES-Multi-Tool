@@ -1709,6 +1709,70 @@ window.updateToolStatus = function (toolId, message) {
 
 
 
+function setWireSizerMessage(message) {
+  const emptyState = document.getElementById("wireSizerEmptyState");
+  if (!emptyState) return;
+  if (message) {
+    emptyState.textContent = message;
+    emptyState.hidden = false;
+  } else {
+    emptyState.textContent = "";
+    emptyState.hidden = true;
+  }
+}
+
+async function openWireSizer() {
+  const dlg = document.getElementById("wireSizerDlg");
+  const frame = document.getElementById("wireSizerFrame");
+  if (!dlg || !frame) return;
+
+  setWireSizerMessage("Loading Wire Sizer...");
+  frame.src = "about:blank";
+
+  if (!dlg.open) dlg.showModal();
+
+  if (window.pywebview?.api?.get_wire_sizer_url) {
+    try {
+      const res = await window.pywebview.api.get_wire_sizer_url();
+      if (res.status === "success" && res.url) {
+        const loadTimeout = setTimeout(() => {
+          setWireSizerMessage(
+            "Wire Sizer is taking longer to load. Please try again."
+          );
+        }, 4000);
+        frame.onload = () => {
+          clearTimeout(loadTimeout);
+          if (frame.src && !frame.src.startsWith("about:")) {
+            setWireSizerMessage("");
+          }
+        };
+        frame.onerror = () => {
+          clearTimeout(loadTimeout);
+          setWireSizerMessage(
+            "Wire Sizer failed to load. Rebuild the tool and try again."
+          );
+        };
+        frame.src = res.url;
+        return;
+      }
+      setWireSizerMessage(res.message || "Wire Sizer is unavailable.");
+      return;
+    } catch (e) {
+      setWireSizerMessage("Wire Sizer is unavailable.");
+      return;
+    }
+  }
+
+  setWireSizerMessage("Wire Sizer is unavailable in this environment.");
+}
+
+function closeWireSizer() {
+  const dlg = document.getElementById("wireSizerDlg");
+  const frame = document.getElementById("wireSizerFrame");
+  if (dlg?.open) dlg.close();
+  if (frame) frame.src = "about:blank";
+}
+
 // ===================== ONBOARDING SYSTEM =====================
 
 let currentOnboardingStep = 1;
@@ -2521,6 +2585,32 @@ function initEventListeners() {
       window.updateToolStatus("toolCleanXrefs", "Initializing...");
       await window.pywebview.api.run_clean_xrefs_script();
     });
+
+
+  const wireSizerBtn = document.getElementById("toolWireSizer");
+  if (wireSizerBtn) {
+    wireSizerBtn.addEventListener("click", openWireSizer);
+    wireSizerBtn.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        openWireSizer();
+      }
+    });
+  }
+
+  const wireSizerCloseBtn = document.getElementById("wireSizerCloseBtn");
+  if (wireSizerCloseBtn) {
+    wireSizerCloseBtn.addEventListener("click", closeWireSizer);
+  }
+
+  const wireSizerDlg = document.getElementById("wireSizerDlg");
+  if (wireSizerDlg) {
+    wireSizerDlg.addEventListener("close", () => {
+      const frame = document.getElementById("wireSizerFrame");
+      if (frame) frame.src = "about:blank";
+      setWireSizerMessage("");
+    });
+  }
 
 
 

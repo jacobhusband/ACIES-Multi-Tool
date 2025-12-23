@@ -993,6 +993,33 @@ Return ONLY the JSON object.
             logging.error(f"Error creating folder: {e}")
             return {'status': 'error', 'message': str(e)}
 
+    def get_wire_sizer_url(self):
+        """Return a URL or relative path to the Wire Sizer build output."""
+        candidate = BASE_DIR / "WireSizerApplication" / "dist" / "index.html"
+        try:
+            if candidate.exists():
+                try:
+                    rel_path = candidate.relative_to(BASE_DIR)
+                    return {
+                        'status': 'success',
+                        'url': rel_path.as_posix()
+                    }
+                except ValueError:
+                    return {
+                        'status': 'success',
+                        'url': candidate.resolve().as_uri()
+                    }
+        except Exception as e:
+            logging.error(f"Error resolving Wire Sizer path: {e}")
+            return {
+                'status': 'error',
+                'message': 'Failed to resolve Wire Sizer path.'
+            }
+        return {
+            'status': 'error',
+            'message': 'Wire Sizer build not found. Run npm install and npm run build in WireSizerApplication.'
+        }
+
     def run_publish_script(self):
         """Runs the PlotDWGs.ps1 PowerShell script with progress updates."""
         script_path = os.path.join(BASE_DIR, "PlotDWGs.ps1")

@@ -2,17 +2,19 @@ param(
   [string]$AcadCore
 )
 
+# ---------------- CONFIGURATION ----------------
+$ProcessTimeoutSeconds = 120
+$ToolDir = Join-Path $env:LOCALAPPDATA "AcadHeadlessTools"
+
 Write-Host "PROGRESS: Initializing script..."
 
-# --- AUTOCAD VERSION DETECTION ---
+# ---------------- 1) FIND ACCORECONSOLE ----------------
 if ($AcadCore -and (Test-Path -Path $AcadCore)) {
   $acadCore = $AcadCore
-  Write-Host "PROGRESS: Using specified AutoCAD Core Console: $AcadCore"
 }
 else {
   $acadCore = $null
-  $years = 2025, 2024, 2023, 2022, 2021, 2020
-
+  $years = 2026..2018
   foreach ($year in $years) {
     $possiblePath = "C:\Program Files\Autodesk\AutoCAD $year\accoreconsole.exe"
     if (Test-Path -Path $possiblePath) {
@@ -23,456 +25,377 @@ else {
   }
 }
 
-# Relaunch in STA for file picker
+if (-not $acadCore) {
+  Write-Error "AutoCAD Core Console not found. Provide -AcadCore or install AutoCAD."
+  exit 1
+}
+
+# ---------------- 2) SELECT FILES (STA wrapper) ----------------
 if ([System.Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') {
   $ps = (Get-Process -Id $PID).Path
-  Start-Process -FilePath $ps -ArgumentList @("-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"") -Wait
+  $argsList = @("-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"")
+  if ($AcadCore) { $argsList += @("-AcadCore", "`"$AcadCore`"") }
+
+  Start-Process -FilePath $ps -ArgumentList $argsList -Wait
   exit
 }
 
-# Validation
-if ([string]::IsNullOrEmpty($acadCore) -or -not (Test-Path $acadCore)) {
-  Write-Host "PROGRESS: ERROR: AutoCAD Core Console not found for versions 2020-2025."
-  Write-Host "Please ensure AutoCAD is installed in the default 'C:\Program Files\Autodesk' directory."
-  exit 1
-}
-
-# --- Let the user select DWGs via a file explorer dialog ---
-Write-Host "PROGRESS: Waiting for file selection..."
 Add-Type -AssemblyName System.Windows.Forms
-[System.Windows.Forms.Application]::EnableVisualStyles()
-
 $dlg = New-Object System.Windows.Forms.OpenFileDialog
-$dlg.Title = "Select DWG file(s) to update layer freeze states"
-$dlg.Filter = "DWG files (*.dwg)|*.dwg|All files (*.*)|*.*"
+$dlg.Title = "Select DWG file(s)"
+$dlg.Filter = "DWG files (*.dwg)|*.dwg"
 $dlg.Multiselect = $true
-$dlg.InitialDirectory = [Environment]::GetFolderPath("Desktop")
-if ($dlg.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK -or -not $dlg.FileNames) {
-  Write-Host "PROGRESS: ERROR: No files selected."; exit 1
-}
+if ($dlg.ShowDialog() -ne 'OK') { exit }
 $files = $dlg.FileNames
 
-function Test-DwgLocked {
-  param([string]$Path)
-  $dir = Split-Path -Path $Path -Parent
-  $name = [IO.Path]::GetFileNameWithoutExtension($Path)
-  $dwl = Join-Path $dir "$name.dwl"
-  $dwl2 = Join-Path $dir "$name.dwl2"
-  if (Test-Path $dwl -or Test-Path $dwl2) {
-    return $true
-  }
-  try {
-    $stream = [System.IO.File]::Open(
-      $Path,
-      [System.IO.FileMode]::Open,
-      [System.IO.FileAccess]::ReadWrite,
-      [System.IO.FileShare]::None
-    )
-    $stream.Close()
-    return $false
-  }
-  catch {
-    return $true
+# ---------------- 3) PREP TOOL FOLDER ----------------
+if (-not (Test-Path $ToolDir)) { New-Item -ItemType Directory -Path $ToolDir | Out-Null }
+
+function Stop-ProcessTree {
+  param([int]$Pid)
+  try { & taskkill /PID $Pid /T /F | Out-Null } catch {
+    try { Stop-Process -Id $Pid -Force -ErrorAction SilentlyContinue } catch {}
   }
 }
 
-$lockedFiles = @()
-$readOnlyFiles = @()
-foreach ($file in $files) {
-  $item = Get-Item -LiteralPath $file -ErrorAction SilentlyContinue
-  if (-not $item) {
-    $lockedFiles += $file
-    continue
-  }
-  if ($item.IsReadOnly) {
-    $readOnlyFiles += $file
-    continue
-  }
-  if (Test-DwgLocked $file) {
-    $lockedFiles += $file
-  }
-}
-
-if ($readOnlyFiles.Count -gt 0 -or $lockedFiles.Count -gt 0) {
-  if ($readOnlyFiles.Count -gt 0) {
-    Write-Host "PROGRESS: ERROR: These files are read-only and cannot be saved:"
-    $readOnlyFiles | ForEach-Object { Write-Host "PROGRESS: - $_" }
-  }
-  if ($lockedFiles.Count -gt 0) {
-    Write-Host "PROGRESS: ERROR: These files appear to be open or locked:"
-    $lockedFiles | ForEach-Object { Write-Host "PROGRESS: - $_" }
-  }
-  Write-Host "PROGRESS: ERROR: Please close the drawings and retry."
-  exit 1
-}
-
-# --- Extract Layers from ALL selected files ---
-$tempExtractDir = Join-Path $env:TEMP "acad_layer_extract"
-if (Test-Path $tempExtractDir) { Remove-Item $tempExtractDir -Recurse -Force }
-New-Item -ItemType Directory -Path $tempExtractDir | Out-Null
-
-$extractLisp = Join-Path $tempExtractDir "extract_layers.lsp"
-$extractLispContent = @"
-(vl-load-com)
-(setvar "CMDECHO" 0)
-(setvar "FILEDIA" 0)
-(defun c:ExtractLayers (/ lay flags frozen)
-  (princ "\nDEBUG_LISP_START\n")
-  (setq lay (tblnext "LAYER" T))
-  (while lay
-    (setq flags (cdr (assoc 70 lay)))
-    (if (null flags) (setq flags 0))
-    (setq frozen (if (= (logand flags 1) 1) "FROZEN" "THAWED"))
-    (princ (strcat "\nLAYER_FOUND:" (cdr (assoc 2 lay)) "|" frozen))
-    (setq lay (tblnext "LAYER"))
+function Invoke-AcadCore {
+  param(
+    [Parameter(Mandatory = $true)][string]$DwgPath,
+    [Parameter(Mandatory = $true)][string]$ScriptPath,
+    [Parameter(Mandatory = $true)][string]$OutLog,
+    [Parameter(Mandatory = $true)][string]$ErrLog,
+    [int]$TimeoutSeconds = 120
   )
-  (command "_QUIT" "Y")
+
+  $p = Start-Process -FilePath $acadCore `
+    -ArgumentList "/i `"$DwgPath`" /s `"$ScriptPath`"" `
+    -PassThru -NoNewWindow `
+    -RedirectStandardOutput $OutLog `
+    -RedirectStandardError  $ErrLog
+
+  if (-not $p.WaitForExit($TimeoutSeconds * 1000)) {
+    Stop-ProcessTree -Pid $p.Id
+    return @{ TimedOut = $true; ExitCode = $null; Pid = $p.Id }
+  }
+
+  return @{ TimedOut = $false; ExitCode = $p.ExitCode; Pid = $p.Id }
+}
+
+# ---------------- 4) EXTRACTION PHASE ----------------
+$layerDumpFile = Join-Path $ToolDir "layers_dump.txt"
+if (Test-Path $layerDumpFile) { Remove-Item $layerDumpFile -Force }
+
+$lispReportPath = ($layerDumpFile -replace '\\', '/')
+
+$extractLsp = Join-Path $ToolDir "extract.lsp"
+$extractLspForLisp = ($extractLsp -replace '\\', '/')
+
+# No (quit) here
+$extractLspContent = @"
+(defun c:ExtractLayers (/ f lay)
+  (setq f (open "$lispReportPath" "a"))
+  (if f
+    (progn
+      (write-line (strcat "###DWG:" (getvar "DWGNAME")) f)
+      (setq lay (tblnext "LAYER" T))
+      (while lay
+        (write-line (cdr (assoc 2 lay)) f)
+        (setq lay (tblnext "LAYER"))
+      )
+      (close f)
+    )
+  )
+  (princ)
 )
+(princ)
 "@
-Set-Content -Encoding ASCII -Path $extractLisp -Value $extractLispContent
+Set-Content -Path $extractLsp -Value $extractLspContent -Encoding ASCII
 
-$extractScr = Join-Path $tempExtractDir "extract_layers.scr"
-$extractScrContent = "(load `"$($extractLisp -replace '\\', '/')`")`nExtractLayers`n"
-Set-Content -Encoding ASCII -Path $extractScr -Value $extractScrContent
+$extractScr = Join-Path $ToolDir "extract.scr"
+$extractScrContent = @"
+FILEDIA
+0
+CMDDIA
+0
+PROXYNOTICE
+0
+SECURELOAD
+0
+(load "$extractLspForLisp")
+(c:ExtractLayers)
+QUIT
+N
+"@
+Set-Content -Path $extractScr -Value $extractScrContent -Encoding ASCII
 
-$fileIndex = 0
-$extractionOutputs = @()
-foreach ($file in $files) {
-  $fileIndex++
-  Write-Host "PROGRESS: Scanning layers ($fileIndex of $($files.Count)): $(Split-Path $file -Leaf)"
+Write-Host "PROGRESS: Scanning $($files.Count) files for layers..."
 
-  $pInfo = New-Object System.Diagnostics.ProcessStartInfo
-  $pInfo.FileName = $acadCore
-  $pInfo.Arguments = "/i `"$file`" /s `"$extractScr`""
-  $pInfo.RedirectStandardOutput = $true
-  $pInfo.RedirectStandardError = $true
-  $pInfo.StandardOutputEncoding = [System.Text.Encoding]::Unicode
-  $pInfo.StandardErrorEncoding = [System.Text.Encoding]::Unicode
-  $pInfo.UseShellExecute = $false
-  $pInfo.CreateNoWindow = $true
-
-  $p = New-Object System.Diagnostics.Process
-  $p.StartInfo = $pInfo
-  [void]$p.Start()
-
-  $output = $p.StandardOutput.ReadToEnd()
-  $err = $p.StandardError.ReadToEnd()
-  $p.WaitForExit()
-
-  $cleanOutput = $output -replace '\0', ''
-  $cleanErr = $err -replace '\0', ''
-  $extractionOutputs += $cleanOutput
-  $extractionOutputs += $cleanErr
-}
-
-# Aggregate unique layers + frozen state
 $allLayers = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-$frozenLayers = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-$thawedLayers = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-foreach ($output in $extractionOutputs) {
-  if ($output) {
-    $lines = $output -split "\r?\n"
-    foreach ($line in $lines) {
-      if ($line -match "LAYER_FOUND:(.+)") {
-        $payload = $matches[1].Trim()
-        $parts = $payload -split "\|", 2
-        $layerName = $parts[0].Trim()
-        if (-not [string]::IsNullOrWhiteSpace($layerName)) {
-          $state = if ($parts.Count -gt 1) { $parts[1].Trim().ToUpperInvariant() } else { "THAWED" }
-          [void]$allLayers.Add($layerName)
-          if ($state -eq "FROZEN") {
-            [void]$frozenLayers.Add($layerName)
-          }
-          else {
-            [void]$thawedLayers.Add($layerName)
-          }
-        }
-      }
-    }
+
+foreach ($file in $files) {
+  Write-Host -NoNewline "."
+
+  $base = Split-Path $file -LeafBase
+  $outLog = Join-Path $ToolDir "extract_$base.out.txt"
+  $errLog = Join-Path $ToolDir "extract_$base.err.txt"
+  if (Test-Path $outLog) { Remove-Item $outLog -Force }
+  if (Test-Path $errLog) { Remove-Item $errLog -Force }
+
+  $result = Invoke-AcadCore -DwgPath $file -ScriptPath $extractScr -OutLog $outLog -ErrLog $errLog -TimeoutSeconds $ProcessTimeoutSeconds
+  if ($result.TimedOut) { Write-Host "!" -NoNewline -ForegroundColor Red }
+}
+Write-Host "`nReading extracted data..."
+
+if (Test-Path $layerDumpFile) {
+  $rawLayers = Get-Content $layerDumpFile
+  foreach ($line in $rawLayers) {
+    if ([string]::IsNullOrWhiteSpace($line)) { continue }
+    if ($line.Trim().StartsWith("###DWG:", [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+    [void]$allLayers.Add($line.Trim())
   }
 }
-
-$defaultFreezeLayers = [System.Collections.Generic.List[string]]::new()
-$defaultKeepLayers = [System.Collections.Generic.List[string]]::new()
-foreach ($lay in $allLayers) {
-  if ($frozenLayers.Contains($lay) -and -not $thawedLayers.Contains($lay)) {
-    [void]$defaultFreezeLayers.Add($lay)
-  }
-  else {
-    [void]$defaultKeepLayers.Add($lay)
-  }
+else {
+  Write-Warning "No layer dump file was created. Check logs in: $ToolDir"
 }
 
 if ($allLayers.Count -eq 0) {
-  Write-Host "PROGRESS: WARNING: No layers were extracted. The list will be empty."
+  Write-Warning "0 layers found. Check: $ToolDir\extract_*.err.txt"
+  exit 1
 }
 
-$allKeepLayers = [System.Collections.Generic.List[string]]::new()
-foreach ($lay in $defaultKeepLayers) {
-  if (-not [string]::IsNullOrWhiteSpace($lay)) {
-    [void]$allKeepLayers.Add([string]$lay)
-  }
-}
-$allFreezeLayers = [System.Collections.Generic.List[string]]::new()
-foreach ($lay in $defaultFreezeLayers) {
-  if (-not [string]::IsNullOrWhiteSpace($lay)) {
-    [void]$allFreezeLayers.Add([string]$lay)
-  }
-}
-
-# --- Let the user select layers to Freeze/Thaw ---
-Write-Host "PROGRESS: Waiting for user input..."
+# ---------------- 5) USER SELECTION (GUI) ----------------
 $form = New-Object System.Windows.Forms.Form
-$form.Text = "Layer Freeze Settings"
-$form.Size = New-Object System.Drawing.Size(600, 500)
+$form.Text = "Select Layers to FREEZE"
+$form.Size = New-Object System.Drawing.Size(420, 540)
 $form.StartPosition = "CenterScreen"
 
-# List Labels
-$lblKeep = New-Object System.Windows.Forms.Label
-$lblKeep.Location = New-Object System.Drawing.Point(10, 45)
-$lblKeep.Text = "Layers to KEEP (Unfrozen)"
-$lblKeep.Size = New-Object System.Drawing.Size(200, 20)
-$form.Controls.Add($lblKeep)
+$lbl = New-Object System.Windows.Forms.Label
+$lbl.Text = "Found $($allLayers.Count) unique layers:"
+$lbl.Location = New-Object System.Drawing.Point(10, 10)
+$lbl.Size = New-Object System.Drawing.Size(380, 20)
+$form.Controls.Add($lbl)
 
-$lblFreeze = New-Object System.Windows.Forms.Label
-$lblFreeze.Location = New-Object System.Drawing.Point(320, 45)
-$lblFreeze.Text = "Layers to FREEZE"
-$lblFreeze.Size = New-Object System.Drawing.Size(200, 20)
-$form.Controls.Add($lblFreeze)
+$listBox = New-Object System.Windows.Forms.ListBox
+$listBox.Location = New-Object System.Drawing.Point(10, 35)
+$listBox.Size = New-Object System.Drawing.Size(380, 410)
+$listBox.SelectionMode = "MultiExtended"
 
-# Filter box
-$lblLayerFilter = New-Object System.Windows.Forms.Label
-$lblLayerFilter.Location = New-Object System.Drawing.Point(10, 10)
-$lblLayerFilter.Text = "Filter layers:"
-$lblLayerFilter.Size = New-Object System.Drawing.Size(80, 20)
-$form.Controls.Add($lblLayerFilter)
+$sortedLayers = $allLayers | Sort-Object
+$listBox.Items.AddRange([object[]]$sortedLayers)
+$form.Controls.Add($listBox)
 
-$txtLayerFilter = New-Object System.Windows.Forms.TextBox
-$txtLayerFilter.Location = New-Object System.Drawing.Point(95, 8)
-$txtLayerFilter.Size = New-Object System.Drawing.Size(475, 20)
-$form.Controls.Add($txtLayerFilter)
+$btnOk = New-Object System.Windows.Forms.Button
+$btnOk.Text = "Freeze Selected"
+$btnOk.DialogResult = 'OK'
+$btnOk.Location = New-Object System.Drawing.Point(10, 460)
+$form.Controls.Add($btnOk)
+$form.AcceptButton = $btnOk
 
-# ListBoxes
-$listKeep = New-Object System.Windows.Forms.ListBox
-$listKeep.Location = New-Object System.Drawing.Point(10, 70)
-$listKeep.Size = New-Object System.Drawing.Size(250, 300)
-$listKeep.SelectionMode = "MultiExtended"
-$form.Controls.Add($listKeep)
+if ($form.ShowDialog() -ne 'OK') { exit }
 
-$listFreeze = New-Object System.Windows.Forms.ListBox
-$listFreeze.Location = New-Object System.Drawing.Point(320, 70)
-$listFreeze.Size = New-Object System.Drawing.Size(250, 300)
-$listFreeze.SelectionMode = "MultiExtended"
-$form.Controls.Add($listFreeze)
+$layersToFreeze = @($listBox.SelectedItems)
+if ($layersToFreeze.Count -eq 0) {
+  Write-Host "No layers selected. Exiting."
+  exit
+}
 
-function Remove-Layer {
-  param(
-    [System.Collections.Generic.List[string]]$list,
-    [string]$item
+# ---------------- 6) UPDATE PHASE (state-aware + report) ----------------
+$freezeReport = Join-Path $ToolDir "FreezeReport.tsv"
+"DWG`tLayer`tExists`tWasCurrent`tWasOff`tWasFrozen`tWasLocked`tAction" | Set-Content -Path $freezeReport -Encoding ASCII
+
+$freezeReportForLisp = ($freezeReport -replace '\\', '/')
+
+$updateLsp = Join-Path $ToolDir "update_layers.lsp"
+$updateLspForLisp = ($updateLsp -replace '\\', '/')
+
+# Build Lisp list: "Lay1" "Lay2"
+$lispLayerList = $layersToFreeze | ForEach-Object { "`"$_`"" }
+$lispLayerListStr = $lispLayerList -join " "
+
+$updateLspContent = @"
+(vl-load-com)
+
+(defun _t (b) (if b "T" "F"))
+
+(defun _log (f dwg lay exists wasCur wasOff wasFroz wasLock action / tab)
+  (setq tab (chr 9))
+  (write-line
+    (strcat dwg tab lay tab exists tab wasCur tab wasOff tab wasFroz tab wasLock tab action)
+    f
   )
-  for ($i = $list.Count - 1; $i -ge 0; $i--) {
-    if ($list[$i] -ieq $item) {
-      $list.RemoveAt($i)
-      return
-    }
-  }
-}
+)
 
-function Add-LayerUnique {
-  param(
-    [System.Collections.Generic.List[string]]$list,
-    [string]$item
+(defun _safe-vla-item (layers name / r)
+  (setq r (vl-catch-all-apply 'vla-item (list layers name)))
+  (if (vl-catch-all-error-p r) nil r)
+)
+
+(defun _ensure-temp-current-layer (/ tmp)
+  (setq tmp "HEADLESS_TEMP")
+  ; Create if missing
+  (if (null (tblsearch "LAYER" tmp))
+    (command "_.-LAYER" "_New" tmp "")
   )
-  if ($list -notcontains $item) {
-    [void]$list.Add($item)
-  }
-}
+  ; Make current (also ensures it isn't frozen as current)
+  (command "_.-LAYER" "_Make" tmp "")
+  ; Make sure it's usable
+  (command "_.-LAYER" "_On" tmp "")
+  (command "_.-LAYER" "_Thaw" tmp "")
+  (command "_.-LAYER" "_Unlock" tmp "")
+  tmp
+)
 
-function Update-LayerList {
-  param(
-    [System.Windows.Forms.ListBox]$listBox,
-    [System.Collections.Generic.List[string]]$source,
-    [string]$filterText
+(defun c:BatchFreeze (/ doc layers f dwg layName exists layObj wasCur wasOff wasFroz wasLock action saveRes)
+
+  (setvar "CMDECHO" 0)
+
+  (setq f (open "$freezeReportForLisp" "a"))
+  (setq doc (vla-get-activedocument (vlax-get-acad-object)))
+  (setq layers (vla-get-layers doc))
+  (setq dwg (getvar "DWGNAME"))
+
+  (foreach layName (list $lispLayerListStr)
+
+    (setq exists (if (tblsearch "LAYER" layName) T nil))
+    (setq wasCur (= (strcase layName) (strcase (getvar "CLAYER"))))
+    (setq wasOff nil)
+    (setq wasFroz nil)
+    (setq wasLock nil)
+    (setq action "")
+
+    (if (not exists)
+      (progn
+        (setq action "NOT_FOUND")
+        (_log f dwg layName "F" (_t wasCur) "?" "?" "?" action)
+      )
+      (progn
+        (setq layObj (_safe-vla-item layers layName))
+
+        (if layObj
+          (progn
+            (setq wasOff  (= (vla-get-layeron layObj) :vlax-false))
+            (setq wasFroz (= (vla-get-freeze  layObj) :vlax-true))
+            (setq wasLock (= (vla-get-lock    layObj) :vlax-true))
+          )
+          (progn
+            ; If we can't get the object (rare), still attempt freeze via command.
+            (setq wasOff nil)
+            (setq wasFroz nil)
+            (setq wasLock nil)
+          )
+        )
+
+        (cond
+          (wasFroz
+            (setq action "SKIP_ALREADY_FROZEN")
+          )
+          (T
+            ; If it's current, switch CLAYER before freezing
+            (if wasCur
+              (progn
+                (_ensure-temp-current-layer)
+                (setq action (strcat action "SWITCH_CLAYER;"))
+              )
+            )
+
+            ; If locked, unlock before freezing
+            (if wasLock
+              (progn
+                (if layObj
+                  (vl-catch-all-apply 'vla-put-lock (list layObj :vlax-false))
+                  (command "_.-LAYER" "_Unlock" layName "")
+                )
+                (setq action (strcat action "UNLOCK;"))
+              )
+            )
+
+            ; Freeze (do NOT change On/Off state)
+            (if layObj
+              (vl-catch-all-apply 'vla-put-freeze (list layObj :vlax-true))
+              (command "_.-LAYER" "_Freeze" layName "")
+            )
+            (setq action (strcat action "FREEZE;"))
+
+            (if wasOff
+              (setq action (strcat action "LEFT_OFF;"))
+            )
+          )
+        )
+
+        (_log
+          f dwg layName "T" (_t wasCur) (_t wasOff) (_t wasFroz) (_t wasLock) action
+        )
+      )
+    )
   )
-  $listBox.BeginUpdate()
-  try {
-    $listBox.Items.Clear()
-    $items = $source
-    if (-not [string]::IsNullOrWhiteSpace($filterText)) {
-      $needle = $filterText.Trim()
-      $items = $source | Where-Object {
-        $_.IndexOf($needle, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
-      }
-    }
-    foreach ($item in ($items | Sort-Object)) {
-      [void]$listBox.Items.Add($item)
-    }
+
+  ; Try to save (avoid QSAVE prompts)
+  (setq saveRes (vl-catch-all-apply 'vla-save (list doc)))
+  (if (vl-catch-all-error-p saveRes)
+    (_log f dwg "<DWG_SAVE>" "T" "?" "?" "?" "?" (strcat "SAVE_FAILED:" (vl-catch-all-error-message saveRes)))
+    (_log f dwg "<DWG_SAVE>" "T" "?" "?" "?" "?" "SAVE_OK")
+  )
+
+  (if f (close f))
+
+  ; Exit without prompting (we already attempted save)
+  (command "_.QUIT" "_N")
+  (princ)
+)
+(princ)
+"@
+Set-Content -Path $updateLsp -Value $updateLspContent -Encoding ASCII
+
+$updateScr = Join-Path $ToolDir "update.scr"
+$updateScrContent = @"
+FILEDIA
+0
+CMDDIA
+0
+PROXYNOTICE
+0
+SECURELOAD
+0
+(load "$updateLspForLisp")
+(c:BatchFreeze)
+"@
+Set-Content -Path $updateScr -Value $updateScrContent -Encoding ASCII
+
+# ---------------- 7) EXECUTE UPDATES ----------------
+$logFile = Join-Path ([Environment]::GetFolderPath("Desktop")) "LayerUpdateLog.txt"
+"Starting Update at $(Get-Date)" | Out-File $logFile
+
+Write-Host "PROGRESS: Updating files..."
+
+foreach ($file in $files) {
+  $leaf = Split-Path $file -Leaf
+  Write-Host "Processing: $leaf"
+
+  $base = Split-Path $file -LeafBase
+  $outLog = Join-Path $ToolDir "update_$base.out.txt"
+  $errLog = Join-Path $ToolDir "update_$base.err.txt"
+  if (Test-Path $outLog) { Remove-Item $outLog -Force }
+  if (Test-Path $errLog) { Remove-Item $errLog -Force }
+
+  $result = Invoke-AcadCore -DwgPath $file -ScriptPath $updateScr -OutLog $outLog -ErrLog $errLog -TimeoutSeconds $ProcessTimeoutSeconds
+
+  if ($result.TimedOut) {
+    Write-Host "  -> TIMEOUT. Killed." -ForegroundColor Red
+    "FAILED (Timeout): $file" | Out-File $logFile -Append
+    continue
   }
-  finally {
-    $listBox.EndUpdate()
+
+  if ($result.ExitCode -eq 0) {
+    Write-Host "  -> CoreConsole ExitCode 0" -ForegroundColor Green
+    "DONE (ExitCode 0): $file" | Out-File $logFile -Append
+  }
+  else {
+    Write-Host "  -> Error Code: $($result.ExitCode)" -ForegroundColor Yellow
+    "ERROR ($($result.ExitCode)): $file" | Out-File $logFile -Append
   }
 }
 
-$refreshLayerLists = {
-  Update-LayerList $listKeep $allKeepLayers $txtLayerFilter.Text
-  Update-LayerList $listFreeze $allFreezeLayers $txtLayerFilter.Text
-}
-
-$txtLayerFilter.Add_TextChanged({ & $refreshLayerLists })
-& $refreshLayerLists
-
-$moveToFreeze = {
-  $selected = @($listKeep.SelectedItems)
-  foreach ($item in $selected) {
-    Remove-Layer $allKeepLayers $item
-    Add-LayerUnique $allFreezeLayers $item
-  }
-  & $refreshLayerLists
-}
-
-$moveToKeep = {
-  $selected = @($listFreeze.SelectedItems)
-  foreach ($item in $selected) {
-    Remove-Layer $allFreezeLayers $item
-    Add-LayerUnique $allKeepLayers $item
-  }
-  & $refreshLayerLists
-}
-
-# Buttons to move
-$btnToFreeze = New-Object System.Windows.Forms.Button
-$btnToFreeze.Text = ">"
-$btnToFreeze.Location = New-Object System.Drawing.Point(275, 170)
-$btnToFreeze.Size = New-Object System.Drawing.Size(35, 30)
-$btnToFreeze.Add_Click({ & $moveToFreeze })
-$form.Controls.Add($btnToFreeze)
-
-$btnToKeep = New-Object System.Windows.Forms.Button
-$btnToKeep.Text = "<"
-$btnToKeep.Location = New-Object System.Drawing.Point(275, 210)
-$btnToKeep.Size = New-Object System.Drawing.Size(35, 30)
-$btnToKeep.Add_Click({ & $moveToKeep })
-$form.Controls.Add($btnToKeep)
-
-# Double-click handlers
-$listKeep.Add_MouseDoubleClick({ & $moveToFreeze })
-$listFreeze.Add_MouseDoubleClick({ & $moveToKeep })
-
-$okButton = New-Object System.Windows.Forms.Button
-$okButton.Location = New-Object System.Drawing.Point(260, 390)
-$okButton.Size = New-Object System.Drawing.Size(80, 30)
-$okButton.Text = "OK"
-$okButton.DialogResult = [System.Windows.Forms.DialogResult]::OK
-$form.AcceptButton = $okButton
-$form.Controls.Add($okButton)
-
-$form.Topmost = $true
-$result = $form.ShowDialog()
-
-if ($result -ne [System.Windows.Forms.DialogResult]::OK) {
-  Write-Host "PROGRESS: ERROR: Operation cancelled by user."; exit 1
-}
-
-$layersToFreeze = @($allFreezeLayers | Sort-Object)
-$layersToKeep = @($allKeepLayers | Sort-Object)
-
-# --- Create SCR file with direct commands (more reliable than LISP) ---
-$scriptFile = Join-Path $env:TEMP "freeze_layers.scr"
-$scriptLines = @()
-
-# Add CMDECHO off
-$scriptLines += "CMDECHO"
-$scriptLines += "0"
-$scriptLines += "FILEDIA"
-$scriptLines += "0"
-
-# Find a safe layer to set as current
-$safeLayer = $null
-foreach ($lay in $layersToKeep) {
-  $safeLayer = $lay
-  break
-}
-if (-not $safeLayer) {
-  $safeLayer = "0"
-}
-
-# Set safe layer as current
-$scriptLines += "-LAYER"
-$scriptLines += "S"
-$scriptLines += $safeLayer
-$scriptLines += ""
-
-# Thaw all layers that should be kept
-foreach ($lay in $layersToKeep) {
-  $scriptLines += "-LAYER"
-  $scriptLines += "T"
-  $scriptLines += $lay
-  $scriptLines += ""
-}
-
-# Freeze all layers that should be frozen
-foreach ($lay in $layersToFreeze) {
-  $scriptLines += "-LAYER"
-  $scriptLines += "F"
-  $scriptLines += $lay
-  $scriptLines += ""
-}
-
-# Save and quit
-$scriptLines += "QSAVE"
-$scriptLines += ""
-$scriptLines += "QUIT"
-$scriptLines += "Y"
-
-$scriptContent = $scriptLines -join "`n"
-Set-Content -Encoding ASCII -Path $scriptFile -Value $scriptContent
-
-# --- PROCESSING SETUP ---
-Write-Host "PROGRESS: Preparing to update $($files.Count) file(s)..."
-$baseLogDir = Join-Path -Path ([Environment]::GetFolderPath("MyDocuments")) -ChildPath "AutoCAD Layer Updates"
-$timestamp = Get-Date -Format 'yyyy-MM-dd_HH-mm-ss'
-$runOutputDir = Join-Path -Path $baseLogDir -ChildPath $timestamp
-New-Item -ItemType Directory -Force -Path $runOutputDir | Out-Null
-
-$logFile = Join-Path $runOutputDir "_LayerFreezeLog.txt"
-"===== Layer Freeze Started: $(Get-Date -f 'yyyy-MM-dd HH:mm:ss') =====" | Out-File $logFile
-"AutoCAD Core Used: $acadCore" | Out-File $logFile -Append
-"Safe Layer (Current): $safeLayer" | Out-File $logFile -Append
-"Layers to Freeze ($($layersToFreeze.Count)): $($layersToFreeze -join ', ')" | Out-File $logFile -Append
-"Layers to Keep ($($layersToKeep.Count)): $($layersToKeep -join ', ')" | Out-File $logFile -Append
-"Processing $($files.Count) files..." | Out-File $logFile -Append
-"" | Out-File $logFile -Append
-"Script content:" | Out-File $logFile -Append
-$scriptContent | Out-File $logFile -Append
-"" | Out-File $logFile -Append
-
-$failed = @()
-$i = 0
-foreach ($dwgPath in $files) {
-  $i++
-  $dwgItem = Get-Item $dwgPath
-  Write-Host "PROGRESS: Updating layers ($i of $($files.Count)): $($dwgItem.Name)"
-
-  "===== $(Get-Date -f 'yyyy-MM-dd HH:mm:ss') Start: $($dwgItem.Name) =====" | Out-File $logFile -Append
-  & $acadCore /i "$dwgPath" /s "$scriptFile" 2>&1 | Tee-Object -FilePath $logFile -Append
-  $code = $LASTEXITCODE
-  "ExitCode: $code" | Out-File $logFile -Append
-
-  if ($code -ne 0) {
-    $failed += $dwgPath
-  }
-  "===== $(Get-Date -f 'yyyy-MM-dd HH:mm:ss') Done: $($dwgItem.Name) =====" | Out-File $logFile -Append
-}
-
-"===== Layer Freeze Finished: $(Get-Date -f 'yyyy-MM-dd HH:mm:ss') =====" | Out-File $logFile -Append
-
-if ($failed.Count) {
-  $failMsg = "One or more files failed to update: $($failed -join ', ')"
-  Write-Host "PROGRESS: ERROR: $failMsg"
-  $failMsg | Out-File $logFile -Append
-}
-else {
-  Write-Host "PROGRESS: Successfully updated $($files.Count) drawing(s)."
-}
-
-Write-Host "PROGRESS: Log saved to $logFile"
+Write-Host "Done."
+Write-Host "Summary log: $logFile"
+Write-Host "State/action report (per DWG + per layer): $freezeReport"
+Write-Host "Per-file Core Console logs: $ToolDir"

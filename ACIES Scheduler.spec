@@ -5,7 +5,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('VERSION', '.'), ('index.html', '.'), ('styles.css', '.'), ('script.js', '.'), ('.env', '.'), ('acies.png', '.'), ('merge_pdfs.py', '.'), ('PlotDWGs.ps1', '.'), ('FreezeLayersDWGs.ps1', '.'), ('removeXREFPaths.ps1', '.'), ('StripRefPaths.dll', '.'), ('WireSizerApplication/dist', 'WireSizerApplication/dist')],
+    datas=[('VERSION', '.'), ('index.html', '.'), ('styles.css', '.'), ('script.js', '.'), ('.env', '.'), ('acies.png', '.'), ('merge_pdfs.py', '.'), ('PlotDWGs.ps1', '.'), ('FreezeLayersDWGs.ps1', '.'), ('removeXREFPaths.ps1', '.'), ('StripRefPaths.dll', '.'), ('WireSizerApplication\\\\dist', 'WireSizerApplication\\\\dist')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

@@ -251,6 +251,16 @@
                             </div>
                             <div class="tool-card-status"></div>
                         </div>
+                        <div id="toolLightingSchedule" class="tool-card" role="button" tabindex="0">
+                            <div class="tool-card-content">
+                                <div class="tool-icon">LF</div>
+                                <div class="tool-card-header">Light Fixture Scheduler</div>
+                                <div class="tool-card-body">
+                                    Build and store lighting fixture schedules for each project.
+                                </div>
+                            </div>
+                            <div class="tool-card-status"></div>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -840,6 +850,69 @@
             <div class="wire-sizer-body">
                 <div id="wireSizerEmptyState" class="wire-sizer-empty" hidden></div>
                 <iframe id="wireSizerFrame" class="wire-sizer-frame" title="Wire Sizer"></iframe>
+            </div>
+        </div>
+    </dialog>
+
+    <dialog id="lightingScheduleDlg" class="lighting-schedule-dialog">
+        <div class="lighting-schedule-shell">
+            <div class="lighting-schedule-header">
+                <div class="lighting-schedule-title">
+                    <div class="title">Light Fixture Scheduler</div>
+                    <p class="tiny muted">Lighting fixture schedule by project.</p>
+                </div>
+                <button class="icon-btn" id="lightingScheduleCloseBtn" aria-label="Close Light Fixture Scheduler"
+                    title="Close">X</button>
+            </div>
+            <div class="lighting-schedule-body">
+                <div class="lighting-schedule-controls">
+                    <div class="lighting-schedule-select">
+                        <label class="label" for="lightingScheduleProjectSelect">Project</label>
+                        <select id="lightingScheduleProjectSelect"></select>
+                    </div>
+                    <div class="lighting-schedule-actions">
+                        <button class="btn tiny" id="lightingScheduleAddRow" type="button">Add Row</button>
+                    </div>
+                </div>
+                <div id="lightingScheduleEmptyState" class="lighting-schedule-empty" hidden></div>
+                <div id="lightingScheduleTableWrap" class="lighting-schedule-table-wrap">
+                    <table class="lighting-schedule-table" aria-label="Lighting fixture schedule">
+                        <thead>
+                            <tr>
+                                <th colspan="8" class="lighting-schedule-title-cell">LIGHTING FIXTURE SCHEDULE</th>
+                            </tr>
+                            <tr>
+                                <th>MARK</th>
+                                <th>DESCRIPTION</th>
+                                <th>MANUFACTURER</th>
+                                <th>MODEL NUMBER</th>
+                                <th>MOUNTING</th>
+                                <th>VOLTS</th>
+                                <th>WATTS</th>
+                                <th>NOTES</th>
+                            </tr>
+                        </thead>
+                        <tbody id="lightingScheduleRows"></tbody>
+                        <tfoot>
+                            <tr>
+                                <td colspan="8" class="lighting-schedule-notes-cell">
+                                    <div class="lighting-schedule-notes">
+                                        <div class="lighting-schedule-notes-label">GENERAL NOTES:</div>
+                                        <textarea id="lightingScheduleGeneralNotes" rows="6"></textarea>
+                                    </div>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td colspan="8" class="lighting-schedule-notes-cell">
+                                    <div class="lighting-schedule-notes">
+                                        <div class="lighting-schedule-notes-label">NOTES:</div>
+                                        <textarea id="lightingScheduleNotes" rows="4"></textarea>
+                                    </div>
+                                </td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
             </div>
         </div>
     </dialog>

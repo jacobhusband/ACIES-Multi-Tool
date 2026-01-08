@@ -39,6 +39,27 @@ const HELP_LINKS = {
     "https://brainy-seahorse-3c5.notion.site/Plugins-2b13fdbb662c801abfe9cc46927eb73a",
 };
 const THEME_STORAGE_KEY = "acies-theme";
+const LIGHTING_SCHEDULE_FIELDS = [
+  "mark",
+  "description",
+  "manufacturer",
+  "modelNumber",
+  "mounting",
+  "volts",
+  "watts",
+  "notes",
+];
+const LIGHTING_SCHEDULE_DEFAULT_GENERAL_NOTES = [
+  "A.  VERIFY ALL CEILING TYPES PRIOR TO ORDERING FIXTURES.",
+  "B.  VERIFY ALL OPERATING VOLTAGE PRIOR TO ORDERING FIXTURES.",
+  "C.  COORDINATE THE HEIGHT OF ALL SUSPENDED FIXTURES WITH THE OWNER, ARCHITECT AND ENGINEER PRIOR TO INSTALLATION.",
+  "D.  ALL LAMPS SHALL HAVE A COLOR TEMPERATURE OF 3500 DEG. KELVIN AND A CRI OF 85 UNLESS SPECIFICALLY NOTED.",
+  'E.  FIXTURES DESIGNATED WITH A "1/2 SHADE" OR "FULL SHADE" AND ALL EXIT SIGNS SHALL BE CIRCUITED TO THE CENTRAL EMERGENCY BATTERY INVERTER OR PROVIDED WITH INTEGRAL BATTERY BACKUP AS REQUIRED. EM BACKUP POWER SHALL BE SUITABLE TO PROVIDE FULL POWER TO FIXTURES FOR A MINIMUM OF 90 MINUTES.',
+].join("\n");
+const LIGHTING_SCHEDULE_DEFAULT_NOTES = [
+  "1.  CONFIRM THE DRIVER TYPE WITH VENDOR. LIGHT DRIVER SHALL BE COMPATIBLE WITH THE DIMMER. REFER TO THE SENSOR SCHEDULE FOR DETAILS.",
+  "2.  COORDINATE THE FINAL MANUFACTURER AND MODEL WITH ARCHITECT.",
+].join("\n");
 
 // Cache for loaded descriptions to prevent re-fetching
 const DESCRIPTION_CACHE = {};
@@ -290,6 +311,7 @@ let activeNoteTab = null;
 let latestAppUpdate = null;
 let currentStatsTimespan = "1Y";
 let currentStatsAggregation = "month";
+let lightingScheduleProjectIndex = null;
 
 const allowedAggregations = {
   "1W": ["day", "week"],
@@ -1114,6 +1136,11 @@ function fillForm(p) {
   (p.refs || []).forEach(addRefRowFrom);
 }
 function readForm() {
+  const baseSchedule =
+    editIndex >= 0 && db[editIndex] ? db[editIndex].lightingSchedule : null;
+  const lightingSchedule = normalizeLightingSchedule(
+    baseSchedule ?? createDefaultLightingSchedule()
+  );
   const out = {
     id: val("f_id"),
     name: val("f_name"),
@@ -1124,6 +1151,7 @@ function readForm() {
     tasks: [],
     refs: [],
     statuses: readStatusPicker("f_statuses"),
+    lightingSchedule,
   };
   document.querySelectorAll("#taskList .task-row").forEach((row) => {
     const text = row.querySelector(".t-text").value.trim();
@@ -1292,6 +1320,7 @@ function importRows(rows, hasHeader = true) {
       tasks: [],
       refs: [],
       statuses: [],
+      lightingSchedule: createDefaultLightingSchedule(),
     };
     const parts = String(statusCell || "")
       .split(/[,/|;]+/)
@@ -1771,6 +1800,221 @@ function closeWireSizer() {
   const frame = document.getElementById("wireSizerFrame");
   if (dlg?.open) dlg.close();
   if (frame) frame.src = "about:blank";
+}
+
+const debouncedSaveLightingSchedule = debounce(() => save(), 400);
+
+function createLightingScheduleRow(seed = {}) {
+  return {
+    mark: seed.mark ?? "",
+    description: seed.description ?? "",
+    manufacturer: seed.manufacturer ?? "",
+    modelNumber: seed.modelNumber ?? "",
+    mounting: seed.mounting ?? "",
+    volts: seed.volts ?? "",
+    watts: seed.watts ?? "",
+    notes: seed.notes ?? "",
+  };
+}
+
+function createDefaultLightingSchedule() {
+  return {
+    rows: [createLightingScheduleRow()],
+    generalNotes: LIGHTING_SCHEDULE_DEFAULT_GENERAL_NOTES,
+    notes: LIGHTING_SCHEDULE_DEFAULT_NOTES,
+  };
+}
+
+function normalizeLightingSchedule(schedule) {
+  const normalized =
+    schedule && typeof schedule === "object" ? schedule : {};
+  if (!Array.isArray(normalized.rows) || normalized.rows.length === 0) {
+    normalized.rows = [createLightingScheduleRow()];
+  } else {
+    normalized.rows = normalized.rows.map((row) => {
+      if (!row || typeof row !== "object") {
+        return createLightingScheduleRow();
+      }
+      LIGHTING_SCHEDULE_FIELDS.forEach((field) => {
+        if (row[field] == null) row[field] = "";
+      });
+      return row;
+    });
+  }
+  if (normalized.generalNotes == null) {
+    normalized.generalNotes = LIGHTING_SCHEDULE_DEFAULT_GENERAL_NOTES;
+  }
+  if (normalized.notes == null) {
+    normalized.notes = LIGHTING_SCHEDULE_DEFAULT_NOTES;
+  }
+  return normalized;
+}
+
+function ensureLightingSchedule(project) {
+  if (!project) return { schedule: null, created: false };
+  let schedule = project.lightingSchedule;
+  let created = false;
+  if (!schedule) {
+    schedule = createDefaultLightingSchedule();
+    created = true;
+  }
+  schedule = normalizeLightingSchedule(schedule);
+  project.lightingSchedule = schedule;
+  return { schedule, created };
+}
+
+function getLightingScheduleProjectLabel(project, index) {
+  if (!project) return `Project ${index + 1}`;
+  const id = (project.id || "").trim();
+  const name = (project.name || "").trim();
+  if (id && name) return `${id} - ${name}`;
+  return id || name || `Project ${index + 1}`;
+}
+
+function renderLightingScheduleProjectOptions() {
+  const select = document.getElementById("lightingScheduleProjectSelect");
+  if (!select) return;
+  select.innerHTML = "";
+  db.forEach((project, index) => {
+    const option = el("option", {
+      value: String(index),
+      textContent: getLightingScheduleProjectLabel(project, index),
+    });
+    select.appendChild(option);
+  });
+  select.disabled = db.length === 0;
+}
+
+function getActiveLightingSchedule() {
+  if (lightingScheduleProjectIndex == null) return null;
+  const project = db[lightingScheduleProjectIndex];
+  if (!project) return null;
+  return ensureLightingSchedule(project).schedule;
+}
+
+function renderLightingScheduleRows(schedule) {
+  const body = document.getElementById("lightingScheduleRows");
+  if (!body) return;
+  body.innerHTML = "";
+  schedule.rows.forEach((row, rowIndex) => {
+    const tr = document.createElement("tr");
+    LIGHTING_SCHEDULE_FIELDS.forEach((field) => {
+      const td = document.createElement("td");
+      const input = document.createElement("input");
+      input.value = row[field] ?? "";
+      input.addEventListener("input", (e) => {
+        row[field] = e.target.value;
+        debouncedSaveLightingSchedule();
+      });
+      if (field === "notes") {
+        const wrap = document.createElement("div");
+        wrap.className = "lighting-schedule-row-notes";
+        wrap.appendChild(input);
+        const removeBtn = document.createElement("button");
+        removeBtn.type = "button";
+        removeBtn.className = "lighting-schedule-remove";
+        removeBtn.textContent = "X";
+        removeBtn.title = "Remove row";
+        removeBtn.setAttribute("aria-label", "Remove row");
+        removeBtn.addEventListener("click", () =>
+          removeLightingScheduleRow(rowIndex)
+        );
+        wrap.appendChild(removeBtn);
+        td.appendChild(wrap);
+      } else {
+        td.appendChild(input);
+      }
+      tr.appendChild(td);
+    });
+    body.appendChild(tr);
+  });
+}
+
+function renderLightingSchedule(schedule) {
+  const emptyState = document.getElementById("lightingScheduleEmptyState");
+  const tableWrap = document.getElementById("lightingScheduleTableWrap");
+  const addRowBtn = document.getElementById("lightingScheduleAddRow");
+  const generalNotes = document.getElementById("lightingScheduleGeneralNotes");
+  const notes = document.getElementById("lightingScheduleNotes");
+
+  if (!schedule) {
+    if (emptyState) {
+      emptyState.textContent =
+        "Create a project to start a lighting fixture schedule.";
+      emptyState.hidden = false;
+    }
+    if (tableWrap) tableWrap.hidden = true;
+    if (addRowBtn) addRowBtn.disabled = true;
+    if (generalNotes) generalNotes.value = "";
+    if (notes) notes.value = "";
+    return;
+  }
+
+  if (emptyState) emptyState.hidden = true;
+  if (tableWrap) tableWrap.hidden = false;
+  if (addRowBtn) addRowBtn.disabled = false;
+  if (generalNotes) generalNotes.value = schedule.generalNotes ?? "";
+  if (notes) notes.value = schedule.notes ?? "";
+  renderLightingScheduleRows(schedule);
+}
+
+function setLightingScheduleProject(index) {
+  if (!Number.isInteger(index) || !db[index]) {
+    lightingScheduleProjectIndex = null;
+    renderLightingSchedule(null);
+    return;
+  }
+  lightingScheduleProjectIndex = index;
+  const select = document.getElementById("lightingScheduleProjectSelect");
+  if (select) select.value = String(index);
+  const { schedule, created } = ensureLightingSchedule(db[index]);
+  if (created) save();
+  renderLightingSchedule(schedule);
+}
+
+function addLightingScheduleRow() {
+  const schedule = getActiveLightingSchedule();
+  if (!schedule) return;
+  schedule.rows.push(createLightingScheduleRow());
+  renderLightingScheduleRows(schedule);
+  debouncedSaveLightingSchedule();
+}
+
+function removeLightingScheduleRow(rowIndex) {
+  const schedule = getActiveLightingSchedule();
+  if (!schedule) return;
+  if (schedule.rows.length <= 1) {
+    schedule.rows[0] = createLightingScheduleRow();
+  } else {
+    schedule.rows.splice(rowIndex, 1);
+  }
+  renderLightingScheduleRows(schedule);
+  debouncedSaveLightingSchedule();
+}
+
+function openLightingSchedule() {
+  const dlg = document.getElementById("lightingScheduleDlg");
+  if (!dlg) return;
+  renderLightingScheduleProjectOptions();
+  if (db.length) {
+    if (
+      lightingScheduleProjectIndex == null ||
+      !db[lightingScheduleProjectIndex]
+    ) {
+      lightingScheduleProjectIndex = 0;
+    }
+    setLightingScheduleProject(lightingScheduleProjectIndex);
+  } else {
+    lightingScheduleProjectIndex = null;
+    renderLightingSchedule(null);
+  }
+  if (!dlg.open) dlg.showModal();
+}
+
+function closeLightingSchedule() {
+  const dlg = document.getElementById("lightingScheduleDlg");
+  if (dlg?.open) dlg.close();
+  save();
 }
 
 // ===================== ONBOARDING SYSTEM =====================
@@ -2609,6 +2853,72 @@ function initEventListeners() {
       const frame = document.getElementById("wireSizerFrame");
       if (frame) frame.src = "about:blank";
       setWireSizerMessage("");
+    });
+  }
+
+  const lightingScheduleBtn = document.getElementById("toolLightingSchedule");
+  if (lightingScheduleBtn) {
+    lightingScheduleBtn.addEventListener("click", openLightingSchedule);
+    lightingScheduleBtn.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        openLightingSchedule();
+      }
+    });
+  }
+
+  const lightingScheduleCloseBtn = document.getElementById(
+    "lightingScheduleCloseBtn"
+  );
+  if (lightingScheduleCloseBtn) {
+    lightingScheduleCloseBtn.addEventListener("click", closeLightingSchedule);
+  }
+
+  const lightingScheduleDlg = document.getElementById("lightingScheduleDlg");
+  if (lightingScheduleDlg) {
+    lightingScheduleDlg.addEventListener("close", () => {
+      save();
+    });
+  }
+
+  const lightingScheduleProjectSelect = document.getElementById(
+    "lightingScheduleProjectSelect"
+  );
+  if (lightingScheduleProjectSelect) {
+    lightingScheduleProjectSelect.addEventListener("change", (e) => {
+      const idx = Number(e.target.value);
+      if (!Number.isNaN(idx)) setLightingScheduleProject(idx);
+    });
+  }
+
+  const lightingScheduleAddRowBtn = document.getElementById(
+    "lightingScheduleAddRow"
+  );
+  if (lightingScheduleAddRowBtn) {
+    lightingScheduleAddRowBtn.addEventListener("click", addLightingScheduleRow);
+  }
+
+  const lightingScheduleGeneralNotes = document.getElementById(
+    "lightingScheduleGeneralNotes"
+  );
+  if (lightingScheduleGeneralNotes) {
+    lightingScheduleGeneralNotes.addEventListener("input", (e) => {
+      const schedule = getActiveLightingSchedule();
+      if (!schedule) return;
+      schedule.generalNotes = e.target.value;
+      debouncedSaveLightingSchedule();
+    });
+  }
+
+  const lightingScheduleNotes = document.getElementById(
+    "lightingScheduleNotes"
+  );
+  if (lightingScheduleNotes) {
+    lightingScheduleNotes.addEventListener("input", (e) => {
+      const schedule = getActiveLightingSchedule();
+      if (!schedule) return;
+      schedule.notes = e.target.value;
+      debouncedSaveLightingSchedule();
     });
   }
 

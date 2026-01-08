@@ -1517,6 +1517,79 @@ dialog.lighting-schedule-dialog {
   flex-wrap: wrap;
 }
 
+.lighting-template-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+}
+
+.lighting-template-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.lighting-template-header input {
+  width: min(320px, 100%);
+}
+
+.lighting-template-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.lighting-template-title {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.lighting-template-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.lighting-template-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+}
+
+.lighting-template-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.lighting-template-mark {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.lighting-template-desc {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .lighting-schedule-empty {
   padding: 1rem;
   text-align: center;
@@ -1536,6 +1609,7 @@ dialog.lighting-schedule-dialog {
   width: 100%;
   border-collapse: collapse;
   min-width: 980px;
+  table-layout: fixed;
 }
 
 .lighting-schedule-table th,
@@ -1562,7 +1636,8 @@ dialog.lighting-schedule-dialog {
   letter-spacing: 0.1em;
 }
 
-.lighting-schedule-table input {
+.lighting-schedule-table input,
+.lighting-schedule-table textarea {
   width: 100%;
   font-size: 12px;
   padding: 0.35rem 0.45rem;
@@ -1570,12 +1645,28 @@ dialog.lighting-schedule-dialog {
 
 .lighting-schedule-row-notes {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 0.35rem;
 }
 
-.lighting-schedule-row-notes input {
+.lighting-schedule-row-notes input,
+.lighting-schedule-row-notes textarea {
   flex: 1;
+}
+
+.lighting-schedule-row-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.lighting-schedule-table textarea {
+  resize: vertical;
+  overflow: hidden;
+  min-height: 32px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .lighting-schedule-remove {
@@ -1594,6 +1685,24 @@ dialog.lighting-schedule-dialog {
   background: var(--danger);
   color: #ffffff;
   border-color: var(--danger);
+}
+
+.lighting-schedule-template-save {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(16, 185, 129, 0.5);
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.lighting-schedule-template-save:hover {
+  background: var(--accent);
+  color: var(--btn-text-on-accent);
+  border-color: var(--accent);
 }
 
 .lighting-schedule-notes-cell {

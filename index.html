@@ -867,12 +867,27 @@
             <div class="lighting-schedule-body">
                 <div class="lighting-schedule-controls">
                     <div class="lighting-schedule-select">
+                        <label class="label" for="lightingScheduleProjectSearch">Search Projects</label>
+                        <input id="lightingScheduleProjectSearch" type="search"
+                            placeholder="Search by project ID or name" />
+                    </div>
+                    <div class="lighting-schedule-select">
                         <label class="label" for="lightingScheduleProjectSelect">Project</label>
                         <select id="lightingScheduleProjectSelect"></select>
                     </div>
                     <div class="lighting-schedule-actions">
                         <button class="btn tiny" id="lightingScheduleAddRow" type="button">Add Row</button>
                     </div>
+                </div>
+                <div class="lighting-template-panel">
+                    <div class="lighting-template-header">
+                        <div class="lighting-template-heading">
+                            <div class="lighting-template-title">Fixture Templates</div>
+                            <div class="tiny muted">Save a row as a template, then search marks to add.</div>
+                        </div>
+                        <input id="lightingTemplateSearch" type="search" placeholder="Search mark or description" />
+                    </div>
+                    <div id="lightingTemplateList" class="lighting-template-list"></div>
                 </div>
                 <div id="lightingScheduleEmptyState" class="lighting-schedule-empty" hidden></div>
                 <div id="lightingScheduleTableWrap" class="lighting-schedule-table-wrap">

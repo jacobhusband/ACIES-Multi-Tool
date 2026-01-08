@@ -306,12 +306,15 @@ let userSettings = {
   autocadPath: "",
   showSetupHelp: true,
   theme: "dark",
+  lightingTemplates: [],
 };
 let activeNoteTab = null;
 let latestAppUpdate = null;
 let currentStatsTimespan = "1Y";
 let currentStatsAggregation = "month";
 let lightingScheduleProjectIndex = null;
+let lightingScheduleProjectQuery = "";
+let lightingTemplateQuery = "";
 
 const allowedAggregations = {
   "1W": ["day", "week"],
@@ -1804,6 +1807,12 @@ function closeWireSizer() {
 
 const debouncedSaveLightingSchedule = debounce(() => save(), 400);
 
+function autoResizeTextarea(textarea) {
+  if (!textarea) return;
+  textarea.style.height = "auto";
+  textarea.style.height = `${textarea.scrollHeight}px`;
+}
+
 function createLightingScheduleRow(seed = {}) {
   return {
     mark: seed.mark ?? "",
@@ -1871,18 +1880,49 @@ function getLightingScheduleProjectLabel(project, index) {
   return id || name || `Project ${index + 1}`;
 }
 
-function renderLightingScheduleProjectOptions() {
+function renderLightingScheduleProjectOptions(filterText = "") {
   const select = document.getElementById("lightingScheduleProjectSelect");
   if (!select) return;
   select.innerHTML = "";
-  db.forEach((project, index) => {
+  const query = String(filterText || "").trim().toLowerCase();
+  const matches = db
+    .map((project, index) => ({ project, index }))
+    .filter(({ project }) => {
+      if (!query) return true;
+      const id = String(project?.id || "").toLowerCase();
+      const name = String(project?.name || "").toLowerCase();
+      const nick = String(project?.nick || "").toLowerCase();
+      return id.includes(query) || name.includes(query) || nick.includes(query);
+    });
+
+  matches.forEach(({ project, index }) => {
     const option = el("option", {
       value: String(index),
       textContent: getLightingScheduleProjectLabel(project, index),
     });
     select.appendChild(option);
   });
-  select.disabled = db.length === 0;
+  select.disabled = matches.length === 0;
+
+  if (!matches.length) {
+    lightingScheduleProjectIndex = null;
+    renderLightingSchedule(
+      null,
+      db.length
+        ? "No projects match that search."
+        : "Create a project to start a lighting fixture schedule."
+    );
+    return;
+  }
+
+  const availableIndexes = matches.map(({ index }) => index);
+  if (availableIndexes.includes(lightingScheduleProjectIndex)) {
+    select.value = String(lightingScheduleProjectIndex);
+    return;
+  }
+
+  const nextIndex = availableIndexes[0];
+  setLightingScheduleProject(nextIndex);
 }
 
 function getActiveLightingSchedule() {
@@ -1890,6 +1930,102 @@ function getActiveLightingSchedule() {
   const project = db[lightingScheduleProjectIndex];
   if (!project) return null;
   return ensureLightingSchedule(project).schedule;
+}
+
+function getLightingTemplates() {
+  return Array.isArray(userSettings.lightingTemplates)
+    ? userSettings.lightingTemplates
+    : [];
+}
+
+function setLightingTemplates(templates) {
+  userSettings.lightingTemplates = templates;
+  debouncedSaveUserSettings();
+}
+
+function saveLightingTemplateFromRow(row) {
+  const mark = String(row?.mark || "").trim();
+  if (!mark) {
+    toast("Enter a Mark before saving a template.");
+    return;
+  }
+  const template = createLightingScheduleRow({
+    ...row,
+    mark,
+  });
+  const templates = [...getLightingTemplates()];
+  const key = mark.toLowerCase();
+  const existingIndex = templates.findIndex(
+    (item) => String(item?.mark || "").trim().toLowerCase() === key
+  );
+  if (existingIndex >= 0) templates[existingIndex] = template;
+  else templates.push(template);
+  setLightingTemplates(templates);
+  renderLightingTemplateList(lightingTemplateQuery);
+  toast(`Saved template for mark ${mark}.`);
+}
+
+function addLightingTemplateToSchedule(template) {
+  const schedule = getActiveLightingSchedule();
+  if (!schedule) return;
+  schedule.rows.push(createLightingScheduleRow(template));
+  renderLightingScheduleRows(schedule);
+  debouncedSaveLightingSchedule();
+}
+
+function renderLightingTemplateList(filterText = "") {
+  const list = document.getElementById("lightingTemplateList");
+  if (!list) return;
+  list.innerHTML = "";
+
+  const templates = getLightingTemplates();
+  const query = String(filterText || "").trim().toLowerCase();
+  const filtered = templates.filter((template) => {
+    if (!query) return true;
+    const haystack = [
+      template?.mark,
+      template?.description,
+      template?.manufacturer,
+      template?.modelNumber,
+      template?.mounting,
+    ]
+      .map((value) => String(value || "").toLowerCase())
+      .join(" ");
+    return haystack.includes(query);
+  });
+
+  if (!filtered.length) {
+    list.appendChild(
+      el("div", {
+        className: "tiny muted",
+        textContent: templates.length
+          ? "No templates match that search."
+          : "No templates saved yet.",
+      })
+    );
+    return;
+  }
+
+  filtered.forEach((template) => {
+    const item = el("div", { className: "lighting-template-item" });
+    const meta = el("div", { className: "lighting-template-meta" }, [
+      el("div", {
+        className: "lighting-template-mark",
+        textContent: template.mark || "Untitled",
+      }),
+      el("div", {
+        className: "lighting-template-desc",
+        textContent: template.description || template.manufacturer || "",
+      }),
+    ]);
+    const addBtn = el("button", {
+      className: "btn tiny",
+      textContent: "Add",
+      onclick: () => addLightingTemplateToSchedule(template),
+    });
+    item.append(meta, addBtn);
+    list.appendChild(item);
+  });
 }
 
 function renderLightingScheduleRows(schedule) {
@@ -1900,16 +2036,30 @@ function renderLightingScheduleRows(schedule) {
     const tr = document.createElement("tr");
     LIGHTING_SCHEDULE_FIELDS.forEach((field) => {
       const td = document.createElement("td");
-      const input = document.createElement("input");
+      const input = document.createElement("textarea");
+      input.rows = 1;
       input.value = row[field] ?? "";
       input.addEventListener("input", (e) => {
         row[field] = e.target.value;
+        autoResizeTextarea(input);
         debouncedSaveLightingSchedule();
       });
+      requestAnimationFrame(() => autoResizeTextarea(input));
       if (field === "notes") {
         const wrap = document.createElement("div");
         wrap.className = "lighting-schedule-row-notes";
         wrap.appendChild(input);
+        const actions = document.createElement("div");
+        actions.className = "lighting-schedule-row-actions";
+        const saveBtn = document.createElement("button");
+        saveBtn.type = "button";
+        saveBtn.className = "lighting-schedule-template-save";
+        saveBtn.textContent = "S";
+        saveBtn.title = "Save template";
+        saveBtn.setAttribute("aria-label", "Save template");
+        saveBtn.addEventListener("click", () =>
+          saveLightingTemplateFromRow(row)
+        );
         const removeBtn = document.createElement("button");
         removeBtn.type = "button";
         removeBtn.className = "lighting-schedule-remove";
@@ -1919,7 +2069,8 @@ function renderLightingScheduleRows(schedule) {
         removeBtn.addEventListener("click", () =>
           removeLightingScheduleRow(rowIndex)
         );
-        wrap.appendChild(removeBtn);
+        actions.append(saveBtn, removeBtn);
+        wrap.appendChild(actions);
         td.appendChild(wrap);
       } else {
         td.appendChild(input);
@@ -1930,7 +2081,10 @@ function renderLightingScheduleRows(schedule) {
   });
 }
 
-function renderLightingSchedule(schedule) {
+function renderLightingSchedule(
+  schedule,
+  emptyMessage = "Create a project to start a lighting fixture schedule."
+) {
   const emptyState = document.getElementById("lightingScheduleEmptyState");
   const tableWrap = document.getElementById("lightingScheduleTableWrap");
   const addRowBtn = document.getElementById("lightingScheduleAddRow");
@@ -1939,22 +2093,33 @@ function renderLightingSchedule(schedule) {
 
   if (!schedule) {
     if (emptyState) {
-      emptyState.textContent =
-        "Create a project to start a lighting fixture schedule.";
+      emptyState.textContent = emptyMessage;
       emptyState.hidden = false;
     }
     if (tableWrap) tableWrap.hidden = true;
     if (addRowBtn) addRowBtn.disabled = true;
-    if (generalNotes) generalNotes.value = "";
-    if (notes) notes.value = "";
+    if (generalNotes) {
+      generalNotes.value = "";
+      autoResizeTextarea(generalNotes);
+    }
+    if (notes) {
+      notes.value = "";
+      autoResizeTextarea(notes);
+    }
     return;
   }
 
   if (emptyState) emptyState.hidden = true;
   if (tableWrap) tableWrap.hidden = false;
   if (addRowBtn) addRowBtn.disabled = false;
-  if (generalNotes) generalNotes.value = schedule.generalNotes ?? "";
-  if (notes) notes.value = schedule.notes ?? "";
+  if (generalNotes) {
+    generalNotes.value = schedule.generalNotes ?? "";
+    autoResizeTextarea(generalNotes);
+  }
+  if (notes) {
+    notes.value = schedule.notes ?? "";
+    autoResizeTextarea(notes);
+  }
   renderLightingScheduleRows(schedule);
 }
 
@@ -1995,19 +2160,15 @@ function removeLightingScheduleRow(rowIndex) {
 function openLightingSchedule() {
   const dlg = document.getElementById("lightingScheduleDlg");
   if (!dlg) return;
-  renderLightingScheduleProjectOptions();
-  if (db.length) {
-    if (
-      lightingScheduleProjectIndex == null ||
-      !db[lightingScheduleProjectIndex]
-    ) {
-      lightingScheduleProjectIndex = 0;
-    }
-    setLightingScheduleProject(lightingScheduleProjectIndex);
-  } else {
-    lightingScheduleProjectIndex = null;
-    renderLightingSchedule(null);
-  }
+  const projectSearch = document.getElementById(
+    "lightingScheduleProjectSearch"
+  );
+  if (projectSearch) projectSearch.value = lightingScheduleProjectQuery;
+  renderLightingScheduleProjectOptions(lightingScheduleProjectQuery);
+
+  const templateSearch = document.getElementById("lightingTemplateSearch");
+  if (templateSearch) templateSearch.value = lightingTemplateQuery;
+  renderLightingTemplateList(lightingTemplateQuery);
   if (!dlg.open) dlg.showModal();
 }
 
@@ -2891,11 +3052,31 @@ function initEventListeners() {
     });
   }
 
+  const lightingScheduleProjectSearch = document.getElementById(
+    "lightingScheduleProjectSearch"
+  );
+  if (lightingScheduleProjectSearch) {
+    lightingScheduleProjectSearch.addEventListener("input", (e) => {
+      lightingScheduleProjectQuery = e.target.value;
+      renderLightingScheduleProjectOptions(lightingScheduleProjectQuery);
+    });
+  }
+
   const lightingScheduleAddRowBtn = document.getElementById(
     "lightingScheduleAddRow"
   );
   if (lightingScheduleAddRowBtn) {
     lightingScheduleAddRowBtn.addEventListener("click", addLightingScheduleRow);
+  }
+
+  const lightingTemplateSearch = document.getElementById(
+    "lightingTemplateSearch"
+  );
+  if (lightingTemplateSearch) {
+    lightingTemplateSearch.addEventListener("input", (e) => {
+      lightingTemplateQuery = e.target.value;
+      renderLightingTemplateList(lightingTemplateQuery);
+    });
   }
 
   const lightingScheduleGeneralNotes = document.getElementById(
@@ -2906,6 +3087,7 @@ function initEventListeners() {
       const schedule = getActiveLightingSchedule();
       if (!schedule) return;
       schedule.generalNotes = e.target.value;
+      autoResizeTextarea(lightingScheduleGeneralNotes);
       debouncedSaveLightingSchedule();
     });
   }
@@ -2918,6 +3100,7 @@ function initEventListeners() {
       const schedule = getActiveLightingSchedule();
       if (!schedule) return;
       schedule.notes = e.target.value;
+      autoResizeTextarea(lightingScheduleNotes);
       debouncedSaveLightingSchedule();
     });
   }

@@ -1175,19 +1175,6 @@ function getOverviewDeliverables(project) {
     const fallback = getPriorityDeliverable(project);
     if (fallback) selected = [fallback];
   }
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const hasUpcoming = deliverables.some((d) => {
-    const due = parseDueStr(d?.due);
-    return due && !isFinished(d) && due >= today;
-  });
-  if (hasUpcoming) selected = selected.filter((d) => !isFinished(d));
-  if (hasUpcoming && !selected.length) {
-    selected = deliverables.filter((d) => {
-      const due = parseDueStr(d?.due);
-      return due && !isFinished(d);
-    });
-  }
   if (!selected.length) selected = deliverables.slice();
   sortDeliverablesForOverview(selected, project?.overviewDeliverableId);
   return selected;
@@ -1233,8 +1220,8 @@ function buildTasksNotesGrid(deliverable) {
       const tasksToShow = expanded
         ? deliverable.tasks.map((task, index) => ({ task, index }))
         : deliverable.tasks
-            .slice(0, 2)
-            .map((task, index) => ({ task, index }));
+          .slice(0, 2)
+          .map((task, index) => ({ task, index }));
       tasksToShow.forEach(({ task, index }) => {
         const taskObj =
           typeof task === "string"
@@ -1478,9 +1465,8 @@ function render() {
 
         const meta = el("div", { className: "deliverable-overview-meta" });
         const eyeBtn = createIconButton({
-          className: `deliverable-action-btn deliverable-eye ${
-            deliverable.showInOverview ? "" : "is-hidden"
-          }`,
+          className: `deliverable-action-btn deliverable-eye ${deliverable.showInOverview ? "" : "is-hidden"
+            }`,
           title: deliverable.showInOverview ? "Hide deliverable" : "Show deliverable",
           ariaLabel: deliverable.showInOverview
             ? "Hide deliverable"
@@ -1724,7 +1710,17 @@ function addDeliverableCard(deliverable, primaryId) {
 
   const primaryInput = card.querySelector(".d-primary");
   primaryInput.name = "primaryDeliverable";
-  if (primaryId && deliverableId === primaryId) primaryInput.checked = true;
+  if (primaryId && deliverableId === primaryId) {
+    primaryInput.checked = true;
+    card.querySelector(".d-overview").checked = true;  // Ensure primary deliverable is shown in overview
+  }
+
+  // When primary is selected, automatically check "Show in overview"
+  primaryInput.addEventListener('change', () => {
+    if (primaryInput.checked) {
+      card.querySelector(".d-overview").checked = true;
+    }
+  });
 
   const taskList = card.querySelector(".deliverable-task-list");
   (deliverable.tasks || []).map(normalizeTask).forEach((task) => {

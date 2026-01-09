@@ -1038,18 +1038,40 @@ function normalizeProject(project) {
   return out;
 }
 
+function getLatestDueDeliverableId(deliverables = []) {
+  let latestId = "";
+  let latestDue = null;
+  deliverables.forEach((deliverable) => {
+    const due = parseDueStr(deliverable?.due);
+    if (!due) return;
+    if (!latestDue || due > latestDue) {
+      latestDue = due;
+      latestId = deliverable?.id || "";
+    }
+  });
+  return latestId;
+}
+
 function migrateProjects(raw = []) {
   let changed = false;
   const map = new Map();
+  const legacyKeys = new Set();
+  const nonLegacyKeys = new Set();
   raw.forEach((item, index) => {
+    const isLegacy = isLegacyProject(item);
     let project = item;
-    if (isLegacyProject(item)) {
+    if (isLegacy) {
       project = convertLegacyProject(item);
       changed = true;
     } else {
       project = normalizeProject(item);
     }
     const key = getProjectMergeKey(project, index);
+    if (isLegacy) {
+      legacyKeys.add(key);
+    } else {
+      nonLegacyKeys.add(key);
+    }
     if (map.has(key)) {
       mergeProjects(map.get(key), project);
       changed = true;
@@ -1057,8 +1079,26 @@ function migrateProjects(raw = []) {
       map.set(key, project);
     }
   });
-  const merged = Array.from(map.values())
-    .map((p) => normalizeProject(p))
+  const legacyOnlyKeys = new Set(
+    [...legacyKeys].filter((key) => !nonLegacyKeys.has(key))
+  );
+  const merged = Array.from(map.entries())
+    .map(([key, p]) => {
+      const normalized = normalizeProject(p);
+      if (normalized && legacyOnlyKeys.has(key)) {
+        const latestDueId = getLatestDueDeliverableId(
+          normalized.deliverables
+        );
+        if (
+          latestDueId &&
+          normalized.overviewDeliverableId !== latestDueId
+        ) {
+          normalized.overviewDeliverableId = latestDueId;
+          changed = true;
+        }
+      }
+      return normalized;
+    })
     .filter(Boolean);
   return { data: merged, didMigrate: changed };
 }

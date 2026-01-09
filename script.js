@@ -1620,7 +1620,9 @@ function render() {
             ? "Hide deliverable"
             : "Show deliverable",
           path: EYE_ICON_PATH,
+          disabled: isPrimary,
           onClick: async () => {
+            if (isPrimary) return;
             deliverable.showInOverview = !deliverable.showInOverview;
             await save();
             render();
@@ -1863,19 +1865,24 @@ function addDeliverableCard(deliverable, primaryId) {
   card.querySelector(".d-name").value = deliverable.name || "";
   card.querySelector(".d-due").value = deliverable.due || "";
   card.querySelector(".d-notes").value = deliverable.notes || "";
-  card.querySelector(".d-overview").checked = deliverable.showInOverview !== false;
+  const overviewInput = card.querySelector(".d-overview");
+  overviewInput.checked = deliverable.showInOverview !== false;
 
   const primaryInput = card.querySelector(".d-primary");
   primaryInput.name = "primaryDeliverable";
   if (primaryId && deliverableId === primaryId) {
     primaryInput.checked = true;
-    card.querySelector(".d-overview").checked = true;  // Ensure primary deliverable is shown in overview
+    overviewInput.checked = true;  // Ensure primary deliverable is shown in overview
+    overviewInput.disabled = true;
   }
 
   // When primary is selected, automatically check "Show in overview"
   primaryInput.addEventListener('change', () => {
     if (primaryInput.checked) {
-      card.querySelector(".d-overview").checked = true;
+      overviewInput.checked = true;
+      overviewInput.disabled = true;
+    } else {
+      overviewInput.disabled = false;
     }
   });
 

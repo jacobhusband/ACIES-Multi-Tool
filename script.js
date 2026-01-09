@@ -1584,7 +1584,7 @@ function render() {
     deliverablesCell.innerHTML = "";
 
     const visibleDeliverables = overviewDeliverables.filter(d => {
-      if (hideNonPrimary) return d.id === priorityId;
+      if (hideNonPrimary && priorityId) return d.id === priorityId;
       return true;
     });
 

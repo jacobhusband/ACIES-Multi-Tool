@@ -1167,15 +1167,13 @@ function compareDeliverablesByDueDesc(a, b) {
   return dbb - da;
 }
 
-function sortDeliverablesForOverview(list, priorityId, sortDir = "asc") {
-  const cmp =
-    sortDir === "desc" ? compareDeliverablesByDueDesc : compareDeliverablesByDue;
+function sortDeliverablesByPrimaryThenDueDesc(list, primaryId) {
   list.sort((a, b) => {
-    const aPrimary = a?.id === priorityId;
-    const bPrimary = b?.id === priorityId;
+    const aPrimary = a?.id === primaryId;
+    const bPrimary = b?.id === primaryId;
     if (aPrimary && !bPrimary) return -1;
     if (!aPrimary && bPrimary) return 1;
-    return cmp(a, b);
+    return compareDeliverablesByDueDesc(a, b);
   });
 }
 
@@ -1220,11 +1218,9 @@ function getOverviewDeliverables(project) {
     if (fallback) selected = [fallback];
   }
   if (!selected.length) selected = deliverables.slice();
-  const sortDir = project?.overviewSortDir === "desc" ? "desc" : "asc";
-  sortDeliverablesForOverview(
+  sortDeliverablesByPrimaryThenDueDesc(
     selected,
-    project?.overviewDeliverableId,
-    sortDir
+    project?.overviewDeliverableId
   );
   return selected;
 }
@@ -1833,7 +1829,12 @@ function fillForm(project) {
 
   const deliverableList = document.getElementById("deliverableList");
   deliverableList.innerHTML = "";
-  p.deliverables.forEach((deliverable) =>
+  const sortedDeliverables = p.deliverables.slice();
+  sortDeliverablesByPrimaryThenDueDesc(
+    sortedDeliverables,
+    p.overviewDeliverableId
+  );
+  sortedDeliverables.forEach((deliverable) =>
     addDeliverableCard(deliverable, p.overviewDeliverableId)
   );
   if (!deliverableList.children.length) {

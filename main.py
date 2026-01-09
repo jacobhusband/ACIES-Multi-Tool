@@ -878,21 +878,38 @@ Return ONLY the JSON object.
             return {'status': 'error', 'message': str(e)}
 
     def mark_overdue_projects_complete(self):
-        """Marks all projects with due dates before today as complete."""
+        """Marks all deliverables with due dates before today as complete."""
         try:
             tasks = self.get_tasks()
             today = datetime.date.today()
             count = 0
             for task in tasks:
-                due_str = task.get('due', '')
-                if due_str:
-                    due_date = parse_due_str(due_str)
-                    if due_date and due_date.date() < today:
-                        # Set status to Complete
-                        task['statuses'] = ['Complete']
-                        task['status'] = 'Complete'
-                        sync_status_arrays(task)
-                        count += 1
+                deliverables = task.get('deliverables')
+                if isinstance(deliverables, list):
+                    for deliverable in deliverables:
+                        due_str = deliverable.get('due', '')
+                        if due_str:
+                            due_date = parse_due_str(due_str)
+                            if due_date and due_date.date() < today:
+                                deliverable['statuses'] = ['Complete']
+                                deliverable['status'] = 'Complete'
+                                sync_status_arrays(deliverable)
+                                if isinstance(deliverable.get('tasks'), list):
+                                    for t in deliverable['tasks']:
+                                        t['done'] = True
+                                count += 1
+                else:
+                    due_str = task.get('due', '')
+                    if due_str:
+                        due_date = parse_due_str(due_str)
+                        if due_date and due_date.date() < today:
+                            task['statuses'] = ['Complete']
+                            task['status'] = 'Complete'
+                            sync_status_arrays(task)
+                            if isinstance(task.get('tasks'), list):
+                                for t in task['tasks']:
+                                    t['done'] = True
+                            count += 1
             if count > 0:
                 self.save_tasks(tasks)
             return {'status': 'success', 'count': count}
@@ -901,20 +918,38 @@ Return ONLY the JSON object.
             return {'status': 'error', 'message': str(e)}
 
     def mark_overdue_projects_delivered(self):
-        """Marks all projects with due dates before today as delivered."""
+        """Marks all deliverables with due dates before today as delivered."""
         try:
             tasks = self.get_tasks()
             today = datetime.date.today()
             count = 0
             for task in tasks:
-                due_str = task.get('due', '')
-                if due_str:
-                    due_date = parse_due_str(due_str)
-                    if due_date and due_date.date() < today:
-                        task['statuses'] = ['Delivered']
-                        task['status'] = 'Delivered'
-                        sync_status_arrays(task)
-                        count += 1
+                deliverables = task.get('deliverables')
+                if isinstance(deliverables, list):
+                    for deliverable in deliverables:
+                        due_str = deliverable.get('due', '')
+                        if due_str:
+                            due_date = parse_due_str(due_str)
+                            if due_date and due_date.date() < today:
+                                deliverable['statuses'] = ['Delivered']
+                                deliverable['status'] = 'Delivered'
+                                sync_status_arrays(deliverable)
+                                if isinstance(deliverable.get('tasks'), list):
+                                    for t in deliverable['tasks']:
+                                        t['done'] = True
+                                count += 1
+                else:
+                    due_str = task.get('due', '')
+                    if due_str:
+                        due_date = parse_due_str(due_str)
+                        if due_date and due_date.date() < today:
+                            task['statuses'] = ['Delivered']
+                            task['status'] = 'Delivered'
+                            sync_status_arrays(task)
+                            if isinstance(task.get('tasks'), list):
+                                for t in task['tasks']:
+                                    t['done'] = True
+                            count += 1
             if count > 0:
                 self.save_tasks(tasks)
             return {'status': 'success', 'count': count}

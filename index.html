@@ -131,9 +131,9 @@
                         <tr>
                             <th style="width:90px" data-sort="id">ID</th>
                             <th data-sort="name">Project Details</th>
-                            <th style="width:120px" data-sort="due">Due</th>
-                            <th style="width:150px">Status</th>
-                            <th class="tasks-notes-header">Tasks / Notes</th>
+                            <th style="width:160px" data-sort="due">Deliverables Due</th>
+                            <th style="width:170px">Deliverable Status</th>
+                            <th class="tasks-notes-header">Deliverable Tasks / Notes</th>
                             <th class="nowrap" style="width:120px;text-align:center">Actions</th>
                         </tr>
                     </thead>
@@ -311,41 +311,22 @@
                     <label class="label">Nickname</label>
                     <input id="f_nick" placeholder="optional" />
                 </div>
-                <div class="col-4">
-                    <label class="label">Due Date</label>
-                    <input id="f_due" placeholder="MM/DD/YY" />
-                </div>
-                <div class="col-4">
+                <div class="col-8">
                     <label class="label">Project Path</label>
                     <input id="f_path" placeholder="e.g. M:\Projects\..." />
                 </div>
                 <div class="col-12">
-                    <label class="label">Status</label>
-                    <div id="f_statuses" class="status-picker">
-                        <button type="button" class="st status-btn st-wait" data-status="Waiting" aria-pressed="false"
-                            title="Waiting">Waiting</button>
-                        <button type="button" class="st status-btn st-work" data-status="Working" aria-pressed="false"
-                            title="Working">Working</button>
-                        <button type="button" class="st status-btn st-pr" data-status="Pending Review"
-                            aria-pressed="false" title="Pending Review">Pending Review</button>
-                        <button type="button" class="st status-btn st-comp" data-status="Complete" aria-pressed="false"
-                            title="Complete">Complete</button>
-                        <button type="button" class="st status-btn st-del" data-status="Delivered" aria-pressed="false"
-                            title="Delivered">Delivered</button>
-                    </div>
-                </div>
-                <div class="col-12">
-                    <label class="label">Notes</label>
-                    <textarea id="f_notes" rows="3" placeholder="Freeform notes…"></textarea>
+                    <label class="label">Global Notes</label>
+                    <textarea id="f_notes" rows="3" placeholder="Global notes"></textarea>
                 </div>
             </div>
             <div class="section-divider"></div>
             <div class="stack">
                 <div class="inline" style="justify-content:space-between">
-                    <div class="title section-header">Tasks</div>
-                    <button class="btn-accent tiny" onclick="addTaskRow()">＋ Add Task</button>
+                    <div class="title section-header">Deliverables</div>
+                    <button class="btn-accent tiny" onclick="addDeliverable()">+ Add Deliverable</button>
                 </div>
-                <div id="taskList" class="stack"></div>
+                <div id="deliverableList" class="stack"></div>
             </div>
             <div class="section-divider"></div>
             <div class="stack">
@@ -382,8 +363,8 @@
             </div>
         </div>
         <div class="modal-body stack">
-            <div class="tiny muted">Expected columns: <b>ID, Project Name, Nickname, Notes, Due Date, Status, Tasks,
-                    Path, Reference1, Reference2, …</b></div>
+            <div class="tiny muted">Expected columns: <b>ID, Project Name, Nickname, Deliverable Notes, Due Date, Status, Tasks,
+                    Path, Reference1, Reference2</b></div>
             <textarea id="pasteArea" rows="12" placeholder="Paste rows from Excel/CSV here…"></textarea>
             <label class="inline tiny checkbox-label"><input type="checkbox" id="hasHeader" checked style="width:auto">
                 First row
@@ -412,11 +393,11 @@
     <!-- Mark Overdue Confirmation Modal -->
     <dialog id="markOverdueDlg">
         <div class="modal-header">
-            <div class="title">Mark Past Due Projects as Complete</div>
+            <div class="title">Mark Past Due Deliverables as Complete</div>
             <button class="btn ghost" onclick="closeDlg('markOverdueDlg')">Cancel</button>
         </div>
         <div class="modal-body stack">
-            <p>This will change the status of all projects with a due date before today to "Complete".</p>
+            <p>This will change the status of all deliverables with a due date before today to "Complete".</p>
             <p>Are you sure you want to proceed?</p>
             <div class="inline" style="justify-content: flex-end; gap: 1rem;">
                 <button class="btn ghost" onclick="closeDlg('markOverdueDlg')">Cancel</button>
@@ -427,11 +408,11 @@
     <!-- Mark Overdue as Delivered Confirmation Modal -->
     <dialog id="markOverdueDeliveredDlg">
         <div class="modal-header">
-            <div class="title">Mark Past Due Projects as Delivered</div>
+            <div class="title">Mark Past Due Deliverables as Delivered</div>
             <button class="btn ghost" onclick="closeDlg('markOverdueDeliveredDlg')">Cancel</button>
         </div>
         <div class="modal-body stack">
-            <p>This will change the status of all projects with a due date before today to "Delivered".</p>
+            <p>This will change the status of all deliverables with a due date before today to "Delivered".</p>
             <p>Are you sure you want to proceed?</p>
             <div class="inline" style="justify-content: flex-end; gap: 1rem;">
                 <button class="btn ghost" onclick="closeDlg('markOverdueDeliveredDlg')">Cancel</button>
@@ -754,7 +735,7 @@
                 <div class="stat-card">
                     <div class="stat-icon">📊</div>
                     <div class="stat-value" id="statTotal">0</div>
-                    <div class="stat-label">Total Projects</div>
+                    <div class="stat-label">Total Deliverables</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-icon">✅</div>
@@ -942,6 +923,40 @@
             <td class="cell-tasks"></td>
             <td class="cell-actions actions"></td>
         </tr>
+    </template>
+    <template id="deliverable-card-template">
+        <div class="deliverable-card">
+            <div class="deliverable-card-header">
+                <div class="deliverable-fields">
+                    <div class="field">
+                        <label class="label">Deliverable Name</label>
+                        <input class="d-name" placeholder="e.g. DD90" />
+                    </div>
+                    <div class="field">
+                        <label class="label">Due Date</label>
+                        <input class="d-due" placeholder="MM/DD/YY" />
+                    </div>
+                </div>
+                <div class="deliverable-controls">
+                    <label class="tiny checkbox-label"><input type="checkbox" class="d-overview"
+                            style="width:auto">Show in overview</label>
+                    <label class="tiny checkbox-label"><input type="radio" class="d-primary"
+                            style="width:auto">Primary</label>
+                    <button type="button" class="btn tiny btn-remove text-danger">Remove</button>
+                </div>
+            </div>
+            <label class="label">Status</label>
+            <div class="deliverable-status"></div>
+            <label class="label">Notes</label>
+            <textarea class="d-notes" rows="3" placeholder="Deliverable notes"></textarea>
+            <div class="stack">
+                <div class="inline" style="justify-content:space-between">
+                    <div class="title section-header">Tasks</div>
+                    <button type="button" class="btn-accent tiny d-add-task">+ Add Task</button>
+                </div>
+                <div class="deliverable-task-list stack"></div>
+            </div>
+        </div>
     </template>
     <template id="task-row-template">
         <div class="task-row modal-grid" style="align-items:center">

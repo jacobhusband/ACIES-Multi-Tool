@@ -295,7 +295,7 @@ let db = [];
 let notesDb = {};
 let noteTabs = [];
 let editIndex = -1;
-let currentSort = { key: "due", dir: "desc" };
+let currentSort = { key: "due", dir: "asc" };
 let statusFilter = "all";
 let dueFilter = "all";
 
@@ -376,8 +376,13 @@ function initThemeFromPreferences() {
 async function load() {
   try {
     const arr = await window.pywebview.api.get_tasks();
-    migrateStatuses(arr);
-    return arr;
+    const { data, didMigrate } = migrateProjects(arr);
+    migrateStatuses(data);
+    if (didMigrate) {
+      db = data;
+      await save();
+    }
+    return data;
   } catch (e) {
     console.warn("Backend load failed:", e);
     return [];
@@ -631,6 +636,125 @@ async function saveUserSettings() {
 }
 const debouncedSaveUserSettings = debounce(saveUserSettings, 500);
 
+function createId(prefix = "dlv") {
+  if (window.crypto?.randomUUID) return `${prefix}_${crypto.randomUUID()}`;
+  return `${prefix}_${Date.now().toString(36)}_${Math.random()
+    .toString(36)
+    .slice(2, 8)}`;
+}
+
+function normalizeTaskLinks(links) {
+  if (!Array.isArray(links)) return [];
+  return links
+    .map((link) => {
+      if (!link) return null;
+      if (typeof link === "string") return normalizeLink(link);
+      const raw = link.raw || link.url || "";
+      if (!raw) return null;
+      const normalized = normalizeLink(raw);
+      if (link.label) normalized.label = link.label;
+      return normalized;
+    })
+    .filter(Boolean);
+}
+
+function normalizeTask(task) {
+  if (typeof task === "string")
+    return { text: task, done: false, links: [] };
+  return {
+    text: task?.text || "",
+    done: !!task?.done,
+    links: normalizeTaskLinks(task?.links),
+  };
+}
+
+const DELIVERABLE_NAME_RULES = [
+  { regex: /\bDD\s*50\b/i, label: "DD50" },
+  { regex: /\bDD\s*90\b/i, label: "DD90" },
+  { regex: /\bCD\s*50\b/i, label: "CD50" },
+  { regex: /\bCD\s*90\b/i, label: "CD90" },
+  { regex: /\bCDF\b/i, label: "CDF" },
+  { regex: /\bIFP\b/i, label: "IFP" },
+  { regex: /\bIFC\b/i, label: "IFC" },
+  { regex: /\bASR\b/i, label: "ASR" },
+];
+
+function extractDeliverableName(text) {
+  if (!text) return "";
+  const raw = String(text);
+  const rfiMatch = raw.match(/\bRFI\s*#?\s*(\d+)\b/i);
+  if (rfiMatch) return `RFI #${rfiMatch[1]}`;
+  if (/\bRFI\b/i.test(raw)) return "RFI";
+  const pccMatch = raw.match(/\bPCC\s*#?\s*(\d+)\b/i);
+  if (pccMatch) return `PCC ${pccMatch[1]}`;
+  if (/\bPCC\b/i.test(raw)) return "PCC";
+  const asrMatch = raw.match(/\bASR\s*#?\s*(\d+)\b/i);
+  if (asrMatch) return `ASR #${asrMatch[1]}`;
+  for (const rule of DELIVERABLE_NAME_RULES) {
+    if (rule.regex.test(raw)) return rule.label;
+  }
+  return "";
+}
+
+function guessDeliverableName(legacy) {
+  const candidates = [];
+  if (legacy?.deliverable) candidates.push(legacy.deliverable);
+  if (legacy?.nick) candidates.push(legacy.nick);
+  if (legacy?.name) candidates.push(legacy.name);
+  if (legacy?.path) candidates.push(basename(legacy.path));
+  if (Array.isArray(legacy?.tasks)) {
+    legacy.tasks.forEach((t) => candidates.push(t?.text || t));
+  }
+  if (legacy?.notes) candidates.push(legacy.notes);
+  for (const text of candidates) {
+    const name = extractDeliverableName(text);
+    if (name) return name;
+  }
+  return "Deliverable";
+}
+
+function normalizeDeliverable(deliverable = {}) {
+  const out = {
+    id: deliverable.id || createId("dlv"),
+    name: String(deliverable.name || "").trim(),
+    due: String(deliverable.due || "").trim(),
+    notes: deliverable.notes || "",
+    tasks: Array.isArray(deliverable.tasks)
+      ? deliverable.tasks.map(normalizeTask)
+      : [],
+    statuses: Array.isArray(deliverable.statuses)
+      ? [...deliverable.statuses]
+      : [],
+    statusTags: Array.isArray(deliverable.statusTags)
+      ? [...deliverable.statusTags]
+      : [],
+    status: deliverable.status || "",
+    showInOverview: deliverable.showInOverview !== false,
+  };
+  migrateStatusFields(out);
+  syncStatusArrays(out);
+  if (isFinished(out)) {
+    out.tasks.forEach((task) => {
+      task.done = true;
+    });
+  }
+  return out;
+}
+
+function createDeliverable(seed = {}) {
+  return normalizeDeliverable({
+    id: seed.id || createId("dlv"),
+    name: seed.name || "",
+    due: seed.due || "",
+    notes: seed.notes || "",
+    tasks: seed.tasks || [],
+    statuses: seed.statuses || [],
+    statusTags: seed.statusTags || [],
+    status: seed.status || "",
+    showInOverview: seed.showInOverview !== false,
+  });
+}
+
 // ===================== DATA MIGRATION =====================
 function canonStatus(s) {
   if (!s) return null;
@@ -655,6 +779,23 @@ function canonStatus(s) {
   if (["delivered", "sent", "shipped"].includes(t)) return "Delivered";
   return null;
 }
+function migrateStatusFields(item) {
+  if (!item) return;
+  if (!Array.isArray(item.statuses)) item.statuses = [];
+  if (item.status) {
+    String(item.status)
+      .split(/[,/|;]+/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .forEach((piece) => {
+        const c = canonStatus(piece);
+        if (c && !item.statuses.includes(c)) item.statuses.push(c);
+      });
+  }
+  item.statuses = item.statuses
+    .map((s) => canonStatus(s) || s)
+    .filter((s) => STATUS_CANON.includes(s));
+}
 function hasStatus(p, s) {
   return Array.isArray(p.statuses) && p.statuses.includes(s);
 }
@@ -669,6 +810,11 @@ function toggleStatus(p, label) {
   if (!Array.isArray(p.statuses)) p.statuses = [];
   const key = LABEL_TO_KEY[label];
   if (key) setTag(p, key, !p.statuses.includes(label));
+  if (isFinished(p) && Array.isArray(p.tasks)) {
+    p.tasks.forEach((task) => {
+      task.done = true;
+    });
+  }
 }
 function syncStatusArrays(p) {
   if (!Array.isArray(p.statuses)) p.statuses = [];
@@ -683,19 +829,15 @@ function syncStatusArrays(p) {
 }
 function migrateStatuses(arr) {
   for (const p of arr) {
-    if (!Array.isArray(p.statuses)) p.statuses = [];
-    if (p.status) {
-      String(p.status)
-        .split(/[,/|;]+/)
-        .map((s) => s.trim())
-        .filter(Boolean)
-        .forEach((piece) => {
-          const c = canonStatus(piece);
-          if (c && !p.statuses.includes(c)) p.statuses.push(c);
-        });
+    if (Array.isArray(p.deliverables)) {
+      p.deliverables.forEach((d) => {
+        migrateStatusFields(d);
+        syncStatusArrays(d);
+      });
+    } else {
+      migrateStatusFields(p);
+      syncStatusArrays(p);
     }
-    p.statuses = p.statuses.filter((s) => STATUS_CANON.includes(s));
-    syncStatusArrays(p);
   }
 }
 function setTag(p, key, on) {
@@ -737,6 +879,256 @@ function getStatusTags(p) {
   return [...new Set(tags)];
 }
 
+function normalizeRef(link) {
+  if (!link) return null;
+  if (typeof link === "string") return normalizeLink(link);
+  const raw = link.raw || link.url || "";
+  if (!raw) return null;
+  const normalized = normalizeLink(raw);
+  if (link.label) normalized.label = link.label;
+  return normalized;
+}
+
+function isLegacyProject(project) {
+  if (!project) return false;
+  if (Array.isArray(project.deliverables)) return false;
+  return (
+    project.due ||
+    project.tasks ||
+    project.statuses ||
+    project.status ||
+    project.notes
+  );
+}
+
+function getProjectMergeKey(project, index) {
+  const id = String(project?.id || "").trim().toLowerCase();
+  if (id) return `id:${id}`;
+  const path = String(project?.path || "").trim().toLowerCase();
+  if (path) return `path:${path}`;
+  const name = String(project?.name || "").trim().toLowerCase();
+  if (name) return `name:${name}`;
+  return `__project_${index}`;
+}
+
+function mergeRefs(baseRefs = [], incomingRefs = []) {
+  const out = [];
+  const seen = new Set();
+  [...baseRefs, ...incomingRefs].forEach((ref) => {
+    const normalized = normalizeRef(ref);
+    if (!normalized) return;
+    const key = (normalized.raw || normalized.url || "").toLowerCase();
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    out.push(normalized);
+  });
+  return out;
+}
+
+function mergeProjects(base, incoming) {
+  if (!base || !incoming) return;
+  if (!base.id && incoming.id) base.id = incoming.id;
+  if (!base.name && incoming.name) base.name = incoming.name;
+  if (!base.nick && incoming.nick) base.nick = incoming.nick;
+  if (!base.path && incoming.path) base.path = incoming.path;
+  if (!base.notes && incoming.notes) base.notes = incoming.notes;
+  base.refs = mergeRefs(base.refs || [], incoming.refs || []);
+  if (!base.lightingSchedule && incoming.lightingSchedule)
+    base.lightingSchedule = incoming.lightingSchedule;
+  if (!Array.isArray(base.deliverables)) base.deliverables = [];
+  if (Array.isArray(incoming.deliverables))
+    base.deliverables.push(...incoming.deliverables);
+  if (!base.overviewDeliverableId && incoming.overviewDeliverableId)
+    base.overviewDeliverableId = incoming.overviewDeliverableId;
+}
+
+function convertLegacyProject(legacy) {
+  const deliverable = createDeliverable({
+    name: guessDeliverableName(legacy),
+    due: legacy?.due || "",
+    notes: legacy?.notes || "",
+    tasks: legacy?.tasks || [],
+    statuses: legacy?.statuses || [],
+    statusTags: legacy?.statusTags || [],
+    status: legacy?.status || "",
+  });
+  return {
+    id: String(legacy?.id || "").trim(),
+    name: String(legacy?.name || "").trim(),
+    nick: String(legacy?.nick || "").trim(),
+    path: String(legacy?.path || "").trim(),
+    notes: "",
+    refs: Array.isArray(legacy?.refs)
+      ? legacy.refs.map(normalizeRef).filter(Boolean)
+      : [],
+    deliverables: [deliverable],
+    overviewDeliverableId: deliverable.id,
+    lightingSchedule: legacy?.lightingSchedule || null,
+  };
+}
+
+function normalizeProject(project) {
+  if (!project) return null;
+  if (!Array.isArray(project.deliverables) && isLegacyProject(project)) {
+    return normalizeProject(convertLegacyProject(project));
+  }
+  const out = {
+    ...project,
+    id: String(project.id || "").trim(),
+    name: String(project.name || "").trim(),
+    nick: String(project.nick || "").trim(),
+    path: String(project.path || "").trim(),
+    notes: project.notes || "",
+    refs: Array.isArray(project.refs)
+      ? project.refs.map(normalizeRef).filter(Boolean)
+      : [],
+    deliverables: Array.isArray(project.deliverables)
+      ? project.deliverables.map(normalizeDeliverable)
+      : [],
+  };
+  if (!out.deliverables.length) out.deliverables = [createDeliverable()];
+  if (
+    !out.overviewDeliverableId ||
+    !out.deliverables.some((d) => d.id === out.overviewDeliverableId)
+  ) {
+    out.overviewDeliverableId = out.deliverables[0]?.id || "";
+  }
+  return out;
+}
+
+function migrateProjects(raw = []) {
+  let changed = false;
+  const map = new Map();
+  raw.forEach((item, index) => {
+    let project = item;
+    if (isLegacyProject(item)) {
+      project = convertLegacyProject(item);
+      changed = true;
+    } else {
+      project = normalizeProject(item);
+    }
+    const key = getProjectMergeKey(project, index);
+    if (map.has(key)) {
+      mergeProjects(map.get(key), project);
+      changed = true;
+    } else {
+      map.set(key, project);
+    }
+  });
+  const merged = Array.from(map.values())
+    .map((p) => normalizeProject(p))
+    .filter(Boolean);
+  return { data: merged, didMigrate: changed };
+}
+
+function getProjectDeliverables(project) {
+  return Array.isArray(project?.deliverables) ? project.deliverables : [];
+}
+
+function getAllDeliverables() {
+  return db.flatMap((project) =>
+    getProjectDeliverables(project).map((deliverable) => ({
+      project,
+      deliverable,
+    }))
+  );
+}
+
+function compareDeliverablesByDue(a, b) {
+  const da = parseDueStr(a?.due);
+  const dbb = parseDueStr(b?.due);
+  if (!da && !dbb) return 0;
+  if (!da) return 1;
+  if (!dbb) return -1;
+  return da - dbb;
+}
+
+function sortDeliverablesForOverview(list, priorityId) {
+  list.sort((a, b) => {
+    const aPrimary = a?.id === priorityId;
+    const bPrimary = b?.id === priorityId;
+    if (aPrimary && !bPrimary) return -1;
+    if (!aPrimary && bPrimary) return 1;
+    return compareDeliverablesByDue(a, b);
+  });
+}
+
+function getEarliestIncompleteDeliverable(project) {
+  const deliverables = getProjectDeliverables(project).filter(
+    (d) => !isFinished(d)
+  );
+  if (!deliverables.length) return null;
+  const withDue = deliverables.filter((d) => parseDueStr(d?.due));
+  if (withDue.length) return withDue.sort(compareDeliverablesByDue)[0];
+  return deliverables[0];
+}
+
+function getPriorityDeliverable(project) {
+  const deliverables = getProjectDeliverables(project);
+  if (!deliverables.length) return null;
+  const priorityId = project?.overviewDeliverableId;
+  if (priorityId) {
+    const priority = deliverables.find((d) => d.id === priorityId);
+    if (priority) return priority;
+  }
+  return getEarliestIncompleteDeliverable(project) || deliverables[0];
+}
+
+function getOverviewDeliverables(project) {
+  const deliverables = getProjectDeliverables(project);
+  if (!deliverables.length) return [];
+  let selected = deliverables.filter((d) => d.showInOverview);
+  if (!selected.length) {
+    const fallback = getPriorityDeliverable(project);
+    if (fallback) selected = [fallback];
+  }
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const hasUpcoming = deliverables.some((d) => {
+    const due = parseDueStr(d?.due);
+    return due && !isFinished(d) && due >= today;
+  });
+  if (hasUpcoming) selected = selected.filter((d) => !isFinished(d));
+  if (hasUpcoming && !selected.length) {
+    selected = deliverables.filter((d) => {
+      const due = parseDueStr(d?.due);
+      return due && !isFinished(d);
+    });
+  }
+  if (!selected.length) selected = deliverables.slice();
+  sortDeliverablesForOverview(selected, project?.overviewDeliverableId);
+  return selected;
+}
+
+function getProjectSortKey(project) {
+  const next = getEarliestIncompleteDeliverable(project);
+  const d = parseDueStr(next?.due);
+  if (!d) return { group: 3, date: null };
+  const state = dueState(next?.due);
+  const group = state === "overdue" ? 0 : state === "dueSoon" ? 1 : 2;
+  return { group, date: d };
+}
+
+function matchesDueFilter(deliverable, filter) {
+  if (filter === "all") return true;
+  const d = parseDueStr(deliverable?.due);
+  if (!d) return false;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const dayOfWeek = today.getDay();
+  const startOfWeek = new Date(today);
+  startOfWeek.setDate(today.getDate() - dayOfWeek);
+  startOfWeek.setHours(0, 0, 0, 0);
+  const endOfWeek = new Date(startOfWeek);
+  endOfWeek.setDate(startOfWeek.getDate() + 6);
+  endOfWeek.setHours(23, 59, 59, 999);
+
+  if (filter === "past") return d < startOfWeek;
+  if (filter === "soon") return d >= startOfWeek && d <= endOfWeek;
+  if (filter === "future") return d > endOfWeek;
+  return true;
+}
+
 // ===================== RENDER LOGIC =====================
 function render() {
   const tbody = document.getElementById("tbody");
@@ -747,76 +1139,45 @@ function render() {
 
   let items = db.filter((p) => {
     if (q && !matches(q, p)) return false;
-    const d = parseDueStr(p.due);
-
-    if (dueFilter === "past") {
-      if (!d) return false;
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const dayOfWeek = today.getDay();
-      const startOfWeek = new Date(today);
-      startOfWeek.setDate(today.getDate() - dayOfWeek);
-      startOfWeek.setHours(0, 0, 0, 0);
-      if (d >= startOfWeek) return false;
-    }
-    if (dueFilter === "soon") {
-      if (!d) return false;
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const dayOfWeek = today.getDay();
-      const startOfWeek = new Date(today);
-      startOfWeek.setDate(today.getDate() - dayOfWeek);
-      startOfWeek.setHours(0, 0, 0, 0);
-      const endOfWeek = new Date(startOfWeek);
-      endOfWeek.setDate(startOfWeek.getDate() + 6);
-      endOfWeek.setHours(23, 59, 59, 999);
-      if (d < startOfWeek || d > endOfWeek) return false;
-    }
-    if (dueFilter === "future") {
-      if (!d) return false;
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const dayOfWeek = today.getDay();
-      const startOfWeek = new Date(today);
-      startOfWeek.setDate(today.getDate() - dayOfWeek);
-      const endOfWeek = new Date(startOfWeek);
-      endOfWeek.setDate(startOfWeek.getDate() + 6);
-      endOfWeek.setHours(23, 59, 59, 999);
-      if (d <= endOfWeek) return false;
+    const overviewDeliverables = getOverviewDeliverables(p);
+    if (!overviewDeliverables.length) return false;
+    if (dueFilter !== "all") {
+      if (!overviewDeliverables.some((d) => matchesDueFilter(d, dueFilter)))
+        return false;
     }
     if (statusFilter === "incomplete") {
-      if (isFinished(p)) return false;
-    } else if (statusFilter !== "all" && !hasStatus(p, statusFilter)) {
+      if (!overviewDeliverables.some((d) => !isFinished(d))) return false;
+    } else if (
+      statusFilter !== "all" &&
+      !overviewDeliverables.some((d) => hasStatus(d, statusFilter))
+    ) {
       return false;
     }
     return true;
   });
 
   items.sort((a, b) => {
+    const dir = currentSort.dir === "asc" ? 1 : -1;
+    if (currentSort.key === "due") {
+      const ka = getProjectSortKey(a);
+      const kb = getProjectSortKey(b);
+      if (ka.group !== kb.group) return (ka.group - kb.group) * dir;
+      if (!ka.date && !kb.date) return 0;
+      if (!ka.date) return 1 * dir;
+      if (!kb.date) return -1 * dir;
+      return (ka.date - kb.date) * dir;
+    }
     const valA = a[currentSort.key];
     const valB = b[currentSort.key];
-    let comparison = 0;
-    if (currentSort.key === "due") {
-      const da = parseDueStr(valA),
-        dbb = parseDueStr(valB);
-      if (!da && !dbb) comparison = 0;
-      else if (!da) comparison = 1;
-      else if (!dbb) comparison = -1;
-      else comparison = da - dbb;
-    } else {
-      comparison = String(valA || "").localeCompare(
-        String(valB || ""),
-        undefined,
-        { numeric: true }
-      );
-    }
-    return comparison * (currentSort.dir === "asc" ? 1 : -1);
+    return (
+      String(valA || "").localeCompare(String(valB || ""), undefined, {
+        numeric: true,
+      }) * dir
+    );
   });
 
   updateSortHeaders();
 
-  const total = db.length;
-  const completed = db.filter((p) => isFinished(p)).length;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const dayOfWeek = today.getDay();
@@ -840,15 +1201,15 @@ function render() {
   let minDate = null,
     maxDate = null;
 
-  db.forEach((p) => {
-    const d = parseDueStr(p.due);
+  getAllDeliverables().forEach(({ deliverable }) => {
+    const d = parseDueStr(deliverable?.due);
     if (d) {
       if (d >= startOfWeek && d <= endOfWeek) dueThisWeek++;
       if (d >= startOfLastWeek && d <= endOfLastWeek) dueLastWeek++;
       if (d > endOfWeek) upcoming++;
       if (!minDate || d < minDate) minDate = d;
       if (!maxDate || d > maxDate) maxDate = d;
-      if (isFinished(p)) {
+      if (isFinished(deliverable)) {
         if (d.getFullYear() === currentYear) completedThisYear++;
         if (d.getFullYear() === lastYear) completedLastYear++;
       }
@@ -864,134 +1225,235 @@ function render() {
   items.forEach((p) => {
     const tr = rowTemplate.content.cloneNode(true).querySelector("tr");
     const idx = db.indexOf(p);
+    const overviewDeliverables = getOverviewDeliverables(p);
+    const priority = getPriorityDeliverable(p);
+    const priorityId = priority?.id;
 
     const idCell = tr.querySelector(".cell-id");
     const idBadge = idCell.querySelector(".id-badge") || idCell;
-    idBadge.textContent = p.id || "—";
+    idBadge.textContent = p.id || "--";
 
     const nameCell = tr.querySelector(".cell-name");
     if (p.path) {
       const link = el("button", {
         className: "path-link",
-        textContent: p.name || "—",
+        textContent: p.name || "--",
         title: `Open: ${p.path}`,
       });
       link.onclick = async () => {
         try {
           await window.pywebview.api.open_path(convertPath(p.path));
-          toast("📂 Opening folder...");
+          toast("Opening folder...");
         } catch (e) {
           toast("Failed to open path.");
         }
       };
       nameCell.appendChild(link);
     } else {
-      nameCell.textContent = p.name || "—";
+      nameCell.textContent = p.name || "--";
     }
     if (p.nick)
       nameCell.append(
         el("small", { className: "muted", textContent: ` (${p.nick})` })
       );
-
-    const dueCell = tr.querySelector(".cell-due");
-    if (p.due) {
-      const ds = dueState(p.due);
-      const pillClass =
-        ds === "overdue"
-          ? "pill overdue"
-          : ds === "dueSoon"
-            ? "pill dueSoon"
-            : "pill ok";
-      dueCell.appendChild(
-        el("div", { className: pillClass, textContent: humanDate(p.due) })
+    const projectNotes = (p.notes || "").trim();
+    if (projectNotes) {
+      nameCell.append(
+        el("div", {
+          className: "project-notes-snippet",
+          textContent: projectNotes,
+        })
       );
-    } else {
-      dueCell.textContent = "—";
     }
 
-    tr.querySelector(".cell-status").appendChild(renderStatusToggles(p));
+    const dueCell = tr.querySelector(".cell-due");
+    dueCell.innerHTML = "";
+    if (overviewDeliverables.length) {
+      const dueList = el("div", { className: "deliverable-due-list" });
+      overviewDeliverables.forEach((deliverable) => {
+        const isPrimary = deliverable.id === priorityId;
+        const row = el("div", {
+          className: `deliverable-row ${isPrimary ? "is-primary" : ""}`,
+        });
+        row.append(
+          el("div", {
+            className: "deliverable-label",
+            textContent: deliverable.name || "Deliverable",
+          })
+        );
+        if (deliverable.due) {
+          const ds = dueState(deliverable.due);
+          const pillClass =
+            ds === "overdue"
+              ? "pill overdue"
+              : ds === "dueSoon"
+                ? "pill dueSoon"
+                : "pill ok";
+          row.appendChild(
+            el("div", {
+              className: pillClass,
+              textContent: humanDate(deliverable.due),
+            })
+          );
+        } else {
+          row.appendChild(
+            el("div", { className: "deliverable-empty", textContent: "--" })
+          );
+        }
+        dueList.appendChild(row);
+      });
+      dueCell.appendChild(dueList);
+    } else {
+      dueCell.textContent = "--";
+    }
+
+    const statusCell = tr.querySelector(".cell-status");
+    statusCell.innerHTML = "";
+    if (overviewDeliverables.length) {
+      const statusList = el("div", { className: "deliverable-status-list" });
+      overviewDeliverables.forEach((deliverable) => {
+        const isPrimary = deliverable.id === priorityId;
+        const row = el("div", {
+          className: `deliverable-row ${isPrimary ? "is-primary" : ""}`,
+        });
+        row.append(
+          el("div", {
+            className: "deliverable-label",
+            textContent: deliverable.name || "Deliverable",
+          })
+        );
+        row.appendChild(renderStatusToggles(deliverable));
+        statusList.appendChild(row);
+      });
+      statusCell.appendChild(statusList);
+    } else {
+      statusCell.textContent = "--";
+    }
 
     const taskCell = tr.querySelector(".cell-tasks");
     taskCell.innerHTML = "";
-    const tasksNotesWrap = el("div", { className: "tasks-notes-grid" });
+    if (overviewDeliverables.length) {
+      const deliverablesWrap = el("div", {
+        className: "deliverable-notes-list",
+      });
+      overviewDeliverables.forEach((deliverable) => {
+        const isPrimary = deliverable.id === priorityId;
+        const deliverableBlock = el("div", {
+          className: `deliverable-block ${isPrimary ? "is-primary" : ""}`,
+        });
+        const header = el("div", { className: "deliverable-block-header" });
+        header.append(
+          el("div", {
+            className: "deliverable-name",
+            textContent: deliverable.name || "Deliverable",
+          })
+        );
+        if (deliverable.due) {
+          const ds = dueState(deliverable.due);
+          const pillClass =
+            ds === "overdue"
+              ? "pill overdue"
+              : ds === "dueSoon"
+                ? "pill dueSoon"
+                : "pill ok";
+          header.appendChild(
+            el("div", {
+              className: pillClass,
+              textContent: humanDate(deliverable.due),
+            })
+          );
+        }
+        deliverableBlock.appendChild(header);
 
-    const tasksCol = el("div", { className: "tn-col tasks-col" });
-    tasksCol.appendChild(
-      el("div", { className: "tn-heading", textContent: "Tasks" })
-    );
-    const tasksBody = el("div", { className: "tn-body tasks-body" });
-    if (p.tasks && p.tasks.length) {
-      const renderTasks = (expanded) => {
-        tasksBody.innerHTML = "";
-        const tasksToShow = expanded
-          ? p.tasks.map((task, index) => ({ task, index }))
-          : p.tasks.slice(0, 2).map((task, index) => ({ task, index }));
-        tasksToShow.forEach(({ task, index }) => {
-          const taskObj =
-            typeof task === "string"
-              ? { text: task, done: false, links: [] }
-              : task;
-          if (task !== taskObj) p.tasks[index] = taskObj;
-          const taskChip = el("div", {
-            className: `task-chip ${taskObj.done ? "done" : ""}`,
-            textContent: taskObj.text || "Task",
-            role: "button",
-            tabIndex: 0,
-            "aria-pressed": String(!!taskObj.done),
-          });
-          const toggleTask = () => {
-            taskObj.done = !taskObj.done;
-            taskChip.classList.toggle("done", taskObj.done);
-            taskChip.setAttribute("aria-pressed", String(!!taskObj.done));
-            save();
-          };
-          taskChip.onclick = (e) => {
-            e.stopPropagation();
-            toggleTask();
-          };
-          taskChip.onkeydown = (e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              toggleTask();
+        const tasksNotesWrap = el("div", { className: "tasks-notes-grid" });
+
+        const tasksCol = el("div", { className: "tn-col tasks-col" });
+        tasksCol.appendChild(
+          el("div", { className: "tn-heading", textContent: "Tasks" })
+        );
+        const tasksBody = el("div", { className: "tn-body tasks-body" });
+        if (deliverable.tasks && deliverable.tasks.length) {
+          const renderTasks = (expanded) => {
+            tasksBody.innerHTML = "";
+            const tasksToShow = expanded
+              ? deliverable.tasks.map((task, index) => ({ task, index }))
+              : deliverable.tasks
+                  .slice(0, 2)
+                  .map((task, index) => ({ task, index }));
+            tasksToShow.forEach(({ task, index }) => {
+              const taskObj =
+                typeof task === "string"
+                  ? { text: task, done: false, links: [] }
+                  : task;
+              if (task !== taskObj) deliverable.tasks[index] = taskObj;
+              const taskChip = el("div", {
+                className: `task-chip ${taskObj.done ? "done" : ""}`,
+                textContent: taskObj.text || "Task",
+                role: "button",
+                tabIndex: 0,
+                "aria-pressed": String(!!taskObj.done),
+              });
+              const toggleTask = () => {
+                taskObj.done = !taskObj.done;
+                taskChip.classList.toggle("done", taskObj.done);
+                taskChip.setAttribute("aria-pressed", String(!!taskObj.done));
+                save();
+              };
+              taskChip.onclick = (e) => {
+                e.stopPropagation();
+                toggleTask();
+              };
+              taskChip.onkeydown = (e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  toggleTask();
+                }
+              };
+              tasksBody.appendChild(taskChip);
+            });
+            if (deliverable.tasks.length > 2) {
+              const moreBtn = el("button", {
+                className: "btn-more-tasks",
+                textContent: expanded
+                  ? "Show Less"
+                  : `+${deliverable.tasks.length - 2} more`,
+                onclick: (e) => {
+                  e.stopPropagation();
+                  renderTasks(!expanded);
+                },
+              });
+              tasksBody.appendChild(moreBtn);
             }
           };
-          tasksBody.appendChild(taskChip);
-        });
-        if (p.tasks.length > 2) {
-          const moreBtn = el("button", {
-            className: "btn-more-tasks",
-            textContent: expanded ? "Show Less" : `+${p.tasks.length - 2} more`,
-            onclick: (e) => {
-              e.stopPropagation();
-              renderTasks(!expanded);
-            },
-          });
-          tasksBody.appendChild(moreBtn);
+          renderTasks(false);
+        } else {
+          tasksBody.textContent = "--";
         }
-      };
-      renderTasks(false);
-    } else {
-      tasksBody.textContent = "--";
-    }
-    tasksCol.appendChild(tasksBody);
+        tasksCol.appendChild(tasksBody);
 
-    const notesCol = el("div", { className: "tn-col notes-col" });
-    notesCol.appendChild(
-      el("div", { className: "tn-heading", textContent: "Notes" })
-    );
-    const notesBody = el("div", { className: "tn-body notes-body" });
-    const notesText = (p.notes || "").trim();
-    if (notesText) {
-      notesBody.appendChild(
-        el("div", { className: "note-snippet", textContent: notesText })
-      );
-    } else {
-      notesBody.textContent = "--";
-    }
-    notesCol.appendChild(notesBody);
+        const notesCol = el("div", { className: "tn-col notes-col" });
+        notesCol.appendChild(
+          el("div", { className: "tn-heading", textContent: "Notes" })
+        );
+        const notesBody = el("div", { className: "tn-body notes-body" });
+        const notesText = (deliverable.notes || "").trim();
+        if (notesText) {
+          notesBody.appendChild(
+            el("div", { className: "note-snippet", textContent: notesText })
+          );
+        } else {
+          notesBody.textContent = "--";
+        }
+        notesCol.appendChild(notesBody);
 
-    tasksNotesWrap.append(tasksCol, notesCol);
-    taskCell.appendChild(tasksNotesWrap);
+        tasksNotesWrap.append(tasksCol, notesCol);
+        deliverableBlock.append(tasksNotesWrap);
+        deliverablesWrap.append(deliverableBlock);
+      });
+      taskCell.appendChild(deliverablesWrap);
+    } else {
+      taskCell.textContent = "--";
+    }
 
     const actionsCell = tr.querySelector(".cell-actions");
     const actionsStack = el("div", { className: "actions-stack" });
@@ -1048,14 +1510,23 @@ function renderStatusToggles(p) {
 function matches(q, p) {
   if (!q) return true;
   const str = (val) => (val || "").toLowerCase();
-  return (
+  if (
     str(p.id).includes(q) ||
     str(p.name).includes(q) ||
     str(p.nick).includes(q) ||
-    str(p.notes).includes(q) ||
-    (p.tasks || []).some((t) => str(t.text).includes(q)) ||
-    (p.statuses || []).some((s) => str(s).includes(q))
-  );
+    str(p.notes).includes(q)
+  )
+    return true;
+  return getProjectDeliverables(p).some((d) => {
+    if (
+      str(d.name).includes(q) ||
+      str(d.notes).includes(q) ||
+      str(d.due).includes(q)
+    )
+      return true;
+    if ((d.tasks || []).some((t) => str(t.text).includes(q))) return true;
+    return (d.statuses || []).some((s) => str(s).includes(q));
+  });
 }
 
 function updateSortHeaders() {
@@ -1067,6 +1538,20 @@ function updateSortHeaders() {
 }
 
 // ===================== CRUD OPERATIONS =====================
+function createBlankProject() {
+  const deliverable = createDeliverable();
+  return {
+    id: "",
+    name: "",
+    nick: "",
+    path: "",
+    notes: "",
+    refs: [],
+    deliverables: [deliverable],
+    overviewDeliverableId: deliverable.id,
+  };
+}
+
 function openEdit(i) {
   editIndex = i;
   const p = db[i];
@@ -1080,7 +1565,7 @@ function openNew() {
   editIndex = -1;
   document.getElementById("dlgTitle").textContent = "New Project";
   document.getElementById("btnSaveProject").textContent = "Create Project";
-  fillForm({ tasks: [], refs: [], statuses: [] });
+  fillForm(createBlankProject());
   document.getElementById("editDlg").showModal();
 }
 function removeProject(i) {
@@ -1091,16 +1576,16 @@ function removeProject(i) {
 }
 function duplicate(i) {
   const original = db[i];
+  const deliverable = createDeliverable();
   const newProjectData = {
     id: original?.id || "",
     name: original?.name || "",
     path: original?.path || "",
     nick: "",
     notes: "",
-    due: "",
-    tasks: [],
     refs: [],
-    statuses: [],
+    deliverables: [deliverable],
+    overviewDeliverableId: deliverable.id,
   };
   editIndex = -1;
   document.getElementById("dlgTitle").textContent = "Duplicate Project";
@@ -1123,21 +1608,115 @@ function onSaveProject() {
 }
 
 // ===================== FORM HANDLING =====================
-function fillForm(p) {
+function fillForm(project) {
+  const p = normalizeProject(project || createBlankProject());
   document.getElementById("f_id").value = p.id || "";
   document.getElementById("f_name").value = p.name || "";
   document.getElementById("f_nick").value = p.nick || "";
   document.getElementById("f_notes").value = p.notes || "";
-  document.getElementById("f_due").value = p.due || "";
   document.getElementById("f_path").value = p.path || "";
-  setupStatusPicker("f_statuses", p.statuses || []);
-  document.getElementById("taskList").innerHTML = "";
-  (p.tasks || [])
-    .map((t) => (typeof t === "string" ? { text: t } : t))
-    .forEach(addTaskRowFrom);
+
+  const deliverableList = document.getElementById("deliverableList");
+  deliverableList.innerHTML = "";
+  p.deliverables.forEach((deliverable) =>
+    addDeliverableCard(deliverable, p.overviewDeliverableId)
+  );
+  if (!deliverableList.children.length) {
+    addDeliverableCard(createDeliverable(), p.overviewDeliverableId);
+  }
+  if (!deliverableList.querySelector(".d-primary:checked")) {
+    const firstPrimary = deliverableList.querySelector(".d-primary");
+    if (firstPrimary) firstPrimary.checked = true;
+  }
+
   document.getElementById("refList").innerHTML = "";
   (p.refs || []).forEach(addRefRowFrom);
 }
+
+function addDeliverableCard(deliverable, primaryId) {
+  const list = document.getElementById("deliverableList");
+  const template = document.getElementById("deliverable-card-template");
+  if (!list || !template) return;
+
+  const card = template.content
+    .cloneNode(true)
+    .querySelector(".deliverable-card");
+  const deliverableId = deliverable.id || createId("dlv");
+  card.dataset.deliverableId = deliverableId;
+
+  card.querySelector(".d-name").value = deliverable.name || "";
+  card.querySelector(".d-due").value = deliverable.due || "";
+  card.querySelector(".d-notes").value = deliverable.notes || "";
+  card.querySelector(".d-overview").checked = deliverable.showInOverview !== false;
+
+  const primaryInput = card.querySelector(".d-primary");
+  primaryInput.name = "primaryDeliverable";
+  if (primaryId && deliverableId === primaryId) primaryInput.checked = true;
+
+  const taskList = card.querySelector(".deliverable-task-list");
+  (deliverable.tasks || []).map(normalizeTask).forEach((task) => {
+    addTaskRowFrom(taskList, task);
+  });
+
+  card.querySelector(".d-add-task").onclick = () =>
+    addTaskRowFrom(taskList, {});
+  card.querySelector(".btn-remove").onclick = () => card.remove();
+
+  const statusContainer = card.querySelector(".deliverable-status");
+  const markTasksDone = () => {
+    taskList
+      .querySelectorAll(".t-done")
+      .forEach((cb) => (cb.checked = true));
+  };
+  const picker = buildStatusPicker(deliverable.statuses || [], (label, pressed) => {
+    if (pressed && (label === "Complete" || label === "Delivered")) {
+      markTasksDone();
+    }
+  });
+  statusContainer.appendChild(picker);
+
+  list.appendChild(card);
+
+  const hasPrimary = list.querySelector(".d-primary:checked");
+  if (!hasPrimary && !primaryId) primaryInput.checked = true;
+}
+
+function buildStatusPicker(selected = [], onToggle) {
+  const wrap = el("div", { className: "status-picker" });
+  const mk = (cls, label) => {
+    const b = el("button", {
+      className: `st status-btn st-${cls}`,
+      type: "button",
+      textContent: label,
+      title: label,
+      "data-status": label,
+      "aria-pressed": String(selected.includes(label)),
+    });
+    b.onclick = (e) => {
+      e.preventDefault();
+      const next = b.getAttribute("aria-pressed") !== "true";
+      b.setAttribute("aria-pressed", String(next));
+      if (onToggle) onToggle(label, next, b);
+    };
+    return b;
+  };
+  [
+    ["wait", "Waiting"],
+    ["work", "Working"],
+    ["pr", "Pending Review"],
+    ["comp", "Complete"],
+    ["del", "Delivered"],
+  ].forEach(([cls, label]) => wrap.append(mk(cls, label)));
+  return wrap;
+}
+
+function readStatusPickerFrom(container) {
+  if (!container) return [];
+  return Array.from(container.querySelectorAll('.st[aria-pressed="true"]')).map(
+    (b) => b.dataset.status
+  );
+}
+
 function readForm() {
   const baseSchedule =
     editIndex >= 0 && db[editIndex] ? db[editIndex].lightingSchedule : null;
@@ -1149,25 +1728,61 @@ function readForm() {
     name: val("f_name"),
     nick: val("f_nick"),
     notes: val("f_notes"),
-    due: val("f_due"),
     path: val("f_path"),
-    tasks: [],
     refs: [],
-    statuses: readStatusPicker("f_statuses"),
+    deliverables: [],
+    overviewDeliverableId: "",
     lightingSchedule,
   };
-  document.querySelectorAll("#taskList .task-row").forEach((row) => {
-    const text = row.querySelector(".t-text").value.trim();
-    if (!text) return;
-    const done = row.querySelector(".t-done").checked;
-    const links = [
-      row.querySelector(".t-link").value.trim(),
-      row.querySelector(".t-link2").value.trim(),
-    ]
-      .filter(Boolean)
-      .map(normalizeLink);
-    out.tasks.push({ text, done, links });
+
+  document.querySelectorAll("#deliverableList .deliverable-card").forEach((card) => {
+    const deliverableId = card.dataset.deliverableId || createId("dlv");
+    const name = card.querySelector(".d-name").value.trim();
+    const due = card.querySelector(".d-due").value.trim();
+    const notes = card.querySelector(".d-notes").value;
+    const showInOverview = card.querySelector(".d-overview").checked;
+    const statuses = readStatusPickerFrom(
+      card.querySelector(".deliverable-status")
+    );
+
+    const tasks = [];
+    card.querySelectorAll(".task-row").forEach((row) => {
+      const text = row.querySelector(".t-text").value.trim();
+      if (!text) return;
+      const done = row.querySelector(".t-done").checked;
+      const links = [
+        row.querySelector(".t-link").value.trim(),
+        row.querySelector(".t-link2").value.trim(),
+      ]
+        .filter(Boolean)
+        .map(normalizeLink);
+      tasks.push({ text, done, links });
+    });
+
+    const deliverable = normalizeDeliverable({
+      id: deliverableId,
+      name,
+      due,
+      notes,
+      tasks,
+      statuses,
+      showInOverview,
+    });
+
+    out.deliverables.push(deliverable);
+    if (card.querySelector(".d-primary").checked)
+      out.overviewDeliverableId = deliverable.id;
   });
+
+  if (!out.deliverables.length) {
+    const deliverable = createDeliverable();
+    out.deliverables = [deliverable];
+    out.overviewDeliverableId = deliverable.id;
+  }
+  if (!out.overviewDeliverableId) {
+    out.overviewDeliverableId = out.deliverables[0].id;
+  }
+
   document.querySelectorAll("#refList .ref-row").forEach((row) => {
     const label = row.querySelector(".r-label").value.trim();
     const raw = row.querySelector(".r-url").value.trim();
@@ -1176,40 +1791,10 @@ function readForm() {
     if (label) link.label = label;
     out.refs.push(link);
   });
-  syncStatusArrays(out);
   return out;
 }
-function setupStatusPicker(containerId, selected) {
-  const elc = document.getElementById(containerId);
-  const setPressed = () =>
-    elc
-      .querySelectorAll(".st")
-      .forEach((b) =>
-        b.setAttribute(
-          "aria-pressed",
-          String(selected.includes(b.dataset.status))
-        )
-      );
-  if (!elc.__wired) {
-    elc.addEventListener("click", (e) => {
-      if (e.target.matches(".st")) {
-        const s = e.target.dataset.status;
-        const i = selected.indexOf(s);
-        if (i >= 0) selected.splice(i, 1);
-        else selected.push(s);
-        setPressed();
-      }
-    });
-    elc.__wired = true;
-  }
-  setPressed();
-}
-function readStatusPicker(containerId) {
-  return Array.from(
-    document.querySelectorAll(`#${containerId} .st[aria-pressed="true"]`)
-  ).map((b) => b.dataset.status);
-}
-function addTaskRowFrom(t = {}) {
+
+function addTaskRowFrom(container, t = {}) {
   const template = document.getElementById("task-row-template");
   const row = template.content.cloneNode(true).querySelector(".task-row");
   row.querySelector(".t-text").value = t.text || "";
@@ -1217,8 +1802,9 @@ function addTaskRowFrom(t = {}) {
   row.querySelector(".t-link").value = t.links?.[0]?.raw || "";
   row.querySelector(".t-link2").value = t.links?.[1]?.raw || "";
   row.querySelector(".btn-remove").onclick = () => row.remove();
-  document.getElementById("taskList").append(row);
+  if (container) container.append(row);
 }
+
 function addRefRowFrom(L = {}) {
   const template = document.getElementById("ref-row-template");
   const row = template.content.cloneNode(true).querySelector(".ref-row");
@@ -1227,7 +1813,8 @@ function addRefRowFrom(L = {}) {
   row.querySelector(".btn-remove").onclick = () => row.remove();
   document.getElementById("refList").append(row);
 }
-window.addTaskRow = () => addTaskRowFrom({});
+
+window.addDeliverable = () => addDeliverableCard(createDeliverable());
 window.addRefRow = () => addRefRowFrom({});
 window.closeDlg = closeDlg;
 
@@ -1309,43 +1896,70 @@ function importRows(rows, hasHeader = true) {
   }
   if (hasHeader) rows = rows.slice(1);
   let added = 0;
+  const incoming = [];
+
   for (const r of rows) {
     if (!r.length) continue;
     const [id, name, nick, notes, due, statusCell, tasksStr, path, ...refs] = r;
     if (!(id || name || tasksStr || refs.some(Boolean))) continue;
-    const p = {
-      id: String(id || "").trim(),
-      name: (name || "").trim(),
-      nick: (nick || "").trim(),
-      notes: (notes || "").trim(),
-      due: (due || "").trim(),
-      path: (path || "").trim(),
-      tasks: [],
-      refs: [],
-      statuses: [],
-      lightingSchedule: createDefaultLightingSchedule(),
-    };
+
+    const statuses = [];
     const parts = String(statusCell || "")
       .split(/[,/|;]+/)
       .map((s) => s.trim())
       .filter(Boolean);
     for (const s of parts) {
       const c = canonStatus(s);
-      if (c && !p.statuses.includes(c)) p.statuses.push(c);
+      if (c && !statuses.includes(c)) statuses.push(c);
     }
+
     const tparts = (tasksStr || "")
       .replace(/\r/g, "\n")
       .split(/\n|;|\u2022|\r/)
       .map((s) => s.trim())
       .filter(Boolean);
-    for (const t of tparts) p.tasks.push({ text: t, done: false, links: [] });
+    const tasks = tparts.map((t) => ({ text: t, done: false, links: [] }));
+
+    const deliverableName =
+      extractDeliverableName(tasksStr) ||
+      extractDeliverableName(notes) ||
+      extractDeliverableName(path) ||
+      extractDeliverableName(name) ||
+      "Deliverable";
+
+    const deliverable = createDeliverable({
+      name: deliverableName,
+      due: (due || "").trim(),
+      notes: (notes || "").trim(),
+      tasks,
+      statuses,
+      showInOverview: true,
+    });
+
+    const refsList = [];
     for (const cell of refs) {
       const s = (cell || "").trim();
       if (!s) continue;
-      p.refs.push(normalizeLink(s));
+      refsList.push(normalizeLink(s));
     }
-    db.push(p);
+
+    incoming.push({
+      id: String(id || "").trim(),
+      name: (name || "").trim(),
+      nick: (nick || "").trim(),
+      notes: "",
+      path: (path || "").trim(),
+      refs: refsList,
+      deliverables: [deliverable],
+      overviewDeliverableId: deliverable.id,
+      lightingSchedule: createDefaultLightingSchedule(),
+    });
     added++;
+  }
+
+  if (incoming.length) {
+    const merged = migrateProjects([...db, ...incoming]);
+    db = merged.data;
   }
   save();
   render();
@@ -2421,12 +3035,14 @@ function getTimespanDateRange(timespan) {
       break;
     case "all":
       // Find the earliest date in the DB
-      let earliest = now;
-      db.forEach((p) => {
-        const d = parseDueStr(p.due);
-        if (d && d < earliest) earliest = d;
-      });
-      return { start: earliest, end: now };
+      {
+        let earliest = now;
+        getAllDeliverables().forEach(({ deliverable }) => {
+          const d = parseDueStr(deliverable?.due);
+          if (d && d < earliest) earliest = d;
+        });
+        return { start: earliest, end: now };
+      }
   }
 
   return { start, end: now };
@@ -2434,31 +3050,34 @@ function getTimespanDateRange(timespan) {
 
 function renderStats() {
   const { start, end } = getTimespanDateRange(currentStatsTimespan);
+  const allDeliverables = getAllDeliverables().map(
+    ({ deliverable }) => deliverable
+  );
 
-  // Filter projects within the timespan
-  const filteredProjects = db.filter((p) => {
-    const dueDate = parseDueStr(p.due);
+  // Filter deliverables within the timespan
+  const filteredDeliverables = allDeliverables.filter((d) => {
+    const dueDate = parseDueStr(d.due);
     return dueDate && dueDate >= start && dueDate <= end;
   });
 
   // Calculate stats from entire history
-  const total = db.length;
-  const completed = db.filter((p) => isFinished(p)).length;
+  const total = allDeliverables.length;
+  const completed = allDeliverables.filter((d) => isFinished(d)).length;
 
   // Calculate averages for weeks/months with completions
-  const allCompletedProjects = db
-    .filter((p) => isFinished(p))
-    .map((p) => ({
-      date: parseDueStr(p.due),
-      ...p,
+  const allCompletedDeliverables = allDeliverables
+    .filter((d) => isFinished(d))
+    .map((d) => ({
+      date: parseDueStr(d.due),
+      ...d,
     }))
-    .filter((p) => p.date);
+    .filter((d) => d.date);
 
   // Group completions by week
   const weeklyCompletions = {};
-  allCompletedProjects.forEach((p) => {
-    const weekStart = new Date(p.date);
-    weekStart.setDate(p.date.getDate() - p.date.getDay());
+  allCompletedDeliverables.forEach((d) => {
+    const weekStart = new Date(d.date);
+    weekStart.setDate(d.date.getDate() - d.date.getDay());
     weekStart.setHours(0, 0, 0, 0);
     const weekKey = weekStart.getTime();
     weeklyCompletions[weekKey] = (weeklyCompletions[weekKey] || 0) + 1;
@@ -2466,9 +3085,9 @@ function renderStats() {
 
   // Group completions by month
   const monthlyCompletions = {};
-  allCompletedProjects.forEach((p) => {
-    const monthKey = `${p.date.getFullYear()}-${String(
-      p.date.getMonth() + 1
+  allCompletedDeliverables.forEach((d) => {
+    const monthKey = `${d.date.getFullYear()}-${String(
+      d.date.getMonth() + 1
     ).padStart(2, "0")}`;
     monthlyCompletions[monthKey] = (monthlyCompletions[monthKey] || 0) + 1;
   });
@@ -2504,16 +3123,16 @@ function renderStats() {
     upcoming = 0;
 
   // Use global DB for forecast stats, not filtered
-  db.forEach((p) => {
-    const d = parseDueStr(p.due);
-    if (d) {
-      if (d >= weekStart && d <= weekEnd) dueThisWeek++;
+  allDeliverables.forEach((d) => {
+    const due = parseDueStr(d.due);
+    if (due) {
+      if (due >= weekStart && due <= weekEnd) dueThisWeek++;
       else if (
-        d >= new Date(weekStart.getTime() - 7 * 24 * 60 * 60 * 1000) &&
-        d < weekStart
+        due >= new Date(weekStart.getTime() - 7 * 24 * 60 * 60 * 1000) &&
+        due < weekStart
       )
         dueLastWeek++;
-      else if (d > weekEnd) upcoming++;
+      else if (due > weekEnd) upcoming++;
     }
   });
 
@@ -2523,12 +3142,12 @@ function renderStats() {
   let completedThisYear = 0,
     completedLastYear = 0;
 
-  db.forEach((p) => {
-    if (isFinished(p)) {
-      const d = parseDueStr(p.due);
-      if (d) {
-        if (d.getFullYear() === currentYear) completedThisYear++;
-        if (d.getFullYear() === lastYear) completedLastYear++;
+  allDeliverables.forEach((d) => {
+    if (isFinished(d)) {
+      const due = parseDueStr(d.due);
+      if (due) {
+        if (due.getFullYear() === currentYear) completedThisYear++;
+        if (due.getFullYear() === lastYear) completedLastYear++;
       }
     }
   });
@@ -2545,7 +3164,7 @@ function renderStats() {
   setStat("statCompletedThisYear", completedThisYear);
 
   // Always render chart with explicit aggregation
-  renderStatsChart(filteredProjects, start, end, currentStatsAggregation);
+  renderStatsChart(filteredDeliverables, start, end, currentStatsAggregation);
 }
 
 function renderStatsChart(projects, start, end, aggregation) {
@@ -2697,7 +3316,7 @@ function renderStatsChart(projects, start, end, aggregation) {
       labels: labels,
       datasets: [
         {
-          label: "Projects Completed",
+          label: "Deliverables Completed",
           data: data,
           backgroundColor: "rgba(16, 185, 129, 0.6)",
           borderColor: "var(--accent)",
@@ -2724,7 +3343,7 @@ function renderStatsChart(projects, start, end, aggregation) {
           callbacks: {
             label: function (context) {
               const count = context.parsed.y;
-              return `${count} project${count !== 1 ? "s" : ""} completed`;
+              return `${count} deliverable${count !== 1 ? "s" : ""} completed`;
             },
           },
         },
@@ -2750,7 +3369,7 @@ function renderStatsChart(projects, start, end, aggregation) {
         y: {
           title: {
             display: true,
-            text: "Projects Completed",
+            text: "Deliverables Completed",
             color: textColor,
           },
           beginAtZero: true,
@@ -3235,14 +3854,14 @@ function initEventListeners() {
       const response =
         await window.pywebview.api.mark_overdue_projects_complete();
       if (response.status === "success") {
-        toast(`Marked ${response.count} projects as complete.`);
+        toast(`Marked ${response.count} deliverables as complete.`);
         db = await load();
         render();
       } else {
-        toast("Failed to mark projects as complete.");
+        toast("Failed to mark deliverables as complete.");
       }
     } catch (e) {
-      toast("Error marking projects as complete.");
+      toast("Error marking deliverables as complete.");
     }
     closeDlg("markOverdueDlg");
   };
@@ -3255,14 +3874,14 @@ function initEventListeners() {
         const response =
           await window.pywebview.api.mark_overdue_projects_delivered();
         if (response.status === "success") {
-          toast(`Marked ${response.count} projects as delivered.`);
+          toast(`Marked ${response.count} deliverables as delivered.`);
           db = await load();
           render();
         } else {
-          toast("Failed to mark projects as delivered.");
+          toast("Failed to mark deliverables as delivered.");
         }
       } catch (e) {
-        toast("Error marking projects as delivered.");
+        toast("Error marking deliverables as delivered.");
       }
       closeDlg("markOverdueDeliveredDlg");
     };

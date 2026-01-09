@@ -21,6 +21,56 @@
         })();
     </script>
     <link rel="stylesheet" href="styles.css" />
+    <style>
+        /* Toggle Switch */
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 36px;
+            height: 20px;
+        }
+
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: var(--input-bg);
+            transition: .4s;
+            border-radius: 20px;
+            border: 1px solid var(--glass-border);
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 14px;
+            width: 14px;
+            left: 3px;
+            bottom: 2px;
+            background-color: var(--muted);
+            transition: .4s;
+            border-radius: 50%;
+        }
+
+        input:checked+.slider {
+            background-color: var(--accent-dim);
+            border-color: var(--accent);
+        }
+
+        input:checked+.slider:before {
+            transform: translateX(16px);
+            background-color: var(--accent);
+        }
+    </style>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 
@@ -104,6 +154,8 @@
                             title="Create project with AI">🤖</button>
                         <button class="icon-btn" id="statsBtn" aria-label="Statistics"
                             title="View Statistics">📊</button>
+                        <button class="icon-btn" id="toggleNonPrimaryBtn" aria-label="Toggle non-primary deliverables"
+                            title="Show/Hide non-primary deliverables">👁️</button>
                         <button class="icon-btn" id="projectsHelpBtn" aria-label="Projects help"
                             title="Projects help">?</button>
                     </div>
@@ -366,7 +418,8 @@
             </div>
         </div>
         <div class="modal-body stack">
-            <div class="tiny muted">Expected columns: <b>ID, Project Name, Nickname, Deliverable Notes, Due Date, Status, Tasks,
+            <div class="tiny muted">Expected columns: <b>ID, Project Name, Nickname, Deliverable Notes, Due Date,
+                    Status, Tasks,
                     Path, Reference1, Reference2</b></div>
             <textarea id="pasteArea" rows="12" placeholder="Paste rows from Excel/CSV here…"></textarea>
             <label class="inline tiny checkbox-label"><input type="checkbox" id="hasHeader" checked style="width:auto">
@@ -539,6 +592,17 @@
                         <div class="setting-desc">Change status of all past due projects to "Delivered"</div>
                     </div>
                     <button class="btn" id="btnMarkOverdueDelivered">Run Action</button>
+                </div>
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <div class="setting-label">Auto-Set Latest as Primary</div>
+                        <div class="setting-desc">Automatically set the deliverable with the latest due date as primary
+                            when merging or updating.</div>
+                    </div>
+                    <label class="switch">
+                        <input type="checkbox" id="settings_autoPrimary">
+                        <span class="slider round"></span>
+                    </label>
                 </div>
             </div>
 
@@ -942,8 +1006,6 @@
                     </div>
                 </div>
                 <div class="deliverable-controls">
-                    <label class="tiny checkbox-label"><input type="checkbox" class="d-overview"
-                            style="width:auto">Show in overview</label>
                     <label class="tiny checkbox-label"><input type="radio" class="d-primary"
                             style="width:auto">Primary</label>
                     <button type="button" class="btn tiny btn-remove text-danger">Remove</button>

@@ -382,7 +382,9 @@ let userSettings = {
   showSetupHelp: true,
   theme: "dark",
   lightingTemplates: [],
+  autoPrimary: false,
 };
+let hideNonPrimary = false;
 let activeNoteTab = null;
 let latestAppUpdate = null;
 let currentStatsTimespan = "1Y";
@@ -612,6 +614,9 @@ async function populateSettingsModal() {
       checkbox.checked = disciplines.includes(checkbox.value);
     });
 
+  const autoPrimaryCheck = document.getElementById("settings_autoPrimary");
+  if (autoPrimaryCheck) autoPrimaryCheck.checked = !!userSettings.autoPrimary;
+
   // Populate AutoCAD versions
   const container = document.getElementById("autocad_versions_container");
   container.innerHTML = '<div class="spinner">Detecting versions...</div>';
@@ -703,6 +708,8 @@ async function saveUserSettings() {
       .getElementById("settings_autocadPath")
       .value.trim();
   }
+  const autoPrimaryCheck = document.getElementById("settings_autoPrimary");
+  if (autoPrimaryCheck) userSettings.autoPrimary = autoPrimaryCheck.checked;
   try {
     await window.pywebview.api.save_user_settings(userSettings);
   } catch (e) {
@@ -804,7 +811,6 @@ function normalizeDeliverable(deliverable = {}) {
       ? [...deliverable.statusTags]
       : [],
     status: deliverable.status || "",
-    showInOverview: deliverable.showInOverview !== false,
   };
   migrateStatusFields(out);
   syncStatusArrays(out);
@@ -826,7 +832,6 @@ function createDeliverable(seed = {}) {
     statuses: seed.statuses || [],
     statusTags: seed.statusTags || [],
     status: seed.status || "",
-    showInOverview: seed.showInOverview !== false,
   });
 }
 
@@ -1085,6 +1090,14 @@ function getLatestDueDeliverableId(deliverables = []) {
   return latestId;
 }
 
+function autoSetPrimary(project) {
+  if (!project || !userSettings.autoPrimary) return;
+  const latestId = getLatestDueDeliverableId(project.deliverables);
+  if (latestId && project.overviewDeliverableId !== latestId) {
+    project.overviewDeliverableId = latestId;
+  }
+}
+
 function migrateProjects(raw = []) {
   let changed = false;
   const map = new Map();
@@ -1212,17 +1225,9 @@ function getPrimaryDeliverable(project) {
 function getOverviewDeliverables(project) {
   const deliverables = getProjectDeliverables(project);
   if (!deliverables.length) return [];
-  let selected = deliverables.filter((d) => d.showInOverview);
-  if (!selected.length) {
-    const fallback = getPriorityDeliverable(project);
-    if (fallback) selected = [fallback];
-  }
-  if (!selected.length) selected = deliverables.slice();
-  sortDeliverablesByPrimaryThenDueDesc(
-    selected,
-    project?.overviewDeliverableId
-  );
-  return selected;
+  const out = deliverables.slice();
+  sortDeliverablesByPrimaryThenDueDesc(out, project?.overviewDeliverableId);
+  return out;
 }
 
 function getProjectSortKey(project) {
@@ -1396,12 +1401,12 @@ function mergeSelectedProjects() {
     )
     .map((deliverable) => ({
       ...deliverable,
-      showInOverview: true,
       id: deliverable.id || createId("dlv"),
     }));
   base.deliverables.sort(compareDeliverablesByDueDesc);
   if (!base.deliverables.length) base.deliverables = [createDeliverable()];
   base.overviewDeliverableId = base.deliverables[0]?.id || "";
+  autoSetPrimary(base);
   base.overviewSortDir = "desc";
 
   db[indexes[0]] = base;
@@ -1577,32 +1582,35 @@ function render() {
 
     const deliverablesCell = tr.querySelector(".cell-deliverables");
     deliverablesCell.innerHTML = "";
-    if (overviewDeliverables.length) {
-      const overviewList = el("div", { className: "deliverable-overview-list" });
-      overviewDeliverables.forEach((deliverable) => {
+
+    const visibleDeliverables = overviewDeliverables.filter(d => {
+      if (hideNonPrimary) return d.id === priorityId;
+      return true;
+    });
+
+    if (visibleDeliverables.length) {
+      const tabsWrap = el("div", { className: "del-tabs" });
+      const contentWrap = el("div", { className: "del-content" });
+
+      const renderDeliverableContent = (deliverable) => {
+        contentWrap.innerHTML = "";
         const isPrimary = deliverable.id === priorityId;
-        const deliverableRow = el("div", {
-          className: `deliverable-overview ${isPrimary ? "is-primary" : ""}`,
-        });
 
         const header = el("div", { className: "deliverable-overview-header" });
         const title = el("div", { className: "deliverable-overview-title" });
         const starBtn = createIconButton({
           className: `deliverable-action-btn deliverable-star ${isPrimary ? "is-primary" : ""}`,
           title: isPrimary ? "Primary deliverable" : "Set as primary deliverable",
-          ariaLabel: isPrimary
-            ? "Primary deliverable"
-            : "Set as primary deliverable",
           path: STAR_ICON_PATH,
           pressed: isPrimary,
           onClick: async () => {
             if (p.overviewDeliverableId === deliverable.id) return;
             p.overviewDeliverableId = deliverable.id;
-            deliverable.showInOverview = true;
             await save();
             render();
           },
         });
+
         title.append(
           starBtn,
           el("div", {
@@ -1612,43 +1620,12 @@ function render() {
         );
 
         const meta = el("div", { className: "deliverable-overview-meta" });
-        const eyeBtn = createIconButton({
-          className: `deliverable-action-btn deliverable-eye ${deliverable.showInOverview ? "" : "is-hidden"
-            }`,
-          title: deliverable.showInOverview ? "Hide deliverable" : "Show deliverable",
-          ariaLabel: deliverable.showInOverview
-            ? "Hide deliverable"
-            : "Show deliverable",
-          path: EYE_ICON_PATH,
-          disabled: isPrimary,
-          onClick: async () => {
-            if (isPrimary) return;
-            deliverable.showInOverview = !deliverable.showInOverview;
-            await save();
-            render();
-          },
-        });
-        if (totalDeliverables > 1) {
-          meta.appendChild(eyeBtn);
-        }
         if (deliverable.due) {
           const ds = dueState(deliverable.due);
-          const pillClass =
-            ds === "overdue"
-              ? "pill overdue"
-              : ds === "dueSoon"
-                ? "pill dueSoon"
-                : "pill ok";
-          meta.appendChild(
-            el("div", {
-              className: pillClass,
-              textContent: humanDate(deliverable.due),
-            })
-          );
+          const pillClass = ds === "overdue" ? "pill overdue" : ds === "dueSoon" ? "pill dueSoon" : "pill ok";
+          meta.appendChild(el("div", { className: pillClass, textContent: humanDate(deliverable.due) }));
         } else {
-          meta.appendChild(
-            el("div", { className: "deliverable-empty", textContent: "--" })
-          );
+          meta.appendChild(el("div", { className: "deliverable-empty", textContent: "--" }));
         }
         header.append(title, meta);
 
@@ -1658,10 +1635,43 @@ function render() {
         const bodyRow = el("div", { className: "deliverable-overview-body" });
         bodyRow.appendChild(buildTasksNotesGrid(deliverable));
 
-        deliverableRow.append(header, statusRow, bodyRow);
-        overviewList.appendChild(deliverableRow);
+        contentWrap.append(header, statusRow, bodyRow);
+      };
+
+      visibleDeliverables.forEach((deliverable, dIdx) => {
+        const isPrimary = deliverable.id === priorityId;
+        const btn = el("button", {
+          className: `del-tab ${dIdx === 0 ? "active" : ""}`,
+          title: deliverable.name || "Deliverable"
+        });
+
+        if (isPrimary) {
+          btn.classList.add("is-primary-tab");
+          const starIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+          starIcon.setAttribute("viewBox", "0 0 24 24");
+          starIcon.setAttribute("width", "12");
+          starIcon.setAttribute("height", "12");
+          starIcon.setAttribute("fill", "currentColor");
+          starIcon.innerHTML = `<path d="${STAR_ICON_PATH}"/>`;
+          btn.appendChild(starIcon);
+        } else {
+          const dot = el("div", { className: "status-dot" });
+          btn.appendChild(dot);
+        }
+
+        btn.append(el("span", { textContent: deliverable.name || `D${dIdx + 1}` }));
+
+        btn.onclick = (e) => {
+          tabsWrap.querySelectorAll(".del-tab").forEach(t => t.classList.remove("active"));
+          btn.classList.add("active");
+          renderDeliverableContent(deliverable);
+        };
+        tabsWrap.appendChild(btn);
       });
-      deliverablesCell.appendChild(overviewList);
+
+      // Initial render of first tab
+      renderDeliverableContent(visibleDeliverables[0]);
+      deliverablesCell.append(tabsWrap, contentWrap);
     } else {
       deliverablesCell.textContent = "--";
     }
@@ -1808,6 +1818,7 @@ function duplicate(i) {
 }
 function onSaveProject() {
   const data = readForm();
+  autoSetPrimary(data);
   if (editIndex >= 0) {
     db[editIndex] = data;
     toast("Project updated successfully.");
@@ -1865,26 +1876,14 @@ function addDeliverableCard(deliverable, primaryId) {
   card.querySelector(".d-name").value = deliverable.name || "";
   card.querySelector(".d-due").value = deliverable.due || "";
   card.querySelector(".d-notes").value = deliverable.notes || "";
-  const overviewInput = card.querySelector(".d-overview");
-  overviewInput.checked = deliverable.showInOverview !== false;
 
   const primaryInput = card.querySelector(".d-primary");
   primaryInput.name = "primaryDeliverable";
   if (primaryId && deliverableId === primaryId) {
     primaryInput.checked = true;
-    overviewInput.checked = true;  // Ensure primary deliverable is shown in overview
-    overviewInput.disabled = true;
   }
 
-  // When primary is selected, automatically check "Show in overview"
-  primaryInput.addEventListener('change', () => {
-    if (primaryInput.checked) {
-      overviewInput.checked = true;
-      overviewInput.disabled = true;
-    } else {
-      overviewInput.disabled = false;
-    }
-  });
+  // No secondary action needed on primary change anymore
 
   const taskList = card.querySelector(".deliverable-task-list");
   (deliverable.tasks || []).map(normalizeTask).forEach((task) => {
@@ -1973,7 +1972,6 @@ function readForm() {
     const name = card.querySelector(".d-name").value.trim();
     const due = card.querySelector(".d-due").value.trim();
     const notes = card.querySelector(".d-notes").value;
-    const showInOverview = card.querySelector(".d-overview").checked;
     const statuses = readStatusPickerFrom(
       card.querySelector(".deliverable-status")
     );
@@ -1999,7 +1997,6 @@ function readForm() {
       notes,
       tasks,
       statuses,
-      showInOverview,
     });
 
     out.deliverables.push(deliverable);
@@ -2166,7 +2163,6 @@ function importRows(rows, hasHeader = true) {
       notes: (notes || "").trim(),
       tasks,
       statuses,
-      showInOverview: true,
     });
 
     const refsList = [];
@@ -3703,6 +3699,16 @@ function initEventListeners() {
     openExternalUrl(HELP_LINKS.main);
   document.getElementById("projectsHelpBtn").onclick = () =>
     openExternalUrl(HELP_LINKS.projects);
+
+  const toggleNonPrimaryBtn = document.getElementById("toggleNonPrimaryBtn");
+  if (toggleNonPrimaryBtn) {
+    toggleNonPrimaryBtn.onclick = (e) => {
+      hideNonPrimary = !hideNonPrimary;
+      e.currentTarget.style.color = hideNonPrimary ? "var(--accent)" : "";
+      e.currentTarget.title = hideNonPrimary ? "Show all deliverables" : "Hide non-primary deliverables";
+      render();
+    };
+  }
   document.getElementById("notesHelpBtn").onclick = () =>
     openExternalUrl(HELP_LINKS.notes);
   document.getElementById("toolsHelpBtn").onclick = () =>
@@ -4067,6 +4073,7 @@ function initEventListeners() {
             ? aiProject.deliverables.map(normalizeDeliverable)
             : [createDeliverable()];
           target.deliverables.push(...incomingDeliverables);
+          autoSetPrimary(target);
           db[matchIndex] = target;
           save();
           render();

@@ -259,6 +259,37 @@ function parseProjectFromPath(rawPath) {
   return null;
 }
 
+function getProjectBasePath(rawPath) {
+  if (!rawPath) return "";
+  let s = String(rawPath).trim();
+  if (!s) return "";
+  s = s.replace(/^['"]+|['"]+$/g, "");
+  const norm = s.replace(/\\/g, "/").replace(/\/+$/g, "");
+  const parts = norm.split("/").filter(Boolean);
+  if (!parts.length) return "";
+  let baseIndex = -1;
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const segment = parts[i].trim();
+    if (/^(\d{5,})\s*(?:[-_]\s*)?(.+)$/.test(segment)) {
+      baseIndex = i;
+      break;
+    }
+  }
+  let baseParts = parts;
+  if (baseIndex >= 0) {
+    baseParts = parts.slice(0, baseIndex + 1);
+  } else {
+    const last = parts[parts.length - 1];
+    if (/\.[A-Za-z0-9]{1,5}$/.test(last)) baseParts = parts.slice(0, -1);
+  }
+  return baseParts.join("/");
+}
+
+function getProjectBaseKey(rawPath) {
+  const base = getProjectBasePath(rawPath);
+  return base ? base.toLowerCase() : "";
+}
+
 function applyProjectFromPath(path, { force = false } = {}) {
   const parsed = parseProjectFromPath(path);
   if (!parsed) return false;
@@ -4017,8 +4048,25 @@ function initEventListeners() {
       );
       if (res.status === "success") {
         closeDlg("emailDlg");
-        openNew();
-        fillForm(res.data);
+        const aiProject = normalizeProject(res.data);
+        const baseKey = getProjectBaseKey(aiProject?.path);
+        const matchIndex = baseKey
+          ? db.findIndex((project) => getProjectBaseKey(project?.path) === baseKey)
+          : -1;
+        if (matchIndex >= 0) {
+          const target = normalizeProject(db[matchIndex]);
+          const incomingDeliverables = Array.isArray(aiProject?.deliverables)
+            ? aiProject.deliverables.map(normalizeDeliverable)
+            : [createDeliverable()];
+          target.deliverables.push(...incomingDeliverables);
+          db[matchIndex] = target;
+          save();
+          render();
+          toast("Added deliverable to existing project.");
+        } else {
+          openNew();
+          fillForm(res.data);
+        }
       } else throw new Error(res.message);
     } catch (e) {
       toast("AI Error: " + e.message);

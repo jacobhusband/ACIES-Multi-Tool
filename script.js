@@ -340,6 +340,8 @@ let editIndex = -1;
 let currentSort = { key: "due", dir: "desc" };
 let statusFilter = "all";
 let dueFilter = "all";
+let selectedProjects = new Set();
+let visibleProjectIndexes = [];
 
 let userSettings = {
   userName: "",
@@ -1125,13 +1127,24 @@ function compareDeliverablesByDue(a, b) {
   return da - dbb;
 }
 
-function sortDeliverablesForOverview(list, priorityId) {
+function compareDeliverablesByDueDesc(a, b) {
+  const da = parseDueStr(a?.due);
+  const dbb = parseDueStr(b?.due);
+  if (!da && !dbb) return 0;
+  if (!da) return 1;
+  if (!dbb) return -1;
+  return dbb - da;
+}
+
+function sortDeliverablesForOverview(list, priorityId, sortDir = "asc") {
+  const cmp =
+    sortDir === "desc" ? compareDeliverablesByDueDesc : compareDeliverablesByDue;
   list.sort((a, b) => {
     const aPrimary = a?.id === priorityId;
     const bPrimary = b?.id === priorityId;
     if (aPrimary && !bPrimary) return -1;
     if (!aPrimary && bPrimary) return 1;
-    return compareDeliverablesByDue(a, b);
+    return cmp(a, b);
   });
 }
 
@@ -1176,7 +1189,12 @@ function getOverviewDeliverables(project) {
     if (fallback) selected = [fallback];
   }
   if (!selected.length) selected = deliverables.slice();
-  sortDeliverablesForOverview(selected, project?.overviewDeliverableId);
+  const sortDir = project?.overviewSortDir === "desc" ? "desc" : "asc";
+  sortDeliverablesForOverview(
+    selected,
+    project?.overviewDeliverableId,
+    sortDir
+  );
   return selected;
 }
 
@@ -1292,10 +1310,100 @@ function buildTasksNotesGrid(deliverable) {
   return tasksNotesWrap;
 }
 
+function pruneSelectedProjects() {
+  selectedProjects.forEach((idx) => {
+    if (!Number.isInteger(idx) || !db[idx]) selectedProjects.delete(idx);
+  });
+}
+
+function getSelectedProjectIndexes() {
+  return Array.from(selectedProjects).filter((idx) =>
+    Number.isInteger(idx) && db[idx]
+  );
+}
+
+function updateMergeControls() {
+  const mergeBtn = document.getElementById("mergeProjectsBtn");
+  const selectAll = document.getElementById("projectsSelectAll");
+  const selected = getSelectedProjectIndexes();
+  if (mergeBtn) {
+    mergeBtn.disabled = selected.length < 2;
+    mergeBtn.textContent = selected.length >= 2 ? `Merge (${selected.length})` : "Merge";
+  }
+  if (selectAll) {
+    const visible = visibleProjectIndexes.filter((idx) => db[idx]);
+    const selectedVisible = visible.filter((idx) => selectedProjects.has(idx));
+    selectAll.disabled = visible.length === 0;
+    selectAll.checked = visible.length > 0 && selectedVisible.length === visible.length;
+    selectAll.indeterminate =
+      selectedVisible.length > 0 && selectedVisible.length < visible.length;
+  }
+}
+
+function pickShortestPath(projects = []) {
+  let shortest = "";
+  projects.forEach((p) => {
+    const path = String(p?.path || "").trim();
+    if (!path) return;
+    if (!shortest || path.length < shortest.length) shortest = path;
+  });
+  return shortest;
+}
+
+function mergeSelectedProjects() {
+  const indexes = getSelectedProjectIndexes().sort((a, b) => a - b);
+  if (indexes.length < 2) {
+    toast("Select at least two projects to merge.");
+    return;
+  }
+  if (!confirm(`Merge ${indexes.length} projects into one?`)) return;
+
+  const projects = indexes.map((idx) => normalizeProject(db[idx]));
+  const base = normalizeProject(db[indexes[0]]);
+  projects.slice(1).forEach((project) => mergeProjects(base, project));
+
+  base.path = pickShortestPath(projects) || base.path || "";
+  base.deliverables = projects
+    .flatMap((project) =>
+      getProjectDeliverables(project).map(normalizeDeliverable)
+    )
+    .map((deliverable) => ({
+      ...deliverable,
+      showInOverview: true,
+      id: deliverable.id || createId("dlv"),
+    }));
+  base.deliverables.sort(compareDeliverablesByDueDesc);
+  if (!base.deliverables.length) base.deliverables = [createDeliverable()];
+  base.overviewDeliverableId = base.deliverables[0]?.id || "";
+  base.overviewSortDir = "desc";
+
+  db[indexes[0]] = base;
+  for (let i = indexes.length - 1; i >= 1; i--) {
+    db.splice(indexes[i], 1);
+  }
+
+  selectedProjects.clear();
+  selectedProjects.add(indexes[0]);
+  save();
+  render();
+  toast("Projects merged.");
+}
+
+function adjustSelectionsAfterRemoval(removedIndex) {
+  const next = new Set();
+  selectedProjects.forEach((idx) => {
+    if (idx === removedIndex) return;
+    if (idx > removedIndex) next.add(idx - 1);
+    else next.add(idx);
+  });
+  selectedProjects = next;
+}
+
 function render() {
   const tbody = document.getElementById("tbody");
   const emptyState = document.getElementById("emptyState");
   tbody.innerHTML = "";
+  pruneSelectedProjects();
 
   const q = val("search").toLowerCase();
 
@@ -1338,6 +1446,7 @@ function render() {
   });
 
   updateSortHeaders();
+  visibleProjectIndexes = items.map((p) => db.indexOf(p));
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -1388,7 +1497,19 @@ function render() {
     const idx = db.indexOf(p);
     const overviewDeliverables = getOverviewDeliverables(p);
     const primary = getPrimaryDeliverable(p);
+    const totalDeliverables = getProjectDeliverables(p).length;
     const priorityId = primary?.id;
+
+    const selectCell = tr.querySelector(".cell-select");
+    const selectInput = selectCell?.querySelector(".project-select");
+    if (selectInput) {
+      selectInput.checked = selectedProjects.has(idx);
+      selectInput.onchange = (e) => {
+        if (e.target.checked) selectedProjects.add(idx);
+        else selectedProjects.delete(idx);
+        updateMergeControls();
+      };
+    }
 
     const idCell = tr.querySelector(".cell-id");
     const idBadge = idCell.querySelector(".id-badge") || idCell;
@@ -1478,7 +1599,9 @@ function render() {
             render();
           },
         });
-        meta.appendChild(eyeBtn);
+        if (totalDeliverables > 1) {
+          meta.appendChild(eyeBtn);
+        }
         if (deliverable.due) {
           const ds = dueState(deliverable.due);
           const pillClass =
@@ -1536,6 +1659,7 @@ function render() {
     actionsCell.append(actionsStack);
     tbody.appendChild(tr);
   });
+  updateMergeControls();
 }
 
 function renderStatusToggles(p) {
@@ -1630,6 +1754,7 @@ function openNew() {
 function removeProject(i) {
   if (!confirm("Delete this project?")) return;
   db.splice(i, 1);
+  adjustSelectionsAfterRemoval(i);
   save();
   render();
 }
@@ -3556,6 +3681,21 @@ function initEventListeners() {
     persistThemePreference(nextTheme);
   };
 
+  const mergeBtn = document.getElementById("mergeProjectsBtn");
+  if (mergeBtn) mergeBtn.onclick = mergeSelectedProjects;
+
+  const selectAllProjects = document.getElementById("projectsSelectAll");
+  if (selectAllProjects) {
+    selectAllProjects.addEventListener("change", (e) => {
+      const shouldSelect = e.target.checked;
+      visibleProjectIndexes.forEach((idx) => {
+        if (shouldSelect) selectedProjects.add(idx);
+        else selectedProjects.delete(idx);
+      });
+      render();
+    });
+  }
+
   document.getElementById("quickNew").onclick = openNew;
   document.getElementById("settingsBtn").onclick = async () => {
     hideSetupHelpBanner(); // Hide the banner when user manually opens settings
@@ -3925,6 +4065,7 @@ function initEventListeners() {
       if (response.status === "success") {
         toast(`Marked ${response.count} deliverables as complete.`);
         db = await load();
+        selectedProjects.clear();
         render();
       } else {
         toast("Failed to mark deliverables as complete.");
@@ -3945,6 +4086,7 @@ function initEventListeners() {
         if (response.status === "success") {
           toast(`Marked ${response.count} deliverables as delivered.`);
           db = await load();
+          selectedProjects.clear();
           render();
         } else {
           toast("Failed to mark deliverables as delivered.");
@@ -3966,6 +4108,7 @@ function initEventListeners() {
   };
   document.getElementById("btnDeleteConfirm").onclick = () => {
     db = [];
+    selectedProjects.clear();
     save();
     render();
     closeDlg("deleteDlg");
@@ -4075,6 +4218,7 @@ async function init() {
       showMainApp();
       const [loadedDb] = await Promise.all([load(), loadNotes()]);
       db = loadedDb;
+      selectedProjects.clear();
       renderNoteTabs();
       render();
 

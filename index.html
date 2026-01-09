@@ -97,6 +97,7 @@
                         <input id="search" type="search" placeholder="Search projects..." />
                     </div>
                     <div class="toolbar-actions">
+                        <button class="btn tiny" id="mergeProjectsBtn" disabled>Merge</button>
                         <button class="icon-btn quick-add" id="quickNew" aria-label="New project"
                             title="New project">＋</button>
                         <button class="icon-btn" id="aiBtn" aria-label="AI Project"
@@ -129,6 +130,10 @@
                 <table class="table">
                     <thead>
                         <tr>
+                            <th class="cell-select">
+                                <input type="checkbox" id="projectsSelectAll" aria-label="Select all projects"
+                                    style="width:auto">
+                            </th>
                             <th style="width:90px" data-sort="id">ID</th>
                             <th data-sort="name">Project Details</th>
                             <th class="deliverables-header" data-sort="due" colspan="3">Deliverables</th>
@@ -914,6 +919,9 @@
     <!-- HTML Templates for JS rendering -->
     <template id="project-row-template">
         <tr class="row">
+            <td class="cell-select">
+                <input type="checkbox" class="project-select" aria-label="Select project" style="width:auto">
+            </td>
             <td class="cell-id"><span class="id-badge"></span></td>
             <td class="cell-name"></td>
             <td class="cell-deliverables" colspan="3"></td>

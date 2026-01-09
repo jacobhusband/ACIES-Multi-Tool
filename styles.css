@@ -602,6 +602,12 @@ main {
   font-weight: 600;
 }
 
+.filter-chip.active[data-filter="Pending Review"] {
+  background: var(--warning);
+  border-color: var(--warning);
+  color: var(--btn-text-on-accent);
+}
+
 .filter-chip.disabled {
   opacity: 0.4;
   cursor: not-allowed;
@@ -1080,26 +1086,26 @@ main {
 }
 
 .st-wait[aria-pressed="true"] {
-  background: var(--bg-tertiary);
-  color: var(--text);
-  border-color: var(--accent-dim);
+  background: var(--warning);
+  color: var(--btn-text-on-accent);
+  border-color: var(--warning);
   box-shadow: var(--shadow-sm);
 }
 
 [data-theme="light"] .st-wait[aria-pressed="true"] {
-  background: #e3efe5;
-  border-color: var(--accent-hover);
+  background: var(--warning);
+  border-color: var(--warning);
 }
 
 .st-work[aria-pressed="true"] {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: #3b82f6;
+  border-color: #3b82f6;
   color: var(--btn-text-on-accent);
 }
 
 .st-pr[aria-pressed="true"] {
-  background: var(--warning-bg);
-  color: var(--warning);
+  background: var(--warning);
+  color: var(--btn-text-on-accent);
   border-color: rgba(245, 158, 11, 0.6);
 }
 

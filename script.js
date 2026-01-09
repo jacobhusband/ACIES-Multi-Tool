@@ -60,6 +60,10 @@ const LIGHTING_SCHEDULE_DEFAULT_NOTES = [
   "1.  CONFIRM THE DRIVER TYPE WITH VENDOR. LIGHT DRIVER SHALL BE COMPATIBLE WITH THE DIMMER. REFER TO THE SENSOR SCHEDULE FOR DETAILS.",
   "2.  COORDINATE THE FINAL MANUFACTURER AND MODEL WITH ARCHITECT.",
 ].join("\n");
+const STAR_ICON_PATH =
+  "M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z";
+const EYE_ICON_PATH =
+  "M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5C21.27 7.61 17 4.5 12 4.5zm0 12.5a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-8a3 3 0 1 0 0 6 3 3 0 0 0 0-6z";
 
 // Cache for loaded descriptions to prevent re-fetching
 const DESCRIPTION_CACHE = {};
@@ -81,6 +85,44 @@ function el(tag, props = {}, children = []) {
     else n.appendChild(c);
   });
   return n;
+}
+
+function createIcon(path, size = 16) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("width", String(size));
+  svg.setAttribute("height", String(size));
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  p.setAttribute("d", path);
+  p.setAttribute("fill", "currentColor");
+  svg.appendChild(p);
+  return svg;
+}
+
+function createIconButton({
+  className,
+  title,
+  ariaLabel,
+  path,
+  pressed,
+  onClick,
+}) {
+  const props = {
+    className,
+    type: "button",
+    title,
+    "aria-label": ariaLabel || title || "",
+  };
+  if (pressed != null) props["aria-pressed"] = String(pressed);
+  const btn = el("button", props);
+  btn.appendChild(createIcon(path));
+  btn.onclick = (e) => {
+    e.stopPropagation();
+    if (onClick) onClick(e);
+  };
+  return btn;
 }
 
 function val(id) {
@@ -295,7 +337,7 @@ let db = [];
 let notesDb = {};
 let noteTabs = [];
 let editIndex = -1;
-let currentSort = { key: "due", dir: "asc" };
+let currentSort = { key: "due", dir: "desc" };
 let statusFilter = "all";
 let dueFilter = "all";
 
@@ -1074,6 +1116,17 @@ function getPriorityDeliverable(project) {
   return getEarliestIncompleteDeliverable(project) || deliverables[0];
 }
 
+function getPrimaryDeliverable(project) {
+  const deliverables = getProjectDeliverables(project);
+  if (!deliverables.length) return null;
+  const primaryId = project?.overviewDeliverableId;
+  if (primaryId) {
+    const primary = deliverables.find((d) => d.id === primaryId);
+    if (primary) return primary;
+  }
+  return deliverables[0];
+}
+
 function getOverviewDeliverables(project) {
   const deliverables = getProjectDeliverables(project);
   if (!deliverables.length) return [];
@@ -1101,12 +1154,8 @@ function getOverviewDeliverables(project) {
 }
 
 function getProjectSortKey(project) {
-  const next = getEarliestIncompleteDeliverable(project);
-  const d = parseDueStr(next?.due);
-  if (!d) return { group: 3, date: null };
-  const state = dueState(next?.due);
-  const group = state === "overdue" ? 0 : state === "dueSoon" ? 1 : 2;
-  return { group, date: d };
+  const primary = getPrimaryDeliverable(project);
+  return parseDueStr(primary?.due);
 }
 
 function matchesDueFilter(deliverable, filter) {
@@ -1130,6 +1179,92 @@ function matchesDueFilter(deliverable, filter) {
 }
 
 // ===================== RENDER LOGIC =====================
+function buildTasksNotesGrid(deliverable) {
+  const tasksNotesWrap = el("div", { className: "tasks-notes-grid" });
+
+  const tasksCol = el("div", { className: "tn-col tasks-col" });
+  tasksCol.appendChild(
+    el("div", { className: "tn-heading", textContent: "Tasks" })
+  );
+  const tasksBody = el("div", { className: "tn-body tasks-body" });
+  if (deliverable.tasks && deliverable.tasks.length) {
+    const renderTasks = (expanded) => {
+      tasksBody.innerHTML = "";
+      const tasksToShow = expanded
+        ? deliverable.tasks.map((task, index) => ({ task, index }))
+        : deliverable.tasks
+            .slice(0, 2)
+            .map((task, index) => ({ task, index }));
+      tasksToShow.forEach(({ task, index }) => {
+        const taskObj =
+          typeof task === "string"
+            ? { text: task, done: false, links: [] }
+            : task;
+        if (task !== taskObj) deliverable.tasks[index] = taskObj;
+        const taskChip = el("div", {
+          className: `task-chip ${taskObj.done ? "done" : ""}`,
+          textContent: taskObj.text || "Task",
+          role: "button",
+          tabIndex: 0,
+          "aria-pressed": String(!!taskObj.done),
+        });
+        const toggleTask = () => {
+          taskObj.done = !taskObj.done;
+          taskChip.classList.toggle("done", taskObj.done);
+          taskChip.setAttribute("aria-pressed", String(!!taskObj.done));
+          save();
+        };
+        taskChip.onclick = (e) => {
+          e.stopPropagation();
+          toggleTask();
+        };
+        taskChip.onkeydown = (e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            toggleTask();
+          }
+        };
+        tasksBody.appendChild(taskChip);
+      });
+      if (deliverable.tasks.length > 2) {
+        const moreBtn = el("button", {
+          className: "btn-more-tasks",
+          textContent: expanded
+            ? "Show Less"
+            : `+${deliverable.tasks.length - 2} more`,
+          onclick: (e) => {
+            e.stopPropagation();
+            renderTasks(!expanded);
+          },
+        });
+        tasksBody.appendChild(moreBtn);
+      }
+    };
+    renderTasks(false);
+  } else {
+    tasksBody.textContent = "--";
+  }
+  tasksCol.appendChild(tasksBody);
+
+  const notesCol = el("div", { className: "tn-col notes-col" });
+  notesCol.appendChild(
+    el("div", { className: "tn-heading", textContent: "Notes" })
+  );
+  const notesBody = el("div", { className: "tn-body notes-body" });
+  const notesText = (deliverable.notes || "").trim();
+  if (notesText) {
+    notesBody.appendChild(
+      el("div", { className: "note-snippet", textContent: notesText })
+    );
+  } else {
+    notesBody.textContent = "--";
+  }
+  notesCol.appendChild(notesBody);
+
+  tasksNotesWrap.append(tasksCol, notesCol);
+  return tasksNotesWrap;
+}
+
 function render() {
   const tbody = document.getElementById("tbody");
   const emptyState = document.getElementById("emptyState");
@@ -1159,13 +1294,12 @@ function render() {
   items.sort((a, b) => {
     const dir = currentSort.dir === "asc" ? 1 : -1;
     if (currentSort.key === "due") {
-      const ka = getProjectSortKey(a);
-      const kb = getProjectSortKey(b);
-      if (ka.group !== kb.group) return (ka.group - kb.group) * dir;
-      if (!ka.date && !kb.date) return 0;
-      if (!ka.date) return 1 * dir;
-      if (!kb.date) return -1 * dir;
-      return (ka.date - kb.date) * dir;
+      const da = getProjectSortKey(a);
+      const db = getProjectSortKey(b);
+      if (!da && !db) return 0;
+      if (!da) return 1;
+      if (!db) return -1;
+      return (da - db) * dir;
     }
     const valA = a[currentSort.key];
     const valB = b[currentSort.key];
@@ -1226,8 +1360,8 @@ function render() {
     const tr = rowTemplate.content.cloneNode(true).querySelector("tr");
     const idx = db.indexOf(p);
     const overviewDeliverables = getOverviewDeliverables(p);
-    const priority = getPriorityDeliverable(p);
-    const priorityId = priority?.id;
+    const primary = getPrimaryDeliverable(p);
+    const priorityId = primary?.id;
 
     const idCell = tr.querySelector(".cell-id");
     const idBadge = idCell.querySelector(".id-badge") || idCell;
@@ -1266,88 +1400,59 @@ function render() {
       );
     }
 
-    const dueCell = tr.querySelector(".cell-due");
-    dueCell.innerHTML = "";
+    const deliverablesCell = tr.querySelector(".cell-deliverables");
+    deliverablesCell.innerHTML = "";
     if (overviewDeliverables.length) {
-      const dueList = el("div", { className: "deliverable-due-list" });
+      const overviewList = el("div", { className: "deliverable-overview-list" });
       overviewDeliverables.forEach((deliverable) => {
         const isPrimary = deliverable.id === priorityId;
-        const row = el("div", {
-          className: `deliverable-row ${isPrimary ? "is-primary" : ""}`,
+        const deliverableRow = el("div", {
+          className: `deliverable-overview ${isPrimary ? "is-primary" : ""}`,
         });
-        row.append(
-          el("div", {
-            className: "deliverable-label",
-            textContent: deliverable.name || "Deliverable",
-          })
-        );
-        if (deliverable.due) {
-          const ds = dueState(deliverable.due);
-          const pillClass =
-            ds === "overdue"
-              ? "pill overdue"
-              : ds === "dueSoon"
-                ? "pill dueSoon"
-                : "pill ok";
-          row.appendChild(
-            el("div", {
-              className: pillClass,
-              textContent: humanDate(deliverable.due),
-            })
-          );
-        } else {
-          row.appendChild(
-            el("div", { className: "deliverable-empty", textContent: "--" })
-          );
-        }
-        dueList.appendChild(row);
-      });
-      dueCell.appendChild(dueList);
-    } else {
-      dueCell.textContent = "--";
-    }
 
-    const statusCell = tr.querySelector(".cell-status");
-    statusCell.innerHTML = "";
-    if (overviewDeliverables.length) {
-      const statusList = el("div", { className: "deliverable-status-list" });
-      overviewDeliverables.forEach((deliverable) => {
-        const isPrimary = deliverable.id === priorityId;
-        const row = el("div", {
-          className: `deliverable-row ${isPrimary ? "is-primary" : ""}`,
+        const header = el("div", { className: "deliverable-overview-header" });
+        const title = el("div", { className: "deliverable-overview-title" });
+        const starBtn = createIconButton({
+          className: `deliverable-action-btn deliverable-star ${isPrimary ? "is-primary" : ""}`,
+          title: isPrimary ? "Primary deliverable" : "Set as primary deliverable",
+          ariaLabel: isPrimary
+            ? "Primary deliverable"
+            : "Set as primary deliverable",
+          path: STAR_ICON_PATH,
+          pressed: isPrimary,
+          onClick: async () => {
+            if (p.overviewDeliverableId === deliverable.id) return;
+            p.overviewDeliverableId = deliverable.id;
+            deliverable.showInOverview = true;
+            await save();
+            render();
+          },
         });
-        row.append(
-          el("div", {
-            className: "deliverable-label",
-            textContent: deliverable.name || "Deliverable",
-          })
-        );
-        row.appendChild(renderStatusToggles(deliverable));
-        statusList.appendChild(row);
-      });
-      statusCell.appendChild(statusList);
-    } else {
-      statusCell.textContent = "--";
-    }
-
-    const taskCell = tr.querySelector(".cell-tasks");
-    taskCell.innerHTML = "";
-    if (overviewDeliverables.length) {
-      const deliverablesWrap = el("div", {
-        className: "deliverable-notes-list",
-      });
-      overviewDeliverables.forEach((deliverable) => {
-        const isPrimary = deliverable.id === priorityId;
-        const deliverableBlock = el("div", {
-          className: `deliverable-block ${isPrimary ? "is-primary" : ""}`,
-        });
-        const header = el("div", { className: "deliverable-block-header" });
-        header.append(
+        title.append(
+          starBtn,
           el("div", {
             className: "deliverable-name",
             textContent: deliverable.name || "Deliverable",
           })
         );
+
+        const meta = el("div", { className: "deliverable-overview-meta" });
+        const eyeBtn = createIconButton({
+          className: `deliverable-action-btn deliverable-eye ${
+            deliverable.showInOverview ? "" : "is-hidden"
+          }`,
+          title: deliverable.showInOverview ? "Hide deliverable" : "Show deliverable",
+          ariaLabel: deliverable.showInOverview
+            ? "Hide deliverable"
+            : "Show deliverable",
+          path: EYE_ICON_PATH,
+          onClick: async () => {
+            deliverable.showInOverview = !deliverable.showInOverview;
+            await save();
+            render();
+          },
+        });
+        meta.appendChild(eyeBtn);
         if (deliverable.due) {
           const ds = dueState(deliverable.due);
           const pillClass =
@@ -1356,103 +1461,31 @@ function render() {
               : ds === "dueSoon"
                 ? "pill dueSoon"
                 : "pill ok";
-          header.appendChild(
+          meta.appendChild(
             el("div", {
               className: pillClass,
               textContent: humanDate(deliverable.due),
             })
           );
-        }
-        deliverableBlock.appendChild(header);
-
-        const tasksNotesWrap = el("div", { className: "tasks-notes-grid" });
-
-        const tasksCol = el("div", { className: "tn-col tasks-col" });
-        tasksCol.appendChild(
-          el("div", { className: "tn-heading", textContent: "Tasks" })
-        );
-        const tasksBody = el("div", { className: "tn-body tasks-body" });
-        if (deliverable.tasks && deliverable.tasks.length) {
-          const renderTasks = (expanded) => {
-            tasksBody.innerHTML = "";
-            const tasksToShow = expanded
-              ? deliverable.tasks.map((task, index) => ({ task, index }))
-              : deliverable.tasks
-                  .slice(0, 2)
-                  .map((task, index) => ({ task, index }));
-            tasksToShow.forEach(({ task, index }) => {
-              const taskObj =
-                typeof task === "string"
-                  ? { text: task, done: false, links: [] }
-                  : task;
-              if (task !== taskObj) deliverable.tasks[index] = taskObj;
-              const taskChip = el("div", {
-                className: `task-chip ${taskObj.done ? "done" : ""}`,
-                textContent: taskObj.text || "Task",
-                role: "button",
-                tabIndex: 0,
-                "aria-pressed": String(!!taskObj.done),
-              });
-              const toggleTask = () => {
-                taskObj.done = !taskObj.done;
-                taskChip.classList.toggle("done", taskObj.done);
-                taskChip.setAttribute("aria-pressed", String(!!taskObj.done));
-                save();
-              };
-              taskChip.onclick = (e) => {
-                e.stopPropagation();
-                toggleTask();
-              };
-              taskChip.onkeydown = (e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  toggleTask();
-                }
-              };
-              tasksBody.appendChild(taskChip);
-            });
-            if (deliverable.tasks.length > 2) {
-              const moreBtn = el("button", {
-                className: "btn-more-tasks",
-                textContent: expanded
-                  ? "Show Less"
-                  : `+${deliverable.tasks.length - 2} more`,
-                onclick: (e) => {
-                  e.stopPropagation();
-                  renderTasks(!expanded);
-                },
-              });
-              tasksBody.appendChild(moreBtn);
-            }
-          };
-          renderTasks(false);
         } else {
-          tasksBody.textContent = "--";
-        }
-        tasksCol.appendChild(tasksBody);
-
-        const notesCol = el("div", { className: "tn-col notes-col" });
-        notesCol.appendChild(
-          el("div", { className: "tn-heading", textContent: "Notes" })
-        );
-        const notesBody = el("div", { className: "tn-body notes-body" });
-        const notesText = (deliverable.notes || "").trim();
-        if (notesText) {
-          notesBody.appendChild(
-            el("div", { className: "note-snippet", textContent: notesText })
+          meta.appendChild(
+            el("div", { className: "deliverable-empty", textContent: "--" })
           );
-        } else {
-          notesBody.textContent = "--";
         }
-        notesCol.appendChild(notesBody);
+        header.append(title, meta);
 
-        tasksNotesWrap.append(tasksCol, notesCol);
-        deliverableBlock.append(tasksNotesWrap);
-        deliverablesWrap.append(deliverableBlock);
+        const statusRow = el("div", { className: "deliverable-overview-status" });
+        statusRow.appendChild(renderStatusToggles(deliverable));
+
+        const bodyRow = el("div", { className: "deliverable-overview-body" });
+        bodyRow.appendChild(buildTasksNotesGrid(deliverable));
+
+        deliverableRow.append(header, statusRow, bodyRow);
+        overviewList.appendChild(deliverableRow);
       });
-      taskCell.appendChild(deliverablesWrap);
+      deliverablesCell.appendChild(overviewList);
     } else {
-      taskCell.textContent = "--";
+      deliverablesCell.textContent = "--";
     }
 
     const actionsCell = tr.querySelector(".cell-actions");

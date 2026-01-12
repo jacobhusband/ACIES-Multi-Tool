@@ -2770,15 +2770,16 @@ function render() {
     if (q && !matches(q, p)) return false;
     const overviewDeliverables = getOverviewDeliverables(p);
     if (!overviewDeliverables.length) return false;
+    const primaryDeliverable = getPrimaryDeliverable(p);
+    if (!primaryDeliverable) return false;
     if (dueFilter !== "all") {
-      if (!overviewDeliverables.some((d) => matchesDueFilter(d, dueFilter)))
-        return false;
+      if (!matchesDueFilter(primaryDeliverable, dueFilter)) return false;
     }
     if (statusFilter === "incomplete") {
-      if (!overviewDeliverables.some((d) => !isFinished(d))) return false;
+      if (isFinished(primaryDeliverable)) return false;
     } else if (
       statusFilter !== "all" &&
-      !overviewDeliverables.some((d) => hasStatus(d, statusFilter))
+      !hasStatus(primaryDeliverable, statusFilter)
     ) {
       return false;
     }
@@ -3201,6 +3202,7 @@ function readStatusPickerFrom(container) {
 function readForm() {
   const baseSchedule =
     editIndex >= 0 && db[editIndex] ? db[editIndex].lightingSchedule : null;
+  const existingProject = editIndex >= 0 && db[editIndex] ? db[editIndex] : null;
   const lightingSchedule = normalizeLightingSchedule(
     baseSchedule ?? createDefaultLightingSchedule()
   );
@@ -3213,6 +3215,7 @@ function readForm() {
     refs: [],
     deliverables: [],
     overviewDeliverableId: "",
+    pinned: !!existingProject?.pinned,
     lightingSchedule,
   };
 

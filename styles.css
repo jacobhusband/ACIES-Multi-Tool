@@ -747,9 +747,9 @@ main {
 
 .actions-stack {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   gap: 0.5rem;
-  align-items: stretch;
+  align-items: center;
   justify-content: flex-start;
   height: 100%;
   width: 100%;
@@ -776,6 +776,12 @@ main {
   box-shadow: none;
   margin-top: 0;
   margin-bottom: 0;
+}
+
+.row .actions .btn.icon-only {
+  width: 32px;
+  padding: 0;
+  align-self: center;
 }
 
 .row .actions .btn-danger:hover {
@@ -3098,11 +3104,12 @@ dialog::backdrop {
   transition: transform 0.2s;
 }
 
-.deliverable-card-new.collapsed .deliverable-collapse-toggle svg {
+.deliverable-card-new.details-collapsed .deliverable-collapse-toggle svg {
   transform: rotate(-90deg);
 }
 
-.deliverable-card-new.collapsed .deliverable-tasks-preview {
+.deliverable-card-new.details-collapsed .deliverable-progress-section,
+.deliverable-card-new.details-collapsed .deliverable-tasks-preview {
   display: none;
 }
 
@@ -3151,6 +3158,39 @@ dialog::backdrop {
 
 .deliverable-status-trigger.open svg {
   transform: rotate(45deg);
+}
+
+.deliverable-details-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 20px;
+  width: 20px;
+  padding: 0;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+  transform: translateY(1px);
+}
+
+.deliverable-details-toggle:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.deliverable-details-toggle svg {
+  width: 12px;
+  height: 12px;
+  transition: transform 0.2s ease;
+}
+
+.deliverable-details-toggle.expanded svg {
+  transform: rotate(180deg);
 }
 
 .deliverable-status-menu {
@@ -3296,7 +3336,7 @@ dialog::backdrop {
 }
 
 /* Collapsed state hides notes */
-.deliverable-card-new.collapsed .deliverable-notes-section {
+.deliverable-card-new.details-collapsed .deliverable-notes-section {
   display: none;
 }
 

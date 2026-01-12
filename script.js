@@ -68,6 +68,12 @@ const EYE_ICON_PATH =
   "M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5C21.27 7.61 17 4.5 12 4.5zm0 12.5a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-8a3 3 0 1 0 0 6 3 3 0 0 0 0-6z";
 const PIN_ICON_PATH =
   "M12 2C8.13 2 5 5.13 5 9c0 2.76 1.87 5.08 4.42 5.76L10 22l2-3 2 3-.42-7.24C16.13 14.08 18 11.76 18 9c0-3.87-3.13-7-7-7zm0 8.5A2.5 2.5 0 1 1 12 5a2.5 2.5 0 0 1 0 5z";
+const PENCIL_ICON_PATH =
+  "M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zm17.71-10.21c.39-.39.39-1.02 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z";
+const COPY_ICON_PATH =
+  "M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z";
+const TRASH_ICON_PATH =
+  "M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zm13-15h-3.5l-1-1h-5l-1 1H5v2h14V4z";
 
 // Timesheet Constants
 const DISCIPLINE_TO_FUNCTION = {
@@ -2525,6 +2531,45 @@ function createTasksPreview(deliverable, card) {
   return container;
 }
 
+function setDeliverableDetailsCollapsed(card, isCollapsed, toggleBtn) {
+  card.classList.toggle("details-collapsed", isCollapsed);
+  const btn = toggleBtn || card.querySelector(".deliverable-details-toggle");
+  if (!btn) return;
+  btn.classList.toggle("expanded", !isCollapsed);
+  const label = isCollapsed ? "Show details" : "Hide details";
+  btn.setAttribute("aria-label", label);
+  btn.setAttribute("title", label);
+}
+
+function createDetailsToggle(card) {
+  const btn = el("button", {
+    className: "deliverable-details-toggle",
+    type: "button",
+  });
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "2");
+  svg.innerHTML = '<polyline points="6 9 12 15 18 9"></polyline>';
+  btn.appendChild(svg);
+
+  btn.onclick = (e) => {
+    e.stopPropagation();
+    setDeliverableDetailsCollapsed(
+      card,
+      !card.classList.contains("details-collapsed")
+    );
+  };
+
+  setDeliverableDetailsCollapsed(
+    card,
+    card.classList.contains("details-collapsed"),
+    btn
+  );
+  return btn;
+}
+
 function createCollapseButton(card) {
   const btn = el("button", { className: "deliverable-collapse-toggle" });
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -2537,7 +2582,10 @@ function createCollapseButton(card) {
 
   btn.onclick = (e) => {
     e.stopPropagation();
-    card.classList.toggle("collapsed");
+    setDeliverableDetailsCollapsed(
+      card,
+      !card.classList.contains("details-collapsed")
+    );
   };
 
   return btn;
@@ -2545,7 +2593,7 @@ function createCollapseButton(card) {
 
 function renderDeliverableCard(deliverable, isPrimary, project) {
   const card = el("div", {
-    className: `deliverable-card-new ${isPrimary ? "is-primary" : ""} ${isPrimary ? "" : "collapsed"}`
+    className: `deliverable-card-new ${isPrimary ? "is-primary" : ""} details-collapsed`
   });
 
   // Header: name + due badge
@@ -2564,7 +2612,8 @@ function renderDeliverableCard(deliverable, isPrimary, project) {
   const statusSection = el("div", { className: "deliverable-status-row" });
   const statusBadges = createStatusBadges(deliverable);
   const statusDropdown = createStatusDropdown(deliverable, project);
-  statusSection.append(statusBadges, statusDropdown);
+  const detailsToggle = createDetailsToggle(card);
+  statusSection.append(statusBadges, statusDropdown, detailsToggle);
 
   // Tasks preview (2-3 tasks, now clickable)
   const tasksPreview = createTasksPreview(deliverable, card);
@@ -2926,20 +2975,26 @@ function render() {
     const actionsCell = tr.querySelector(".cell-actions");
     const actionsStack = el("div", { className: "actions-stack" });
     actionsStack.append(
-      el("button", {
-        className: "btn",
-        textContent: "Edit",
-        onclick: () => openEdit(idx),
+      createIconButton({
+        className: "btn icon-only",
+        title: "Edit",
+        ariaLabel: "Edit project",
+        path: PENCIL_ICON_PATH,
+        onClick: () => openEdit(idx),
       }),
-      el("button", {
-        className: "btn",
-        textContent: "Duplicate",
-        onclick: () => duplicate(idx),
+      createIconButton({
+        className: "btn icon-only",
+        title: "Duplicate",
+        ariaLabel: "Duplicate project",
+        path: COPY_ICON_PATH,
+        onClick: () => duplicate(idx),
       }),
-      el("button", {
-        className: "btn btn-danger",
-        textContent: "Delete",
-        onclick: () => removeProject(idx),
+      createIconButton({
+        className: "btn btn-danger icon-only",
+        title: "Delete",
+        ariaLabel: "Delete project",
+        path: TRASH_ICON_PATH,
+        onClick: () => removeProject(idx),
       })
     );
     actionsCell.append(actionsStack);

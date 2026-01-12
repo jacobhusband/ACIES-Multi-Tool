@@ -147,7 +147,6 @@
                         <input id="search" type="search" placeholder="Search projects..." />
                     </div>
                     <div class="toolbar-actions">
-                        <button class="btn tiny" id="mergeProjectsBtn" disabled>Merge</button>
                         <button class="icon-btn quick-add" id="quickNew" aria-label="New project"
                             title="New project">＋</button>
                         <button class="icon-btn" id="aiBtn" aria-label="AI Project"
@@ -183,8 +182,16 @@
                     <thead>
                         <tr>
                             <th class="cell-select">
-                                <input type="checkbox" id="projectsSelectAll" aria-label="Select all projects"
-                                    style="width:auto">
+                                <span class="pin-header" aria-hidden="true">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                                        stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                        stroke-linejoin="round">
+                                        <path
+                                            d="M12 2c-3.31 0-6 2.69-6 6 0 2.76 1.87 5.08 4.42 5.76L10 22l2-3 2 3-.42-8.24C16.13 13.08 18 10.76 18 8c0-3.31-2.69-6-6-6z">
+                                        </path>
+                                        <circle cx="12" cy="8" r="2"></circle>
+                                    </svg>
+                                </span>
                             </th>
                             <th style="width:90px" data-sort="id">ID</th>
                             <th data-sort="name">Project Details</th>
@@ -595,6 +602,14 @@
                 </div>
                 <div class="setting-row">
                     <div class="setting-info">
+                        <div class="setting-label">Scan and merge similar projects together</div>
+                        <div class="setting-desc">Thoroughly compares project IDs and names, then merges any matches.
+                        </div>
+                    </div>
+                    <button class="btn" id="btnMergeSimilarProjects">Run Action</button>
+                </div>
+                <div class="setting-row">
+                    <div class="setting-info">
                         <div class="setting-label">Auto-Set Latest as Primary</div>
                         <div class="setting-desc">Automatically set the deliverable with the latest due date as primary
                             when merging or updating.</div>
@@ -984,7 +999,7 @@
     <template id="project-row-template">
         <tr class="row">
             <td class="cell-select">
-                <input type="checkbox" class="project-select" aria-label="Select project" style="width:auto">
+                <button class="pin-btn" type="button" aria-label="Pin project"></button>
             </td>
             <td class="cell-id"><span class="id-badge"></span></td>
             <td class="cell-name"></td>

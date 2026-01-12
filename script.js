@@ -64,6 +64,8 @@ const STAR_ICON_PATH =
   "M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z";
 const EYE_ICON_PATH =
   "M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5C21.27 7.61 17 4.5 12 4.5zm0 12.5a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-8a3 3 0 1 0 0 6 3 3 0 0 0 0-6z";
+const PIN_ICON_PATH =
+  "M12 2C8.13 2 5 5.13 5 9c0 2.76 1.87 5.08 4.42 5.76L10 22l2-3 2 3-.42-7.24C16.13 14.08 18 11.76 18 9c0-3.87-3.13-7-7-7zm0 8.5A2.5 2.5 0 1 1 12 5a2.5 2.5 0 0 1 0 5z";
 
 // Cache for loaded descriptions to prevent re-fetching
 const DESCRIPTION_CACHE = {};
@@ -371,8 +373,6 @@ let editIndex = -1;
 let currentSort = { key: "due", dir: "desc" };
 let statusFilter = "all";
 let dueFilter = "all";
-let selectedProjects = new Set();
-let visibleProjectIndexes = [];
 
 let userSettings = {
   userName: "",
@@ -1342,34 +1342,61 @@ function buildTasksNotesGrid(deliverable) {
   return tasksNotesWrap;
 }
 
-function pruneSelectedProjects() {
-  selectedProjects.forEach((idx) => {
-    if (!Number.isInteger(idx) || !db[idx]) selectedProjects.delete(idx);
+function normalizeProjectMatchValue(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function normalizeProjectId(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "")
+    .trim();
+}
+
+function getNameTokens(value) {
+  const normalized = normalizeProjectMatchValue(value);
+  if (!normalized) return [];
+  return normalized.split(" ").filter((token) => token.length > 2);
+}
+
+function nameSimilarityScore(a, b) {
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  if (a.includes(b) || b.includes(a)) return 0.9;
+  const aTokens = new Set(getNameTokens(a));
+  const bTokens = new Set(getNameTokens(b));
+  if (!aTokens.size || !bTokens.size) return 0;
+  let intersect = 0;
+  aTokens.forEach((token) => {
+    if (bTokens.has(token)) intersect++;
   });
+  const union = aTokens.size + bTokens.size - intersect;
+  return union ? intersect / union : 0;
 }
 
-function getSelectedProjectIndexes() {
-  return Array.from(selectedProjects).filter((idx) =>
-    Number.isInteger(idx) && db[idx]
-  );
-}
-
-function updateMergeControls() {
-  const mergeBtn = document.getElementById("mergeProjectsBtn");
-  const selectAll = document.getElementById("projectsSelectAll");
-  const selected = getSelectedProjectIndexes();
-  if (mergeBtn) {
-    mergeBtn.disabled = selected.length < 2;
-    mergeBtn.textContent = selected.length >= 2 ? `Merge (${selected.length})` : "Merge";
+function areProjectsSimilar(a, b) {
+  if (!a || !b) return false;
+  const idA = normalizeProjectId(a.id);
+  const idB = normalizeProjectId(b.id);
+  if (idA && idB) {
+    if (idA === idB) return true;
+    if (
+      idA.length >= 4 &&
+      idB.length >= 4 &&
+      (idA.includes(idB) || idB.includes(idA))
+    )
+      return true;
   }
-  if (selectAll) {
-    const visible = visibleProjectIndexes.filter((idx) => db[idx]);
-    const selectedVisible = visible.filter((idx) => selectedProjects.has(idx));
-    selectAll.disabled = visible.length === 0;
-    selectAll.checked = visible.length > 0 && selectedVisible.length === visible.length;
-    selectAll.indeterminate =
-      selectedVisible.length > 0 && selectedVisible.length < visible.length;
+  const nameA = normalizeProjectMatchValue(a.name);
+  const nameB = normalizeProjectMatchValue(b.name);
+  if (nameA && nameB) {
+    const score = nameSimilarityScore(nameA, nameB);
+    if (score >= 0.8) return true;
   }
+  return false;
 }
 
 function pickShortestPath(projects = []) {
@@ -1382,60 +1409,126 @@ function pickShortestPath(projects = []) {
   return shortest;
 }
 
-function mergeSelectedProjects() {
-  const indexes = getSelectedProjectIndexes().sort((a, b) => a - b);
-  if (indexes.length < 2) {
-    toast("Select at least two projects to merge.");
+function scanAndMergeSimilarProjects() {
+  if (!db.length) {
+    toast("No projects to scan.");
     return;
   }
-  if (!confirm(`Merge ${indexes.length} projects into one?`)) return;
+  if (!confirm("Scan all projects and merge similar matches?")) return;
+  const total = db.length;
+  const parent = Array.from({ length: total }, (_, i) => i);
 
-  const projects = indexes.map((idx) => normalizeProject(db[idx]));
-  const base = normalizeProject(db[indexes[0]]);
-  projects.slice(1).forEach((project) => mergeProjects(base, project));
+  const find = (x) => {
+    let root = x;
+    while (parent[root] !== root) root = parent[root];
+    while (parent[x] !== x) {
+      const next = parent[x];
+      parent[x] = root;
+      x = next;
+    }
+    return root;
+  };
 
-  base.path = pickShortestPath(projects) || base.path || "";
-  base.deliverables = projects
-    .flatMap((project) =>
-      getProjectDeliverables(project).map(normalizeDeliverable)
-    )
-    .map((deliverable) => ({
-      ...deliverable,
-      id: deliverable.id || createId("dlv"),
-    }));
-  base.deliverables.sort(compareDeliverablesByDueDesc);
-  if (!base.deliverables.length) base.deliverables = [createDeliverable()];
-  base.overviewDeliverableId = base.deliverables[0]?.id || "";
-  autoSetPrimary(base);
-  base.overviewSortDir = "desc";
+  const union = (a, b) => {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent[rb] = ra;
+  };
 
-  db[indexes[0]] = base;
-  for (let i = indexes.length - 1; i >= 1; i--) {
-    db.splice(indexes[i], 1);
+  for (let i = 0; i < total; i++) {
+    for (let j = i + 1; j < total; j++) {
+      if (areProjectsSimilar(db[i], db[j])) union(i, j);
+    }
   }
 
-  selectedProjects.clear();
-  selectedProjects.add(indexes[0]);
+  const groups = new Map();
+  for (let i = 0; i < total; i++) {
+    const root = find(i);
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root).push(i);
+  }
+
+  const mergeGroups = Array.from(groups.values()).filter((g) => g.length > 1);
+  if (!mergeGroups.length) {
+    toast("No similar projects found.");
+    return;
+  }
+
+  mergeGroups.sort((a, b) => Math.max(...b) - Math.max(...a));
+  let mergedCount = 0;
+  let removedCount = 0;
+
+  mergeGroups.forEach((indexes) => {
+    const sorted = indexes.slice().sort((a, b) => a - b);
+    const projects = sorted.map((idx) => normalizeProject(db[idx]));
+    const base = normalizeProject(db[sorted[0]]);
+    projects.slice(1).forEach((project) => mergeProjects(base, project));
+
+    base.path = pickShortestPath(projects) || base.path || "";
+    base.deliverables = projects
+      .flatMap((project) =>
+        getProjectDeliverables(project).map(normalizeDeliverable)
+      )
+      .map((deliverable) => ({
+        ...deliverable,
+        id: deliverable.id || createId("dlv"),
+      }));
+    base.deliverables.sort(compareDeliverablesByDueDesc);
+    if (!base.deliverables.length) base.deliverables = [createDeliverable()];
+    base.overviewDeliverableId = base.deliverables[0]?.id || "";
+    autoSetPrimary(base);
+    base.overviewSortDir = "desc";
+    base.pinned = projects.some((project) => project?.pinned);
+
+    db[sorted[0]] = base;
+    for (let i = sorted.length - 1; i >= 1; i--) {
+      db.splice(sorted[i], 1);
+      removedCount++;
+    }
+    mergedCount++;
+  });
+
   save();
   render();
-  toast("Projects merged.");
+  toast(`Merged ${mergedCount} group${mergedCount === 1 ? "" : "s"} (${removedCount} removed).`);
 }
 
-function adjustSelectionsAfterRemoval(removedIndex) {
-  const next = new Set();
-  selectedProjects.forEach((idx) => {
-    if (idx === removedIndex) return;
-    if (idx > removedIndex) next.add(idx - 1);
-    else next.add(idx);
+function sortProjectsByCurrent(items) {
+  items.sort((a, b) => {
+    const dir = currentSort.dir === "asc" ? 1 : -1;
+    if (currentSort.key === "due") {
+      const da = getProjectSortKey(a);
+      const dbb = getProjectSortKey(b);
+      if (!da && !dbb) return 0;
+      if (!da) return 1;
+      if (!dbb) return -1;
+      return (da - dbb) * dir;
+    }
+    const valA = a[currentSort.key];
+    const valB = b[currentSort.key];
+    return (
+      String(valA || "").localeCompare(String(valB || ""), undefined, {
+        numeric: true,
+      }) * dir
+    );
   });
-  selectedProjects = next;
+}
+
+function sortProjectsByDueDesc(items) {
+  items.sort((a, b) => {
+    const da = getProjectSortKey(a);
+    const dbb = getProjectSortKey(b);
+    if (!da && !dbb) return 0;
+    if (!da) return 1;
+    if (!dbb) return -1;
+    return dbb - da;
+  });
 }
 
 function render() {
   const tbody = document.getElementById("tbody");
   const emptyState = document.getElementById("emptyState");
   tbody.innerHTML = "";
-  pruneSelectedProjects();
 
   const q = val("search").toLowerCase();
 
@@ -1458,27 +1551,13 @@ function render() {
     return true;
   });
 
-  items.sort((a, b) => {
-    const dir = currentSort.dir === "asc" ? 1 : -1;
-    if (currentSort.key === "due") {
-      const da = getProjectSortKey(a);
-      const db = getProjectSortKey(b);
-      if (!da && !db) return 0;
-      if (!da) return 1;
-      if (!db) return -1;
-      return (da - db) * dir;
-    }
-    const valA = a[currentSort.key];
-    const valB = b[currentSort.key];
-    return (
-      String(valA || "").localeCompare(String(valB || ""), undefined, {
-        numeric: true,
-      }) * dir
-    );
-  });
+  const pinned = items.filter((p) => p?.pinned);
+  const unpinned = items.filter((p) => !p?.pinned);
+  sortProjectsByDueDesc(pinned);
+  sortProjectsByCurrent(unpinned);
+  items = pinned.concat(unpinned);
 
   updateSortHeaders();
-  visibleProjectIndexes = items.map((p) => db.indexOf(p));
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -1533,13 +1612,20 @@ function render() {
     const priorityId = primary?.id;
 
     const selectCell = tr.querySelector(".cell-select");
-    const selectInput = selectCell?.querySelector(".project-select");
-    if (selectInput) {
-      selectInput.checked = selectedProjects.has(idx);
-      selectInput.onchange = (e) => {
-        if (e.target.checked) selectedProjects.add(idx);
-        else selectedProjects.delete(idx);
-        updateMergeControls();
+    const pinBtn = selectCell?.querySelector(".pin-btn");
+    if (pinBtn) {
+      const isPinned = !!p.pinned;
+      pinBtn.classList.toggle("is-pinned", isPinned);
+      pinBtn.setAttribute("aria-pressed", String(isPinned));
+      pinBtn.setAttribute("aria-label", isPinned ? "Unpin project" : "Pin project");
+      pinBtn.setAttribute("title", isPinned ? "Unpin project" : "Pin project");
+      pinBtn.textContent = "";
+      pinBtn.appendChild(createIcon(PIN_ICON_PATH, 14));
+      pinBtn.onclick = async (e) => {
+        e.stopPropagation();
+        p.pinned = !p.pinned;
+        await save();
+        render();
       };
     }
 
@@ -1698,7 +1784,6 @@ function render() {
     actionsCell.append(actionsStack);
     tbody.appendChild(tr);
   });
-  updateMergeControls();
 }
 
 function renderStatusToggles(p) {
@@ -1793,7 +1878,6 @@ function openNew() {
 function removeProject(i) {
   if (!confirm("Delete this project?")) return;
   db.splice(i, 1);
-  adjustSelectionsAfterRemoval(i);
   save();
   render();
 }
@@ -1804,7 +1888,7 @@ function duplicate(i) {
     id: original?.id || "",
     name: original?.name || "",
     path: original?.path || "",
-    nick: "",
+    nick: original?.nick || "",
     notes: "",
     refs: [],
     deliverables: [deliverable],
@@ -1862,10 +1946,11 @@ function fillForm(project) {
   (p.refs || []).forEach(addRefRowFrom);
 }
 
-function addDeliverableCard(deliverable, primaryId) {
+function addDeliverableCard(deliverable, primaryId, options = {}) {
   const list = document.getElementById("deliverableList");
   const template = document.getElementById("deliverable-card-template");
   if (!list || !template) return;
+  const { insertAtTop = false } = options;
 
   const card = template.content
     .cloneNode(true)
@@ -1907,7 +1992,11 @@ function addDeliverableCard(deliverable, primaryId) {
   });
   statusContainer.appendChild(picker);
 
-  list.appendChild(card);
+  if (insertAtTop && list.firstChild) {
+    list.prepend(card);
+  } else {
+    list.appendChild(card);
+  }
 
   const hasPrimary = list.querySelector(".d-primary:checked");
   if (!hasPrimary && !primaryId) primaryInput.checked = true;
@@ -2044,7 +2133,8 @@ function addRefRowFrom(L = {}) {
   document.getElementById("refList").append(row);
 }
 
-window.addDeliverable = () => addDeliverableCard(createDeliverable());
+window.addDeliverable = () =>
+  addDeliverableCard(createDeliverable(), null, { insertAtTop: true });
 window.addRefRow = () => addRefRowFrom({});
 window.closeDlg = closeDlg;
 
@@ -3701,11 +3791,19 @@ function initEventListeners() {
     openExternalUrl(HELP_LINKS.projects);
 
   const toggleNonPrimaryBtn = document.getElementById("toggleNonPrimaryBtn");
+  const updateToggleNonPrimaryState = () => {
+    if (!toggleNonPrimaryBtn) return;
+    toggleNonPrimaryBtn.classList.toggle("is-active", hideNonPrimary);
+    toggleNonPrimaryBtn.setAttribute("aria-pressed", String(hideNonPrimary));
+    toggleNonPrimaryBtn.title = hideNonPrimary
+      ? "Show all deliverables"
+      : "Hide non-primary deliverables";
+  };
   if (toggleNonPrimaryBtn) {
-    toggleNonPrimaryBtn.onclick = (e) => {
+    updateToggleNonPrimaryState();
+    toggleNonPrimaryBtn.onclick = () => {
       hideNonPrimary = !hideNonPrimary;
-      e.currentTarget.style.color = hideNonPrimary ? "var(--accent)" : "";
-      e.currentTarget.title = hideNonPrimary ? "Show all deliverables" : "Hide non-primary deliverables";
+      updateToggleNonPrimaryState();
       render();
     };
   }
@@ -3726,20 +3824,8 @@ function initEventListeners() {
     persistThemePreference(nextTheme);
   };
 
-  const mergeBtn = document.getElementById("mergeProjectsBtn");
-  if (mergeBtn) mergeBtn.onclick = mergeSelectedProjects;
-
-  const selectAllProjects = document.getElementById("projectsSelectAll");
-  if (selectAllProjects) {
-    selectAllProjects.addEventListener("change", (e) => {
-      const shouldSelect = e.target.checked;
-      visibleProjectIndexes.forEach((idx) => {
-        if (shouldSelect) selectedProjects.add(idx);
-        else selectedProjects.delete(idx);
-      });
-      render();
-    });
-  }
+  const mergeSimilarBtn = document.getElementById("btnMergeSimilarProjects");
+  if (mergeSimilarBtn) mergeSimilarBtn.onclick = scanAndMergeSimilarProjects;
 
   document.getElementById("quickNew").onclick = openNew;
   document.getElementById("settingsBtn").onclick = async () => {
@@ -4128,7 +4214,6 @@ function initEventListeners() {
       if (response.status === "success") {
         toast(`Marked ${response.count} deliverables as complete.`);
         db = await load();
-        selectedProjects.clear();
         render();
       } else {
         toast("Failed to mark deliverables as complete.");
@@ -4149,7 +4234,6 @@ function initEventListeners() {
         if (response.status === "success") {
           toast(`Marked ${response.count} deliverables as delivered.`);
           db = await load();
-          selectedProjects.clear();
           render();
         } else {
           toast("Failed to mark deliverables as delivered.");
@@ -4171,7 +4255,6 @@ function initEventListeners() {
   };
   document.getElementById("btnDeleteConfirm").onclick = () => {
     db = [];
-    selectedProjects.clear();
     save();
     render();
     closeDlg("deleteDlg");
@@ -4281,7 +4364,6 @@ async function init() {
       showMainApp();
       const [loadedDb] = await Promise.all([load(), loadNotes()]);
       db = loadedDb;
-      selectedProjects.clear();
       renderNoteTabs();
       render();
 

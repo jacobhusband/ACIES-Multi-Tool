@@ -2561,7 +2561,7 @@ function renderDeliverableCard(deliverable, isPrimary, project) {
   const progress = createProgressSection(deliverable);
 
   // Status section: badges + dropdown inline
-  const statusSection = el("div", { style: "margin-bottom: 0.625rem;" });
+  const statusSection = el("div", { className: "deliverable-status-row" });
   const statusBadges = createStatusBadges(deliverable);
   const statusDropdown = createStatusDropdown(deliverable, project);
   statusSection.append(statusBadges, statusDropdown);

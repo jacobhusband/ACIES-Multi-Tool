@@ -2960,6 +2960,14 @@ dialog::backdrop {
   align-items: center;
 }
 
+.deliverable-status-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.625rem;
+}
+
 .deliverable-status-badge {
   display: inline-flex;
   align-items: center;
@@ -3120,6 +3128,7 @@ dialog::backdrop {
   transition: all 0.2s ease;
   color: var(--text-secondary);
   flex-shrink: 0;
+  transform: translateY(1px);
 }
 
 .deliverable-status-trigger:hover {

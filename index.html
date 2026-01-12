@@ -96,6 +96,7 @@
                 <button class="main-tab-btn" data-tab="notes">Notes</button>
                 <button class="main-tab-btn" data-tab="tools">Tools</button>
                 <button class="main-tab-btn" data-tab="plugins">Plugins</button>
+                <button class="main-tab-btn" data-tab="timesheets">Timesheets</button>
             </nav>
         </div>
         <div class="header-actions">
@@ -361,7 +362,127 @@
                 </div>
             </section>
         </div>
+        <!-- Tab Panel for Timesheets -->
+        <div id="timesheets-panel" class="tab-panel" hidden>
+            <section class="panel stack">
+                <div class="panel-toolbar">
+                    <div class="timesheets-week-selector">
+                        <button class="btn tiny" id="prevWeekBtn" aria-label="Previous week">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="15 18 9 12 15 6"></polyline>
+                            </svg>
+                        </button>
+                        <span class="week-display" id="weekDisplay">Week of Jan 12, 2026</span>
+                        <button class="btn tiny" id="nextWeekBtn" aria-label="Next week">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="9 18 15 12 9 6"></polyline>
+                            </svg>
+                        </button>
+                        <button class="btn tiny" id="currentWeekBtn">Today</button>
+                    </div>
+                    <div class="toolbar-actions">
+                        <button class="btn-primary tiny" id="exportTimesheetBtn">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px;">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                <polyline points="7 10 12 15 17 10"></polyline>
+                                <line x1="12" y1="15" x2="12" y2="3"></line>
+                            </svg>
+                            Export Excel
+                        </button>
+                        <button class="icon-btn" id="timesheetsHelpBtn" aria-label="Timesheets help" title="Timesheets help">?</button>
+                    </div>
+                </div>
+
+                <div class="timesheet-totals-bar">
+                    <span class="total-label">Weekly Total:</span>
+                    <span class="total-hours" id="weeklyTotalHours">0.0</span>
+                    <span class="total-label">hours</span>
+                </div>
+
+                <div class="timesheet-grid-container">
+                    <table class="timesheet-table">
+                        <thead>
+                            <tr>
+                                <th class="ts-drag-col">MOVE</th>
+                                <th class="ts-project-col">PROJECT #</th>
+                                <th class="ts-task-col">Task #</th>
+                                <th class="ts-name-col">PROJECT NAME</th>
+                                <th class="ts-func-col">FUNC</th>
+                                <th class="ts-pm-col">PM</th>
+                                <th class="ts-desc-col">SERVICE DESCRIPTION</th>
+                                <th class="ts-day-col">MON</th>
+                                <th class="ts-day-col">TUE</th>
+                                <th class="ts-day-col">WED</th>
+                                <th class="ts-day-col">THU</th>
+                                <th class="ts-day-col">FRI</th>
+                                <th class="ts-day-col">SAT</th>
+                                <th class="ts-day-col">SUN</th>
+                                <th class="ts-total-col">TOTAL</th>
+                                <th class="ts-mileage-col">MILES</th>
+                                <th class="ts-actions-col"></th>
+                            </tr>
+                        </thead>
+                        <tbody id="timesheetBody"></tbody>
+                        <tfoot>
+                            <tr class="totals-row">
+                                <td colspan="7" class="totals-label">Daily Totals</td>
+                                <td id="totalMon">0</td>
+                                <td id="totalTue">0</td>
+                                <td id="totalWed">0</td>
+                                <td id="totalThu">0</td>
+                                <td id="totalFri">0</td>
+                                <td id="totalSat">0</td>
+                                <td id="totalSun">0</td>
+                                <td id="totalWeek">0</td>
+                                <td id="totalMileage">0</td>
+                                <td></td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+
+                <div class="timesheet-add-section">
+                    <button class="btn" id="addTimesheetEntryBtn" onclick="openAddTimesheetProjectDialog()">
+                        + Add Project Entry
+                    </button>
+                    <button class="btn" id="addManualTimesheetEntryBtn" onclick="addManualTimesheetEntry()">
+                        + Add Manual Entry
+                    </button>
+                </div>
+
+                <div id="timesheetEmptyState" class="timesheet-empty" style="display: none;">
+                    <div class="empty-icon">📊</div>
+                    <h3>No timesheet entries</h3>
+                    <p>Add projects from the suggestions below or click "+ Add Project Entry"</p>
+                </div>
+
+                <!-- Projects due this week section -->
+                <div class="timesheet-suggestions">
+                    <h4 class="section-title">Projects Due This Week & Next</h4>
+                    <p class="tiny muted">Click a project to add it to your timesheet</p>
+                    <div id="timesheetSuggestions" class="timesheet-suggestions-list"></div>
+                </div>
+            </section>
+        </div>
     </main>
+    <!-- Timesheet Project Selection Dialog -->
+    <dialog id="timesheetProjectDlg">
+        <div class="modal-header">
+            <div class="title">Add Project to Timesheet</div>
+            <button class="btn ghost" onclick="closeDlg('timesheetProjectDlg')">Cancel</button>
+        </div>
+        <div class="modal-body stack">
+            <div class="nav-search expanded-search">
+                <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="2">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                </svg>
+                <input id="timesheetProjectSearch" type="search" placeholder="Search projects..." />
+            </div>
+            <div id="timesheetProjectList" class="timesheet-project-list"></div>
+        </div>
+    </dialog>
     <!-- Edit / New Modal -->
     <dialog id="editDlg">
         <div class="modal-header">
@@ -569,6 +690,16 @@
                         <input id="settings_apiKey" type="password" placeholder="Enter your API key" />
                         <button type="button" class="btn tiny" id="settings_howToSetupBtn">Help</button>
                     </div>
+                </div>
+            </div>
+
+            <!-- Timesheets Section -->
+            <h3 class="section-title" style="margin-top: 1rem;">Timesheets</h3>
+            <div class="modal-grid">
+                <div class="col-6">
+                    <label class="label">Default PM Initials</label>
+                    <input id="settings_defaultPmInitials" placeholder="e.g. JH" maxlength="6" />
+                    <div class="tiny muted" style="margin-top: 0.35rem;">Used when adding new timesheet entries.</div>
                 </div>
             </div>
 

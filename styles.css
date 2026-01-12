@@ -2811,3 +2811,861 @@ dialog::backdrop {
   padding: 0;
   background: transparent;
 }
+
+/* ========================================
+   Card-Based Deliverables Layout
+   ======================================== */
+
+.deliverable-cards-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.deliverable-card-new {
+  background: var(--bg-secondary);
+  border: 1px solid var(--glass-border);
+  border-left-width: 2px;
+  border-radius: var(--radius);
+  padding: 0.875rem;
+  transition: all 0.2s ease;
+  box-shadow: var(--shadow-sm);
+}
+
+.deliverable-card-new:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+
+.deliverable-card-new.is-primary {
+  border-left-width: 4px;
+  border-left-color: #fbbf24;
+  background: linear-gradient(
+    to right,
+    rgba(251, 191, 36, 0.05) 0%,
+    var(--bg-secondary) 20%
+  );
+}
+
+.deliverable-card-header-new {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.625rem;
+}
+
+.deliverable-card-title-new {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  flex: 1;
+  min-width: 0;
+}
+
+.deliverable-card-title-new svg {
+  width: 14px;
+  height: 14px;
+  color: #fbbf24;
+  flex-shrink: 0;
+}
+
+.deliverable-card-title-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.deliverable-due-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.deliverable-due-badge.overdue {
+  background: var(--danger);
+  color: #ffffff;
+}
+
+.deliverable-due-badge.due-soon {
+  background: var(--warning);
+  color: var(--btn-text-on-accent);
+}
+
+.deliverable-due-badge.ok {
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--accent);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.deliverable-progress-section {
+  margin-bottom: 0.625rem;
+}
+
+.deliverable-progress-bar-container {
+  width: 100%;
+  height: 6px;
+  background: var(--bg-tertiary);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 0.375rem;
+}
+
+.deliverable-progress-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent) 0%, var(--accent-hover) 100%);
+  transition: width 0.3s ease;
+  border-radius: 3px;
+}
+
+.deliverable-progress-text {
+  font-size: 12px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  color: var(--muted);
+}
+
+.deliverable-progress-text .percentage {
+  font-weight: 600;
+}
+
+.deliverable-progress-text.high .percentage {
+  color: var(--accent);
+}
+
+.deliverable-progress-text.medium .percentage {
+  color: var(--warning);
+}
+
+.deliverable-progress-text.low .percentage {
+  color: var(--danger);
+}
+
+.deliverable-status-badges {
+  display: inline-flex;
+  gap: 0.375rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.deliverable-status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.deliverable-status-badge.waiting {
+  background: var(--warning);
+  color: var(--btn-text-on-accent);
+}
+
+.deliverable-status-badge.working {
+  background: #3b82f6;
+  color: #ffffff;
+}
+
+.deliverable-status-badge.pendingreview {
+  background: var(--warning);
+  color: var(--btn-text-on-accent);
+}
+
+.deliverable-status-badge.complete {
+  background: var(--accent);
+  color: var(--btn-text-on-accent);
+}
+
+.deliverable-status-badge.delivered {
+  background: linear-gradient(135deg, #34d399, #10b981);
+  color: var(--btn-text-on-accent);
+}
+
+.deliverable-tasks-preview {
+  margin-bottom: 0.5rem;
+}
+
+.deliverable-tasks-preview-heading {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  font-weight: 600;
+  margin-bottom: 0.375rem;
+}
+
+.deliverable-tasks-preview-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.deliverable-task-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.deliverable-task-item .task-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 2px;
+}
+
+.deliverable-task-item.done {
+  color: var(--muted);
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+
+.deliverable-task-item.undone {
+  color: var(--text);
+}
+
+.deliverable-expand-btn {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 4px 8px;
+  margin-top: 0.25rem;
+  border-radius: 4px;
+  transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-weight: 500;
+}
+
+.deliverable-expand-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text);
+}
+
+.deliverable-collapse-toggle {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  border: 1px solid var(--glass-border);
+  background: transparent;
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.deliverable-collapse-toggle:hover {
+  background: var(--bg-tertiary);
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.deliverable-collapse-toggle svg {
+  width: 12px;
+  height: 12px;
+  transition: transform 0.2s;
+}
+
+.deliverable-card-new.collapsed .deliverable-collapse-toggle svg {
+  transform: rotate(-90deg);
+}
+
+.deliverable-card-new.collapsed .deliverable-tasks-preview {
+  display: none;
+}
+
+/* ===================== INLINE EDITING CONTROLS ===================== */
+
+/* Status dropdown for inline editing - compact inline version */
+.deliverable-status-dropdown {
+  position: relative;
+  display: inline-block;
+}
+
+.deliverable-status-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 20px;
+  width: 20px;
+  padding: 0;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.deliverable-status-trigger:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.deliverable-status-trigger svg {
+  width: 12px;
+  height: 12px;
+  transition: transform 0.2s ease;
+}
+
+.deliverable-status-trigger.open {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--btn-text-on-accent);
+}
+
+.deliverable-status-trigger.open svg {
+  transform: rotate(45deg);
+}
+
+.deliverable-status-menu {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 180px;
+  margin-top: 0.25rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  z-index: 100;
+  overflow: hidden;
+}
+
+.deliverable-status-menu.open {
+  display: block;
+}
+
+.deliverable-status-option {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.625rem;
+  cursor: pointer;
+  font-size: 0.8125rem;
+  transition: background 0.15s ease;
+}
+
+.deliverable-status-option:hover {
+  background: var(--bg-hover);
+}
+
+.deliverable-status-option input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+
+/* Notes section */
+.deliverable-notes-section {
+  margin-top: 0.625rem;
+  padding-top: 0.625rem;
+  border-top: 1px solid var(--glass-border);
+}
+
+.deliverable-notes-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.375rem;
+  cursor: pointer;
+  padding: 0.25rem;
+  border-radius: var(--radius);
+  transition: background 0.15s ease;
+}
+
+.deliverable-notes-header:hover {
+  background: var(--bg-hover);
+}
+
+.deliverable-notes-title {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.deliverable-notes-title svg {
+  width: 14px;
+  height: 14px;
+  transition: transform 0.2s ease;
+}
+
+.deliverable-notes-header.expanded svg {
+  transform: rotate(90deg);
+}
+
+.deliverable-notes-content {
+  display: none;
+  margin-top: 0.375rem;
+}
+
+.deliverable-notes-content.expanded {
+  display: block;
+}
+
+.deliverable-notes-textarea {
+  width: 100%;
+  min-height: 60px;
+  padding: 0.5rem;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  font-size: 0.8125rem;
+  font-family: inherit;
+  resize: vertical;
+  transition: border-color 0.2s ease;
+}
+
+.deliverable-notes-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.deliverable-notes-textarea::placeholder {
+  color: var(--text-tertiary);
+}
+
+/* Interactive task items */
+.deliverable-task-item {
+  cursor: pointer;
+  padding: 0.25rem 0.375rem;
+  margin: 0.125rem 0;
+  border-radius: var(--radius);
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.deliverable-task-item:hover {
+  background: var(--bg-hover);
+}
+
+.deliverable-task-item .task-icon {
+  display: inline-block;
+  width: 18px;
+  text-align: center;
+  transition: transform 0.2s ease;
+}
+
+.deliverable-task-item:hover .task-icon {
+  transform: scale(1.15);
+}
+
+.deliverable-task-item.done .task-icon {
+  color: var(--accent);
+}
+
+/* Collapsed state hides notes */
+.deliverable-card-new.collapsed .deliverable-notes-section {
+  display: none;
+}
+
+/* ===================== TIMESHEET STYLES ===================== */
+
+/* Week Selector */
+.timesheets-week-selector {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.week-display {
+  font-weight: 600;
+  font-size: 14px;
+  min-width: 200px;
+  text-align: center;
+  color: var(--text);
+  padding: 0 0.5rem;
+}
+
+/* Totals Bar */
+.timesheet-totals-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  background: var(--accent-dim);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  margin-bottom: 1rem;
+}
+
+.timesheet-totals-bar .total-label {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.timesheet-totals-bar .total-hours {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+/* Timesheet Table Container */
+.timesheet-grid-container {
+  overflow-x: auto;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+}
+
+.timesheet-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 1100px;
+}
+
+.timesheet-table th,
+.timesheet-table td {
+  padding: 0.5rem 0.4rem;
+  text-align: center;
+  border: 1px solid var(--glass-border);
+  font-size: 12px;
+}
+
+.timesheet-table th {
+  background: var(--bg-tertiary);
+  color: var(--muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 10px;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+/* Column Widths */
+.ts-drag-col { width: 36px; }
+.ts-project-col { width: 90px; }
+.ts-task-col { width: 60px; }
+.ts-name-col { min-width: 160px; text-align: left !important; }
+.ts-func-col { width: 50px; }
+.ts-pm-col { width: 50px; }
+.ts-desc-col { min-width: 140px; text-align: left !important; }
+.ts-day-col { width: 65px; }
+.ts-total-col { width: 55px; }
+.ts-mileage-col { width: 55px; }
+.ts-actions-col { width: 36px; }
+
+.ts-drag-handle {
+  width: 100%;
+  padding: 0.15rem 0.2rem;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--muted);
+  cursor: grab;
+  font-weight: 700;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.ts-drag-handle:hover {
+  color: var(--text);
+}
+
+.ts-drag-handle:active {
+  cursor: grabbing;
+}
+
+.ts-entry-row.ts-dragging {
+  opacity: 0.6;
+}
+
+.ts-entry-row.ts-drop-before td {
+  border-top: 2px solid var(--accent);
+}
+
+.ts-entry-row.ts-drop-after td {
+  border-bottom: 2px solid var(--accent);
+}
+
+/* Hour Input Cells */
+.ts-hour-cell {
+  position: relative;
+  padding: 0.25rem !important;
+}
+
+.ts-hour-bar-container {
+  position: relative;
+  height: 28px;
+  background: var(--bg-tertiary);
+  border-radius: 4px;
+  overflow: hidden;
+  cursor: ew-resize;
+  user-select: none;
+}
+
+.ts-hour-bar-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent) 0%, var(--accent-hover) 100%);
+  transition: width 0.05s ease;
+  border-radius: 4px;
+  min-width: 0;
+}
+
+.ts-hour-value {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 11px;
+  color: var(--text);
+  pointer-events: none;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+.ts-hour-cell:hover .ts-hour-bar-container {
+  box-shadow: 0 0 0 2px var(--accent-dim);
+}
+
+/* Editable inputs in table */
+.timesheet-table input {
+  width: 100%;
+  padding: 0.25rem 0.35rem;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  text-align: inherit;
+  color: var(--text);
+  font-size: 12px;
+  font-family: var(--font-main);
+}
+
+.timesheet-table input:focus {
+  background: var(--input-bg);
+  border-color: var(--accent);
+  outline: none;
+}
+
+.timesheet-table input::placeholder {
+  color: var(--muted);
+  opacity: 0.5;
+}
+
+/* Totals Row */
+.timesheet-table .totals-row {
+  background: var(--bg-tertiary);
+}
+
+.timesheet-table .totals-row td {
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.timesheet-table .totals-label {
+  text-align: right !important;
+  padding-right: 1rem !important;
+  color: var(--text-secondary) !important;
+  font-weight: 600 !important;
+}
+
+/* Row total column */
+.ts-row-total {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+/* Add Section */
+.timesheet-add-section {
+  margin-top: 1rem;
+  display: flex;
+  gap: 0.5rem;
+}
+
+/* Empty State */
+.timesheet-empty {
+  text-align: center;
+  padding: 2rem;
+  color: var(--muted);
+}
+
+.timesheet-empty .empty-icon {
+  font-size: 3rem;
+  margin-bottom: 1rem;
+}
+
+.timesheet-empty h3 {
+  margin: 0 0 0.5rem;
+  color: var(--text);
+}
+
+.timesheet-empty p {
+  margin: 0;
+  font-size: 13px;
+}
+
+/* Suggestions Section */
+.timesheet-suggestions {
+  margin-top: 1.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--glass-border);
+}
+
+.timesheet-suggestions .section-title {
+  margin: 0 0 0.25rem;
+}
+
+.timesheet-suggestions-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.ts-suggestion-card {
+  background: var(--surface);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  padding: 0.75rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.ts-suggestion-card:hover {
+  border-color: var(--accent);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+.ts-suggestion-card.added {
+  opacity: 0.5;
+  border-style: dashed;
+}
+
+.ts-suggestion-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 0.5rem;
+}
+
+.ts-suggestion-id {
+  font-family: monospace;
+  background: var(--bg-tertiary);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.ts-suggestion-due {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.ts-suggestion-due.overdue { color: var(--danger); }
+.ts-suggestion-due.dueSoon { color: var(--warning); }
+.ts-suggestion-due.ok { color: var(--accent); }
+
+.ts-suggestion-name {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+  margin-bottom: 0.25rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ts-suggestion-deliverable {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ts-suggestion-added {
+  font-size: 11px;
+  color: var(--accent);
+  margin-top: 0.5rem;
+  font-style: italic;
+}
+
+/* Project Selection Dialog */
+.timesheet-project-list {
+  max-height: 400px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.ts-project-option {
+  padding: 0.75rem;
+  background: var(--surface);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.ts-project-option:hover {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+}
+
+/* Remove Button */
+.ts-remove-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.ts-remove-btn:hover {
+  background: var(--danger-bg);
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+/* No suggestions message */
+.timesheet-suggestions-list .muted {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: 1rem;
+}

@@ -146,6 +146,7 @@ logging.info(f".env loaded: {loaded} (override=True)")
 TASKS_FILE = get_app_data_path("tasks.json")
 NOTES_FILE = get_app_data_path("notes.json")
 SETTINGS_FILE = get_app_data_path("settings.json")
+TIMESHEETS_FILE = get_app_data_path("timesheets.json")
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -875,6 +876,145 @@ Return ONLY the JSON object.
             return {'status': 'success'}
         except Exception as e:
             logging.error(f"Error saving notes: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def get_timesheets(self):
+        """Reads and returns the content of timesheets.json."""
+        try:
+            with open(TIMESHEETS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {'weeks': {}, 'lastModified': None}
+
+    def save_timesheets(self, data):
+        """Saves timesheets data to timesheets.json and creates a backup."""
+        try:
+            if os.path.exists(TIMESHEETS_FILE):
+                shutil.copy2(TIMESHEETS_FILE, TIMESHEETS_FILE + '.bak')
+            with open(TIMESHEETS_FILE, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            return {'status': 'success'}
+        except Exception as e:
+            logging.error(f"Error saving timesheets: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def export_timesheet_excel(self, data):
+        """Exports timesheet data to an Excel file."""
+        try:
+            import openpyxl
+            from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
+            from openpyxl.utils import get_column_letter
+
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "Timesheet"
+
+            # Styles
+            header_font = Font(bold=True, size=11)
+            title_font = Font(bold=True, size=14)
+            thin_border = Border(
+                left=Side(style='thin'),
+                right=Side(style='thin'),
+                top=Side(style='thin'),
+                bottom=Side(style='thin')
+            )
+            center_align = Alignment(horizontal='center', vertical='center')
+            left_align = Alignment(horizontal='left', vertical='center')
+            header_fill = PatternFill(start_color="D9EAD3", end_color="D9EAD3", fill_type="solid")
+
+            # Row 1: Employee name
+            ws['K1'] = "Employee:"
+            ws['M1'] = data.get('userName', 'Employee')
+            ws['M1'].font = title_font
+
+            # Row 2: Week of
+            ws['K2'] = "Week of:"
+            ws['M2'] = data.get('weekDisplay', '')
+            ws['M2'].font = Font(size=11)
+
+            # Row 4: Column headers (matching the CSV format)
+            headers = ['PROJECT #', 'Task #', 'PROJECT NAME', 'FUNCTION', 'PM',
+                       'DESIGN / ENG', 'DRAFTING', 'TRAVEL', 'OTHERS',
+                       'SERVICE & WORK DESCRIPTION', 'MON', 'TUE', 'WED', 'THU',
+                       'FRI', 'SAT', 'SUN', 'MILEAGE']
+
+            for col, header in enumerate(headers, 1):
+                cell = ws.cell(row=4, column=col, value=header)
+                cell.font = header_font
+                cell.fill = header_fill
+                cell.border = thin_border
+                cell.alignment = center_align
+
+            # Data rows
+            entries = data.get('entries', [])
+            day_order = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
+
+            for row_idx, entry in enumerate(entries, 5):
+                ws.cell(row=row_idx, column=1, value=entry.get('projectId', '')).border = thin_border
+                ws.cell(row=row_idx, column=2, value=entry.get('taskNumber', '')).border = thin_border
+                cell = ws.cell(row=row_idx, column=3, value=entry.get('projectName', ''))
+                cell.border = thin_border
+                cell.alignment = left_align
+                ws.cell(row=row_idx, column=4, value=entry.get('function', '')).border = thin_border
+                ws.cell(row=row_idx, column=5, value=entry.get('pmInitials', '')).border = thin_border
+                # Columns 6-9 are empty (DESIGN/ENG, DRAFTING, TRAVEL, OTHERS)
+                for empty_col in range(6, 10):
+                    ws.cell(row=row_idx, column=empty_col, value='').border = thin_border
+                cell = ws.cell(row=row_idx, column=10, value=entry.get('serviceDescription', ''))
+                cell.border = thin_border
+                cell.alignment = left_align
+
+                hours = entry.get('hours', {})
+                for day_idx, day in enumerate(day_order):
+                    h = hours.get(day, 0)
+                    cell = ws.cell(row=row_idx, column=11 + day_idx, value=h if h else '')
+                    cell.border = thin_border
+                    cell.alignment = center_align
+
+                cell = ws.cell(row=row_idx, column=18, value=entry.get('mileage', 0) or '')
+                cell.border = thin_border
+                cell.alignment = center_align
+
+            # Totals row
+            totals = data.get('totals', {})
+            totals_row = 5 + len(entries)
+
+            # Empty cells with borders for totals row
+            for col in range(1, 11):
+                ws.cell(row=totals_row, column=col, value='').border = thin_border
+
+            for day_idx, day in enumerate(day_order):
+                cell = ws.cell(row=totals_row, column=11 + day_idx, value=totals.get(day, 0))
+                cell.font = header_font
+                cell.border = thin_border
+                cell.alignment = center_align
+
+            cell = ws.cell(row=totals_row, column=18, value=totals.get('mileage', 0) or '')
+            cell.font = header_font
+            cell.border = thin_border
+            cell.alignment = center_align
+
+            # Set column widths
+            col_widths = [12, 8, 35, 10, 6, 12, 10, 8, 8, 25, 6, 6, 6, 6, 6, 6, 6, 8]
+            for col, width in enumerate(col_widths, 1):
+                ws.column_dimensions[get_column_letter(col)].width = width
+
+            # Save file to Documents folder
+            week_key = data.get('weekKey', 'timesheet')
+            user_docs = os.path.join(os.path.expanduser('~'), 'Documents')
+            file_path = os.path.join(user_docs, f"Timesheet_{week_key}.xlsx")
+            wb.save(file_path)
+
+            # Open file on Windows
+            if sys.platform == "win32":
+                os.startfile(file_path)
+
+            return {'status': 'success', 'path': file_path}
+
+        except ImportError:
+            return {'status': 'error', 'message': 'openpyxl not installed. Run: pip install openpyxl'}
+        except Exception as e:
+            logging.error(f"Error exporting timesheet: {e}")
             return {'status': 'error', 'message': str(e)}
 
     def mark_overdue_projects_complete(self):

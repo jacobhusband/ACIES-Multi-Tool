@@ -37,6 +37,8 @@ const HELP_LINKS = {
     "https://brainy-seahorse-3c5.notion.site/Tools-2b13fdbb662c80afbab9d68204f9cd23",
   plugins:
     "https://brainy-seahorse-3c5.notion.site/Plugins-2b13fdbb662c801abfe9cc46927eb73a",
+  timesheets:
+    "https://brainy-seahorse-3c5.notion.site/ACIES-Desktop-Application-2b03fdbb662c80afa61af555bddc9e61?pvs=74",
 };
 const THEME_STORAGE_KEY = "acies-theme";
 const LIGHTING_SCHEDULE_FIELDS = [
@@ -67,6 +69,14 @@ const EYE_ICON_PATH =
 const PIN_ICON_PATH =
   "M12 2C8.13 2 5 5.13 5 9c0 2.76 1.87 5.08 4.42 5.76L10 22l2-3 2 3-.42-7.24C16.13 14.08 18 11.76 18 9c0-3.87-3.13-7-7-7zm0 8.5A2.5 2.5 0 1 1 12 5a2.5 2.5 0 0 1 0 5z";
 
+// Timesheet Constants
+const DISCIPLINE_TO_FUNCTION = {
+  Electrical: "E",
+  Mechanical: "M",
+  Plumbing: "P",
+};
+const MAX_HOURS_PER_DAY = 12;
+
 // Cache for loaded descriptions to prevent re-fetching
 const DESCRIPTION_CACHE = {};
 let bundlesPrefetchStarted = false;
@@ -87,6 +97,778 @@ function el(tag, props = {}, children = []) {
     else n.appendChild(c);
   });
   return n;
+}
+
+// ===================== TIMESHEET UTILITIES =====================
+
+function getWeekStartDate(date) {
+  const d = new Date(date);
+  const day = d.getDay(); // 0 = Sunday
+  d.setDate(d.getDate() - day);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function formatWeekKey(date) {
+  const d = getWeekStartDate(date);
+  return d.toISOString().split("T")[0];
+}
+
+function formatWeekDisplay(date) {
+  const start = getWeekStartDate(date);
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6);
+  const options = { month: "short", day: "numeric" };
+  const startStr = start.toLocaleDateString(undefined, options);
+  const endStr = end.toLocaleDateString(undefined, {
+    ...options,
+    year: "numeric",
+  });
+  return `${startStr} - ${endStr}`;
+}
+
+function normalizeDisciplineList(value) {
+  if (Array.isArray(value)) return value;
+  if (typeof value === "string") {
+    const parts = value
+      .split(/[,/;]+/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+    return parts.length ? parts : ["Electrical"];
+  }
+  return ["Electrical"];
+}
+
+function getDisciplineFunction() {
+  const disciplines = normalizeDisciplineList(userSettings.discipline);
+  const funcs = disciplines
+    .map((d) => DISCIPLINE_TO_FUNCTION[d] || "")
+    .filter(Boolean);
+  return funcs.join("/") || "E";
+}
+
+function getDefaultPmInitials() {
+  return String(userSettings.defaultPmInitials || "").trim().toUpperCase();
+}
+
+function createTimesheetEntryId() {
+  return "ts_" + Math.random().toString(36).substr(2, 9);
+}
+
+function getProjectsForWeek(weekStart) {
+  const weekEnd = new Date(weekStart);
+  weekEnd.setDate(weekStart.getDate() + 13); // This week + next week
+
+  const projectsWithDeliverables = [];
+
+  db.forEach((project) => {
+    const deliverables = getProjectDeliverables(project);
+    deliverables.forEach((deliverable) => {
+      const due = parseDueStr(deliverable?.due);
+      if (due && due >= weekStart && due <= weekEnd) {
+        projectsWithDeliverables.push({
+          project,
+          deliverable,
+          dueDate: due,
+        });
+      }
+    });
+  });
+
+  // Sort: this week first, then by due date
+  const thisWeekEnd = new Date(weekStart);
+  thisWeekEnd.setDate(weekStart.getDate() + 6);
+
+  return projectsWithDeliverables.sort((a, b) => {
+    const aThisWeek = a.dueDate <= thisWeekEnd;
+    const bThisWeek = b.dueDate <= thisWeekEnd;
+    if (aThisWeek && !bThisWeek) return -1;
+    if (!aThisWeek && bThisWeek) return 1;
+    return a.dueDate - b.dueDate;
+  });
+}
+
+function getWeekEntries(weekKey) {
+  return timesheetDb.weeks[weekKey]?.entries || [];
+}
+
+function setWeekEntries(weekKey, entries) {
+  if (!timesheetDb.weeks[weekKey]) {
+    timesheetDb.weeks[weekKey] = { entries: [], notes: "" };
+  }
+  timesheetDb.weeks[weekKey].entries = entries;
+}
+
+let timesheetDragEntryId = null;
+
+function ensureTimesheetEntryIds(entries) {
+  let updated = false;
+  entries.forEach((entry) => {
+    if (!entry.id) {
+      entry.id = createTimesheetEntryId();
+      updated = true;
+    }
+  });
+  if (updated) saveTimesheets();
+}
+
+function moveTimesheetEntry(entries, fromIndex, toIndex) {
+  if (fromIndex === toIndex) return entries;
+  const boundedTo = Math.max(0, Math.min(toIndex, entries.length));
+  const [moved] = entries.splice(fromIndex, 1);
+  entries.splice(boundedTo, 0, moved);
+  return entries;
+}
+
+function clearTimesheetDragStyles() {
+  document.querySelectorAll(".ts-entry-row").forEach((row) => {
+    row.classList.remove("ts-drop-before", "ts-drop-after", "ts-dragging");
+    delete row.dataset.dropPosition;
+  });
+}
+
+// ===================== TIMESHEET I/O =====================
+
+async function loadTimesheets() {
+  try {
+    const data = await window.pywebview.api.get_timesheets();
+    timesheetDb = data || { weeks: {}, lastModified: null };
+    return timesheetDb;
+  } catch (e) {
+    console.warn("Failed to load timesheets:", e);
+    return { weeks: {}, lastModified: null };
+  }
+}
+
+async function saveTimesheets() {
+  try {
+    timesheetDb.lastModified = new Date().toISOString();
+    const response = await window.pywebview.api.save_timesheets(timesheetDb);
+    if (response.status !== "success") throw new Error(response.message);
+  } catch (e) {
+    console.warn("Failed to save timesheets:", e);
+    toast("Failed to save timesheet data.");
+  }
+}
+
+// ===================== TIMESHEET RENDERING =====================
+
+function renderTimesheets() {
+  const weekKey = formatWeekKey(currentTimesheetWeek);
+  const entries = getWeekEntries(weekKey);
+
+  // Update week display
+  const weekDisplay = document.getElementById("weekDisplay");
+  if (weekDisplay) {
+    weekDisplay.textContent = formatWeekDisplay(currentTimesheetWeek);
+  }
+
+  renderTimesheetEntries(entries);
+  renderTimesheetSuggestions();
+  updateTimesheetTotals(entries);
+}
+
+function renderTimesheetEntries(entries) {
+  const tbody = document.getElementById("timesheetBody");
+  if (!tbody) return;
+  tbody.innerHTML = "";
+
+  const emptyState = document.getElementById("timesheetEmptyState");
+  if (!entries.length) {
+    if (emptyState) emptyState.style.display = "block";
+    return;
+  }
+  if (emptyState) emptyState.style.display = "none";
+
+  ensureTimesheetEntryIds(entries);
+  entries.forEach((entry, index) => {
+    const row = createTimesheetRow(entry, index);
+    tbody.appendChild(row);
+  });
+}
+
+function createTimesheetRow(entry, index) {
+  const row = el("tr", { className: "ts-entry-row" });
+  row.dataset.entryId = entry.id || "";
+
+  const dragCell = el("td", { className: "ts-drag-col" });
+  const dragHandle = el("button", {
+    className: "ts-drag-handle",
+    type: "button",
+    title: "Drag to reorder",
+    "aria-label": "Drag to reorder",
+    textContent: "|||",
+  });
+  dragCell.appendChild(dragHandle);
+  row.appendChild(dragCell);
+
+  // Project ID
+  const projectIdCell = el("td");
+  const projectIdInput = el("input", {
+    value: entry.projectId || "",
+    placeholder: "--",
+  });
+  projectIdInput.oninput = (e) => {
+    entry.projectId = e.target.value;
+    saveTimesheets();
+  };
+  projectIdCell.appendChild(projectIdInput);
+  row.appendChild(projectIdCell);
+
+  // Task Number (editable)
+  const taskCell = el("td");
+  const taskInput = el("input", {
+    value: entry.taskNumber || "",
+    placeholder: "--",
+  });
+  taskInput.oninput = (e) => {
+    entry.taskNumber = e.target.value;
+    saveTimesheets();
+  };
+  taskCell.appendChild(taskInput);
+  row.appendChild(taskCell);
+
+  // Project Name
+  const nameCell = el("td", { className: "ts-name-col" });
+  const nameInput = el("input", {
+    value: entry.projectName || "",
+    placeholder: "--",
+  });
+  nameInput.oninput = (e) => {
+    entry.projectName = e.target.value;
+    saveTimesheets();
+  };
+  nameCell.appendChild(nameInput);
+  row.appendChild(nameCell);
+
+  // Function (auto-filled, editable)
+  const funcCell = el("td");
+  const funcInput = el("input", {
+    value: entry.function || getDisciplineFunction(),
+    style: "text-align: center",
+  });
+  funcInput.oninput = (e) => {
+    entry.function = e.target.value.toUpperCase();
+    saveTimesheets();
+  };
+  funcCell.appendChild(funcInput);
+  row.appendChild(funcCell);
+
+  // PM Initials (editable)
+  const pmCell = el("td");
+  const pmInput = el("input", {
+    value: entry.pmInitials || "",
+    placeholder: "--",
+    style: "text-align: center",
+  });
+  pmInput.oninput = (e) => {
+    entry.pmInitials = e.target.value.toUpperCase();
+    saveTimesheets();
+  };
+  pmCell.appendChild(pmInput);
+  row.appendChild(pmCell);
+
+  // Service Description (auto-filled from deliverable, editable)
+  const descCell = el("td");
+  const descInput = el("input", {
+    value: entry.serviceDescription || entry.deliverableName || "",
+    placeholder: "Description",
+  });
+  descInput.oninput = (e) => {
+    entry.serviceDescription = e.target.value;
+    saveTimesheets();
+  };
+  descCell.appendChild(descInput);
+  row.appendChild(descCell);
+
+  // Hour cells for each day (Mon-Sun)
+  const dayOrder = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+  dayOrder.forEach((day) => {
+    const cell = el("td", { className: "ts-hour-cell" });
+    const hours = entry.hours?.[day] || 0;
+    cell.appendChild(createHourDragBar(entry, day, hours, row));
+    row.appendChild(cell);
+  });
+
+  // Row Total
+  const rowTotal = calculateRowTotal(entry);
+  row.appendChild(
+    el("td", {
+      className: "ts-row-total",
+      textContent: rowTotal > 0 ? rowTotal.toFixed(1) : "",
+    })
+  );
+
+  // Mileage
+  const mileageCell = el("td");
+  const mileageInput = el("input", {
+    type: "number",
+    value: entry.mileage || "",
+    placeholder: "0",
+    min: "0",
+    style: "text-align: center",
+  });
+  mileageInput.oninput = (e) => {
+    entry.mileage = parseFloat(e.target.value) || 0;
+    saveTimesheets();
+    updateTimesheetTotals(getWeekEntries(formatWeekKey(currentTimesheetWeek)));
+  };
+  mileageCell.appendChild(mileageInput);
+  row.appendChild(mileageCell);
+
+  // Remove button
+  const actionsCell = el("td");
+  const removeBtn = el("button", {
+    className: "ts-remove-btn",
+    innerHTML: "&times;",
+    title: "Remove entry",
+  });
+  removeBtn.onclick = () => removeTimesheetEntry(index);
+  actionsCell.appendChild(removeBtn);
+  row.appendChild(actionsCell);
+
+  enableTimesheetRowDrag(row, entry.id);
+  return row;
+}
+
+function enableTimesheetRowDrag(row, entryId) {
+  row.draggable = true;
+
+  row.addEventListener("dragstart", (e) => {
+    const handle = e.target.closest(".ts-drag-handle");
+    if (!handle) {
+      e.preventDefault();
+      return;
+    }
+    timesheetDragEntryId = entryId;
+    row.classList.add("ts-dragging");
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", entryId);
+    }
+  });
+
+  row.addEventListener("dragover", (e) => {
+    if (!timesheetDragEntryId) return;
+    e.preventDefault();
+    const rect = row.getBoundingClientRect();
+    const before = e.clientY < rect.top + rect.height / 2;
+    row.classList.toggle("ts-drop-before", before);
+    row.classList.toggle("ts-drop-after", !before);
+    row.dataset.dropPosition = before ? "before" : "after";
+  });
+
+  row.addEventListener("dragleave", () => {
+    row.classList.remove("ts-drop-before", "ts-drop-after");
+    delete row.dataset.dropPosition;
+  });
+
+  row.addEventListener("drop", (e) => {
+    if (!timesheetDragEntryId) return;
+    e.preventDefault();
+    const before = row.dataset.dropPosition !== "after";
+    const weekKey = formatWeekKey(currentTimesheetWeek);
+    const entries = getWeekEntries(weekKey);
+    const fromIndex = entries.findIndex(
+      (entry) => entry.id === timesheetDragEntryId
+    );
+    const toIndex = entries.findIndex((entry) => entry.id === entryId);
+    if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) {
+      clearTimesheetDragStyles();
+      timesheetDragEntryId = null;
+      return;
+    }
+    let targetIndex = before ? toIndex : toIndex + 1;
+    if (fromIndex < targetIndex) targetIndex -= 1;
+    moveTimesheetEntry(entries, fromIndex, targetIndex);
+    setWeekEntries(weekKey, entries);
+    saveTimesheets();
+    renderTimesheets();
+    clearTimesheetDragStyles();
+    timesheetDragEntryId = null;
+  });
+
+  row.addEventListener("dragend", () => {
+    timesheetDragEntryId = null;
+    clearTimesheetDragStyles();
+  });
+}
+
+function createHourDragBar(entry, day, hours, row) {
+  const container = el("div", { className: "ts-hour-bar-container" });
+
+  const fill = el("div", {
+    className: "ts-hour-bar-fill",
+    style: `width: ${(hours / MAX_HOURS_PER_DAY) * 100}%`,
+  });
+
+  const valueDisplay = el("div", {
+    className: "ts-hour-value",
+    textContent: hours > 0 ? hours.toFixed(1) : "",
+  });
+
+  container.append(fill, valueDisplay);
+
+  // Drag interaction
+  let isDragging = false;
+
+  const updateHours = (e) => {
+    const rect = container.getBoundingClientRect();
+    const x = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
+    const percentage = x / rect.width;
+    const newHours = Math.round(percentage * MAX_HOURS_PER_DAY * 2) / 2; // Round to 0.5
+
+    if (!entry.hours) entry.hours = {};
+    entry.hours[day] = Math.min(newHours, MAX_HOURS_PER_DAY);
+
+    fill.style.width = `${(entry.hours[day] / MAX_HOURS_PER_DAY) * 100}%`;
+    valueDisplay.textContent =
+      entry.hours[day] > 0 ? entry.hours[day].toFixed(1) : "";
+
+    // Update row total
+    const rowTotalCell = row?.querySelector(".ts-row-total");
+    if (rowTotalCell) {
+      const total = calculateRowTotal(entry);
+      rowTotalCell.textContent = total > 0 ? total.toFixed(1) : "";
+    }
+
+    updateTimesheetTotals(getWeekEntries(formatWeekKey(currentTimesheetWeek)));
+  };
+
+  container.onmousedown = (e) => {
+    isDragging = true;
+    updateHours(e);
+    e.preventDefault();
+  };
+
+  const onMouseMove = (e) => {
+    if (isDragging) updateHours(e);
+  };
+
+  const onMouseUp = () => {
+    if (isDragging) {
+      isDragging = false;
+      saveTimesheets();
+    }
+  };
+
+  document.addEventListener("mousemove", onMouseMove);
+  document.addEventListener("mouseup", onMouseUp);
+
+  // Double-click to manually enter
+  container.ondblclick = () => {
+    const value = prompt("Enter hours:", entry.hours?.[day] || 0);
+    if (value !== null) {
+      const newHours = Math.min(parseFloat(value) || 0, MAX_HOURS_PER_DAY);
+      if (!entry.hours) entry.hours = {};
+      entry.hours[day] = newHours;
+      fill.style.width = `${(newHours / MAX_HOURS_PER_DAY) * 100}%`;
+      valueDisplay.textContent = newHours > 0 ? newHours.toFixed(1) : "";
+      saveTimesheets();
+      updateTimesheetTotals(getWeekEntries(formatWeekKey(currentTimesheetWeek)));
+      // Update row total
+      const rowTotalCell = row?.querySelector(".ts-row-total");
+      if (rowTotalCell) {
+        const total = calculateRowTotal(entry);
+        rowTotalCell.textContent = total > 0 ? total.toFixed(1) : "";
+      }
+    }
+  };
+
+  return container;
+}
+
+function calculateRowTotal(entry) {
+  if (!entry.hours) return 0;
+  return Object.values(entry.hours).reduce((sum, h) => sum + (h || 0), 0);
+}
+
+function updateTimesheetTotals(entries) {
+  const dayOrder = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+  const totals = { week: 0, mileage: 0 };
+
+  dayOrder.forEach((day) => (totals[day] = 0));
+
+  entries.forEach((entry) => {
+    dayOrder.forEach((day) => {
+      totals[day] += entry.hours?.[day] || 0;
+    });
+    totals.mileage += entry.mileage || 0;
+  });
+
+  totals.week = dayOrder.reduce((sum, day) => sum + totals[day], 0);
+
+  // Update footer cells
+  dayOrder.forEach((day) => {
+    const cell = document.getElementById(
+      `total${day.charAt(0).toUpperCase() + day.slice(1)}`
+    );
+    if (cell) cell.textContent = totals[day] > 0 ? totals[day].toFixed(1) : "0";
+  });
+
+  const weekCell = document.getElementById("totalWeek");
+  if (weekCell)
+    weekCell.textContent = totals.week > 0 ? totals.week.toFixed(1) : "0";
+
+  const mileageCell = document.getElementById("totalMileage");
+  if (mileageCell) mileageCell.textContent = totals.mileage || "0";
+
+  const weeklyTotal = document.getElementById("weeklyTotalHours");
+  if (weeklyTotal)
+    weeklyTotal.textContent = totals.week > 0 ? totals.week.toFixed(1) : "0.0";
+}
+
+function renderTimesheetSuggestions() {
+  const container = document.getElementById("timesheetSuggestions");
+  if (!container) return;
+  container.innerHTML = "";
+
+  const suggestions = getProjectsForWeek(currentTimesheetWeek);
+  const weekKey = formatWeekKey(currentTimesheetWeek);
+  const entries = getWeekEntries(weekKey);
+  const addedIds = new Set(
+    entries.map((e) => `${e.projectId}-${e.deliverableId}`)
+  );
+
+  if (!suggestions.length) {
+    container.innerHTML =
+      '<p class="muted">No projects due this week or next.</p>';
+    return;
+  }
+
+  suggestions.forEach(({ project, deliverable, dueDate }) => {
+    const isAdded = addedIds.has(`${project.id}-${deliverable.id}`);
+    const card = createSuggestionCard(project, deliverable, dueDate, isAdded);
+    container.appendChild(card);
+  });
+}
+
+function createSuggestionCard(project, deliverable, dueDate, isAdded) {
+  const card = el("div", {
+    className: `ts-suggestion-card ${isAdded ? "added" : ""}`,
+  });
+
+  card.onclick = () => {
+    if (isAdded) {
+      toast("Already on the timesheet.");
+      return;
+    }
+    addProjectToTimesheet(project, deliverable);
+  };
+
+  const header = el("div", { className: "ts-suggestion-header" });
+  header.appendChild(
+    el("span", { className: "ts-suggestion-id", textContent: project.id || "--" })
+  );
+
+  const ds = dueState(deliverable.due);
+  header.appendChild(
+    el("span", {
+      className: `ts-suggestion-due ${ds}`,
+      textContent: humanDate(deliverable.due),
+    })
+  );
+  card.appendChild(header);
+
+  card.appendChild(
+    el("div", {
+      className: "ts-suggestion-name",
+      textContent: project.nick || project.name || "Unnamed Project",
+    })
+  );
+
+  card.appendChild(
+    el("div", {
+      className: "ts-suggestion-deliverable",
+      textContent: deliverable.name || "Deliverable",
+    })
+  );
+
+  if (isAdded) {
+    card.appendChild(
+      el("div", {
+        className: "ts-suggestion-added",
+        textContent: "Added to timesheet",
+      })
+    );
+  }
+
+  return card;
+}
+
+// ===================== TIMESHEET ACTIONS =====================
+
+function addProjectToTimesheet(project, deliverable) {
+  const weekKey = formatWeekKey(currentTimesheetWeek);
+  const entries = getWeekEntries(weekKey);
+  const projectId = project.id || "";
+  const deliverableId = deliverable?.id || "";
+  const alreadyAdded = entries.some(
+    (e) => e.projectId === projectId && e.deliverableId === deliverableId
+  );
+  if (alreadyAdded) {
+    toast("Project already on the timesheet.");
+    return;
+  }
+
+  const entry = {
+    id: createTimesheetEntryId(),
+    projectId,
+    projectName: project.nick || project.name || "",
+    deliverableId,
+    deliverableName: deliverable?.name || "",
+    pmInitials: getDefaultPmInitials(),
+    serviceDescription: deliverable?.name || "",
+    function: getDisciplineFunction(),
+    hours: { sun: 0, mon: 0, tue: 0, wed: 0, thu: 0, fri: 0, sat: 0 },
+    mileage: 0,
+    taskNumber: "",
+  };
+
+  entries.push(entry);
+  setWeekEntries(weekKey, entries);
+  toast("Added timesheet entry.");
+  saveTimesheets();
+  renderTimesheets();
+}
+
+function addManualTimesheetEntry() {
+  const weekKey = formatWeekKey(currentTimesheetWeek);
+  const entries = getWeekEntries(weekKey);
+
+  const entry = {
+    id: createTimesheetEntryId(),
+    projectId: "",
+    projectName: "",
+    deliverableId: "",
+    deliverableName: "",
+    pmInitials: getDefaultPmInitials(),
+    serviceDescription: "",
+    function: getDisciplineFunction(),
+    hours: { sun: 0, mon: 0, tue: 0, wed: 0, thu: 0, fri: 0, sat: 0 },
+    mileage: 0,
+    taskNumber: "",
+  };
+
+  entries.push(entry);
+  setWeekEntries(weekKey, entries);
+  toast("Added manual timesheet entry.");
+  saveTimesheets();
+  renderTimesheets();
+}
+
+function removeTimesheetEntry(index) {
+  const weekKey = formatWeekKey(currentTimesheetWeek);
+  const entries = getWeekEntries(weekKey);
+  entries.splice(index, 1);
+  setWeekEntries(weekKey, entries);
+  saveTimesheets();
+  renderTimesheets();
+}
+
+function openAddTimesheetProjectDialog() {
+  const dlg = document.getElementById("timesheetProjectDlg");
+  const list = document.getElementById("timesheetProjectList");
+  const search = document.getElementById("timesheetProjectSearch");
+
+  if (!dlg || !list) return;
+
+  const renderProjects = (query = "") => {
+    list.innerHTML = "";
+    const q = query.toLowerCase();
+
+    db.filter((p) => {
+      const name = (p.name || "").toLowerCase();
+      const id = (p.id || "").toLowerCase();
+      const nick = (p.nick || "").toLowerCase();
+      return !q || name.includes(q) || id.includes(q) || nick.includes(q);
+    }).forEach((project) => {
+      const deliverables = getProjectDeliverables(project);
+      deliverables.forEach((deliverable) => {
+        const option = el("div", { className: "ts-project-option" });
+        option.innerHTML = `
+          <div><strong>${project.id || "--"}</strong> - ${
+          project.nick || project.name || "Unnamed"
+        }</div>
+          <div class="muted tiny">${deliverable.name || "Deliverable"} - Due: ${
+          humanDate(deliverable.due) || "No date"
+        }</div>
+        `;
+        option.onclick = () => {
+          addProjectToTimesheet(project, deliverable);
+          closeDlg("timesheetProjectDlg");
+        };
+        list.appendChild(option);
+      });
+    });
+
+    if (list.children.length === 0) {
+      list.innerHTML = '<p class="muted" style="padding: 1rem; text-align: center;">No projects found</p>';
+    }
+  };
+
+  renderProjects();
+  if (search) {
+    search.value = "";
+    search.oninput = () => renderProjects(search.value);
+  }
+
+  showDialog(dlg);
+}
+
+function navigateTimesheetWeek(direction) {
+  const newDate = new Date(currentTimesheetWeek);
+  newDate.setDate(newDate.getDate() + direction * 7);
+  currentTimesheetWeek = newDate;
+  renderTimesheets();
+}
+
+function goToCurrentWeek() {
+  currentTimesheetWeek = getWeekStartDate(new Date());
+  renderTimesheets();
+}
+
+function calculateWeekTotals(entries) {
+  const dayOrder = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+  const totals = { mileage: 0 };
+  dayOrder.forEach((day) => (totals[day] = 0));
+
+  entries.forEach((entry) => {
+    dayOrder.forEach((day) => (totals[day] += entry.hours?.[day] || 0));
+    totals.mileage += entry.mileage || 0;
+  });
+
+  totals.week = dayOrder.reduce((sum, day) => sum + totals[day], 0);
+  return totals;
+}
+
+async function exportTimesheetToExcel() {
+  const weekKey = formatWeekKey(currentTimesheetWeek);
+  const entries = getWeekEntries(weekKey);
+
+  if (!entries.length) {
+    toast("No entries to export");
+    return;
+  }
+
+  try {
+    const result = await window.pywebview.api.export_timesheet_excel({
+      weekKey,
+      weekDisplay: formatWeekDisplay(currentTimesheetWeek),
+      userName: userSettings.userName || "Employee",
+      entries,
+      totals: calculateWeekTotals(entries),
+    });
+
+    if (result.status === "success") {
+      toast("Timesheet exported successfully");
+    } else {
+      throw new Error(result.message);
+    }
+  } catch (e) {
+    console.error("Export failed:", e);
+    toast("Failed to export timesheet: " + e.message);
+  }
 }
 
 function createIcon(path, size = 16) {
@@ -345,6 +1127,45 @@ function toast(msg, duration = 2500) {
   }, duration);
 }
 
+function reportClientError(message, error) {
+  const detail = error?.message || error?.toString?.() || "";
+  const payload = detail ? `${message}: ${detail}` : message;
+  console.error(payload, error || "");
+  try {
+    toast(payload, 6000);
+  } catch {
+    try {
+      alert(payload);
+    } catch {
+      /* noop */
+    }
+  }
+}
+
+window.addEventListener("error", (event) => {
+  reportClientError("JS error", event?.error || event?.message);
+});
+
+window.addEventListener("unhandledrejection", (event) => {
+  reportClientError("Unhandled promise rejection", event?.reason);
+});
+
+function showDialog(dialogEl) {
+  if (!dialogEl) return false;
+  try {
+    dialogEl.showModal();
+    return true;
+  } catch (err) {
+    try {
+      dialogEl.setAttribute("open", "");
+      return true;
+    } catch (fallbackErr) {
+      reportClientError("Failed to open dialog", fallbackErr);
+      return false;
+    }
+  }
+}
+
 const updateStickyOffsets = () => {
   const header = document.querySelector(".app-header");
   const toolbar = document.querySelector("#projects-panel .panel-toolbar");
@@ -383,6 +1204,7 @@ let userSettings = {
   theme: "dark",
   lightingTemplates: [],
   autoPrimary: false,
+  defaultPmInitials: "",
 };
 let hideNonPrimary = false;
 let activeNoteTab = null;
@@ -392,6 +1214,10 @@ let currentStatsAggregation = "month";
 let lightingScheduleProjectIndex = null;
 let lightingScheduleProjectQuery = "";
 let lightingTemplateQuery = "";
+
+// Timesheet State
+let timesheetDb = { weeks: {}, lastModified: null };
+let currentTimesheetWeek = getWeekStartDate(new Date());
 
 const allowedAggregations = {
   "1W": ["day", "week"],
@@ -594,6 +1420,7 @@ async function loadUserSettings() {
   try {
     const storedSettings = await window.pywebview.api.get_user_settings();
     if (storedSettings) userSettings = { ...userSettings, ...storedSettings };
+    userSettings.discipline = normalizeDisciplineList(userSettings.discipline);
   } catch (e) {
     console.error("Failed to load settings:", e);
   }
@@ -603,11 +1430,11 @@ async function populateSettingsModal() {
   document.getElementById("settings_userName").value =
     userSettings.userName || "";
   document.getElementById("settings_apiKey").value = userSettings.apiKey || "";
+  document.getElementById("settings_defaultPmInitials").value =
+    userSettings.defaultPmInitials || "";
   document.getElementById("settings_autocadPath").value =
     userSettings.autocadPath || "";
-  const disciplines = Array.isArray(userSettings.discipline)
-    ? userSettings.discipline
-    : ["Electrical"];
+  const disciplines = normalizeDisciplineList(userSettings.discipline);
   document
     .querySelectorAll('input[name="settings_discipline_checkbox"]')
     .forEach((checkbox) => {
@@ -1342,6 +2169,413 @@ function buildTasksNotesGrid(deliverable) {
   return tasksNotesWrap;
 }
 
+// ===================== CARD-BASED DELIVERABLE RENDERING =====================
+
+function getTaskCompletionStats(deliverable) {
+  if (!deliverable.tasks || !deliverable.tasks.length) {
+    return { total: 0, completed: 0, percentage: 0 };
+  }
+  const total = deliverable.tasks.length;
+  const completed = deliverable.tasks.filter(t => {
+    const taskObj = typeof t === "string" ? { done: false } : t;
+    return taskObj.done;
+  }).length;
+  const percentage = Math.round((completed / total) * 100);
+  return { total, completed, percentage };
+}
+
+function createCardHeader(deliverable, isPrimary) {
+  const header = el("div", { className: "deliverable-card-header-new" });
+
+  const title = el("div", { className: "deliverable-card-title-new" });
+
+  if (isPrimary) {
+    const starIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    starIcon.setAttribute("viewBox", "0 0 24 24");
+    starIcon.setAttribute("fill", "currentColor");
+    starIcon.innerHTML = `<path d="${STAR_ICON_PATH}"/>`;
+    title.appendChild(starIcon);
+  }
+
+  const nameSpan = el("span", {
+    className: "deliverable-card-title-name",
+    textContent: deliverable.name || "Deliverable"
+  });
+  title.appendChild(nameSpan);
+
+  header.appendChild(title);
+
+  // Due date badge
+  if (deliverable.due) {
+    const ds = dueState(deliverable.due);
+    const badgeClass = `deliverable-due-badge ${ds === "overdue" ? "overdue" : ds === "dueSoon" ? "due-soon" : "ok"}`;
+    const badgeText = ds === "overdue" ? "OVERDUE" : humanDate(deliverable.due).replace(/\//g, "/").toUpperCase();
+    const badge = el("div", { className: badgeClass, textContent: badgeText });
+    header.appendChild(badge);
+  }
+
+  return header;
+}
+
+function createProgressSection(deliverable) {
+  const section = el("div", { className: "deliverable-progress-section" });
+  const stats = getTaskCompletionStats(deliverable);
+
+  // Progress bar
+  const barContainer = el("div", { className: "deliverable-progress-bar-container" });
+  const barFill = el("div", {
+    className: "deliverable-progress-bar-fill",
+    style: `width: ${stats.percentage}%`
+  });
+  barContainer.appendChild(barFill);
+
+  // Progress text
+  const progressClass = stats.percentage >= 50 ? "high" : stats.percentage >= 25 ? "medium" : "low";
+  const progressText = el("div", { className: `deliverable-progress-text ${progressClass}` });
+
+  const percentageSpan = el("span", {
+    className: "percentage",
+    textContent: `${stats.percentage}%`
+  });
+  const detailSpan = el("span", {
+    className: "detail",
+    textContent: stats.total > 0 ? ` complete (${stats.completed}/${stats.total} tasks)` : " (no tasks)"
+  });
+
+  progressText.append(percentageSpan, detailSpan);
+
+  section.append(barContainer, progressText);
+  return section;
+}
+
+function createStatusBadges(deliverable) {
+  const container = el("div", { className: "deliverable-status-badges" });
+
+  if (deliverable.statuses && deliverable.statuses.length) {
+    deliverable.statuses.forEach(status => {
+      const statusClass = status.toLowerCase().replace(/\s+/g, "");
+      const badge = el("div", {
+        className: `deliverable-status-badge ${statusClass}`,
+        textContent: status
+      });
+      container.appendChild(badge);
+    });
+  }
+
+  return container;
+}
+
+function createStatusDropdown(deliverable, project) {
+  const availableStatuses = ["Waiting", "Working", "Pending Review", "Complete", "Delivered"];
+  const dropdown = el("div", { className: "deliverable-status-dropdown" });
+
+  // Trigger button - compact plus icon
+  const trigger = el("button", {
+    className: "deliverable-status-trigger",
+    title: "Edit statuses"
+  });
+
+  const plusSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  plusSvg.setAttribute("viewBox", "0 0 24 24");
+  plusSvg.setAttribute("fill", "none");
+  plusSvg.setAttribute("stroke", "currentColor");
+  plusSvg.setAttribute("stroke-width", "2");
+  plusSvg.innerHTML = '<path d="M12 5v14m-7-7h14"/>';
+
+  trigger.appendChild(plusSvg);
+
+  // Dropdown menu
+  const menu = el("div", { className: "deliverable-status-menu" });
+
+  availableStatuses.forEach(status => {
+    const isActive = deliverable.statuses && deliverable.statuses.includes(status);
+    const option = el("label", { className: "deliverable-status-option" });
+
+    const checkbox = el("input", {
+      type: "checkbox",
+      checked: isActive
+    });
+
+    checkbox.addEventListener("change", async (e) => {
+      e.stopPropagation();
+
+      if (!deliverable.statuses) {
+        deliverable.statuses = [];
+      }
+
+      if (checkbox.checked) {
+        if (!deliverable.statuses.includes(status)) {
+          deliverable.statuses.push(status);
+        }
+      } else {
+        deliverable.statuses = deliverable.statuses.filter(s => s !== status);
+      }
+
+      // Save changes
+      await save();
+
+      // Update the status badges display
+      const card = dropdown.closest(".deliverable-card-new");
+      const badgesContainer = card.querySelector(".deliverable-status-badges");
+      if (badgesContainer) {
+        badgesContainer.innerHTML = "";
+        if (deliverable.statuses.length) {
+          deliverable.statuses.forEach(s => {
+            const statusClass = s.toLowerCase().replace(/\s+/g, "");
+            const badge = el("div", {
+              className: `deliverable-status-badge ${statusClass}`,
+              textContent: s
+            });
+            badgesContainer.appendChild(badge);
+          });
+        }
+      }
+    });
+
+    const label = el("span", { textContent: status });
+    option.append(checkbox, label);
+    menu.appendChild(option);
+  });
+
+  // Toggle dropdown
+  trigger.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const isOpen = menu.classList.toggle("open");
+    trigger.classList.toggle("open", isOpen);
+
+    // Close other open dropdowns
+    document.querySelectorAll(".deliverable-status-menu.open").forEach(m => {
+      if (m !== menu) {
+        m.classList.remove("open");
+        m.previousElementSibling.classList.remove("open");
+      }
+    });
+  });
+
+  // Close dropdown when clicking outside
+  document.addEventListener("click", (e) => {
+    if (!dropdown.contains(e.target)) {
+      menu.classList.remove("open");
+      trigger.classList.remove("open");
+    }
+  });
+
+  dropdown.append(trigger, menu);
+  return dropdown;
+}
+
+function createNotesSection(deliverable, project) {
+  const section = el("div", { className: "deliverable-notes-section" });
+
+  // Header (collapsible)
+  const header = el("div", { className: "deliverable-notes-header" });
+  const title = el("div", { className: "deliverable-notes-title" });
+
+  const chevronSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  chevronSvg.setAttribute("viewBox", "0 0 24 24");
+  chevronSvg.setAttribute("fill", "none");
+  chevronSvg.setAttribute("stroke", "currentColor");
+  chevronSvg.setAttribute("stroke-width", "2");
+  chevronSvg.innerHTML = '<polyline points="9 18 15 12 9 6"></polyline>';
+
+  const titleText = el("span", { textContent: "Notes" });
+  title.append(chevronSvg, titleText);
+  header.appendChild(title);
+
+  // Content (textarea)
+  const content = el("div", { className: "deliverable-notes-content" });
+  const textarea = el("textarea", {
+    className: "deliverable-notes-textarea",
+    placeholder: "Add notes about this deliverable...",
+    value: deliverable.notes || ""
+  });
+
+  // Auto-save on change
+  let saveTimeout;
+  textarea.addEventListener("input", () => {
+    deliverable.notes = textarea.value;
+
+    // Debounce save
+    clearTimeout(saveTimeout);
+    saveTimeout = setTimeout(async () => {
+      await save();
+    }, 500);
+  });
+
+  content.appendChild(textarea);
+
+  // Toggle expand/collapse
+  header.addEventListener("click", () => {
+    const isExpanded = content.classList.toggle("expanded");
+    header.classList.toggle("expanded", isExpanded);
+  });
+
+  section.append(header, content);
+  return section;
+}
+
+function createTasksPreview(deliverable, card) {
+  const container = el("div", { className: "deliverable-tasks-preview" });
+
+  if (!deliverable.tasks || !deliverable.tasks.length) {
+    return container;
+  }
+
+  const stats = getTaskCompletionStats(deliverable);
+  const heading = el("div", {
+    className: "deliverable-tasks-preview-heading",
+    textContent: `Tasks (${stats.completed}/${stats.total}):`
+  });
+
+  const list = el("div", { className: "deliverable-tasks-preview-list" });
+  const maxVisible = 3;
+
+  const renderTaskList = (showAll) => {
+    list.innerHTML = "";
+    const tasksToShow = showAll ? deliverable.tasks : deliverable.tasks.slice(0, maxVisible);
+
+    tasksToShow.forEach((task, index) => {
+      const taskObj = typeof task === "string" ? { text: task, done: false } : task;
+      const item = el("div", {
+        className: `deliverable-task-item ${taskObj.done ? "done" : "undone"}`
+      });
+
+      // Checkmark or circle icon
+      const icon = taskObj.done ? "✓" : "○";
+      const iconSpan = el("span", { className: "task-icon", textContent: icon });
+      const textSpan = el("span", { textContent: taskObj.text || "Task" });
+
+      item.append(iconSpan, textSpan);
+
+      // Make task clickable to toggle completion
+      item.addEventListener("click", async (e) => {
+        e.stopPropagation();
+
+        // Toggle done state
+        taskObj.done = !taskObj.done;
+
+        // Update the task in the array
+        const actualIndex = showAll ? index : index;
+        if (typeof deliverable.tasks[actualIndex] === "string") {
+          deliverable.tasks[actualIndex] = { text: deliverable.tasks[actualIndex], done: taskObj.done };
+        } else {
+          deliverable.tasks[actualIndex].done = taskObj.done;
+        }
+
+        // Update UI
+        item.classList.toggle("done", taskObj.done);
+        item.classList.toggle("undone", !taskObj.done);
+        iconSpan.textContent = taskObj.done ? "✓" : "○";
+
+        // Save changes
+        await save();
+
+        // Update progress bar
+        const progressSection = card.querySelector(".deliverable-progress-section");
+        if (progressSection) {
+          const newStats = getTaskCompletionStats(deliverable);
+          const barFill = progressSection.querySelector(".deliverable-progress-bar-fill");
+          const progressText = progressSection.querySelector(".deliverable-progress-text");
+          const percentageSpan = progressText.querySelector(".percentage");
+          const detailSpan = progressText.querySelector(".detail");
+
+          barFill.style.width = `${newStats.percentage}%`;
+          percentageSpan.textContent = `${newStats.percentage}%`;
+          detailSpan.textContent = newStats.total > 0 ? ` complete (${newStats.completed}/${newStats.total} tasks)` : " (no tasks)";
+
+          // Update progress class
+          progressText.className = `deliverable-progress-text ${newStats.percentage >= 50 ? "high" : newStats.percentage >= 25 ? "medium" : "low"}`;
+        }
+
+        // Update heading
+        const newStats = getTaskCompletionStats(deliverable);
+        heading.textContent = `Tasks (${newStats.completed}/${newStats.total}):`;
+      });
+
+      list.appendChild(item);
+    });
+
+    // "+N more" button if there are more tasks and we're not showing all
+    if (deliverable.tasks.length > maxVisible && !showAll) {
+      const moreBtn = el("button", {
+        className: "deliverable-expand-btn",
+        textContent: `+${deliverable.tasks.length - maxVisible} more`,
+        onclick: (e) => {
+          e.stopPropagation();
+          renderTaskList(true);
+        }
+      });
+      list.appendChild(moreBtn);
+    } else if (showAll && deliverable.tasks.length > maxVisible) {
+      const lessBtn = el("button", {
+        className: "deliverable-expand-btn",
+        textContent: "Show less",
+        onclick: (e) => {
+          e.stopPropagation();
+          renderTaskList(false);
+        }
+      });
+      list.appendChild(lessBtn);
+    }
+  };
+
+  renderTaskList(false);
+
+  container.append(heading, list);
+  return container;
+}
+
+function createCollapseButton(card) {
+  const btn = el("button", { className: "deliverable-collapse-toggle" });
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "2");
+  svg.innerHTML = '<polyline points="6 9 12 15 18 9"></polyline>';
+  btn.appendChild(svg);
+
+  btn.onclick = (e) => {
+    e.stopPropagation();
+    card.classList.toggle("collapsed");
+  };
+
+  return btn;
+}
+
+function renderDeliverableCard(deliverable, isPrimary, project) {
+  const card = el("div", {
+    className: `deliverable-card-new ${isPrimary ? "is-primary" : ""} ${isPrimary ? "" : "collapsed"}`
+  });
+
+  // Header: name + due badge
+  const header = createCardHeader(deliverable, isPrimary);
+
+  // Collapse toggle (only for non-primary)
+  if (!isPrimary) {
+    const collapseBtn = createCollapseButton(card);
+    header.appendChild(collapseBtn);
+  }
+
+  // Progress: bar + percentage text
+  const progress = createProgressSection(deliverable);
+
+  // Status section: badges + dropdown inline
+  const statusSection = el("div", { style: "margin-bottom: 0.625rem;" });
+  const statusBadges = createStatusBadges(deliverable);
+  const statusDropdown = createStatusDropdown(deliverable, project);
+  statusSection.append(statusBadges, statusDropdown);
+
+  // Tasks preview (2-3 tasks, now clickable)
+  const tasksPreview = createTasksPreview(deliverable, card);
+
+  // Notes section (collapsible)
+  const notesSection = createNotesSection(deliverable, project);
+
+  card.append(header, progress, statusSection, tasksPreview, notesSection);
+  return card;
+}
+
 function normalizeProjectMatchValue(value) {
   return String(value || "")
     .toLowerCase()
@@ -1675,89 +2909,15 @@ function render() {
     });
 
     if (visibleDeliverables.length) {
-      const tabsWrap = el("div", { className: "del-tabs" });
-      const contentWrap = el("div", { className: "del-content" });
+      const cardsContainer = el("div", { className: "deliverable-cards-container" });
 
-      const renderDeliverableContent = (deliverable) => {
-        contentWrap.innerHTML = "";
+      visibleDeliverables.forEach((deliverable) => {
         const isPrimary = deliverable.id === priorityId;
-
-        const header = el("div", { className: "deliverable-overview-header" });
-        const title = el("div", { className: "deliverable-overview-title" });
-        const starBtn = createIconButton({
-          className: `deliverable-action-btn deliverable-star ${isPrimary ? "is-primary" : ""}`,
-          title: isPrimary ? "Primary deliverable" : "Set as primary deliverable",
-          path: STAR_ICON_PATH,
-          pressed: isPrimary,
-          onClick: async () => {
-            if (p.overviewDeliverableId === deliverable.id) return;
-            p.overviewDeliverableId = deliverable.id;
-            await save();
-            render();
-          },
-        });
-
-        title.append(
-          starBtn,
-          el("div", {
-            className: "deliverable-name",
-            textContent: deliverable.name || "Deliverable",
-          })
-        );
-
-        const meta = el("div", { className: "deliverable-overview-meta" });
-        if (deliverable.due) {
-          const ds = dueState(deliverable.due);
-          const pillClass = ds === "overdue" ? "pill overdue" : ds === "dueSoon" ? "pill dueSoon" : "pill ok";
-          meta.appendChild(el("div", { className: pillClass, textContent: humanDate(deliverable.due) }));
-        } else {
-          meta.appendChild(el("div", { className: "deliverable-empty", textContent: "--" }));
-        }
-        header.append(title, meta);
-
-        const statusRow = el("div", { className: "deliverable-overview-status" });
-        statusRow.appendChild(renderStatusToggles(deliverable));
-
-        const bodyRow = el("div", { className: "deliverable-overview-body" });
-        bodyRow.appendChild(buildTasksNotesGrid(deliverable));
-
-        contentWrap.append(header, statusRow, bodyRow);
-      };
-
-      visibleDeliverables.forEach((deliverable, dIdx) => {
-        const isPrimary = deliverable.id === priorityId;
-        const btn = el("button", {
-          className: `del-tab ${dIdx === 0 ? "active" : ""}`,
-          title: deliverable.name || "Deliverable"
-        });
-
-        if (isPrimary) {
-          btn.classList.add("is-primary-tab");
-          const starIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-          starIcon.setAttribute("viewBox", "0 0 24 24");
-          starIcon.setAttribute("width", "12");
-          starIcon.setAttribute("height", "12");
-          starIcon.setAttribute("fill", "currentColor");
-          starIcon.innerHTML = `<path d="${STAR_ICON_PATH}"/>`;
-          btn.appendChild(starIcon);
-        } else {
-          const dot = el("div", { className: "status-dot" });
-          btn.appendChild(dot);
-        }
-
-        btn.append(el("span", { textContent: deliverable.name || `D${dIdx + 1}` }));
-
-        btn.onclick = (e) => {
-          tabsWrap.querySelectorAll(".del-tab").forEach(t => t.classList.remove("active"));
-          btn.classList.add("active");
-          renderDeliverableContent(deliverable);
-        };
-        tabsWrap.appendChild(btn);
+        const card = renderDeliverableCard(deliverable, isPrimary, p);
+        cardsContainer.appendChild(card);
       });
 
-      // Initial render of first tab
-      renderDeliverableContent(visibleDeliverables[0]);
-      deliverablesCell.append(tabsWrap, contentWrap);
+      deliverablesCell.appendChild(cardsContainer);
     } else {
       deliverablesCell.textContent = "--";
     }
@@ -3771,6 +4931,8 @@ function initTabbedInterfaces() {
       loadAndRenderBundles();
     } else if (tab === "projects") {
       render();
+    } else if (tab === "timesheets") {
+      renderTimesheets();
     }
   });
 }
@@ -3813,6 +4975,21 @@ function initEventListeners() {
     openExternalUrl(HELP_LINKS.tools);
   document.getElementById("pluginsHelpBtn").onclick = () =>
     openExternalUrl(HELP_LINKS.plugins);
+  document.getElementById("timesheetsHelpBtn").onclick = () =>
+    openExternalUrl(HELP_LINKS.timesheets);
+
+  document.getElementById("prevWeekBtn").onclick = () =>
+    navigateTimesheetWeek(-1);
+  document.getElementById("nextWeekBtn").onclick = () =>
+    navigateTimesheetWeek(1);
+  document.getElementById("currentWeekBtn").onclick = () =>
+    goToCurrentWeek();
+  document.getElementById("addTimesheetEntryBtn").onclick = () =>
+    openAddTimesheetProjectDialog();
+  document.getElementById("addManualTimesheetEntryBtn").onclick = () =>
+    addManualTimesheetEntry();
+  document.getElementById("exportTimesheetBtn").onclick = () =>
+    exportTimesheetToExcel();
 
   document.getElementById("checkUpdateBtn").onclick = () =>
     refreshAppUpdateStatus({ manual: true });
@@ -4199,6 +5376,10 @@ function initEventListeners() {
     userSettings.apiKey = e.target.value;
     debouncedSaveUserSettings();
   };
+  document.getElementById("settings_defaultPmInitials").oninput = (e) => {
+    userSettings.defaultPmInitials = e.target.value.toUpperCase();
+    debouncedSaveUserSettings();
+  };
   document
     .querySelectorAll('input[name="settings_discipline_checkbox"]')
     .forEach((checkbox) => {
@@ -4375,8 +5556,14 @@ async function init() {
       showOnboardingModal();
     } else {
       showMainApp();
-      const [loadedDb] = await Promise.all([load(), loadNotes()]);
+      const [loadedDb, loadedNotes, loadedTimesheets] = await Promise.all([
+        load(),
+        loadNotes(),
+        loadTimesheets(),
+      ]);
       db = loadedDb;
+      notesDb = loadedNotes || {};
+      timesheetDb = loadedTimesheets || { weeks: {}, lastModified: null };
       renderNoteTabs();
       render();
 

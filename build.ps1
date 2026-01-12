@@ -66,6 +66,7 @@ $pyInstallerArgs = @(
     "--add-data", "merge_pdfs.py;.",
     "--add-data", "PlotDWGs.ps1;.",
     "--add-data", "FreezeLayersDWGs.ps1;.",
+    "--add-data", "ThawLayersDWGs.ps1;.",
     "--add-data", "removeXREFPaths.ps1;.",
     "--add-data", "StripRefPaths.dll;."
 )

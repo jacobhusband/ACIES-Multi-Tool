@@ -3938,6 +3938,19 @@ function initEventListeners() {
     });
 
   document
+    .getElementById("toolThawLayers")
+    .addEventListener("click", async (e) => {
+      if (e.currentTarget.classList.contains("running")) return;
+      if (!userSettings.autocadPath) {
+        await showAutocadSelectModal();
+        return;
+      }
+      e.currentTarget.classList.add("running");
+      window.updateToolStatus("toolThawLayers", "Initializing...");
+      await window.pywebview.api.run_thaw_layers_script();
+    });
+
+  document
     .getElementById("toolCleanXrefs")
     .addEventListener("click", async (e) => {
       if (e.currentTarget.classList.contains("running")) return;

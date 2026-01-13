@@ -1212,7 +1212,7 @@ let userSettings = {
   autoPrimary: false,
   defaultPmInitials: "",
 };
-let hideNonPrimary = false;
+let hideNonPrimary = true;
 let activeNoteTab = null;
 let latestAppUpdate = null;
 let currentStatsTimespan = "1Y";

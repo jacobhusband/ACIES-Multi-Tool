@@ -701,6 +701,21 @@
                     <input id="settings_defaultPmInitials" placeholder="e.g. JH" maxlength="6" />
                     <div class="tiny muted" style="margin-top: 0.35rem;">Used when adding new timesheet entries.</div>
                 </div>
+                <div class="col-6">
+                    <label class="label">Timesheet data</label>
+                    <button type="button" class="btn tiny" id="settings_openTimesheetsFolder">Open timesheets folder</button>
+                    <div class="tiny muted" style="margin-top: 0.35rem;">Opens the folder with timesheets.json.</div>
+                </div>
+                <div class="col-12">
+                    <label class="label">Timesheets file path</label>
+                    <div class="inline" style="gap: 0.5rem;">
+                        <input id="settings_timesheetsPath" readonly />
+                        <button type="button" class="btn tiny" id="settings_refreshTimesheetsInfo">Refresh</button>
+                        <button type="button" class="btn tiny" id="settings_forceSaveTimesheets">Force save</button>
+                        <button type="button" class="btn tiny" id="settings_writeTimesheetsTest">Write test file</button>
+                    </div>
+                    <div id="settings_timesheetsInfo" class="tiny muted" style="margin-top: 0.35rem;"></div>
+                </div>
             </div>
 
             <!-- AutoCAD Version Section -->

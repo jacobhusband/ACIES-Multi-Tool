@@ -1450,6 +1450,8 @@ async function populateSettingsModal() {
   const autoPrimaryCheck = document.getElementById("settings_autoPrimary");
   if (autoPrimaryCheck) autoPrimaryCheck.checked = !!userSettings.autoPrimary;
 
+  await refreshTimesheetsInfo();
+
   // Populate AutoCAD versions
   const container = document.getElementById("autocad_versions_container");
   container.innerHTML = '<div class="spinner">Detecting versions...</div>';
@@ -2529,6 +2531,32 @@ function createTasksPreview(deliverable, card) {
 
   container.append(heading, list);
   return container;
+}
+
+async function refreshTimesheetsInfo() {
+  const pathInput = document.getElementById("settings_timesheetsPath");
+  const infoEl = document.getElementById("settings_timesheetsInfo");
+  if (!pathInput || !infoEl) return;
+
+  try {
+    const res = await window.pywebview.api.get_timesheets_info();
+    if (res && res.status !== "success") {
+      throw new Error(res.message || "Failed to read timesheets info.");
+    }
+
+    pathInput.value = res.path || "";
+    if (!res.exists) {
+      infoEl.textContent = "File not found yet.";
+    } else {
+      const modified = res.modified
+        ? new Date(res.modified).toLocaleString()
+        : "unknown";
+      infoEl.textContent = `Last modified: ${modified} • Size: ${res.size} bytes`;
+    }
+  } catch (e) {
+    console.warn("Failed to refresh timesheets info:", e);
+    infoEl.textContent = "Unable to read timesheets file info.";
+  }
 }
 
 function setDeliverableDetailsCollapsed(card, isCollapsed, toggleBtn) {
@@ -5071,6 +5099,67 @@ function initEventListeners() {
   document.getElementById("statsBtn").onclick = () => showStatsModal();
   document.getElementById("settings_howToSetupBtn").onclick = () =>
     document.getElementById("apiKeyHelpDlg").showModal();
+  const openTimesheetsBtn = document.getElementById(
+    "settings_openTimesheetsFolder"
+  );
+  if (openTimesheetsBtn) {
+    openTimesheetsBtn.onclick = async () => {
+      try {
+        const res = await window.pywebview.api.open_timesheets_folder();
+        if (res && res.status !== "success") {
+          throw new Error(res.message || "Failed to open timesheets folder.");
+        }
+      } catch (e) {
+        console.warn("Failed to open timesheets folder:", e);
+        toast("Couldn't open timesheets folder.");
+      }
+    };
+  }
+  const refreshTimesheetsBtn = document.getElementById(
+    "settings_refreshTimesheetsInfo"
+  );
+  if (refreshTimesheetsBtn) {
+    refreshTimesheetsBtn.onclick = async () => {
+      await refreshTimesheetsInfo();
+    };
+  }
+  const forceSaveTimesheetsBtn = document.getElementById(
+    "settings_forceSaveTimesheets"
+  );
+  if (forceSaveTimesheetsBtn) {
+    forceSaveTimesheetsBtn.onclick = async () => {
+      try {
+        await saveTimesheets();
+        await refreshTimesheetsInfo();
+        toast("Timesheets saved.");
+      } catch (e) {
+        console.warn("Failed to force save timesheets:", e);
+        toast("Failed to save timesheets.");
+      }
+    };
+  }
+  const writeTimesheetsTestBtn = document.getElementById(
+    "settings_writeTimesheetsTest"
+  );
+  if (writeTimesheetsTestBtn) {
+    writeTimesheetsTestBtn.onclick = async () => {
+      try {
+        const res = await window.pywebview.api.write_timesheets_test_file();
+        if (res && res.status !== "success") {
+          throw new Error(
+            res.message ||
+              `Failed to write test file: ${res.path || "unknown path"}`
+          );
+        }
+        await refreshTimesheetsInfo();
+        const pathInfo = res?.path ? ` ${res.path}` : "";
+        toast(`Test file written:${pathInfo}`);
+      } catch (e) {
+        console.warn("Failed to write timesheets test file:", e);
+        toast("Failed to write test file.");
+      }
+    };
+  }
   document.getElementById("btnStartSetupGuide").onclick = () => {
     closeDlg("settingsDlg");
     startSetupHelp();

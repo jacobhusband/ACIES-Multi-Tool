@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(dir \"C:\\\\Users\\\\JacobH\\\\AppData\\\\Roaming\\\\ProjectManagementApp\")",
+      "Bash(dir:*)",
+      "Bash(findstr:*)",
+      "Bash(fc:*)",
+      "Bash(where \"ACIES Scheduler.exe\")",
+      "Bash(powershell -Command:*)",
+      "Bash(__NEW_LINE_ea6c1bfd72a6384e__ echo \"\")",
+      "Bash(Remove-Item -Path \"c:\\\\Users\\\\JacobH\\\\Documents\\\\dev\\\\ProjectManagement\\\\tmpclaude-*\" -Force)"
+    ]
+  }
+}

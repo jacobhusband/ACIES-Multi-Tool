@@ -124,9 +124,19 @@ def get_app_data_path(file_name="tasks.json"):
     """
     Determines the correct, cross-platform path for storing user data
     and returns the full path for the given file_name.
+
+    On Windows, we store data in the user's Documents folder to bypass
+    Windows Store Python's file system virtualization, which redirects
+    writes to AppData to a package-specific virtualized location.
     """
     if sys.platform == "win32":
-        base_dir = os.getenv('APPDATA')
+        # Use Documents folder - it is NOT virtualized by Windows Store Python
+        # This ensures both dev (python main.py) and packaged apps use the same location
+        user_profile = os.getenv('USERPROFILE')
+        if user_profile:
+            base_dir = os.path.join(user_profile, 'Documents')
+        else:
+            base_dir = os.path.expanduser('~')
     elif sys.platform == "darwin":  # macOS
         base_dir = os.path.join(os.path.expanduser(
             '~'), 'Library', 'Application Support')
@@ -1154,6 +1164,57 @@ Return ONLY the JSON object.
             return {'status': 'success'}
         except Exception as e:
             logging.error(f"Error opening path: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def open_timesheets_folder(self):
+        """Opens the folder where timesheets.json is stored."""
+        try:
+            folder = os.path.dirname(TIMESHEETS_FILE)
+            return self.open_path(folder)
+        except Exception as e:
+            logging.error(f"Error opening timesheets folder: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def get_timesheets_info(self):
+        """Returns details about the timesheets file path and state."""
+        try:
+            path = os.path.normpath(TIMESHEETS_FILE)
+            exists = os.path.exists(path)
+            size = os.path.getsize(path) if exists else 0
+            mtime = os.path.getmtime(path) if exists else None
+            mtime_iso = None
+            if mtime is not None:
+                mtime_iso = datetime.datetime.fromtimestamp(mtime).isoformat()
+            return {
+                'status': 'success',
+                'path': path,
+                'exists': exists,
+                'size': size,
+                'modified': mtime_iso
+            }
+        except Exception as e:
+            logging.error(f"Error reading timesheets info: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def write_timesheets_test_file(self):
+        """Writes a small test file next to timesheets.json to verify writes."""
+        try:
+            folder = os.path.dirname(TIMESHEETS_FILE)
+            os.makedirs(folder, exist_ok=True)
+            test_path = os.path.join(folder, "timesheets_write_test.txt")
+            stamp = datetime.datetime.now().isoformat()
+            with open(test_path, "w", encoding="utf-8") as f:
+                f.write(f"write_test {stamp}\n")
+            exists = os.path.exists(test_path)
+            if not exists:
+                return {
+                    'status': 'error',
+                    'message': 'Test file write did not persist.',
+                    'path': test_path
+                }
+            return {'status': 'success', 'path': test_path, 'exists': True}
+        except Exception as e:
+            logging.error(f"Error writing timesheets test file: {e}")
             return {'status': 'error', 'message': str(e)}
 
     def create_folder(self, path):

@@ -97,6 +97,7 @@
                 <button class="main-tab-btn" data-tab="tools">Tools</button>
                 <button class="main-tab-btn" data-tab="plugins">Plugins</button>
                 <button class="main-tab-btn" data-tab="timesheets">Timesheets</button>
+                <button class="main-tab-btn" data-tab="templates">Templates</button>
             </nav>
         </div>
         <div class="header-actions">
@@ -461,6 +462,34 @@
                     <h4 class="section-title">Projects Due This Week & Next</h4>
                     <p class="tiny muted">Click a project to add it to your timesheet</p>
                     <div id="timesheetSuggestions" class="timesheet-suggestions-list"></div>
+                </div>
+            </section>
+        </div>
+        <!-- Tab Panel for Templates -->
+        <div id="templates-panel" class="tab-panel" hidden>
+            <section class="panel stack">
+                <div class="templates-panel-header">
+                    <div class="templates-panel-heading">
+                        <h3 class="section-title">Document Templates</h3>
+                        <p class="tiny muted">Reusable document templates organized by discipline.</p>
+                    </div>
+                    <div class="toolbar-actions">
+                        <button class="btn btn-primary tiny" id="addTemplateBtn">
+                            + Add Template
+                        </button>
+                        <button class="icon-btn" id="templatesHelpBtn" aria-label="Templates help" title="Templates help">?</button>
+                    </div>
+                </div>
+
+                <div id="templatesContainer" class="templates-container">
+                    <!-- Template sections will be rendered here -->
+                </div>
+
+                <div id="templatesEmptyState" class="templates-empty" style="display: none;">
+                    <div class="empty-icon">📋</div>
+                    <h3>No templates yet</h3>
+                    <p>Add document templates to quickly copy them to project folders.</p>
+                    <button class="btn btn-primary" id="addTemplateEmptyBtn">Add Your First Template</button>
                 </div>
             </section>
         </div>
@@ -1041,7 +1070,78 @@
         </div>
     </dialog>
 
+    <!-- Add Template Dialog -->
+    <dialog id="addTemplateDlg">
+        <div class="modal-header">
+            <div class="title">Add Template</div>
+            <div class="inline">
+                <button class="btn ghost" onclick="closeDlg('addTemplateDlg')">Cancel</button>
+                <button class="btn-primary" id="btnSaveNewTemplate">Add Template</button>
+            </div>
+        </div>
+        <div class="modal-body stack">
+            <div class="modal-grid">
+                <div class="col-12">
+                    <label class="label">Template Name</label>
+                    <input id="tpl_name" placeholder="e.g. Panel Schedule Template" />
+                </div>
+                <div class="col-6">
+                    <label class="label">Discipline</label>
+                    <select id="tpl_discipline">
+                        <option value="General">General</option>
+                        <option value="Electrical">Electrical</option>
+                        <option value="Mechanical">Mechanical</option>
+                        <option value="Plumbing">Plumbing</option>
+                    </select>
+                </div>
+                <div class="col-6">
+                    <label class="label">Template File</label>
+                    <div class="input-with-button">
+                        <input id="tpl_path" placeholder="Select file..." readonly />
+                        <button class="btn tiny" id="btnBrowseTemplateFile">Browse...</button>
+                    </div>
+                </div>
+                <div class="col-12">
+                    <label class="label">Description (optional)</label>
+                    <textarea id="tpl_description" rows="2" placeholder="Brief description of this template..."></textarea>
+                </div>
+            </div>
+            <p class="tiny muted">Supported file types: .doc, .docx, .dwg, .xlsx, .xls</p>
+        </div>
+    </dialog>
 
+    <!-- Copy Template Dialog -->
+    <dialog id="copyTemplateDlg">
+        <input type="hidden" id="copy_templateId" />
+        <div class="modal-header">
+            <div class="title">Copy Template to Folder</div>
+            <button class="btn ghost" onclick="closeDlg('copyTemplateDlg')">Cancel</button>
+        </div>
+        <div class="modal-body stack">
+            <div class="copy-template-info">
+                <span class="label">Template:</span>
+                <span id="copy_templateName" class="template-name-display"></span>
+            </div>
+            <div class="modal-grid">
+                <div class="col-12">
+                    <label class="label">Destination Folder</label>
+                    <div class="input-with-button">
+                        <input id="copy_destination" placeholder="Select destination folder..." readonly />
+                        <button class="btn tiny" id="btnBrowseDestination">Browse...</button>
+                    </div>
+                </div>
+                <div class="col-12">
+                    <label class="label">New File Name (optional)</label>
+                    <input id="copy_newName" placeholder="Leave empty to keep original name" />
+                    <p class="tiny muted">The file extension will be preserved automatically.</p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn ghost" onclick="closeDlg('copyTemplateDlg')">Cancel</button>
+                <button class="btn-primary" id="btnExecuteCopy">Copy Template</button>
+            </div>
+        </div>
+    </dialog>
 
     <!-- Install Prerequisite Modal -->
     <dialog id="installPrereqDlg">

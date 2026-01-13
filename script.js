@@ -257,6 +257,321 @@ async function saveTimesheets() {
   }
 }
 
+// ===================== TEMPLATES I/O =====================
+
+async function loadTemplates() {
+  try {
+    const data = await window.pywebview.api.get_templates();
+    templatesDb = data || { templates: [], defaultTemplatesInstalled: false, lastModified: null };
+    return templatesDb;
+  } catch (e) {
+    console.warn("Failed to load templates:", e);
+    return { templates: [], defaultTemplatesInstalled: false, lastModified: null };
+  }
+}
+
+async function saveTemplates() {
+  try {
+    templatesDb.lastModified = new Date().toISOString();
+    const response = await window.pywebview.api.save_templates(templatesDb);
+    if (response.status !== "success") throw new Error(response.message);
+  } catch (e) {
+    console.warn("Failed to save templates:", e);
+    toast("Failed to save templates.");
+  }
+}
+
+// ===================== TEMPLATES RENDERING =====================
+
+function renderTemplates() {
+  const container = document.getElementById('templatesContainer');
+  if (!container) return;
+
+  const templates = templatesDb.templates || [];
+  const emptyState = document.getElementById('templatesEmptyState');
+
+  if (!templates.length) {
+    container.innerHTML = '';
+    if (emptyState) emptyState.style.display = 'block';
+    return;
+  }
+  if (emptyState) emptyState.style.display = 'none';
+
+  // Group templates by discipline
+  const grouped = groupTemplatesByDiscipline(templates);
+
+  container.innerHTML = '';
+
+  // Get user disciplines for highlighting
+  const userDisciplines = normalizeDisciplineList(userSettings.discipline);
+
+  // Render General first, then user's disciplines, then others
+  const disciplineOrder = ['General', ...userDisciplines.filter(d => d !== 'General')];
+  const remainingDisciplines = DISCIPLINE_OPTIONS.filter(
+    d => !disciplineOrder.includes(d) && grouped[d]?.length
+  );
+  const orderedDisciplines = [...disciplineOrder, ...remainingDisciplines];
+
+  orderedDisciplines.forEach(discipline => {
+    const disciplineTemplates = grouped[discipline];
+    if (!disciplineTemplates?.length) return;
+
+    const isUserDiscipline = discipline === 'General' || userDisciplines.includes(discipline);
+    const section = createTemplateSection(discipline, disciplineTemplates, isUserDiscipline);
+    container.appendChild(section);
+  });
+}
+
+function groupTemplatesByDiscipline(templates) {
+  const grouped = {};
+  templates.forEach(template => {
+    const discipline = template.discipline || 'General';
+    if (!grouped[discipline]) grouped[discipline] = [];
+    grouped[discipline].push(template);
+  });
+  return grouped;
+}
+
+function createTemplateSection(discipline, templates, isHighlighted) {
+  const section = el('div', { className: 'templates-section' + (isHighlighted ? ' highlighted' : '') });
+
+  const header = el('div', { className: 'templates-section-header' });
+  header.appendChild(el('h4', { className: 'templates-section-title', textContent: discipline }));
+  header.appendChild(el('p', {
+    className: 'tiny muted templates-section-desc',
+    textContent: `${templates.length} template${templates.length !== 1 ? 's' : ''}`
+  }));
+  section.appendChild(header);
+
+  const grid = el('div', { className: 'templates-grid' });
+  templates.forEach(template => {
+    grid.appendChild(createTemplateCard(template));
+  });
+  section.appendChild(grid);
+
+  return section;
+}
+
+function createTemplateCard(template) {
+  const card = el('div', {
+    className: 'template-card' + (template.isDefault ? ' default-template' : ''),
+    'data-template-id': template.id
+  });
+
+  const icon = el('div', {
+    className: 'template-icon',
+    textContent: FILE_TYPE_ICONS[template.fileType] || '📄'
+  });
+
+  const content = el('div', { className: 'template-card-content' });
+
+  const headerDiv = el('div', { className: 'template-card-header' });
+  headerDiv.appendChild(el('span', {
+    className: 'template-name',
+    textContent: template.name
+  }));
+  if (template.isDefault) {
+    headerDiv.appendChild(el('span', {
+      className: 'template-badge default',
+      textContent: 'Default'
+    }));
+  }
+  content.appendChild(headerDiv);
+
+  const meta = el('div', { className: 'template-meta' });
+  meta.appendChild(el('span', {
+    className: 'template-type',
+    textContent: FILE_TYPE_LABELS[template.fileType] || template.fileType.toUpperCase()
+  }));
+  content.appendChild(meta);
+
+  if (template.description) {
+    content.appendChild(el('div', {
+      className: 'template-description tiny muted',
+      textContent: template.description
+    }));
+  }
+
+  const actions = el('div', { className: 'template-actions' });
+
+  const copyBtn = el('button', {
+    className: 'btn btn-primary tiny',
+    textContent: 'Copy to Folder',
+    onclick: (e) => {
+      e.stopPropagation();
+      handleCopyTemplate(template.id);
+    }
+  });
+  actions.appendChild(copyBtn);
+
+  if (!template.isDefault) {
+    const removeBtn = el('button', {
+      className: 'btn ghost tiny text-danger',
+      textContent: 'Remove',
+      onclick: (e) => {
+        e.stopPropagation();
+        handleRemoveTemplate(template.id, template.name);
+      }
+    });
+    actions.appendChild(removeBtn);
+  }
+
+  card.appendChild(icon);
+  card.appendChild(content);
+  card.appendChild(actions);
+
+  return card;
+}
+
+// ===================== TEMPLATES ACTION HANDLERS =====================
+
+async function handleAddTemplate() {
+  const dlg = document.getElementById('addTemplateDlg');
+  if (!dlg) return;
+
+  // Reset form
+  document.getElementById('tpl_name').value = '';
+  document.getElementById('tpl_discipline').value = 'General';
+  document.getElementById('tpl_path').value = '';
+  document.getElementById('tpl_description').value = '';
+
+  dlg.showModal();
+}
+
+async function handleBrowseTemplateFile() {
+  try {
+    const result = await window.pywebview.api.select_template_file();
+    if (result.status === 'success' && result.path) {
+      document.getElementById('tpl_path').value = result.path;
+
+      // Auto-fill name from filename if empty
+      const nameInput = document.getElementById('tpl_name');
+      if (!nameInput.value) {
+        const filename = result.path.split(/[\\/]/).pop();
+        nameInput.value = filename.replace(/\.[^/.]+$/, ''); // Remove extension
+      }
+    }
+  } catch (e) {
+    toast('Error selecting file.');
+  }
+}
+
+async function handleSaveNewTemplate() {
+  const name = document.getElementById('tpl_name').value.trim();
+  const discipline = document.getElementById('tpl_discipline').value;
+  const sourcePath = document.getElementById('tpl_path').value.trim();
+  const description = document.getElementById('tpl_description').value.trim();
+
+  if (!name) {
+    toast('Please enter a template name.');
+    return;
+  }
+  if (!sourcePath) {
+    toast('Please select a template file.');
+    return;
+  }
+
+  try {
+    const result = await window.pywebview.api.add_template(name, discipline, sourcePath, description);
+    if (result.status === 'success') {
+      toast('Template added successfully.');
+      closeDlg('addTemplateDlg');
+      await loadTemplates();
+      renderTemplates();
+    } else {
+      toast(result.message || 'Failed to add template.');
+    }
+  } catch (e) {
+    toast('Error adding template.');
+  }
+}
+
+async function handleCopyTemplate(templateId) {
+  const dlg = document.getElementById('copyTemplateDlg');
+  if (!dlg) return;
+
+  const template = templatesDb.templates.find(t => t.id === templateId);
+  if (!template) return;
+
+  // Verify template file exists
+  const verifyResult = await window.pywebview.api.verify_template_exists(templateId);
+  if (verifyResult.status === 'success' && !verifyResult.exists) {
+    toast('Template source file not found. The file may have been moved or deleted.');
+    return;
+  }
+
+  document.getElementById('copy_templateId').value = templateId;
+  document.getElementById('copy_templateName').textContent = template.name;
+  document.getElementById('copy_destination').value = '';
+  document.getElementById('copy_newName').value = '';
+  document.getElementById('copy_newName').placeholder = template.name;
+
+  dlg.showModal();
+}
+
+async function handleBrowseDestination() {
+  try {
+    const result = await window.pywebview.api.select_folder();
+    if (result.status === 'success' && result.path) {
+      document.getElementById('copy_destination').value = result.path;
+    }
+  } catch (e) {
+    toast('Error selecting folder.');
+  }
+}
+
+async function handleExecuteCopy() {
+  const templateId = document.getElementById('copy_templateId').value;
+  const destination = document.getElementById('copy_destination').value.trim();
+  const newName = document.getElementById('copy_newName').value.trim();
+
+  if (!destination) {
+    toast('Please select a destination folder.');
+    return;
+  }
+
+  try {
+    const result = await window.pywebview.api.copy_template_to_folder(
+      templateId,
+      destination,
+      newName || null
+    );
+
+    if (result.status === 'success') {
+      toast('Template copied successfully.');
+      closeDlg('copyTemplateDlg');
+
+      // Offer to open folder
+      if (confirm('Open the destination folder?')) {
+        await window.pywebview.api.open_path(destination);
+      }
+    } else {
+      toast(result.message || 'Failed to copy template.');
+    }
+  } catch (e) {
+    toast('Error copying template.');
+  }
+}
+
+async function handleRemoveTemplate(templateId, templateName) {
+  if (!confirm(`Remove template "${templateName}"?\n\nThis will only remove it from the list, not delete the original file.`)) {
+    return;
+  }
+
+  try {
+    const result = await window.pywebview.api.remove_template(templateId);
+    if (result.status === 'success') {
+      toast('Template removed.');
+      await loadTemplates();
+      renderTemplates();
+    } else {
+      toast(result.message || 'Failed to remove template.');
+    }
+  } catch (e) {
+    toast('Error removing template.');
+  }
+}
+
 // ===================== TIMESHEET RENDERING =====================
 
 function renderTimesheets() {
@@ -1224,6 +1539,12 @@ let lightingTemplateQuery = "";
 // Timesheet State
 let timesheetDb = { weeks: {}, lastModified: null };
 let currentTimesheetWeek = getWeekStartDate(new Date());
+
+// Templates State
+let templatesDb = { templates: [], defaultTemplatesInstalled: false, lastModified: null };
+const DISCIPLINE_OPTIONS = ['General', 'Electrical', 'Mechanical', 'Plumbing'];
+const FILE_TYPE_ICONS = { doc: '📄', docx: '📄', dwg: '📐', xlsx: '📊', xls: '📊' };
+const FILE_TYPE_LABELS = { doc: 'Word Document', docx: 'Word Document', dwg: 'AutoCAD Drawing', xlsx: 'Excel Spreadsheet', xls: 'Excel Spreadsheet' };
 
 const allowedAggregations = {
   "1W": ["day", "week"],
@@ -5019,6 +5340,8 @@ function initTabbedInterfaces() {
       render();
     } else if (tab === "timesheets") {
       renderTimesheets();
+    } else if (tab === "templates") {
+      renderTemplates();
     }
   });
 }
@@ -5063,6 +5386,16 @@ function initEventListeners() {
     openExternalUrl(HELP_LINKS.plugins);
   document.getElementById("timesheetsHelpBtn").onclick = () =>
     openExternalUrl(HELP_LINKS.timesheets);
+
+  // Templates tab event listeners
+  document.getElementById("addTemplateBtn").onclick = () => handleAddTemplate();
+  document.getElementById("addTemplateEmptyBtn").onclick = () => handleAddTemplate();
+  document.getElementById("btnBrowseTemplateFile").onclick = () => handleBrowseTemplateFile();
+  document.getElementById("btnSaveNewTemplate").onclick = () => handleSaveNewTemplate();
+  document.getElementById("btnBrowseDestination").onclick = () => handleBrowseDestination();
+  document.getElementById("btnExecuteCopy").onclick = () => handleExecuteCopy();
+  document.getElementById("templatesHelpBtn").onclick = () =>
+    openExternalUrl(HELP_LINKS.main); // Uses main help link for now
 
   document.getElementById("prevWeekBtn").onclick = () =>
     navigateTimesheetWeek(-1);
@@ -5703,14 +6036,16 @@ async function init() {
       showOnboardingModal();
     } else {
       showMainApp();
-      const [loadedDb, loadedNotes, loadedTimesheets] = await Promise.all([
+      const [loadedDb, loadedNotes, loadedTimesheets, loadedTemplates] = await Promise.all([
         load(),
         loadNotes(),
         loadTimesheets(),
+        loadTemplates(),
       ]);
       db = loadedDb;
       notesDb = loadedNotes || {};
       timesheetDb = loadedTimesheets || { weeks: {}, lastModified: null };
+      templatesDb = loadedTemplates || { templates: [], defaultTemplatesInstalled: false, lastModified: null };
       renderNoteTabs();
       render();
 

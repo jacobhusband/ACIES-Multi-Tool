@@ -3718,3 +3718,190 @@ dialog::backdrop {
   text-align: center;
   padding: 1rem;
 }
+
+/* ===================== TEMPLATES TAB ===================== */
+
+.templates-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.templates-panel-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.templates-container {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+/* Template Sections (by discipline) */
+.templates-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.templates-section.highlighted {
+  background: var(--accent-dim);
+  border-radius: var(--radius);
+  padding: 1rem;
+  margin: -0.5rem;
+}
+
+.templates-section-header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.templates-section+.templates-section {
+  border-top: 1px solid var(--glass-border);
+  margin-top: 1rem;
+  padding-top: 1rem;
+}
+
+.templates-section-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.templates-section-desc {
+  margin: 0;
+}
+
+/* Templates Grid */
+.templates-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1rem;
+}
+
+/* Template Card */
+.template-card {
+  background: var(--surface);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  transition: all 0.2s ease;
+}
+
+.template-card:hover {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-sm), var(--glow);
+  background: var(--surface-hover);
+}
+
+.template-card.default-template {
+  border-left: 3px solid var(--accent);
+}
+
+.template-icon {
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.template-card-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.template-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.template-name {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.template-badge {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  font-weight: 600;
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  letter-spacing: 0.5px;
+}
+
+.template-badge.default {
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+.template-meta {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.template-type {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.template-description {
+  margin-top: 0.25rem;
+  line-height: 1.4;
+}
+
+.template-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: auto;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--glass-border);
+}
+
+/* Templates Empty State */
+.templates-empty {
+  text-align: center;
+  padding: 3rem 1rem;
+}
+
+.templates-empty .empty-icon {
+  font-size: 3rem;
+  margin-bottom: 1rem;
+}
+
+.templates-empty h3 {
+  margin: 0 0 0.5rem 0;
+  color: var(--text);
+}
+
+.templates-empty p {
+  color: var(--muted);
+  margin-bottom: 1.5rem;
+}
+
+/* Copy Template Dialog Specific */
+.copy-template-info {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  background: var(--accent-dim);
+  border-radius: var(--radius-sm);
+  margin-bottom: 1rem;
+}
+
+.template-name-display {
+  font-weight: 600;
+  color: var(--text);
+}

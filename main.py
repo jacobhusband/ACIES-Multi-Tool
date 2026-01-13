@@ -157,6 +157,25 @@ TASKS_FILE = get_app_data_path("tasks.json")
 NOTES_FILE = get_app_data_path("notes.json")
 SETTINGS_FILE = get_app_data_path("settings.json")
 TIMESHEETS_FILE = get_app_data_path("timesheets.json")
+TEMPLATES_FILE = get_app_data_path("templates.json")
+
+DEFAULT_TEMPLATES = [
+    {
+        "name": "Narrative of Changes",
+        "discipline": "General",
+        "fileType": "docx",
+        "sourcePath": r"C:\Users\JacobH\OneDrive - ACIES Engineering\Documents\Company Files\Narrative of Changes.docx",
+        "description": "Standard narrative of changes template with MEP sections"
+    },
+    {
+        "name": "Plan Check Comments",
+        "discipline": "General",
+        "fileType": "doc",
+        "sourcePath": r"C:\Users\JacobH\OneDrive - ACIES Engineering\Documents\Company Files\PCC.doc",
+        "description": "Plan check comments response table template"
+    }
+]
+
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -906,6 +925,192 @@ Return ONLY the JSON object.
             return {'status': 'success'}
         except Exception as e:
             logging.error(f"Error saving timesheets: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    # ===================== TEMPLATES API =====================
+
+    def get_templates(self):
+        """Reads and returns templates data, installing defaults on first run."""
+        try:
+            with open(TEMPLATES_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            # Check if defaults need installation
+            if not data.get('defaultTemplatesInstalled'):
+                data = self._install_default_templates(data)
+
+            return data
+        except (FileNotFoundError, json.JSONDecodeError):
+            # First run - create initial structure with defaults
+            data = {'templates': [], 'defaultTemplatesInstalled': False, 'lastModified': None}
+            data = self._install_default_templates(data)
+            return data
+
+    def _install_default_templates(self, data):
+        """Install default templates on first run."""
+        for tpl_def in DEFAULT_TEMPLATES:
+            if os.path.exists(tpl_def['sourcePath']):
+                template = {
+                    'id': f"tpl_{os.urandom(6).hex()}",
+                    'name': tpl_def['name'],
+                    'discipline': tpl_def['discipline'],
+                    'fileType': tpl_def['fileType'],
+                    'sourcePath': tpl_def['sourcePath'],
+                    'isDefault': True,
+                    'dateAdded': datetime.datetime.now().isoformat(),
+                    'description': tpl_def.get('description', '')
+                }
+                data['templates'].append(template)
+
+        data['defaultTemplatesInstalled'] = True
+        data['lastModified'] = datetime.datetime.now().isoformat()
+        self.save_templates(data)
+        return data
+
+    def save_templates(self, data):
+        """Saves templates data with backup."""
+        try:
+            if os.path.exists(TEMPLATES_FILE):
+                shutil.copy2(TEMPLATES_FILE, TEMPLATES_FILE + '.bak')
+            with open(TEMPLATES_FILE, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            return {'status': 'success'}
+        except Exception as e:
+            logging.error(f"Error saving templates: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def add_template(self, name, discipline, source_path, description=''):
+        """Adds a new template to the collection."""
+        try:
+            if not os.path.exists(source_path):
+                return {'status': 'error', 'message': 'Source file does not exist'}
+
+            # Detect file type
+            ext = os.path.splitext(source_path)[1].lower().lstrip('.')
+            if ext not in ['doc', 'docx', 'dwg', 'xlsx', 'xls']:
+                return {'status': 'error', 'message': f'Unsupported file type: .{ext}'}
+
+            data = self.get_templates()
+            template = {
+                'id': f"tpl_{os.urandom(6).hex()}",
+                'name': name,
+                'discipline': discipline,
+                'fileType': ext,
+                'sourcePath': source_path,
+                'isDefault': False,
+                'dateAdded': datetime.datetime.now().isoformat(),
+                'description': description
+            }
+            data['templates'].append(template)
+            data['lastModified'] = datetime.datetime.now().isoformat()
+            self.save_templates(data)
+            return {'status': 'success', 'template': template}
+        except Exception as e:
+            logging.error(f"Error adding template: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def remove_template(self, template_id):
+        """Removes a template by ID."""
+        try:
+            data = self.get_templates()
+            original_count = len(data['templates'])
+            data['templates'] = [t for t in data['templates'] if t['id'] != template_id]
+
+            if len(data['templates']) == original_count:
+                return {'status': 'error', 'message': 'Template not found'}
+
+            data['lastModified'] = datetime.datetime.now().isoformat()
+            self.save_templates(data)
+            return {'status': 'success'}
+        except Exception as e:
+            logging.error(f"Error removing template: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def copy_template_to_folder(self, template_id, destination_folder, new_name=None):
+        """Copies a template file to the specified folder with optional rename."""
+        try:
+            data = self.get_templates()
+            template = next((t for t in data['templates'] if t['id'] == template_id), None)
+
+            if not template:
+                return {'status': 'error', 'message': 'Template not found'}
+
+            source = template['sourcePath']
+            if not os.path.exists(source):
+                return {'status': 'error', 'message': f'Template file not found: {source}'}
+
+            if not os.path.isdir(destination_folder):
+                return {'status': 'error', 'message': 'Destination folder does not exist'}
+
+            # Determine output filename
+            ext = os.path.splitext(source)[1]
+            if new_name:
+                # Ensure proper extension
+                if not new_name.lower().endswith(ext.lower()):
+                    new_name = new_name + ext
+                dest_filename = new_name
+            else:
+                dest_filename = os.path.basename(source)
+
+            dest_path = os.path.join(destination_folder, dest_filename)
+
+            # Check if file exists and handle
+            if os.path.exists(dest_path):
+                return {'status': 'error', 'message': 'File already exists at destination'}
+
+            shutil.copy2(source, dest_path)
+            return {'status': 'success', 'path': dest_path}
+        except Exception as e:
+            logging.error(f"Error copying template: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def select_folder(self):
+        """Shows a folder selection dialog."""
+        try:
+            window = webview.windows[0]
+            folder_path = window.create_file_dialog(
+                webview.FOLDER_DIALOG
+            )
+            if not folder_path:
+                return {'status': 'cancelled', 'path': None}
+            # folder_path is a tuple, get first element
+            return {'status': 'success', 'path': folder_path[0] if folder_path else None}
+        except Exception as e:
+            logging.error(f"Error in folder dialog: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def select_template_file(self):
+        """Shows file dialog for selecting template files."""
+        try:
+            window = webview.windows[0]
+            file_types = (
+                'Document Files (*.doc;*.docx)',
+                'AutoCAD Files (*.dwg)',
+                'Excel Files (*.xlsx;*.xls)',
+                'All Supported (*.doc;*.docx;*.dwg;*.xlsx;*.xls)'
+            )
+            file_paths = window.create_file_dialog(
+                webview.OPEN_DIALOG,
+                allow_multiple=False,
+                file_types=file_types
+            )
+            if not file_paths:
+                return {'status': 'cancelled', 'path': None}
+            return {'status': 'success', 'path': file_paths[0]}
+        except Exception as e:
+            logging.error(f"Error in file dialog: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def verify_template_exists(self, template_id):
+        """Verifies if a template's source file still exists."""
+        try:
+            data = self.get_templates()
+            template = next((t for t in data['templates'] if t['id'] == template_id), None)
+            if not template:
+                return {'status': 'error', 'message': 'Template not found'}
+            exists = os.path.exists(template['sourcePath'])
+            return {'status': 'success', 'exists': exists, 'path': template['sourcePath']}
+        except Exception as e:
             return {'status': 'error', 'message': str(e)}
 
     def export_timesheet_excel(self, data):

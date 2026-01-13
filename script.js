@@ -2594,27 +2594,54 @@ function createStatusBadges(deliverable) {
   return container;
 }
 
-function createStatusDropdown(deliverable, project) {
+function createStatusDropdown(deliverable, project, card) {
   const availableStatuses = ["Waiting", "Working", "Pending Review", "Complete", "Delivered"];
   const dropdown = el("div", { className: "deliverable-status-dropdown" });
 
-  // Trigger button - compact plus icon
+  // Trigger button - compact ellipsis icon
   const trigger = el("button", {
     className: "deliverable-status-trigger",
-    title: "Edit statuses"
+    title: "Deliverable actions",
+    "aria-label": "Deliverable actions"
   });
 
-  const plusSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  plusSvg.setAttribute("viewBox", "0 0 24 24");
-  plusSvg.setAttribute("fill", "none");
-  plusSvg.setAttribute("stroke", "currentColor");
-  plusSvg.setAttribute("stroke-width", "2");
-  plusSvg.innerHTML = '<path d="M12 5v14m-7-7h14"/>';
+  const dotsSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  dotsSvg.setAttribute("viewBox", "0 0 24 24");
+  dotsSvg.setAttribute("fill", "currentColor");
+  dotsSvg.innerHTML = '<circle cx="6" cy="12" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="18" cy="12" r="1.6"></circle>';
 
-  trigger.appendChild(plusSvg);
+  trigger.appendChild(dotsSvg);
 
   // Dropdown menu
   const menu = el("div", { className: "deliverable-status-menu" });
+
+  const detailsToggle = el("button", {
+    className: "deliverable-details-menu-item",
+    type: "button"
+  });
+
+  const updateDetailsLabel = () => {
+    const isCollapsed = card.classList.contains("details-collapsed");
+    const label = isCollapsed ? "Show details" : "Hide details";
+    detailsToggle.textContent = label;
+    detailsToggle.setAttribute("aria-label", label);
+  };
+
+  updateDetailsLabel();
+
+  detailsToggle.addEventListener("click", (e) => {
+    e.stopPropagation();
+    setDeliverableDetailsCollapsed(
+      card,
+      !card.classList.contains("details-collapsed")
+    );
+    updateDetailsLabel();
+    menu.classList.remove("open");
+    trigger.classList.remove("open");
+  });
+
+  const divider = el("div", { className: "deliverable-status-divider" });
+  menu.append(detailsToggle, divider);
 
   availableStatuses.forEach(status => {
     const isActive = deliverable.statuses && deliverable.statuses.includes(status);
@@ -2671,12 +2698,15 @@ function createStatusDropdown(deliverable, project) {
     e.stopPropagation();
     const isOpen = menu.classList.toggle("open");
     trigger.classList.toggle("open", isOpen);
+    card.classList.toggle("deliverable-menu-open", isOpen);
+    if (isOpen) updateDetailsLabel();
 
     // Close other open dropdowns
     document.querySelectorAll(".deliverable-status-menu.open").forEach(m => {
       if (m !== menu) {
         m.classList.remove("open");
         m.previousElementSibling.classList.remove("open");
+        m.closest(".deliverable-card-new")?.classList.remove("deliverable-menu-open");
       }
     });
   });
@@ -2686,6 +2716,7 @@ function createStatusDropdown(deliverable, project) {
     if (!dropdown.contains(e.target)) {
       menu.classList.remove("open");
       trigger.classList.remove("open");
+      card.classList.remove("deliverable-menu-open");
     }
   });
 
@@ -2880,43 +2911,8 @@ async function refreshTimesheetsInfo() {
   }
 }
 
-function setDeliverableDetailsCollapsed(card, isCollapsed, toggleBtn) {
+function setDeliverableDetailsCollapsed(card, isCollapsed) {
   card.classList.toggle("details-collapsed", isCollapsed);
-  const btn = toggleBtn || card.querySelector(".deliverable-details-toggle");
-  if (!btn) return;
-  btn.classList.toggle("expanded", !isCollapsed);
-  const label = isCollapsed ? "Show details" : "Hide details";
-  btn.setAttribute("aria-label", label);
-  btn.setAttribute("title", label);
-}
-
-function createDetailsToggle(card) {
-  const btn = el("button", {
-    className: "deliverable-details-toggle",
-    type: "button",
-  });
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("viewBox", "0 0 24 24");
-  svg.setAttribute("fill", "none");
-  svg.setAttribute("stroke", "currentColor");
-  svg.setAttribute("stroke-width", "2");
-  svg.innerHTML = '<polyline points="6 9 12 15 18 9"></polyline>';
-  btn.appendChild(svg);
-
-  btn.onclick = (e) => {
-    e.stopPropagation();
-    setDeliverableDetailsCollapsed(
-      card,
-      !card.classList.contains("details-collapsed")
-    );
-  };
-
-  setDeliverableDetailsCollapsed(
-    card,
-    card.classList.contains("details-collapsed"),
-    btn
-  );
-  return btn;
 }
 
 function createCollapseButton(card) {
@@ -2960,9 +2956,8 @@ function renderDeliverableCard(deliverable, isPrimary, project) {
   // Status section: badges + dropdown inline
   const statusSection = el("div", { className: "deliverable-status-row" });
   const statusBadges = createStatusBadges(deliverable);
-  const statusDropdown = createStatusDropdown(deliverable, project);
-  const detailsToggle = createDetailsToggle(card);
-  statusSection.append(statusBadges, statusDropdown, detailsToggle);
+  const statusDropdown = createStatusDropdown(deliverable, project, card);
+  statusSection.append(statusBadges, statusDropdown);
 
   // Tasks preview (2-3 tasks, now clickable)
   const tasksPreview = createTasksPreview(deliverable, card);

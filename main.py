@@ -1114,111 +1114,214 @@ Return ONLY the JSON object.
             return {'status': 'error', 'message': str(e)}
 
     def export_timesheet_excel(self, data):
-        """Exports timesheet data to an Excel file."""
+        """Exports timesheet data to an Excel file using a template."""
         try:
             import openpyxl
-            from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
-            from openpyxl.utils import get_column_letter
+            from openpyxl.drawing.image import Image as XLImage
+            from PIL import Image as PILImage
 
-            wb = openpyxl.Workbook()
-            ws = wb.active
-            ws.title = "Timesheet"
+            # Get the template path (relative to this script)
+            script_dir = Path(__file__).resolve().parent
+            template_path = script_dir / "templates" / "Template_Timesheet.xlsx"
 
-            # Styles
-            header_font = Font(bold=True, size=11)
-            title_font = Font(bold=True, size=14)
-            thin_border = Border(
-                left=Side(style='thin'),
-                right=Side(style='thin'),
-                top=Side(style='thin'),
-                bottom=Side(style='thin')
-            )
-            center_align = Alignment(horizontal='center', vertical='center')
-            left_align = Alignment(horizontal='left', vertical='center')
-            header_fill = PatternFill(start_color="D9EAD3", end_color="D9EAD3", fill_type="solid")
+            if not template_path.exists():
+                return {'status': 'error', 'message': f'Template file not found: {template_path}'}
 
-            # Row 1: Employee name
-            ws['K1'] = "Employee:"
-            ws['M1'] = data.get('userName', 'Employee')
-            ws['M1'].font = title_font
+            # Determine output path
+            week_key = data.get('weekKey', 'timesheet')
+            user_docs = os.path.join(os.path.expanduser('~'), 'Documents')
+            file_path = os.path.join(user_docs, f"Timesheet_{week_key}.xlsx")
 
-            # Row 2: Week of
-            ws['K2'] = "Week of:"
-            ws['M2'] = data.get('weekDisplay', '')
-            ws['M2'].font = Font(size=11)
+            # Copy template to output location
+            shutil.copy2(str(template_path), file_path)
 
-            # Row 4: Column headers (matching the CSV format)
-            headers = ['PROJECT #', 'Task #', 'PROJECT NAME', 'FUNCTION', 'PM',
-                       'DESIGN / ENG', 'DRAFTING', 'TRAVEL', 'OTHERS',
-                       'SERVICE & WORK DESCRIPTION', 'MON', 'TUE', 'WED', 'THU',
-                       'FRI', 'SAT', 'SUN', 'MILEAGE']
+            # Open the copied file and modify the "time log" sheet
+            wb = openpyxl.load_workbook(file_path)
 
-            for col, header in enumerate(headers, 1):
-                cell = ws.cell(row=4, column=col, value=header)
-                cell.font = header_font
-                cell.fill = header_fill
-                cell.border = thin_border
-                cell.alignment = center_align
+            # Get the "time log" sheet
+            if "time log" not in wb.sheetnames:
+                return {'status': 'error', 'message': 'Sheet "time log" not found in template'}
 
-            # Data rows
+            ws = wb["time log"]
+
+            # Row 1: Employee name (column M = 13)
+            ws.cell(row=1, column=13, value=data.get('userName', 'Employee'))
+
+            # Row 2: Week of (column M = 13)
+            ws.cell(row=2, column=13, value=data.get('weekDisplay', ''))
+
+            # Data rows start at row 5
             entries = data.get('entries', [])
             day_order = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
 
             for row_idx, entry in enumerate(entries, 5):
-                ws.cell(row=row_idx, column=1, value=entry.get('projectId', '')).border = thin_border
-                ws.cell(row=row_idx, column=2, value=entry.get('taskNumber', '')).border = thin_border
-                cell = ws.cell(row=row_idx, column=3, value=entry.get('projectName', ''))
-                cell.border = thin_border
-                cell.alignment = left_align
-                ws.cell(row=row_idx, column=4, value=entry.get('function', '')).border = thin_border
-                ws.cell(row=row_idx, column=5, value=entry.get('pmInitials', '')).border = thin_border
-                # Columns 6-9 are empty (DESIGN/ENG, DRAFTING, TRAVEL, OTHERS)
-                for empty_col in range(6, 10):
-                    ws.cell(row=row_idx, column=empty_col, value='').border = thin_border
-                cell = ws.cell(row=row_idx, column=10, value=entry.get('serviceDescription', ''))
-                cell.border = thin_border
-                cell.alignment = left_align
+                # Column A (1): PROJECT #
+                ws.cell(row=row_idx, column=1, value=entry.get('projectId', ''))
+                # Column B (2): Task #
+                ws.cell(row=row_idx, column=2, value=entry.get('taskNumber', ''))
+                # Column C (3): PROJECT NAME
+                ws.cell(row=row_idx, column=3, value=entry.get('projectName', ''))
+                # Column D (4): FUNCTION (M E P F)
+                ws.cell(row=row_idx, column=4, value=entry.get('function', ''))
+                # Column E (5): PM
+                ws.cell(row=row_idx, column=5, value=entry.get('pmInitials', ''))
+                # Columns F-I (6-9): DESIGN/ENG, DRAFTING, TRAVEL, OTHERS - leave empty
+                # Column J (10): SERVICE & WORK DESCRIPTION
+                ws.cell(row=row_idx, column=10, value=entry.get('serviceDescription', ''))
 
+                # Columns K-Q (11-17): MON through SUN
                 hours = entry.get('hours', {})
                 for day_idx, day in enumerate(day_order):
                     h = hours.get(day, 0)
-                    cell = ws.cell(row=row_idx, column=11 + day_idx, value=h if h else '')
-                    cell.border = thin_border
-                    cell.alignment = center_align
+                    ws.cell(row=row_idx, column=11 + day_idx, value=h if h else '')
 
-                cell = ws.cell(row=row_idx, column=18, value=entry.get('mileage', 0) or '')
-                cell.border = thin_border
-                cell.alignment = center_align
+                # Column R (18): MILEAGE
+                mileage = entry.get('mileage', 0)
+                ws.cell(row=row_idx, column=18, value=mileage if mileage else '')
 
-            # Totals row
+            # Totals row (row 26 in template based on CSV)
             totals = data.get('totals', {})
-            totals_row = 5 + len(entries)
-
-            # Empty cells with borders for totals row
-            for col in range(1, 11):
-                ws.cell(row=totals_row, column=col, value='').border = thin_border
+            totals_row = 26
 
             for day_idx, day in enumerate(day_order):
-                cell = ws.cell(row=totals_row, column=11 + day_idx, value=totals.get(day, 0))
-                cell.font = header_font
-                cell.border = thin_border
-                cell.alignment = center_align
+                ws.cell(row=totals_row, column=11 + day_idx, value=totals.get(day, 0))
 
-            cell = ws.cell(row=totals_row, column=18, value=totals.get('mileage', 0) or '')
-            cell.font = header_font
-            cell.border = thin_border
-            cell.alignment = center_align
+            # Total mileage
+            ws.cell(row=totals_row, column=18, value=totals.get('mileage', 0) or '')
 
-            # Set column widths
-            col_widths = [12, 8, 35, 10, 6, 12, 10, 8, 8, 25, 6, 6, 6, 6, 6, 6, 6, 8]
-            for col, width in enumerate(col_widths, 1):
-                ws.column_dimensions[get_column_letter(col)].width = width
+            # =============== EXPENSE SHEET EXPORT ===============
+            # If expense data is provided, also populate the expense sheet
+            expense_data = data.get('expenses', {})
+            expense_projects = expense_data.get('projects', [])
 
-            # Save file to Documents folder
-            week_key = data.get('weekKey', 'timesheet')
-            user_docs = os.path.join(os.path.expanduser('~'), 'Documents')
-            file_path = os.path.join(user_docs, f"Timesheet_{week_key}.xlsx")
+            if expense_projects:
+                sheet_name = "Project Expense Sheet"
+                if sheet_name in wb.sheetnames:
+                    ws_exp = wb[sheet_name]
+                    mileage_rate = expense_data.get('mileageRate', 0.70)
+
+                    HEADER_ROWS = 3
+                    DEFAULT_DATA_ROWS = 5
+
+                    current_row = 1
+                    all_images = []
+
+                    for proj_idx, project in enumerate(expense_projects):
+                        exp_entries = project.get('entries', [])
+                        num_entries = max(len(exp_entries), 1)
+
+                        rows_needed = num_entries - DEFAULT_DATA_ROWS
+
+                        if proj_idx > 0:
+                            total_section_rows = HEADER_ROWS + max(num_entries, DEFAULT_DATA_ROWS) + 4
+                            ws_exp.insert_rows(current_row, total_section_rows)
+
+                        if rows_needed > 0 and proj_idx == 0:
+                            ws_exp.insert_rows(current_row + HEADER_ROWS + DEFAULT_DATA_ROWS, rows_needed)
+
+                        ws_exp.cell(row=current_row, column=1, value=f"PROJECT: {project.get('projectName', '')}")
+                        ws_exp.cell(row=current_row + 1, column=1, value=f"JOB #: {project.get('projectId', '')}")
+
+                        data_start_row = current_row + HEADER_ROWS
+                        total_mileage = 0
+                        total_expense = 0
+
+                        for entry_idx, entry in enumerate(exp_entries):
+                            row = data_start_row + entry_idx
+                            ws_exp.cell(row=row, column=1, value=entry.get('date', ''))
+                            ws_exp.cell(row=row, column=2, value=entry.get('description', ''))
+
+                            exp_mileage = entry.get('mileage', 0) or 0
+                            expense = entry.get('expense', 0) or 0
+
+                            ws_exp.cell(row=row, column=4, value=exp_mileage if exp_mileage else '')
+                            expense_cell = ws_exp.cell(row=row, column=5, value=expense if expense else '')
+                            if expense:
+                                expense_cell.number_format = '0.00'
+
+                            total_mileage += exp_mileage
+                            total_expense += expense
+
+                        actual_data_rows = max(num_entries, DEFAULT_DATA_ROWS)
+                        subtotal_row = data_start_row + actual_data_rows
+                        rate_row = subtotal_row + 1
+                        total_row = rate_row + 1
+
+                        ws_exp.cell(row=subtotal_row, column=3, value="SUBTOTAL")
+                        # Use SUM formulas so subtotals update when rows are added
+                        last_data_row = subtotal_row - 1
+                        ws_exp.cell(row=subtotal_row, column=4, value=f'=SUM(D{data_start_row}:D{last_data_row})')
+                        subtotal_expense_cell = ws_exp.cell(row=subtotal_row, column=5, value=f'=SUM(E{data_start_row}:E{last_data_row})')
+                        subtotal_expense_cell.number_format = '0.00'
+
+                        ws_exp.cell(row=rate_row, column=3, value=f"{mileage_rate:.2f} CENTS PER MILE")
+                        # Formula: mileage subtotal * rate
+                        rate_mileage_cell = ws_exp.cell(row=rate_row, column=4, value=f'=D{subtotal_row}*{mileage_rate}')
+                        rate_mileage_cell.number_format = '0.00'
+
+                        ws_exp.cell(row=total_row, column=3, value="TOTAL")
+                        # Formula: mileage reimbursement + expense subtotal
+                        total_cell = ws_exp.cell(row=total_row, column=4, value=f'=D{rate_row}+E{subtotal_row}')
+                        total_cell.number_format = '0.00'
+
+                        for img in project.get('images', []):
+                            all_images.append(img.get('path', ''))
+
+                        current_row = total_row + 2
+
+                    # Add images starting at row 45, spanning columns A-E
+                    temp_files_to_cleanup = []
+                    if all_images:
+                        image_start_row = 45
+                        # Width spanning A to E (approximately 5 columns ~500 pixels)
+                        TARGET_WIDTH = 500
+                        TARGET_HEIGHT = 375
+
+                        for img_path in all_images:
+                            if not os.path.exists(img_path):
+                                continue
+
+                            try:
+                                # Use PIL to convert unsupported formats (like .mpo) to PNG
+                                pil_img = PILImage.open(img_path)
+                                # Convert to RGB if needed (handles RGBA, P mode, etc.)
+                                if pil_img.mode in ('RGBA', 'P', 'LA'):
+                                    pil_img = pil_img.convert('RGB')
+                                # For MPO files, get the first frame
+                                if hasattr(pil_img, 'n_frames') and pil_img.n_frames > 1:
+                                    pil_img.seek(0)
+
+                                # Save to temp file as PNG for openpyxl compatibility
+                                temp_img_path = os.path.join(tempfile.gettempdir(), f"expense_img_{os.urandom(4).hex()}.png")
+                                pil_img.save(temp_img_path, 'PNG')
+                                temp_files_to_cleanup.append(temp_img_path)
+
+                                img = XLImage(temp_img_path)
+
+                                # Scale to fit within target dimensions while maintaining aspect ratio
+                                scale = min(1.0, TARGET_WIDTH / img.width, TARGET_HEIGHT / img.height)
+                                img.width = int(img.width * scale)
+                                img.height = int(img.height * scale)
+
+                                # Place image at column A, current row
+                                ws_exp.add_image(img, f"A{image_start_row}")
+
+                                # Calculate rows needed for this image (row height ~15 pixels)
+                                rows_for_image = max(int(img.height / 15) + 2, 18)
+                                image_start_row += rows_for_image
+
+                            except Exception as img_err:
+                                logging.warning(f"Could not add image {img_path}: {img_err}")
+
+            # Save the modified file
             wb.save(file_path)
+
+            # Clean up temp files after save
+            for temp_file in temp_files_to_cleanup:
+                try:
+                    os.remove(temp_file)
+                except:
+                    pass
 
             # Open file on Windows
             if sys.platform == "win32":
@@ -1230,6 +1333,223 @@ Return ONLY the JSON object.
             return {'status': 'error', 'message': 'openpyxl not installed. Run: pip install openpyxl'}
         except Exception as e:
             logging.error(f"Error exporting timesheet: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def select_expense_images(self):
+        """Shows file dialog for selecting expense receipt images."""
+        try:
+            window = webview.windows[0]
+            file_types = (
+                'Image Files (*.jpg;*.jpeg;*.png;*.gif;*.bmp)',
+                'PDF Files (*.pdf)',
+                'All Files (*.*)'
+            )
+            file_paths = window.create_file_dialog(
+                webview.OPEN_DIALOG,
+                allow_multiple=True,
+                file_types=file_types
+            )
+            if not file_paths:
+                return {'status': 'cancelled', 'paths': []}
+            return {'status': 'success', 'paths': list(file_paths)}
+        except Exception as e:
+            logging.error(f"Error in expense image selection dialog: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def export_expense_sheet_excel(self, data):
+        """Exports expense sheet data to an Excel file with images."""
+        try:
+            import openpyxl
+            from openpyxl.drawing.image import Image as XLImage
+            from PIL import Image as PILImage
+
+            # Get the template path
+            script_dir = Path(__file__).resolve().parent
+            template_path = script_dir / "templates" / "Template_Timesheet.xlsx"
+
+            if not template_path.exists():
+                return {'status': 'error', 'message': f'Template file not found: {template_path}'}
+
+            # Determine output path
+            week_key = data.get('weekKey', 'expense')
+            user_docs = os.path.join(os.path.expanduser('~'), 'Documents')
+            file_path = os.path.join(user_docs, f"Expense_Sheet_{week_key}.xlsx")
+
+            # Copy template to output location
+            shutil.copy2(str(template_path), file_path)
+
+            # Open the copied file
+            wb = openpyxl.load_workbook(file_path)
+
+            # Get the expense sheet
+            sheet_name = "Project Expense Sheet"
+            if sheet_name not in wb.sheetnames:
+                return {'status': 'error', 'message': f'Sheet "{sheet_name}" not found in template'}
+
+            ws = wb[sheet_name]
+
+            projects = data.get('projects', [])
+            mileage_rate = data.get('mileageRate', 0.70)
+
+            # Template structure per project section (11 rows each):
+            # Row 1: PROJECT: [name]
+            # Row 2: JOB #: [number]
+            # Row 3: DATE, DESCRIPTION, MILEAGE, EXPENSE (headers)
+            # Rows 4-8: 5 data rows
+            # Row 9: SUBTOTAL
+            # Row 10: mileage rate
+            # Row 11: TOTAL
+            # Row 12: blank separator
+
+            ROWS_PER_SECTION = 12
+            HEADER_ROWS = 3
+            DEFAULT_DATA_ROWS = 5
+            FOOTER_ROWS = 4  # subtotal, rate, total, blank
+
+            current_row = 1
+            all_images = []
+
+            for proj_idx, project in enumerate(projects):
+                entries = project.get('entries', [])
+                num_entries = max(len(entries), 1)  # At least 1 row
+
+                # Calculate if we need to insert extra rows
+                rows_needed = num_entries - DEFAULT_DATA_ROWS
+
+                if proj_idx > 0:
+                    # Insert a new section for additional projects
+                    # We need to insert rows for the entire section
+                    total_section_rows = HEADER_ROWS + max(num_entries, DEFAULT_DATA_ROWS) + FOOTER_ROWS
+                    ws.insert_rows(current_row, total_section_rows)
+
+                # If this project has more entries than default, insert extra data rows
+                if rows_needed > 0 and proj_idx == 0:
+                    # Insert extra rows after the header rows (row 4 onwards for first section)
+                    ws.insert_rows(current_row + HEADER_ROWS + DEFAULT_DATA_ROWS, rows_needed)
+
+                # Row 1: PROJECT name
+                ws.cell(row=current_row, column=1, value=f"PROJECT: {project.get('projectName', '')}")
+
+                # Row 2: JOB #
+                ws.cell(row=current_row + 1, column=1, value=f"JOB #: {project.get('projectId', '')}")
+
+                # Row 3 is header row (DATE, DESCRIPTION, MILEAGE, EXPENSE) - already in template
+
+                # Data rows start at row 4 of this section
+                data_start_row = current_row + HEADER_ROWS
+                total_mileage = 0
+                total_expense = 0
+
+                for entry_idx, entry in enumerate(entries):
+                    row = data_start_row + entry_idx
+                    ws.cell(row=row, column=1, value=entry.get('date', ''))
+                    ws.cell(row=row, column=2, value=entry.get('description', ''))
+
+                    mileage = entry.get('mileage', 0) or 0
+                    expense = entry.get('expense', 0) or 0
+
+                    ws.cell(row=row, column=4, value=mileage if mileage else '')
+                    expense_cell = ws.cell(row=row, column=5, value=expense if expense else '')
+                    if expense:
+                        expense_cell.number_format = '0.00'
+
+                    total_mileage += mileage
+                    total_expense += expense
+
+                # Calculate footer row positions
+                actual_data_rows = max(num_entries, DEFAULT_DATA_ROWS)
+                subtotal_row = data_start_row + actual_data_rows
+                rate_row = subtotal_row + 1
+                total_row = rate_row + 1
+
+                # SUBTOTAL row - use SUM formulas so subtotals update when rows are added
+                ws.cell(row=subtotal_row, column=3, value="SUBTOTAL")
+                last_data_row = subtotal_row - 1
+                ws.cell(row=subtotal_row, column=4, value=f'=SUM(D{data_start_row}:D{last_data_row})')
+                subtotal_expense_cell = ws.cell(row=subtotal_row, column=5, value=f'=SUM(E{data_start_row}:E{last_data_row})')
+                subtotal_expense_cell.number_format = '0.00'
+
+                # Mileage rate row - formula: mileage subtotal * rate
+                ws.cell(row=rate_row, column=3, value=f"{mileage_rate:.2f} CENTS PER MILE")
+                rate_mileage_cell = ws.cell(row=rate_row, column=4, value=f'=D{subtotal_row}*{mileage_rate}')
+                rate_mileage_cell.number_format = '0.00'
+
+                # TOTAL row - formula: mileage reimbursement + expense subtotal
+                ws.cell(row=total_row, column=3, value="TOTAL")
+                total_cell = ws.cell(row=total_row, column=4, value=f'=D{rate_row}+E{subtotal_row}')
+                total_cell.number_format = '0.00'
+
+                # Collect images for this project
+                for img in project.get('images', []):
+                    all_images.append(img.get('path', ''))
+
+                # Move to next section
+                current_row = total_row + 2  # +2 for blank row after total
+
+            # Add images starting at row 45, spanning columns A-E
+            temp_files_to_cleanup = []
+            if all_images:
+                image_start_row = 45
+                # Width spanning A to E (approximately 5 columns ~500 pixels)
+                TARGET_WIDTH = 500
+                TARGET_HEIGHT = 375
+
+                for img_path in all_images:
+                    if not os.path.exists(img_path):
+                        continue
+
+                    try:
+                        # Use PIL to convert unsupported formats (like .mpo) to PNG
+                        pil_img = PILImage.open(img_path)
+                        # Convert to RGB if needed (handles RGBA, P mode, etc.)
+                        if pil_img.mode in ('RGBA', 'P', 'LA'):
+                            pil_img = pil_img.convert('RGB')
+                        # For MPO files, get the first frame
+                        if hasattr(pil_img, 'n_frames') and pil_img.n_frames > 1:
+                            pil_img.seek(0)
+
+                        # Save to temp file as PNG for openpyxl compatibility
+                        temp_img_path = os.path.join(tempfile.gettempdir(), f"expense_img_{os.urandom(4).hex()}.png")
+                        pil_img.save(temp_img_path, 'PNG')
+                        temp_files_to_cleanup.append(temp_img_path)
+
+                        img = XLImage(temp_img_path)
+
+                        # Scale to fit within target dimensions while maintaining aspect ratio
+                        scale = min(1.0, TARGET_WIDTH / img.width, TARGET_HEIGHT / img.height)
+                        img.width = int(img.width * scale)
+                        img.height = int(img.height * scale)
+
+                        # Place image at column A, current row
+                        ws.add_image(img, f"A{image_start_row}")
+
+                        # Calculate rows needed for this image (row height ~15 pixels)
+                        rows_for_image = max(int(img.height / 15) + 2, 18)
+                        image_start_row += rows_for_image
+
+                    except Exception as img_err:
+                        logging.warning(f"Could not add image {img_path}: {img_err}")
+
+            # Save the modified file
+            wb.save(file_path)
+
+            # Clean up temp files after save
+            for temp_file in temp_files_to_cleanup:
+                try:
+                    os.remove(temp_file)
+                except:
+                    pass
+
+            # Open file on Windows
+            if sys.platform == "win32":
+                os.startfile(file_path)
+
+            return {'status': 'success', 'path': file_path}
+
+        except ImportError:
+            return {'status': 'error', 'message': 'openpyxl not installed. Run: pip install openpyxl'}
+        except Exception as e:
+            logging.error(f"Error exporting expense sheet: {e}")
             return {'status': 'error', 'message': str(e)}
 
     def mark_overdue_projects_complete(self):

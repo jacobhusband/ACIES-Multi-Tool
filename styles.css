@@ -3897,3 +3897,331 @@ dialog::backdrop {
   font-weight: 600;
   color: var(--text);
 }
+
+/* ===================== EXPENSE SHEET SECTION ===================== */
+
+.expense-sheet-section {
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--glass-border);
+}
+
+.expense-sheet-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.expense-sheet-add-section {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.expense-sheet-container {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+/* Individual Project Expense Section */
+.expense-project {
+  background: var(--surface);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.expense-project-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  background: var(--glass-bg);
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.expense-project-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.expense-project-name {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.expense-project-id {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.expense-project-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+/* Expense Table */
+.expense-table-container {
+  overflow-x: auto;
+}
+
+.expense-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.expense-table th,
+.expense-table td {
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.expense-table th {
+  background: var(--bg);
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.expense-table input {
+  width: 100%;
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.875rem;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+}
+
+.expense-table input:hover {
+  background: var(--input-bg);
+}
+
+.expense-table input:focus {
+  border-color: var(--accent);
+  background: var(--input-bg);
+  outline: none;
+}
+
+.expense-table input::placeholder {
+  color: var(--muted);
+  opacity: 0.6;
+}
+
+.expense-table .date-col {
+  width: 120px;
+}
+
+.expense-table .mileage-col,
+.expense-table .amount-col {
+  width: 100px;
+  text-align: right;
+}
+
+.expense-table .mileage-col input,
+.expense-table .amount-col input {
+  text-align: right;
+  -moz-appearance: textfield;
+}
+
+.expense-table .mileage-col input::-webkit-outer-spin-button,
+.expense-table .mileage-col input::-webkit-inner-spin-button,
+.expense-table .amount-col input::-webkit-outer-spin-button,
+.expense-table .amount-col input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.expense-table .actions-col {
+  width: 40px;
+  text-align: center;
+}
+
+.expense-remove-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0.25rem;
+  border-radius: var(--radius-sm);
+  font-size: 1rem;
+  line-height: 1;
+  transition: all 0.15s ease;
+}
+
+.expense-remove-btn:hover {
+  background: var(--danger-bg);
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+/* Project Subtotals Row */
+.expense-table .subtotals-row {
+  background: var(--bg);
+  font-weight: 600;
+}
+
+.expense-table .subtotals-row td {
+  padding: 0.75rem;
+}
+
+/* Image Attachments Section */
+.expense-images-section {
+  padding: 0.75rem 1rem;
+  border-top: 1px solid var(--glass-border);
+  background: var(--bg);
+}
+
+.expense-images-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.expense-images-title {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.expense-images-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.expense-image-thumb {
+  position: relative;
+  width: 80px;
+  height: 80px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  border: 1px solid var(--glass-border);
+  background: var(--surface);
+}
+
+.expense-image-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.expense-image-thumb .pdf-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  font-size: 2rem;
+  color: var(--danger);
+}
+
+.expense-image-thumb .remove-image-btn {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--danger);
+  color: white;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.expense-image-thumb:hover .remove-image-btn {
+  opacity: 1;
+}
+
+.expense-images-empty {
+  color: var(--muted);
+  font-size: 0.8rem;
+  padding: 0.5rem 0;
+}
+
+/* Expense Totals Bar */
+.expense-sheet-totals-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  padding: 1rem;
+  margin-top: 1rem;
+  background: var(--accent-dim);
+  border-radius: var(--radius);
+  border: 1px solid var(--accent);
+}
+
+.expense-total-item {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.expense-total-item .total-label {
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+
+.expense-total-item .total-value {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.expense-total-item .total-unit {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.expense-total-item.grand-total {
+  margin-left: auto;
+  padding-left: 1.5rem;
+  border-left: 1px solid var(--glass-border);
+}
+
+.expense-total-item.grand-total .total-value {
+  font-size: 1.25rem;
+  color: var(--text);
+}
+
+/* Empty State */
+.expense-sheet-empty {
+  text-align: center;
+  padding: 2rem 1rem;
+  color: var(--muted);
+}
+
+.expense-sheet-empty .empty-icon {
+  font-size: 2.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.expense-sheet-empty h3 {
+  margin: 0 0 0.5rem 0;
+  color: var(--text);
+  font-size: 1rem;
+}
+
+.expense-sheet-empty p {
+  margin: 0;
+  font-size: 0.875rem;
+}

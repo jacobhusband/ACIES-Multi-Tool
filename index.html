@@ -382,7 +382,7 @@
                         <button class="btn tiny" id="currentWeekBtn">Today</button>
                     </div>
                     <div class="toolbar-actions">
-                        <button class="btn-primary tiny" id="exportTimesheetBtn">
+                        <button class="btn-primary tiny" id="exportTimesheetBtn" title="Export timesheet and project expense sheet to Excel">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px;">
                                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                                 <polyline points="7 10 12 15 17 10"></polyline>
@@ -463,6 +463,52 @@
                     <p class="tiny muted">Click a project to add it to your timesheet</p>
                     <div id="timesheetSuggestions" class="timesheet-suggestions-list"></div>
                 </div>
+
+                <!-- Project Expense Sheet Section -->
+                <div class="expense-sheet-section">
+                    <div class="expense-sheet-header">
+                        <div>
+                            <h4 class="section-title">Project Expense Sheet</h4>
+                            <p class="tiny muted">Track expenses for projects on this week's timesheet</p>
+                        </div>
+                    </div>
+
+                    <div class="expense-sheet-add-section">
+                        <button class="btn" id="addExpenseProjectBtn">
+                            + Add Project Expense
+                        </button>
+                    </div>
+
+                    <div id="expenseSheetContainer" class="expense-sheet-container">
+                        <!-- Expense project sections will be rendered here -->
+                    </div>
+
+                    <div id="expenseSheetEmptyState" class="expense-sheet-empty">
+                        <div class="empty-icon">💰</div>
+                        <h3>No expenses recorded</h3>
+                        <p>Add expenses for projects listed in your timesheet above.</p>
+                    </div>
+
+                    <div class="expense-sheet-totals-bar" id="expenseTotalsBar" style="display: none;">
+                        <div class="expense-total-item">
+                            <span class="total-label">Total Mileage:</span>
+                            <span class="total-value" id="expenseTotalMileage">0</span>
+                            <span class="total-unit">miles</span>
+                        </div>
+                        <div class="expense-total-item">
+                            <span class="total-label">Mileage Reimbursement:</span>
+                            <span class="total-value" id="expenseMileageReimbursement">$0.00</span>
+                        </div>
+                        <div class="expense-total-item">
+                            <span class="total-label">Total Expenses:</span>
+                            <span class="total-value" id="expenseTotalAmount">$0.00</span>
+                        </div>
+                        <div class="expense-total-item grand-total">
+                            <span class="total-label">Grand Total:</span>
+                            <span class="total-value" id="expenseGrandTotal">$0.00</span>
+                        </div>
+                    </div>
+                </div>
             </section>
         </div>
         <!-- Tab Panel for Templates -->
@@ -510,6 +556,55 @@
                 <input id="timesheetProjectSearch" type="search" placeholder="Search projects..." />
             </div>
             <div id="timesheetProjectList" class="timesheet-project-list"></div>
+        </div>
+    </dialog>
+    <!-- Expense Project Selection Dialog -->
+    <dialog id="expenseProjectDlg">
+        <div class="modal-header">
+            <div class="title">Add Project Expense</div>
+            <button class="btn ghost" onclick="closeDlg('expenseProjectDlg')">Cancel</button>
+        </div>
+        <div class="modal-body stack">
+            <div class="nav-search expanded-search">
+                <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="2">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                </svg>
+                <input id="expenseProjectSearch" type="search" placeholder="Search projects..." />
+            </div>
+            <div id="expenseProjectList" class="timesheet-project-list"></div>
+        </div>
+    </dialog>
+    <!-- Add Expense Entry Dialog -->
+    <dialog id="addExpenseEntryDlg">
+        <div class="modal-header">
+            <div class="title">Add Expense Entry</div>
+            <div class="inline">
+                <button class="btn ghost" onclick="closeDlg('addExpenseEntryDlg')">Cancel</button>
+                <button class="btn-primary" id="btnSaveExpenseEntry">Add Entry</button>
+            </div>
+        </div>
+        <div class="modal-body stack">
+            <input type="hidden" id="exp_projectIndex" />
+            <div class="modal-grid">
+                <div class="col-6">
+                    <label class="label">Date</label>
+                    <input id="exp_date" type="date" />
+                </div>
+                <div class="col-6">
+                    <label class="label">Expense Amount ($)</label>
+                    <input id="exp_amount" type="number" step="0.01" min="0" placeholder="0.00" />
+                </div>
+                <div class="col-12">
+                    <label class="label">Description</label>
+                    <input id="exp_description" placeholder="e.g. Site visit materials, client lunch" />
+                </div>
+                <div class="col-6">
+                    <label class="label">Mileage</label>
+                    <input id="exp_mileage" type="number" min="0" placeholder="0" />
+                </div>
+            </div>
         </div>
     </dialog>
     <!-- Edit / New Modal -->

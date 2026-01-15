@@ -587,6 +587,7 @@ function renderTimesheets() {
   renderTimesheetEntries(entries);
   renderTimesheetSuggestions();
   updateTimesheetTotals(entries);
+  renderExpenses(); // Also render expense sheet when timesheets render
 }
 
 function renderTimesheetEntries(entries) {
@@ -1166,29 +1167,651 @@ function calculateWeekTotals(entries) {
 async function exportTimesheetToExcel() {
   const weekKey = formatWeekKey(currentTimesheetWeek);
   const entries = getWeekEntries(weekKey);
+  const expenseProjects = getWeekExpenses(weekKey);
 
-  if (!entries.length) {
+  if (!entries.length && !expenseProjects.length) {
     toast("No entries to export");
     return;
   }
 
   try {
+    // Export timesheet and expenses together
     const result = await window.pywebview.api.export_timesheet_excel({
       weekKey,
       weekDisplay: formatWeekDisplay(currentTimesheetWeek),
       userName: userSettings.userName || "Employee",
       entries,
       totals: calculateWeekTotals(entries),
+      // Include expense data for the expense sheet tab
+      expenses: {
+        projects: expenseProjects,
+        mileageRate: MILEAGE_RATE
+      }
     });
 
     if (result.status === "success") {
-      toast("Timesheet exported successfully");
+      const hasTimesheet = entries.length > 0;
+      const hasExpenses = expenseProjects.length > 0;
+      const message = hasTimesheet && hasExpenses
+        ? "Timesheet and project expense sheet exported successfully"
+        : hasExpenses
+          ? "Project expense sheet exported successfully"
+          : "Timesheet exported successfully";
+      toast(message);
     } else {
       throw new Error(result.message);
     }
   } catch (e) {
     console.error("Export failed:", e);
-    toast("Failed to export timesheet: " + e.message);
+    toast("Failed to export: " + e.message);
+  }
+}
+
+// ===================== EXPENSE SHEET FUNCTIONS =====================
+
+const MILEAGE_RATE = 0.70; // Fixed rate per mile
+
+function createExpenseEntryId() {
+  return "exp_" + Math.random().toString(36).substr(2, 9);
+}
+
+function createExpenseProjectId() {
+  return "prj_" + Math.random().toString(36).substr(2, 9);
+}
+
+function createExpenseImageId() {
+  return "img_" + Math.random().toString(36).substr(2, 9);
+}
+
+function getWeekExpenses(weekKey) {
+  return timesheetDb.expenses?.[weekKey]?.projects || [];
+}
+
+function setWeekExpenses(weekKey, projects) {
+  if (!timesheetDb.expenses) {
+    timesheetDb.expenses = {};
+  }
+  if (!timesheetDb.expenses[weekKey]) {
+    timesheetDb.expenses[weekKey] = { projects: [] };
+  }
+  timesheetDb.expenses[weekKey].projects = projects;
+}
+
+function renderExpenses() {
+  const weekKey = formatWeekKey(currentTimesheetWeek);
+  const projects = getWeekExpenses(weekKey);
+
+  const container = document.getElementById("expenseSheetContainer");
+  const emptyState = document.getElementById("expenseSheetEmptyState");
+  const totalsBar = document.getElementById("expenseTotalsBar");
+
+  if (!container) return;
+  container.innerHTML = "";
+
+  if (!projects.length) {
+    if (emptyState) emptyState.style.display = "block";
+    if (totalsBar) totalsBar.style.display = "none";
+    return;
+  }
+
+  if (emptyState) emptyState.style.display = "none";
+  if (totalsBar) totalsBar.style.display = "flex";
+
+  projects.forEach((project, projectIndex) => {
+    const section = createExpenseProjectSection(project, projectIndex);
+    container.appendChild(section);
+  });
+
+  updateExpenseTotals(projects);
+}
+
+function createExpenseProjectSection(project, projectIndex) {
+  const section = el("div", { className: "expense-project" });
+  section.dataset.projectIndex = projectIndex;
+
+  // Header
+  const header = el("div", { className: "expense-project-header" });
+
+  const info = el("div", { className: "expense-project-info" });
+  info.appendChild(el("div", { className: "expense-project-name", textContent: project.projectName || "Unnamed Project" }));
+  info.appendChild(el("div", { className: "expense-project-id", textContent: `Job #: ${project.projectId || "--"}` }));
+  header.appendChild(info);
+
+  const actions = el("div", { className: "expense-project-actions" });
+
+  const addEntryBtn = el("button", {
+    className: "btn tiny",
+    textContent: "+ Add Entry",
+    onclick: () => openAddExpenseEntryDialog(projectIndex)
+  });
+  actions.appendChild(addEntryBtn);
+
+  const addImageBtn = el("button", {
+    className: "btn tiny",
+    textContent: "📷 Add Images",
+    onclick: () => addExpenseImages(projectIndex)
+  });
+  actions.appendChild(addImageBtn);
+
+  const removeProjectBtn = el("button", {
+    className: "btn tiny ghost text-danger",
+    textContent: "Remove",
+    onclick: () => removeExpenseProject(projectIndex)
+  });
+  actions.appendChild(removeProjectBtn);
+
+  header.appendChild(actions);
+  section.appendChild(header);
+
+  // Expense Table
+  const tableContainer = el("div", { className: "expense-table-container" });
+  const table = el("table", { className: "expense-table" });
+
+  // Table Header
+  const thead = el("thead");
+  const headerRow = el("tr");
+  headerRow.appendChild(el("th", { className: "date-col", textContent: "Date" }));
+  headerRow.appendChild(el("th", { textContent: "Description" }));
+  headerRow.appendChild(el("th", { className: "mileage-col", textContent: "Mileage" }));
+  headerRow.appendChild(el("th", { className: "amount-col", textContent: "Expense" }));
+  headerRow.appendChild(el("th", { className: "actions-col", textContent: "" }));
+  thead.appendChild(headerRow);
+  table.appendChild(thead);
+
+  // Table Body
+  const tbody = el("tbody");
+  (project.entries || []).forEach((entry, entryIndex) => {
+    const row = createExpenseRow(entry, projectIndex, entryIndex);
+    tbody.appendChild(row);
+  });
+
+  // Subtotals row
+  const subtotalsRow = el("tr", { className: "subtotals-row" });
+  const projectTotals = calculateProjectExpenseTotals(project);
+  subtotalsRow.appendChild(el("td", { colSpan: 2, textContent: "Subtotal" }));
+  subtotalsRow.appendChild(el("td", { className: "mileage-col", textContent: projectTotals.mileage.toString() }));
+  subtotalsRow.appendChild(el("td", { className: "amount-col", textContent: "$" + projectTotals.expense.toFixed(2) }));
+  subtotalsRow.appendChild(el("td", { className: "actions-col" }));
+  tbody.appendChild(subtotalsRow);
+
+  table.appendChild(tbody);
+  tableContainer.appendChild(table);
+  section.appendChild(tableContainer);
+
+  // Images Section
+  const imagesSection = el("div", { className: "expense-images-section" });
+
+  const imagesHeader = el("div", { className: "expense-images-header" });
+  imagesHeader.appendChild(el("span", { className: "expense-images-title", textContent: "Receipts & Attachments" }));
+  imagesSection.appendChild(imagesHeader);
+
+  const imagesGrid = el("div", { className: "expense-images-grid" });
+
+  if (project.images && project.images.length > 0) {
+    project.images.forEach((image, imageIndex) => {
+      const thumb = createExpenseImageThumb(image, projectIndex, imageIndex);
+      imagesGrid.appendChild(thumb);
+    });
+  } else {
+    imagesGrid.appendChild(el("span", { className: "expense-images-empty", textContent: "No receipts attached" }));
+  }
+
+  imagesSection.appendChild(imagesGrid);
+  section.appendChild(imagesSection);
+
+  return section;
+}
+
+function createExpenseRow(entry, projectIndex, entryIndex) {
+  const row = el("tr");
+  row.dataset.entryIndex = entryIndex;
+
+  // Date
+  const dateCell = el("td", { className: "date-col" });
+  const dateInput = el("input", {
+    type: "date",
+    value: entry.date || "",
+  });
+  dateInput.oninput = (e) => {
+    entry.date = e.target.value;
+    saveTimesheets();
+  };
+  dateCell.appendChild(dateInput);
+  row.appendChild(dateCell);
+
+  // Description
+  const descCell = el("td");
+  const descInput = el("input", {
+    value: entry.description || "",
+    placeholder: "Description"
+  });
+  descInput.oninput = (e) => {
+    entry.description = e.target.value;
+    saveTimesheets();
+  };
+  descCell.appendChild(descInput);
+  row.appendChild(descCell);
+
+  // Mileage
+  const mileageCell = el("td", { className: "mileage-col" });
+  const mileageInput = el("input", {
+    type: "number",
+    min: "0",
+    value: entry.mileage || "",
+    placeholder: "0"
+  });
+  mileageInput.oninput = (e) => {
+    entry.mileage = parseFloat(e.target.value) || 0;
+    saveTimesheets();
+    updateAllExpenseTotals(projectIndex);
+  };
+  mileageCell.appendChild(mileageInput);
+  row.appendChild(mileageCell);
+
+  // Expense Amount
+  const amountCell = el("td", { className: "amount-col" });
+  const amountInput = el("input", {
+    type: "number",
+    step: "0.01",
+    min: "0",
+    value: entry.expense || "",
+    placeholder: "0.00"
+  });
+  amountInput.oninput = (e) => {
+    entry.expense = parseFloat(e.target.value) || 0;
+    saveTimesheets();
+    updateAllExpenseTotals(projectIndex);
+  };
+  amountCell.appendChild(amountInput);
+  row.appendChild(amountCell);
+
+  // Remove button
+  const actionsCell = el("td", { className: "actions-col" });
+  const removeBtn = el("button", {
+    className: "expense-remove-btn",
+    innerHTML: "&times;",
+    title: "Remove entry"
+  });
+  removeBtn.onclick = () => removeExpenseEntry(projectIndex, entryIndex);
+  actionsCell.appendChild(removeBtn);
+  row.appendChild(actionsCell);
+
+  return row;
+}
+
+function createExpenseImageThumb(image, projectIndex, imageIndex) {
+  const thumb = el("div", { className: "expense-image-thumb" });
+
+  const ext = (image.filename || "").toLowerCase().split(".").pop();
+
+  if (ext === "pdf") {
+    thumb.appendChild(el("div", { className: "pdf-icon", textContent: "📄" }));
+  } else {
+    // For images, we can't actually load local file:// URLs due to security
+    // So we'll show a placeholder or use the filename
+    const imgEl = el("div", {
+      className: "pdf-icon",
+      textContent: "🖼️",
+      title: image.filename || "Image"
+    });
+    thumb.appendChild(imgEl);
+  }
+
+  const removeBtn = el("button", {
+    className: "remove-image-btn",
+    innerHTML: "&times;",
+    title: "Remove image"
+  });
+  removeBtn.onclick = (e) => {
+    e.stopPropagation();
+    removeExpenseImage(projectIndex, imageIndex);
+  };
+  thumb.appendChild(removeBtn);
+
+  return thumb;
+}
+
+function calculateProjectExpenseTotals(project) {
+  let mileage = 0;
+  let expense = 0;
+
+  (project.entries || []).forEach((entry) => {
+    mileage += entry.mileage || 0;
+    expense += entry.expense || 0;
+  });
+
+  return { mileage, expense };
+}
+
+function updateExpenseTotals(projects) {
+  let totalMileage = 0;
+  let totalExpense = 0;
+
+  projects.forEach((project) => {
+    const totals = calculateProjectExpenseTotals(project);
+    totalMileage += totals.mileage;
+    totalExpense += totals.expense;
+  });
+
+  const mileageReimbursement = totalMileage * MILEAGE_RATE;
+  const grandTotal = mileageReimbursement + totalExpense;
+
+  const mileageEl = document.getElementById("expenseTotalMileage");
+  const reimbursementEl = document.getElementById("expenseMileageReimbursement");
+  const expenseEl = document.getElementById("expenseTotalAmount");
+  const grandTotalEl = document.getElementById("expenseGrandTotal");
+
+  if (mileageEl) mileageEl.textContent = totalMileage.toString();
+  if (reimbursementEl) reimbursementEl.textContent = "$" + mileageReimbursement.toFixed(2);
+  if (expenseEl) expenseEl.textContent = "$" + totalExpense.toFixed(2);
+  if (grandTotalEl) grandTotalEl.textContent = "$" + grandTotal.toFixed(2);
+}
+
+function updateAllExpenseTotals(projectIndex) {
+  const weekKey = formatWeekKey(currentTimesheetWeek);
+  const projects = getWeekExpenses(weekKey);
+
+  // Update subtotals row for the specific project
+  const projectSection = document.querySelector(`.expense-project[data-project-index="${projectIndex}"]`);
+  if (projectSection && projects[projectIndex]) {
+    const subtotalsRow = projectSection.querySelector(".subtotals-row");
+    if (subtotalsRow) {
+      const projectTotals = calculateProjectExpenseTotals(projects[projectIndex]);
+      const cells = subtotalsRow.querySelectorAll("td");
+      if (cells.length >= 4) {
+        cells[2].textContent = projectTotals.mileage.toString();
+        cells[3].textContent = "$" + projectTotals.expense.toFixed(2);
+      }
+    }
+  }
+
+  // Update grand totals
+  updateExpenseTotals(projects);
+}
+
+// ===================== EXPENSE SHEET ACTIONS =====================
+
+function openAddExpenseProjectDialog() {
+  const dlg = document.getElementById("expenseProjectDlg");
+  const list = document.getElementById("expenseProjectList");
+  const search = document.getElementById("expenseProjectSearch");
+
+  if (!dlg || !list) return;
+
+  // Get projects from current week's timesheet entries
+  const weekKey = formatWeekKey(currentTimesheetWeek);
+  const timesheetEntries = getWeekEntries(weekKey);
+  const existingExpenseProjects = getWeekExpenses(weekKey);
+
+  // Get unique projects from timesheet rows (by projectId or projectName)
+  const timesheetProjects = [];
+  const seenKeys = new Map();
+  timesheetEntries.forEach((entry) => {
+    const projectId = (entry.projectId || "").trim();
+    const projectName = (entry.projectName || "").trim();
+    if (!projectId && !projectName) return;
+    const key = projectId ? `id:${projectId.toLowerCase()}` : `name:${projectName.toLowerCase()}`;
+    const existingIndex = seenKeys.get(key);
+    if (existingIndex === undefined) {
+      seenKeys.set(key, timesheetProjects.length);
+      timesheetProjects.push({
+        id: projectId,
+        name: projectName
+      });
+      return;
+    }
+    if (!timesheetProjects[existingIndex].name && projectName) {
+      timesheetProjects[existingIndex].name = projectName;
+    }
+  });
+
+  const renderProjects = (query = "") => {
+    list.innerHTML = "";
+    const q = query.toLowerCase();
+
+    // Filter timesheet projects by search query
+    const filtered = timesheetProjects.filter((p) => {
+      const name = (p.name || "").toLowerCase();
+      const id = (p.id || "").toLowerCase();
+      return !q || name.includes(q) || id.includes(q);
+    });
+
+    // Check which projects already have expense entries
+    const expenseProjectKeys = new Set(
+      existingExpenseProjects.map((p) => {
+        const projectId = (p.projectId || "").trim();
+        const projectName = (p.projectName || "").trim();
+        return projectId ? `id:${projectId.toLowerCase()}` : `name:${projectName.toLowerCase()}`;
+      })
+    );
+
+    filtered.forEach((project) => {
+      const projectKey = project.id
+        ? `id:${project.id.toLowerCase()}`
+        : `name:${(project.name || "").toLowerCase()}`;
+      const alreadyHasExpenses = expenseProjectKeys.has(projectKey);
+      const option = el("div", { className: "ts-project-option" + (alreadyHasExpenses ? " disabled" : "") });
+      option.innerHTML = `
+        <div><strong>${project.id || "--"}</strong> - ${project.name || "Unnamed"}${alreadyHasExpenses ? " (already added)" : ""}</div>
+      `;
+      if (!alreadyHasExpenses) {
+        option.onclick = () => {
+          addExpenseProject(project.id, project.name);
+          closeDlg("expenseProjectDlg");
+        };
+      }
+      list.appendChild(option);
+    });
+
+    if (filtered.length === 0) {
+      if (timesheetProjects.length === 0) {
+        list.innerHTML = '<p class="muted" style="padding: 1rem; text-align: center;">No projects on timesheet. Add projects to your timesheet first.</p>';
+      } else {
+        list.innerHTML = '<p class="muted" style="padding: 1rem; text-align: center;">No matching projects found</p>';
+      }
+    }
+  };
+
+  renderProjects();
+  if (search) {
+    search.value = "";
+    search.oninput = () => renderProjects(search.value);
+  }
+
+  showDialog(dlg);
+}
+
+function addExpenseProject(projectId, projectName) {
+  const weekKey = formatWeekKey(currentTimesheetWeek);
+  const projects = getWeekExpenses(weekKey);
+
+  // Check if project already exists
+  const normalizedId = (projectId || "").trim();
+  const normalizedName = (projectName || "").trim();
+  if (!normalizedId && !normalizedName) {
+    toast("Add a project with a name or job number.");
+    return;
+  }
+  const exists = projects.some((p) => {
+    const existingId = (p.projectId || "").trim();
+    const existingName = (p.projectName || "").trim();
+    if (normalizedId) return existingId === normalizedId;
+    if (existingId) return false;
+    return existingName.toLowerCase() === normalizedName.toLowerCase();
+  });
+  if (exists) {
+    toast("Project already added. Add entries to the existing project.");
+    return;
+  }
+
+  const newProject = {
+    id: createExpenseProjectId(),
+    projectId: normalizedId,
+    projectName: normalizedName,
+    jobNumber: normalizedId,
+    entries: [
+      {
+        id: createExpenseEntryId(),
+        date: "",
+        description: "",
+        mileage: 0,
+        expense: 0
+      }
+    ],
+    images: []
+  };
+
+  projects.push(newProject);
+  setWeekExpenses(weekKey, projects);
+  saveTimesheets();
+  renderExpenses();
+  toast("Project expense section added.");
+}
+
+function removeExpenseProject(projectIndex) {
+  if (!confirm("Remove this project and all its expense entries?")) return;
+
+  const weekKey = formatWeekKey(currentTimesheetWeek);
+  const projects = getWeekExpenses(weekKey);
+  projects.splice(projectIndex, 1);
+  setWeekExpenses(weekKey, projects);
+  saveTimesheets();
+  renderExpenses();
+  toast("Project expense section removed.");
+}
+
+function openAddExpenseEntryDialog(projectIndex) {
+  const dlg = document.getElementById("addExpenseEntryDlg");
+  if (!dlg) return;
+
+  document.getElementById("exp_projectIndex").value = projectIndex;
+  document.getElementById("exp_date").value = "";
+  document.getElementById("exp_description").value = "";
+  document.getElementById("exp_mileage").value = "";
+  document.getElementById("exp_amount").value = "";
+
+  showDialog(dlg);
+}
+
+function saveExpenseEntry() {
+  const projectIndex = parseInt(document.getElementById("exp_projectIndex").value);
+  const date = document.getElementById("exp_date").value;
+  const description = document.getElementById("exp_description").value.trim();
+  const mileage = parseFloat(document.getElementById("exp_mileage").value) || 0;
+  const expense = parseFloat(document.getElementById("exp_amount").value) || 0;
+
+  const weekKey = formatWeekKey(currentTimesheetWeek);
+  const projects = getWeekExpenses(weekKey);
+
+  if (projectIndex < 0 || projectIndex >= projects.length) {
+    toast("Invalid project.");
+    return;
+  }
+
+  const entry = {
+    id: createExpenseEntryId(),
+    date,
+    description,
+    mileage,
+    expense
+  };
+
+  projects[projectIndex].entries.push(entry);
+  setWeekExpenses(weekKey, projects);
+  saveTimesheets();
+  renderExpenses();
+  closeDlg("addExpenseEntryDlg");
+  toast("Expense entry added.");
+}
+
+function removeExpenseEntry(projectIndex, entryIndex) {
+  const weekKey = formatWeekKey(currentTimesheetWeek);
+  const projects = getWeekExpenses(weekKey);
+
+  if (projectIndex < 0 || projectIndex >= projects.length) return;
+
+  const project = projects[projectIndex];
+  if (!project.entries || entryIndex < 0 || entryIndex >= project.entries.length) return;
+
+  project.entries.splice(entryIndex, 1);
+  setWeekExpenses(weekKey, projects);
+  saveTimesheets();
+  renderExpenses();
+}
+
+async function addExpenseImages(projectIndex) {
+  try {
+    const result = await window.pywebview.api.select_expense_images();
+    if (result.status === "cancelled" || !result.paths?.length) return;
+
+    const weekKey = formatWeekKey(currentTimesheetWeek);
+    const projects = getWeekExpenses(weekKey);
+
+    if (projectIndex < 0 || projectIndex >= projects.length) return;
+
+    const project = projects[projectIndex];
+    if (!project.images) project.images = [];
+
+    result.paths.forEach((path) => {
+      const filename = path.split(/[\\/]/).pop();
+      project.images.push({
+        id: createExpenseImageId(),
+        path,
+        filename
+      });
+    });
+
+    setWeekExpenses(weekKey, projects);
+    saveTimesheets();
+    renderExpenses();
+    toast(`Added ${result.paths.length} image(s).`);
+  } catch (e) {
+    console.error("Error selecting images:", e);
+    toast("Error selecting images.");
+  }
+}
+
+function removeExpenseImage(projectIndex, imageIndex) {
+  const weekKey = formatWeekKey(currentTimesheetWeek);
+  const projects = getWeekExpenses(weekKey);
+
+  if (projectIndex < 0 || projectIndex >= projects.length) return;
+
+  const project = projects[projectIndex];
+  if (!project.images || imageIndex < 0 || imageIndex >= project.images.length) return;
+
+  project.images.splice(imageIndex, 1);
+  setWeekExpenses(weekKey, projects);
+  saveTimesheets();
+  renderExpenses();
+}
+
+async function exportExpenseSheetToExcel() {
+  const weekKey = formatWeekKey(currentTimesheetWeek);
+  const projects = getWeekExpenses(weekKey);
+
+  if (!projects.length) {
+    toast("No expense entries to export.");
+    return;
+  }
+
+  try {
+    const result = await window.pywebview.api.export_expense_sheet_excel({
+      weekKey,
+      weekDisplay: formatWeekDisplay(currentTimesheetWeek),
+      userName: userSettings.userName || "Employee",
+      projects,
+      mileageRate: MILEAGE_RATE
+    });
+
+    if (result.status === "success") {
+      toast("Expense sheet exported successfully.");
+    } else {
+      throw new Error(result.message);
+    }
+  } catch (e) {
+    console.error("Export failed:", e);
+    toast("Failed to export expense sheet: " + e.message);
   }
 }
 
@@ -5404,6 +6027,12 @@ function initEventListeners() {
     addManualTimesheetEntry();
   document.getElementById("exportTimesheetBtn").onclick = () =>
     exportTimesheetToExcel();
+
+  // Expense sheet event listeners
+  document.getElementById("addExpenseProjectBtn").onclick = () =>
+    openAddExpenseProjectDialog();
+  document.getElementById("btnSaveExpenseEntry").onclick = () =>
+    saveExpenseEntry();
 
   document.getElementById("checkUpdateBtn").onclick = () =>
     refreshAppUpdateStatus({ manual: true });

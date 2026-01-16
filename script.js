@@ -3136,8 +3136,11 @@ function getTaskCompletionStats(deliverable) {
   return { total, completed, percentage };
 }
 
-function createCardHeader(deliverable, isPrimary) {
+function createCardHeader(deliverable, isPrimary, card) {
   const header = el("div", { className: "deliverable-card-header-new" });
+
+  // Left section: title + due date
+  const leftSection = el("div", { className: "deliverable-header-left" });
 
   const title = el("div", { className: "deliverable-card-title-new" });
 
@@ -3151,22 +3154,115 @@ function createCardHeader(deliverable, isPrimary) {
 
   const nameSpan = el("span", {
     className: "deliverable-card-title-name",
-    textContent: deliverable.name || "Deliverable"
+    textContent: deliverable.name || "Deliverable",
+    title: "Double-click to edit"
   });
+
+  // Double-click to edit deliverable name
+  nameSpan.addEventListener("dblclick", (e) => {
+    e.stopPropagation();
+
+    // Create input for inline editing
+    const input = el("input", {
+      className: "deliverable-name-input",
+      type: "text",
+      value: deliverable.name || ""
+    });
+
+    // Replace span with input
+    nameSpan.style.display = "none";
+    title.insertBefore(input, nameSpan.nextSibling);
+    input.focus();
+    input.select();
+
+    const finishEditing = async (shouldSave) => {
+      if (shouldSave && input.value.trim()) {
+        deliverable.name = input.value.trim();
+        nameSpan.textContent = deliverable.name;
+        await save();
+      }
+      input.remove();
+      nameSpan.style.display = "";
+    };
+
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        finishEditing(true);
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        finishEditing(false);
+      }
+    });
+
+    input.addEventListener("blur", () => {
+      finishEditing(true);
+    });
+
+    input.addEventListener("click", (e) => {
+      e.stopPropagation();
+    });
+  });
+
   title.appendChild(nameSpan);
 
-  header.appendChild(title);
+  leftSection.appendChild(title);
 
-  // Due date badge
+  // Due date badge - now on the left after title
   if (deliverable.due) {
     const ds = dueState(deliverable.due);
     const badgeClass = `deliverable-due-badge ${ds === "overdue" ? "overdue" : ds === "dueSoon" ? "due-soon" : "ok"}`;
     const badgeText = ds === "overdue" ? "OVERDUE" : humanDate(deliverable.due).replace(/\//g, "/").toUpperCase();
     const badge = el("div", { className: badgeClass, textContent: badgeText });
-    header.appendChild(badge);
+    leftSection.appendChild(badge);
   }
 
+  header.appendChild(leftSection);
+
+  // Right section: expand/contract toggle
+  const expandToggle = createExpandToggle(card);
+  header.appendChild(expandToggle);
+
   return header;
+}
+
+function createExpandToggle(card) {
+  const btn = el("button", {
+    className: "deliverable-expand-toggle",
+    title: "Expand/collapse details"
+  });
+
+  // Create expand icon (outward arrows)
+  const expandSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  expandSvg.setAttribute("viewBox", "0 0 24 24");
+  expandSvg.setAttribute("fill", "none");
+  expandSvg.setAttribute("stroke", "currentColor");
+  expandSvg.setAttribute("stroke-width", "2");
+  expandSvg.setAttribute("class", "expand-icon");
+  // Expand icon - arrows pointing outward
+  expandSvg.innerHTML = '<polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line>';
+
+  // Create contract icon (inward arrows)
+  const contractSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  contractSvg.setAttribute("viewBox", "0 0 24 24");
+  contractSvg.setAttribute("fill", "none");
+  contractSvg.setAttribute("stroke", "currentColor");
+  contractSvg.setAttribute("stroke-width", "2");
+  contractSvg.setAttribute("class", "contract-icon");
+  // Contract icon - arrows pointing inward
+  contractSvg.innerHTML = '<polyline points="4 14 10 14 10 20"></polyline><polyline points="20 10 14 10 14 4"></polyline><line x1="14" y1="10" x2="21" y2="3"></line><line x1="3" y1="21" x2="10" y2="14"></line>';
+
+  btn.append(expandSvg, contractSvg);
+
+  btn.onclick = (e) => {
+    e.stopPropagation();
+    setDeliverableDetailsCollapsed(
+      card,
+      !card.classList.contains("details-collapsed")
+    );
+  };
+
+  return btn;
 }
 
 function createProgressSection(deliverable) {
@@ -3224,8 +3320,8 @@ function createStatusDropdown(deliverable, project, card) {
   // Trigger button - compact ellipsis icon
   const trigger = el("button", {
     className: "deliverable-status-trigger",
-    title: "Deliverable actions",
-    "aria-label": "Deliverable actions"
+    title: "Status options",
+    "aria-label": "Status options"
   });
 
   const dotsSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -3235,36 +3331,8 @@ function createStatusDropdown(deliverable, project, card) {
 
   trigger.appendChild(dotsSvg);
 
-  // Dropdown menu
+  // Dropdown menu - status options only (no Show details)
   const menu = el("div", { className: "deliverable-status-menu" });
-
-  const detailsToggle = el("button", {
-    className: "deliverable-details-menu-item",
-    type: "button"
-  });
-
-  const updateDetailsLabel = () => {
-    const isCollapsed = card.classList.contains("details-collapsed");
-    const label = isCollapsed ? "Show details" : "Hide details";
-    detailsToggle.textContent = label;
-    detailsToggle.setAttribute("aria-label", label);
-  };
-
-  updateDetailsLabel();
-
-  detailsToggle.addEventListener("click", (e) => {
-    e.stopPropagation();
-    setDeliverableDetailsCollapsed(
-      card,
-      !card.classList.contains("details-collapsed")
-    );
-    updateDetailsLabel();
-    menu.classList.remove("open");
-    trigger.classList.remove("open");
-  });
-
-  const divider = el("div", { className: "deliverable-status-divider" });
-  menu.append(detailsToggle, divider);
 
   availableStatuses.forEach(status => {
     const isActive = deliverable.statuses && deliverable.statuses.includes(status);
@@ -3322,7 +3390,6 @@ function createStatusDropdown(deliverable, project, card) {
     const isOpen = menu.classList.toggle("open");
     trigger.classList.toggle("open", isOpen);
     card.classList.toggle("deliverable-menu-open", isOpen);
-    if (isOpen) updateDetailsLabel();
 
     // Close other open dropdowns
     document.querySelectorAll(".deliverable-status-menu.open").forEach(m => {
@@ -3350,23 +3417,15 @@ function createStatusDropdown(deliverable, project, card) {
 function createNotesSection(deliverable, project) {
   const section = el("div", { className: "deliverable-notes-section" });
 
-  // Header (collapsible)
-  const header = el("div", { className: "deliverable-notes-header" });
-  const title = el("div", { className: "deliverable-notes-title" });
+  // Simple header label (no toggle)
+  const header = el("div", { className: "deliverable-notes-header-simple" });
+  const titleText = el("span", {
+    className: "deliverable-notes-label",
+    textContent: "Notes"
+  });
+  header.appendChild(titleText);
 
-  const chevronSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  chevronSvg.setAttribute("viewBox", "0 0 24 24");
-  chevronSvg.setAttribute("fill", "none");
-  chevronSvg.setAttribute("stroke", "currentColor");
-  chevronSvg.setAttribute("stroke-width", "2");
-  chevronSvg.innerHTML = '<polyline points="9 18 15 12 9 6"></polyline>';
-
-  const titleText = el("span", { textContent: "Notes" });
-  title.append(chevronSvg, titleText);
-  header.appendChild(title);
-
-  // Content (textarea)
-  const content = el("div", { className: "deliverable-notes-content" });
+  // Content (textarea) - always visible when details are expanded
   const textarea = el("textarea", {
     className: "deliverable-notes-textarea",
     placeholder: "Add notes about this deliverable...",
@@ -3385,33 +3444,45 @@ function createNotesSection(deliverable, project) {
     }, 500);
   });
 
-  content.appendChild(textarea);
-
-  // Toggle expand/collapse
-  header.addEventListener("click", () => {
-    const isExpanded = content.classList.toggle("expanded");
-    header.classList.toggle("expanded", isExpanded);
-  });
-
-  section.append(header, content);
+  section.append(header, textarea);
   return section;
 }
 
 function createTasksPreview(deliverable, card) {
   const container = el("div", { className: "deliverable-tasks-preview" });
 
-  if (!deliverable.tasks || !deliverable.tasks.length) {
-    return container;
+  // Initialize tasks array if it doesn't exist
+  if (!deliverable.tasks) {
+    deliverable.tasks = [];
   }
 
   const stats = getTaskCompletionStats(deliverable);
   const heading = el("div", {
     className: "deliverable-tasks-preview-heading",
-    textContent: `Tasks (${stats.completed}/${stats.total}):`
+    textContent: deliverable.tasks.length > 0 ? `Tasks (${stats.completed}/${stats.total}):` : "Tasks:"
   });
 
   const list = el("div", { className: "deliverable-tasks-preview-list" });
   const maxVisible = 3;
+
+  // Helper to update heading and progress bar
+  const updateStatsDisplay = () => {
+    const newStats = getTaskCompletionStats(deliverable);
+    heading.textContent = deliverable.tasks.length > 0 ? `Tasks (${newStats.completed}/${newStats.total}):` : "Tasks:";
+
+    const progressSection = card.querySelector(".deliverable-progress-section");
+    if (progressSection) {
+      const barFill = progressSection.querySelector(".deliverable-progress-bar-fill");
+      const progressText = progressSection.querySelector(".deliverable-progress-text");
+      const percentageSpan = progressText.querySelector(".percentage");
+      const detailSpan = progressText.querySelector(".detail");
+
+      barFill.style.width = `${newStats.percentage}%`;
+      percentageSpan.textContent = `${newStats.percentage}%`;
+      detailSpan.textContent = newStats.total > 0 ? ` complete (${newStats.completed}/${newStats.total} tasks)` : " (no tasks)";
+      progressText.className = `deliverable-progress-text ${newStats.percentage >= 50 ? "high" : newStats.percentage >= 25 ? "medium" : "low"}`;
+    }
+  };
 
   const renderTaskList = (showAll) => {
     list.innerHTML = "";
@@ -3426,12 +3497,32 @@ function createTasksPreview(deliverable, card) {
       // Checkmark or circle icon
       const icon = taskObj.done ? "✓" : "○";
       const iconSpan = el("span", { className: "task-icon", textContent: icon });
-      const textSpan = el("span", { textContent: taskObj.text || "Task" });
+      const textSpan = el("span", { className: "task-text", textContent: taskObj.text || "Task" });
 
-      item.append(iconSpan, textSpan);
+      // Delete button (visible on hover)
+      const deleteBtn = el("button", {
+        className: "task-delete-btn",
+        title: "Remove task",
+        textContent: "×"
+      });
 
-      // Make task clickable to toggle completion
+      deleteBtn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+
+        // Find actual index in case we're showing limited view
+        const actualIndex = showAll ? index : index;
+        deliverable.tasks.splice(actualIndex, 1);
+
+        await save();
+        updateStatsDisplay();
+        renderTaskList(showAll && deliverable.tasks.length > maxVisible);
+      });
+
+      item.append(iconSpan, textSpan, deleteBtn);
+
+      // Make task clickable to toggle completion (but not on delete button)
       item.addEventListener("click", async (e) => {
+        if (e.target === deleteBtn) return;
         e.stopPropagation();
 
         // Toggle done state
@@ -3450,29 +3541,8 @@ function createTasksPreview(deliverable, card) {
         item.classList.toggle("undone", !taskObj.done);
         iconSpan.textContent = taskObj.done ? "✓" : "○";
 
-        // Save changes
         await save();
-
-        // Update progress bar
-        const progressSection = card.querySelector(".deliverable-progress-section");
-        if (progressSection) {
-          const newStats = getTaskCompletionStats(deliverable);
-          const barFill = progressSection.querySelector(".deliverable-progress-bar-fill");
-          const progressText = progressSection.querySelector(".deliverable-progress-text");
-          const percentageSpan = progressText.querySelector(".percentage");
-          const detailSpan = progressText.querySelector(".detail");
-
-          barFill.style.width = `${newStats.percentage}%`;
-          percentageSpan.textContent = `${newStats.percentage}%`;
-          detailSpan.textContent = newStats.total > 0 ? ` complete (${newStats.completed}/${newStats.total} tasks)` : " (no tasks)";
-
-          // Update progress class
-          progressText.className = `deliverable-progress-text ${newStats.percentage >= 50 ? "high" : newStats.percentage >= 25 ? "medium" : "low"}`;
-        }
-
-        // Update heading
-        const newStats = getTaskCompletionStats(deliverable);
-        heading.textContent = `Tasks (${newStats.completed}/${newStats.total}):`;
+        updateStatsDisplay();
       });
 
       list.appendChild(item);
@@ -3500,6 +3570,40 @@ function createTasksPreview(deliverable, card) {
       });
       list.appendChild(lessBtn);
     }
+
+    // Add new task input at the bottom
+    const addTaskRow = el("div", { className: "task-add-row" });
+    const bulletSpan = el("span", { className: "task-icon task-add-bullet", textContent: "○" });
+    const taskInput = el("input", {
+      className: "task-add-input",
+      type: "text",
+      placeholder: "Add a task..."
+    });
+
+    taskInput.addEventListener("keydown", async (e) => {
+      if (e.key === "Enter" && taskInput.value.trim()) {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const newTask = { text: taskInput.value.trim(), done: false };
+        deliverable.tasks.push(newTask);
+        taskInput.value = "";
+
+        await save();
+        updateStatsDisplay();
+
+        // Re-render showing all if we were showing all, otherwise show limited
+        const shouldShowAll = showAll || deliverable.tasks.length <= maxVisible;
+        renderTaskList(shouldShowAll);
+      }
+    });
+
+    taskInput.addEventListener("click", (e) => {
+      e.stopPropagation();
+    });
+
+    addTaskRow.append(bulletSpan, taskInput);
+    list.appendChild(addTaskRow);
   };
 
   renderTaskList(false);
@@ -3538,40 +3642,13 @@ function setDeliverableDetailsCollapsed(card, isCollapsed) {
   card.classList.toggle("details-collapsed", isCollapsed);
 }
 
-function createCollapseButton(card) {
-  const btn = el("button", { className: "deliverable-collapse-toggle" });
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("viewBox", "0 0 24 24");
-  svg.setAttribute("fill", "none");
-  svg.setAttribute("stroke", "currentColor");
-  svg.setAttribute("stroke-width", "2");
-  svg.innerHTML = '<polyline points="6 9 12 15 18 9"></polyline>';
-  btn.appendChild(svg);
-
-  btn.onclick = (e) => {
-    e.stopPropagation();
-    setDeliverableDetailsCollapsed(
-      card,
-      !card.classList.contains("details-collapsed")
-    );
-  };
-
-  return btn;
-}
-
 function renderDeliverableCard(deliverable, isPrimary, project) {
   const card = el("div", {
     className: `deliverable-card-new ${isPrimary ? "is-primary" : ""} details-collapsed`
   });
 
-  // Header: name + due badge
-  const header = createCardHeader(deliverable, isPrimary);
-
-  // Collapse toggle (only for non-primary)
-  if (!isPrimary) {
-    const collapseBtn = createCollapseButton(card);
-    header.appendChild(collapseBtn);
-  }
+  // Header: name + due badge + expand toggle (pass card for toggle)
+  const header = createCardHeader(deliverable, isPrimary, card);
 
   // Progress: bar + percentage text
   const progress = createProgressSection(deliverable);
@@ -3585,7 +3662,7 @@ function renderDeliverableCard(deliverable, isPrimary, project) {
   // Tasks preview (2-3 tasks, now clickable)
   const tasksPreview = createTasksPreview(deliverable, card);
 
-  // Notes section (collapsible)
+  // Notes section (always visible when expanded, no toggle)
   const notesSection = createNotesSection(deliverable, project);
 
   card.append(header, progress, statusSection, tasksPreview, notesSection);

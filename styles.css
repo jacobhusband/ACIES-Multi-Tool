@@ -2888,6 +2888,27 @@ dialog::backdrop {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  cursor: default;
+}
+
+.deliverable-card-title-name:hover {
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+}
+
+/* Inline edit input for deliverable name */
+.deliverable-name-input {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 2px 6px;
+  outline: none;
+  min-width: 80px;
+  max-width: 200px;
 }
 
 .deliverable-due-badge {
@@ -3327,9 +3348,137 @@ dialog::backdrop {
   color: var(--accent);
 }
 
+/* Task text takes up remaining space */
+.deliverable-task-item .task-text {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Task delete button - hidden by default, shown on hover */
+.task-delete-btn {
+  opacity: 0;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 16px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 0 4px;
+  margin-left: auto;
+  transition: opacity 0.15s ease, color 0.15s ease;
+  flex-shrink: 0;
+}
+
+.deliverable-task-item:hover .task-delete-btn {
+  opacity: 1;
+}
+
+.task-delete-btn:hover {
+  color: var(--danger);
+}
+
+/* Add task input row */
+.task-add-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.375rem;
+  margin-top: 0.25rem;
+}
+
+.task-add-bullet {
+  color: var(--muted);
+  opacity: 0.5;
+}
+
+.task-add-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid transparent;
+  color: var(--text);
+  font-size: 13px;
+  padding: 0.25rem 0;
+  outline: none;
+  transition: border-color 0.2s ease;
+}
+
+.task-add-input::placeholder {
+  color: var(--muted);
+  opacity: 0.6;
+}
+
+.task-add-input:focus {
+  border-bottom-color: var(--accent);
+}
+
 /* Collapsed state hides notes */
 .deliverable-card-new.details-collapsed .deliverable-notes-section {
   display: none;
+}
+
+/* Header left section - contains title and due date */
+.deliverable-header-left {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Expand/contract toggle button */
+.deliverable-expand-toggle {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid var(--glass-border);
+  background: var(--bg-tertiary);
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.deliverable-expand-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.deliverable-expand-toggle svg {
+  width: 14px;
+  height: 14px;
+  transition: all 0.2s ease;
+}
+
+/* Show expand icon when collapsed, contract icon when expanded */
+.deliverable-expand-toggle .expand-icon {
+  display: block;
+}
+
+.deliverable-expand-toggle .contract-icon {
+  display: none;
+}
+
+.deliverable-card-new:not(.details-collapsed) .deliverable-expand-toggle .expand-icon {
+  display: none;
+}
+
+.deliverable-card-new:not(.details-collapsed) .deliverable-expand-toggle .contract-icon {
+  display: block;
+}
+
+/* Simple notes header (no toggle) */
+.deliverable-notes-header-simple {
+  margin-bottom: 0.375rem;
+}
+
+.deliverable-notes-label {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-secondary);
 }
 
 /* ===================== TIMESHEET STYLES ===================== */

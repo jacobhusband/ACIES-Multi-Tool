@@ -81,7 +81,7 @@ const DISCIPLINE_TO_FUNCTION = {
   Mechanical: "M",
   Plumbing: "P",
 };
-const MAX_HOURS_PER_DAY = 12;
+const MAX_HOURS_PER_DAY = 8;
 const WFH_SUFFIX = " - WFH";
 const TIMESHEET_SUMMARY_DELIVERABLE_ID = "__summary__";
 

@@ -83,6 +83,7 @@ const DISCIPLINE_TO_FUNCTION = {
 };
 const MAX_HOURS_PER_DAY = 12;
 const WFH_SUFFIX = " - WFH";
+const TIMESHEET_SUMMARY_DELIVERABLE_ID = "__summary__";
 
 // Cache for loaded descriptions to prevent re-fetching
 const DESCRIPTION_CACHE = {};
@@ -162,10 +163,6 @@ function createTimesheetEntryId() {
   return "ts_" + Math.random().toString(36).substr(2, 9);
 }
 
-function getTimesheetEntryKey(projectId, deliverableId) {
-  return `${projectId || ""}-${deliverableId || ""}`;
-}
-
 function getTimesheetEntryDescription(entry, fallback = "") {
   const desc = entry?.serviceDescription || entry?.deliverableName || fallback || "";
   return String(desc).trim();
@@ -191,6 +188,98 @@ function appendWfhSuffix(value) {
   const trimmed = String(value || "").trimEnd();
   if (!trimmed) return "WFH";
   return hasWfhSuffix(trimmed) ? trimmed : `${trimmed}${WFH_SUFFIX}`;
+}
+
+function normalizeDeliverableNames(deliverables) {
+  const names = [];
+  const seen = new Set();
+  (deliverables || []).forEach((deliverable) => {
+    const raw =
+      typeof deliverable === "string" ? deliverable : deliverable?.name || "";
+    const name = String(raw || "").trim();
+    if (!name) return;
+    const key = name.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    names.push(name);
+  });
+  return names;
+}
+
+function parseDeliverableList(description) {
+  return String(description || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function mergeDeliverableDescription(existingDescription, deliverableNames) {
+  const baseList = parseDeliverableList(existingDescription);
+  const seen = new Set(baseList.map((name) => name.toLowerCase()));
+  const merged = baseList.slice();
+  deliverableNames.forEach((name) => {
+    const key = String(name || "").toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    merged.push(name);
+  });
+  return merged.join(", ");
+}
+
+function getMissingDeliverables(existingDescription, deliverableNames) {
+  const baseList = parseDeliverableList(existingDescription);
+  const seen = new Set(baseList.map((name) => name.toLowerCase()));
+  return deliverableNames.filter(
+    (name) => !seen.has(String(name || "").toLowerCase())
+  );
+}
+
+function getTimesheetProjectMatchKey(project, fallbackIndex = null) {
+  const id = String(project?.id || "").trim();
+  if (id) return `id:${id.toLowerCase()}`;
+  const name = String(project?.nick || project?.name || "").trim();
+  if (name) return `name:${name.toLowerCase()}`;
+  if (fallbackIndex != null) return `project:${fallbackIndex}`;
+  return "";
+}
+
+function getTimesheetEntryMatchKey(entry) {
+  const projectId = String(entry?.projectId || "").trim();
+  if (projectId) return `id:${projectId.toLowerCase()}`;
+  const projectName = String(entry?.projectName || "").trim();
+  if (projectName) return `name:${projectName.toLowerCase()}`;
+  return "";
+}
+
+function isProjectSummaryEntry(entry) {
+  return (
+    entry?.deliverableId === TIMESHEET_SUMMARY_DELIVERABLE_ID ||
+    entry?.isProjectSummary
+  );
+}
+
+function getSummaryEntryStatus(summaryEntries, deliverableNames) {
+  const status = {
+    count: 0,
+    hasOffice: false,
+    hasWfh: false,
+    needsUpdate: false,
+  };
+  (summaryEntries || []).forEach((entry) => {
+    status.count += 1;
+    const desc = getTimesheetEntryDescription(entry);
+    const isWfh = hasWfhSuffix(desc);
+    if (isWfh) {
+      status.hasWfh = true;
+    } else {
+      status.hasOffice = true;
+    }
+    const baseDesc = stripWfhSuffix(desc);
+    if (getMissingDeliverables(baseDesc, deliverableNames).length) {
+      status.needsUpdate = true;
+    }
+  });
+  return status;
 }
 
 function getProjectsForWeek(weekStart) {
@@ -980,23 +1069,6 @@ function renderTimesheetSuggestions() {
   const suggestions = getProjectsForWeek(currentTimesheetWeek);
   const weekKey = formatWeekKey(currentTimesheetWeek);
   const entries = getWeekEntries(weekKey);
-  const entryStatusByKey = new Map();
-  entries.forEach((entry) => {
-    const key = getTimesheetEntryKey(entry.projectId, entry.deliverableId);
-    const status = entryStatusByKey.get(key) || {
-      count: 0,
-      hasWfh: false,
-      hasOffice: false,
-    };
-    status.count += 1;
-    const desc = getTimesheetEntryDescription(entry);
-    if (hasWfhSuffix(desc)) {
-      status.hasWfh = true;
-    } else {
-      status.hasOffice = true;
-    }
-    entryStatusByKey.set(key, status);
-  });
 
   if (!suggestions.length) {
     container.innerHTML =
@@ -1004,36 +1076,95 @@ function renderTimesheetSuggestions() {
     return;
   }
 
+  const summaryEntriesByProject = new Map();
+  entries.forEach((entry) => {
+    if (!isProjectSummaryEntry(entry)) return;
+    const key = getTimesheetEntryMatchKey(entry);
+    if (!key) return;
+    const list = summaryEntriesByProject.get(key) || [];
+    list.push(entry);
+    summaryEntriesByProject.set(key, list);
+  });
+
+  const grouped = new Map();
+  let fallbackIndex = 0;
+
   suggestions.forEach(({ project, deliverable, dueDate }) => {
-    const key = getTimesheetEntryKey(project.id, deliverable.id);
-    const entryStatus = entryStatusByKey.get(key) || {
-      count: 0,
-      hasWfh: false,
-      hasOffice: false,
-    };
-    const card = createSuggestionCard(
+    let key = getTimesheetProjectMatchKey(project);
+    if (!key) {
+      key = getTimesheetProjectMatchKey(project, fallbackIndex);
+      fallbackIndex += 1;
+    }
+    const group = grouped.get(key) || {
       project,
-      deliverable,
-      dueDate,
+      deliverables: [],
+      earliestDueDate: null,
+      earliestDue: "",
+    };
+    group.deliverables.push(deliverable);
+    if (!group.earliestDueDate || (dueDate && dueDate < group.earliestDueDate)) {
+      group.earliestDueDate = dueDate || group.earliestDueDate;
+      group.earliestDue = deliverable?.due || group.earliestDue;
+    }
+    grouped.set(key, group);
+  });
+
+  const thisWeekEnd = new Date(currentTimesheetWeek);
+  thisWeekEnd.setDate(thisWeekEnd.getDate() + 6);
+
+  const groupedList = Array.from(grouped.values()).sort((a, b) => {
+    const aDate = a.earliestDueDate;
+    const bDate = b.earliestDueDate;
+    const aThisWeek = aDate && aDate <= thisWeekEnd;
+    const bThisWeek = bDate && bDate <= thisWeekEnd;
+    if (aThisWeek && !bThisWeek) return -1;
+    if (!aThisWeek && bThisWeek) return 1;
+    if (!aDate && !bDate) return 0;
+    if (!aDate) return 1;
+    if (!bDate) return -1;
+    return aDate - bDate;
+  });
+
+  groupedList.forEach((group) => {
+    const deliverableNames = normalizeDeliverableNames(group.deliverables);
+    const matchKey = getTimesheetProjectMatchKey(group.project);
+    const summaryEntries = matchKey
+      ? summaryEntriesByProject.get(matchKey) || []
+      : [];
+    const entryStatus = getSummaryEntryStatus(
+      summaryEntries,
+      deliverableNames
+    );
+    const card = createSuggestionCard(
+      group.project,
+      deliverableNames,
+      group.earliestDue,
       entryStatus
     );
     container.appendChild(card);
   });
 }
 
-function createSuggestionCard(project, deliverable, dueDate, entryStatus = {}) {
-  const { count = 0, hasWfh = false, hasOffice = false } = entryStatus;
+function createSuggestionCard(
+  project,
+  deliverableNames,
+  dueDate,
+  entryStatus = {}
+) {
+  const {
+    count = 0,
+    hasWfh = false,
+    hasOffice = false,
+    needsUpdate = false,
+  } = entryStatus;
   const isFullyAdded = count >= 2;
+  const showAddedStyle = count > 0 && !needsUpdate;
   const card = el("div", {
-    className: `ts-suggestion-card ${isFullyAdded ? "added" : ""}`,
+    className: `ts-suggestion-card ${showAddedStyle ? "added" : ""}`,
   });
 
   card.onclick = () => {
-    if (isFullyAdded) {
-      toast("Office and WFH entries already on the timesheet.");
-      return;
-    }
-    addProjectToTimesheet(project, deliverable);
+    addProjectDeliverablesToTimesheet(project, deliverableNames);
   };
 
   const header = el("div", { className: "ts-suggestion-header" });
@@ -1041,11 +1172,11 @@ function createSuggestionCard(project, deliverable, dueDate, entryStatus = {}) {
     el("span", { className: "ts-suggestion-id", textContent: project.id || "--" })
   );
 
-  const ds = dueState(deliverable.due);
+  const ds = dueState(dueDate);
   header.appendChild(
     el("span", {
       className: `ts-suggestion-due ${ds}`,
-      textContent: humanDate(deliverable.due),
+      textContent: humanDate(dueDate),
     })
   );
   card.appendChild(header);
@@ -1060,11 +1191,20 @@ function createSuggestionCard(project, deliverable, dueDate, entryStatus = {}) {
   card.appendChild(
     el("div", {
       className: "ts-suggestion-deliverable",
-      textContent: deliverable.name || "Deliverable",
+      textContent: deliverableNames.length
+        ? deliverableNames.join(", ")
+        : "No deliverables listed",
     })
   );
 
-  if (isFullyAdded) {
+  if (needsUpdate) {
+    card.appendChild(
+      el("div", {
+        className: "ts-suggestion-added",
+        textContent: "Click to append new deliverables",
+      })
+    );
+  } else if (isFullyAdded) {
     card.appendChild(
       el("div", {
         className: "ts-suggestion-added",
@@ -1073,8 +1213,8 @@ function createSuggestionCard(project, deliverable, dueDate, entryStatus = {}) {
     );
   } else if (count > 0) {
     let note = "Added to timesheet";
-    if (hasOffice && !hasWfh) note = "Added (add WFH row)";
-    if (hasWfh && !hasOffice) note = "Added (add office row)";
+    if (hasOffice && !hasWfh) note = "Office added";
+    if (hasWfh && !hasOffice) note = "WFH added";
     card.appendChild(
       el("div", {
         className: "ts-suggestion-added",
@@ -1087,6 +1227,150 @@ function createSuggestionCard(project, deliverable, dueDate, entryStatus = {}) {
 }
 
 // ===================== TIMESHEET ACTIONS =====================
+
+function buildProjectSummaryEntry({
+  projectId,
+  projectName,
+  pmInitials,
+  functionName,
+  taskNumber,
+  description,
+  isWfh,
+}) {
+  const baseDescription = description || "";
+  const serviceDescription = isWfh
+    ? appendWfhSuffix(baseDescription)
+    : baseDescription;
+
+  return {
+    id: createTimesheetEntryId(),
+    projectId,
+    projectName,
+    deliverableId: TIMESHEET_SUMMARY_DELIVERABLE_ID,
+    deliverableName: serviceDescription,
+    pmInitials,
+    serviceDescription,
+    function: functionName,
+    hours: { sun: 0, mon: 0, tue: 0, wed: 0, thu: 0, fri: 0, sat: 0 },
+    mileage: 0,
+    taskNumber,
+    isProjectSummary: true,
+  };
+}
+
+function addProjectDeliverablesToTimesheet(project, deliverables) {
+  const weekKey = formatWeekKey(currentTimesheetWeek);
+  const entries = getWeekEntries(weekKey);
+  const deliverableNames = normalizeDeliverableNames(deliverables);
+  const projectKey = getTimesheetProjectMatchKey(project);
+
+  if (!projectKey) {
+    toast("Project is missing an ID or name.");
+    return;
+  }
+
+  const summaryEntries = entries.filter(
+    (entry) =>
+      isProjectSummaryEntry(entry) &&
+      getTimesheetEntryMatchKey(entry) === projectKey
+  );
+
+  const projectId = project.id || "";
+  const projectName = project.nick || project.name || "";
+  const baseDescription = deliverableNames.join(", ");
+  let updated = false;
+  let created = false;
+  let addedOffice = false;
+  let addedWfh = false;
+
+  const updateEntryDescription = (entry) => {
+    const currentDesc = getTimesheetEntryDescription(entry);
+    const isWfh = hasWfhSuffix(currentDesc);
+    const baseDesc = stripWfhSuffix(currentDesc);
+    const merged = mergeDeliverableDescription(baseDesc, deliverableNames);
+    if (merged !== baseDesc) {
+      const nextDesc = isWfh ? appendWfhSuffix(merged) : merged;
+      entry.serviceDescription = nextDesc;
+      entry.deliverableName = nextDesc;
+      updated = true;
+    }
+  };
+
+  if (summaryEntries.length) {
+    summaryEntries.forEach(updateEntryDescription);
+
+    if (!updated && summaryEntries.length === 1) {
+      const existingEntry = summaryEntries[0];
+      const existingDesc = stripWfhSuffix(
+        getTimesheetEntryDescription(existingEntry)
+      );
+      const description = existingDesc || baseDescription;
+
+      if (!description) {
+        toast("No deliverables to add.");
+        return;
+      }
+
+      const entryBase = {
+        projectId: existingEntry.projectId || projectId,
+        projectName: existingEntry.projectName || projectName,
+        pmInitials: existingEntry.pmInitials || getDefaultPmInitials(),
+        functionName: existingEntry.function || getDisciplineFunction(),
+        taskNumber: existingEntry.taskNumber || "",
+        description,
+      };
+
+      if (hasWfhSuffix(getTimesheetEntryDescription(existingEntry))) {
+        entries.push(buildProjectSummaryEntry({ ...entryBase, isWfh: false }));
+        addedOffice = true;
+      } else {
+        entries.push(buildProjectSummaryEntry({ ...entryBase, isWfh: true }));
+        addedWfh = true;
+      }
+
+      created = true;
+    }
+  } else {
+    if (!baseDescription) {
+      toast("No deliverables due this week.");
+      return;
+    }
+
+    entries.push(
+      buildProjectSummaryEntry({
+        projectId,
+        projectName,
+        pmInitials: getDefaultPmInitials(),
+        functionName: getDisciplineFunction(),
+        taskNumber: "",
+        description: baseDescription,
+        isWfh: false,
+      })
+    );
+    created = true;
+    addedOffice = true;
+  }
+
+  if (created || updated) {
+    setWeekEntries(weekKey, entries);
+    saveTimesheets();
+    renderTimesheets();
+  }
+
+  if (updated) {
+    toast("Updated timesheet description.");
+    return;
+  }
+  if (created) {
+    if (addedWfh) {
+      toast("Added WFH timesheet entry.");
+    } else if (addedOffice) {
+      toast("Added timesheet entry.");
+    }
+    return;
+  }
+  toast("No new deliverables to add.");
+}
 
 function addProjectToTimesheet(project, deliverable) {
   const weekKey = formatWeekKey(currentTimesheetWeek);

@@ -3362,6 +3362,11 @@ function createStatusDropdown(deliverable, project, card) {
         deliverable.statuses = deliverable.statuses.filter(s => s !== status);
       }
 
+      deliverable.statusTags = deliverable.statuses
+        .map((s) => LABEL_TO_KEY[s])
+        .filter(Boolean);
+      syncStatusArrays(deliverable);
+
       // Save changes
       await save();
 

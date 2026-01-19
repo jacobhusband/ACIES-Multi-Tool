@@ -151,6 +151,18 @@ def build_timesheet_filename(user_name, week_key):
     return f"{initials}-TS-{monday.strftime('%m%d')}-{friday.strftime('%m%d%Y')}.xlsx"
 
 
+def _ensure_numpy_short_alias():
+    """Provide numpy.short alias for numpy 2.0 compatibility."""
+    try:
+        import numpy as np
+    except Exception:
+        return
+    if not hasattr(np, "int16"):
+        np.int16 = int
+    if not hasattr(np, "short"):
+        np.short = np.int16
+
+
 # --- Google GenAI (new client) ---
 # Uses GOOGLE_API_KEY from environment/.env
 
@@ -1153,6 +1165,7 @@ Return ONLY the JSON object.
     def export_timesheet_excel(self, data):
         """Exports timesheet data to an Excel file using a template."""
         try:
+            _ensure_numpy_short_alias()
             import openpyxl
             from openpyxl.drawing.image import Image as XLImage
             from PIL import Image as PILImage
@@ -1414,6 +1427,7 @@ Return ONLY the JSON object.
     def export_expense_sheet_excel(self, data):
         """Exports expense sheet data to an Excel file with images."""
         try:
+            _ensure_numpy_short_alias()
             import openpyxl
             from openpyxl.drawing.image import Image as XLImage
             from PIL import Image as PILImage

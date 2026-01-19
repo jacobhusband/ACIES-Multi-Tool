@@ -114,6 +114,43 @@ def sync_status_arrays(task):
         (label for label in STATUS_PRIORITY if label in task['statuses']), '')
 
 
+def get_default_documents_dir():
+    user_profile = os.getenv('USERPROFILE') or os.path.expanduser('~')
+    onedrive_docs = os.path.join(
+        user_profile, 'OneDrive - ACIES Engineering', 'Documents')
+    if os.path.isdir(onedrive_docs):
+        return onedrive_docs
+    return os.path.join(user_profile, 'Documents')
+
+
+def build_timesheet_filename(user_name, week_key):
+    tokens = [t for t in str(user_name or '').strip().split() if t]
+    if len(tokens) >= 2:
+        initials = (tokens[0][0] + tokens[-1][0]).upper()
+    elif tokens:
+        initials = (tokens[0][:2]).upper()
+        if len(initials) == 1:
+            initials = initials + initials
+    else:
+        initials = "TS"
+
+    week_start = None
+    if week_key:
+        try:
+            week_start = datetime.date.fromisoformat(week_key)
+        except ValueError:
+            week_start = None
+    if not week_start:
+        week_start = datetime.date.today()
+
+    monday = week_start + datetime.timedelta(
+        days=(7 + 0 - week_start.weekday()) % 7
+    )
+    friday = monday + datetime.timedelta(days=4)
+
+    return f"{initials}-TS-{monday.strftime('%m%d')}-{friday.strftime('%m%d%Y')}.xlsx"
+
+
 # --- Google GenAI (new client) ---
 # Uses GOOGLE_API_KEY from environment/.env
 
@@ -1128,9 +1165,27 @@ Return ONLY the JSON object.
                 return {'status': 'error', 'message': f'Template file not found: {template_path}'}
 
             # Determine output path
-            week_key = data.get('weekKey', 'timesheet')
-            user_docs = os.path.join(os.path.expanduser('~'), 'Documents')
-            file_path = os.path.join(user_docs, f"Timesheet_{week_key}.xlsx")
+            week_key = data.get('weekKey', '')
+            user_name = data.get('userName', '')
+            file_path = data.get('filePath')
+            if not file_path:
+                default_dir = get_default_documents_dir()
+                default_name = build_timesheet_filename(user_name, week_key)
+                window = webview.windows[0]
+                file_path = window.create_file_dialog(
+                    webview.FileDialog.SAVE,
+                    directory=default_dir,
+                    save_filename=default_name,
+                    file_types=('Excel Files (*.xlsx)',)
+                )
+                if not file_path:
+                    return {'status': 'cancelled'}
+            if isinstance(file_path, (list, tuple)):
+                file_path = file_path[0] if file_path else ''
+            if not file_path:
+                return {'status': 'cancelled'}
+            if not str(file_path).lower().endswith('.xlsx'):
+                file_path = f"{file_path}.xlsx"
 
             # Copy template to output location
             shutil.copy2(str(template_path), file_path)

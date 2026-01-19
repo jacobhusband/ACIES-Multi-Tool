@@ -1189,6 +1189,10 @@ async function exportTimesheetToExcel() {
       }
     });
 
+    if (result.status === "cancelled") {
+      toast("Export cancelled.");
+      return;
+    }
     if (result.status === "success") {
       const hasTimesheet = entries.length > 0;
       const hasExpenses = expenseProjects.length > 0;

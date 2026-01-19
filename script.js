@@ -82,6 +82,7 @@ const DISCIPLINE_TO_FUNCTION = {
   Plumbing: "P",
 };
 const MAX_HOURS_PER_DAY = 12;
+const WFH_SUFFIX = " - WFH";
 
 // Cache for loaded descriptions to prevent re-fetching
 const DESCRIPTION_CACHE = {};
@@ -159,6 +160,37 @@ function getDefaultPmInitials() {
 
 function createTimesheetEntryId() {
   return "ts_" + Math.random().toString(36).substr(2, 9);
+}
+
+function getTimesheetEntryKey(projectId, deliverableId) {
+  return `${projectId || ""}-${deliverableId || ""}`;
+}
+
+function getTimesheetEntryDescription(entry, fallback = "") {
+  const desc = entry?.serviceDescription || entry?.deliverableName || fallback || "";
+  return String(desc).trim();
+}
+
+function hasWfhSuffix(value) {
+  const trimmed = String(value || "").trimEnd();
+  const upper = trimmed.toUpperCase();
+  return upper === "WFH" || upper.endsWith(WFH_SUFFIX);
+}
+
+function stripWfhSuffix(value) {
+  const trimmed = String(value || "").trimEnd();
+  const upper = trimmed.toUpperCase();
+  if (upper === "WFH") return "";
+  if (upper.endsWith(WFH_SUFFIX)) {
+    return trimmed.slice(0, -WFH_SUFFIX.length).trimEnd();
+  }
+  return trimmed;
+}
+
+function appendWfhSuffix(value) {
+  const trimmed = String(value || "").trimEnd();
+  if (!trimmed) return "WFH";
+  return hasWfhSuffix(trimmed) ? trimmed : `${trimmed}${WFH_SUFFIX}`;
 }
 
 function getProjectsForWeek(weekStart) {
@@ -948,9 +980,23 @@ function renderTimesheetSuggestions() {
   const suggestions = getProjectsForWeek(currentTimesheetWeek);
   const weekKey = formatWeekKey(currentTimesheetWeek);
   const entries = getWeekEntries(weekKey);
-  const addedIds = new Set(
-    entries.map((e) => `${e.projectId}-${e.deliverableId}`)
-  );
+  const entryStatusByKey = new Map();
+  entries.forEach((entry) => {
+    const key = getTimesheetEntryKey(entry.projectId, entry.deliverableId);
+    const status = entryStatusByKey.get(key) || {
+      count: 0,
+      hasWfh: false,
+      hasOffice: false,
+    };
+    status.count += 1;
+    const desc = getTimesheetEntryDescription(entry);
+    if (hasWfhSuffix(desc)) {
+      status.hasWfh = true;
+    } else {
+      status.hasOffice = true;
+    }
+    entryStatusByKey.set(key, status);
+  });
 
   if (!suggestions.length) {
     container.innerHTML =
@@ -959,20 +1005,32 @@ function renderTimesheetSuggestions() {
   }
 
   suggestions.forEach(({ project, deliverable, dueDate }) => {
-    const isAdded = addedIds.has(`${project.id}-${deliverable.id}`);
-    const card = createSuggestionCard(project, deliverable, dueDate, isAdded);
+    const key = getTimesheetEntryKey(project.id, deliverable.id);
+    const entryStatus = entryStatusByKey.get(key) || {
+      count: 0,
+      hasWfh: false,
+      hasOffice: false,
+    };
+    const card = createSuggestionCard(
+      project,
+      deliverable,
+      dueDate,
+      entryStatus
+    );
     container.appendChild(card);
   });
 }
 
-function createSuggestionCard(project, deliverable, dueDate, isAdded) {
+function createSuggestionCard(project, deliverable, dueDate, entryStatus = {}) {
+  const { count = 0, hasWfh = false, hasOffice = false } = entryStatus;
+  const isFullyAdded = count >= 2;
   const card = el("div", {
-    className: `ts-suggestion-card ${isAdded ? "added" : ""}`,
+    className: `ts-suggestion-card ${isFullyAdded ? "added" : ""}`,
   });
 
   card.onclick = () => {
-    if (isAdded) {
-      toast("Already on the timesheet.");
+    if (isFullyAdded) {
+      toast("Office and WFH entries already on the timesheet.");
       return;
     }
     addProjectToTimesheet(project, deliverable);
@@ -1006,11 +1064,21 @@ function createSuggestionCard(project, deliverable, dueDate, isAdded) {
     })
   );
 
-  if (isAdded) {
+  if (isFullyAdded) {
     card.appendChild(
       el("div", {
         className: "ts-suggestion-added",
-        textContent: "Added to timesheet",
+        textContent: "Office + WFH added",
+      })
+    );
+  } else if (count > 0) {
+    let note = "Added to timesheet";
+    if (hasOffice && !hasWfh) note = "Added (add WFH row)";
+    if (hasWfh && !hasOffice) note = "Added (add office row)";
+    card.appendChild(
+      el("div", {
+        className: "ts-suggestion-added",
+        textContent: note,
       })
     );
   }
@@ -1025,31 +1093,60 @@ function addProjectToTimesheet(project, deliverable) {
   const entries = getWeekEntries(weekKey);
   const projectId = project.id || "";
   const deliverableId = deliverable?.id || "";
-  const alreadyAdded = entries.some(
+  const existingEntries = entries.filter(
     (e) => e.projectId === projectId && e.deliverableId === deliverableId
   );
-  if (alreadyAdded) {
-    toast("Project already on the timesheet.");
+  if (existingEntries.length >= 2) {
+    toast("Office and WFH entries already on the timesheet.");
     return;
   }
+
+  const hasWfhEntry = existingEntries.some((entry) =>
+    hasWfhSuffix(
+      getTimesheetEntryDescription(entry, deliverable?.name || "")
+    )
+  );
+  const referenceEntry = existingEntries[0];
+  const baseDescription = referenceEntry
+    ? stripWfhSuffix(
+        getTimesheetEntryDescription(referenceEntry, deliverable?.name || "")
+      )
+    : deliverable?.name || "";
+  const addWfh = existingEntries.length === 1 && !hasWfhEntry;
+  const serviceDescription = addWfh
+    ? appendWfhSuffix(baseDescription)
+    : baseDescription;
+  const projectName =
+    referenceEntry?.projectName || project.nick || project.name || "";
+  const deliverableName =
+    deliverable?.name || referenceEntry?.deliverableName || "";
+  const pmInitials = referenceEntry?.pmInitials || getDefaultPmInitials();
+  const functionName = referenceEntry?.function || getDisciplineFunction();
+  const taskNumber = referenceEntry?.taskNumber || "";
 
   const entry = {
     id: createTimesheetEntryId(),
     projectId,
-    projectName: project.nick || project.name || "",
+    projectName,
     deliverableId,
-    deliverableName: deliverable?.name || "",
-    pmInitials: getDefaultPmInitials(),
-    serviceDescription: deliverable?.name || "",
-    function: getDisciplineFunction(),
+    deliverableName,
+    pmInitials,
+    serviceDescription,
+    function: functionName,
     hours: { sun: 0, mon: 0, tue: 0, wed: 0, thu: 0, fri: 0, sat: 0 },
     mileage: 0,
-    taskNumber: "",
+    taskNumber,
   };
 
   entries.push(entry);
   setWeekEntries(weekKey, entries);
-  toast("Added timesheet entry.");
+  if (addWfh) {
+    toast("Added WFH timesheet entry.");
+  } else if (existingEntries.length === 1 && hasWfhEntry) {
+    toast("Added office timesheet entry.");
+  } else {
+    toast("Added timesheet entry.");
+  }
   saveTimesheets();
   renderTimesheets();
 }

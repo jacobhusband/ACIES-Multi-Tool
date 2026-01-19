@@ -2,8 +2,11 @@ Write-Host "###################################" -ForegroundColor Cyan
 Write-Host "#      Building ACIES Scheduler     #" -ForegroundColor Cyan
 Write-Host "###################################" -ForegroundColor Cyan
 
+# Project root is one level up from build-config
+$projectRoot = Split-Path $PSScriptRoot -Parent
+
 # 1. Build Wire Sizer frontend (if present)
-$wireSizerDir = Join-Path $PSScriptRoot "WireSizerApplication"
+$wireSizerDir = Join-Path $projectRoot "WireSizerApplication"
 $wireSizerDist = Join-Path $wireSizerDir "dist"
 if (Test-Path $wireSizerDir) {
     Write-Host "`n[1/3] Building Wire Sizer frontend..." -ForegroundColor Yellow
@@ -30,7 +33,7 @@ if (Test-Path $wireSizerDir) {
 Write-Host "`n[2/3] Bundling application with PyInstaller..." -ForegroundColor Yellow
 
 # Clean previous installer output to avoid file locks/resource errors
-$setupOutput = Join-Path $PSScriptRoot "dist\\setup"
+$setupOutput = Join-Path $projectRoot "dist\\setup"
 if (Test-Path $setupOutput) {
     try {
         Remove-Item -Recurse -Force $setupOutput
@@ -40,7 +43,7 @@ if (Test-Path $setupOutput) {
 }
 
 # Read version from VERSION file
-$versionPath = Join-Path $PSScriptRoot "VERSION"
+$versionPath = Join-Path $projectRoot "VERSION"
 if (!(Test-Path $versionPath)) {
     Write-Error "VERSION file not found at $versionPath"
     exit 1
@@ -51,24 +54,27 @@ if (-not $appVersion) {
     exit 1
 }
 
+# Change to project root for PyInstaller
+Push-Location $projectRoot
+
 # --noconfirm: Overwrites output directory without asking
 # --clean: Cleans PyInstaller cache
 $pyInstallerArgs = @(
-    "main.py", "--noconfirm", "--clean", "--noconsole", 
-    "--name", "ACIES Scheduler", 
-    "--icon=acies.ico",
+    "main.py", "--noconfirm", "--clean", "--noconsole",
+    "--name", "ACIES Scheduler",
+    "--icon=assets\acies.ico",
     "--add-data", "VERSION;.",
     "--add-data", "index.html;.",
     "--add-data", "styles.css;.",
     "--add-data", "script.js;.",
     "--add-data", ".env;.",
-    "--add-data", "acies.png;.",
-    "--add-data", "merge_pdfs.py;.",
-    "--add-data", "PlotDWGs.ps1;.",
-    "--add-data", "FreezeLayersDWGs.ps1;.",
-    "--add-data", "ThawLayersDWGs.ps1;.",
-    "--add-data", "removeXREFPaths.ps1;.",
-    "--add-data", "StripRefPaths.dll;."
+    "--add-data", "assets\acies.png;.",
+    "--add-data", "scripts\merge_pdfs.py;scripts",
+    "--add-data", "scripts\PlotDWGs.ps1;scripts",
+    "--add-data", "scripts\FreezeLayersDWGs.ps1;scripts",
+    "--add-data", "scripts\ThawLayersDWGs.ps1;scripts",
+    "--add-data", "scripts\removeXREFPaths.ps1;scripts",
+    "--add-data", "scripts\StripRefPaths.dll;scripts"
 )
 
 if (Test-Path $wireSizerDist) {
@@ -80,9 +86,12 @@ if (Test-Path $wireSizerDist) {
 # Run PyInstaller and check for errors
 & pyinstaller $pyInstallerArgs
 if ($LASTEXITCODE -ne 0) {
+    Pop-Location
     Write-Error "PyInstaller failed!"
     exit 1
 }
+
+Pop-Location
 
 # 3. Run Inno Setup
 Write-Host "`n[3/3] Creating installer with Inno Setup..." -ForegroundColor Yellow
@@ -113,8 +122,8 @@ if (-not $isccPath) {
 
 Write-Host "Found Inno Setup at: $isccPath" -ForegroundColor Gray
 
-# Run Inno Setup
-& $isccPath "/DMyAppVersion=$appVersion" "setup.iss"
+# Run Inno Setup (setup.iss is in the same build-config folder)
+& $isccPath "/DMyAppVersion=$appVersion" (Join-Path $PSScriptRoot "setup.iss")
 if ($LASTEXITCODE -ne 0) {
     Write-Error "Inno Setup compilation failed!"
     exit 1

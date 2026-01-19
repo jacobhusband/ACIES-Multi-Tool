@@ -1852,9 +1852,9 @@ Return ONLY the JSON object.
 
     def run_publish_script(self):
         """Runs the PlotDWGs.ps1 PowerShell script with progress updates."""
-        script_path = os.path.join(BASE_DIR, "PlotDWGs.ps1")
+        script_path = os.path.join(BASE_DIR, "scripts", "PlotDWGs.ps1")
         if not os.path.exists(script_path):
-            raise Exception("PlotDWGs.ps1 not found in application directory.")
+            raise Exception("PlotDWGs.ps1 not found in scripts directory.")
         settings = self.get_user_settings()
         acad_path = settings.get('autocadPath', '')
         if not acad_path:
@@ -1865,10 +1865,10 @@ Return ONLY the JSON object.
 
     def run_freeze_layers_script(self):
         """Runs the FreezeLayersDWGs.ps1 PowerShell script with progress updates."""
-        script_path = os.path.join(BASE_DIR, "FreezeLayersDWGs.ps1")
+        script_path = os.path.join(BASE_DIR, "scripts", "FreezeLayersDWGs.ps1")
         if not os.path.exists(script_path):
             raise Exception(
-                "FreezeLayersDWGs.ps1 not found in application directory.")
+                "FreezeLayersDWGs.ps1 not found in scripts directory.")
         settings = self.get_user_settings()
         acad_path = settings.get('autocadPath', '')
         if not acad_path:
@@ -1879,10 +1879,10 @@ Return ONLY the JSON object.
 
     def run_thaw_layers_script(self):
         """Runs the ThawLayersDWGs.ps1 PowerShell script with progress updates."""
-        script_path = os.path.join(BASE_DIR, "ThawLayersDWGs.ps1")
+        script_path = os.path.join(BASE_DIR, "scripts", "ThawLayersDWGs.ps1")
         if not os.path.exists(script_path):
             raise Exception(
-                "ThawLayersDWGs.ps1 not found in application directory.")
+                "ThawLayersDWGs.ps1 not found in scripts directory.")
         settings = self.get_user_settings()
         acad_path = settings.get('autocadPath', '')
         if not acad_path:
@@ -1893,10 +1893,10 @@ Return ONLY the JSON object.
 
     def run_clean_xrefs_script(self):
         """Runs the removeXREFPaths.ps1 PowerShell script with progress updates."""
-        script_path = os.path.join(BASE_DIR, "removeXREFPaths.ps1")
+        script_path = os.path.join(BASE_DIR, "scripts", "removeXREFPaths.ps1")
         if not os.path.exists(script_path):
             raise Exception(
-                "removeXREFPaths.ps1 not found in application directory.")
+                "removeXREFPaths.ps1 not found in scripts directory.")
         settings = self.get_user_settings()
         acad_path = settings.get('autocadPath', '')
         if not acad_path:

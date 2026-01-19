@@ -1,7 +1,5 @@
 export type ConductorMaterial = 'Copper' | 'Aluminum';
-export type ConduitType = 'EMT' | 'PVC_Sch40' | 'RMC';
 export type Phase = 1 | 3;
-export type InsulationType = 'THHN/THWN-2' | 'XHHW-2';
 
 export interface WireSizeData {
   size: string;

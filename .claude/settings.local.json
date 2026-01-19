@@ -9,7 +9,9 @@
       "Bash(where \"ACIES Scheduler.exe\")",
       "Bash(powershell -Command:*)",
       "Bash(__NEW_LINE_ea6c1bfd72a6384e__ echo \"\")",
-      "Bash(Remove-Item -Path \"c:\\\\Users\\\\JacobH\\\\Documents\\\\dev\\\\ProjectManagement\\\\tmpclaude-*\" -Force)"
+      "Bash(Remove-Item -Path \"c:\\\\Users\\\\JacobH\\\\Documents\\\\dev\\\\ProjectManagement\\\\tmpclaude-*\" -Force)",
+      "Bash(\".venv/Scripts/python.exe\" -c \"import ast; ast.parse\\(open\\(''main.py''\\).read\\(\\)\\); print\\(''Syntax OK''\\)\")",
+      "Bash(\".venv/Scripts/python.exe\" -c \"import main; print\\(''Import successful''\\)\")"
     ]
   }
 }

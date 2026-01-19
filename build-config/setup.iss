@@ -1,4 +1,5 @@
 ; SEE THE DOCUMENTATION FOR DETAILS ON CREATING INNO SETUP SCRIPT FILES!
+; Note: Paths are relative to project root (one level up from build-config/)
 
 #define MyAppName "ACIES Scheduler"
 #ifndef MyAppVersion
@@ -10,7 +11,7 @@
 #define MyAppAssocName MyAppName + " File"
 #define MyAppAssocExt ".myp"
 #define MyAppAssocKey StringChange(MyAppAssocName, " ", "") + MyAppAssocExt
-#define SourcePath "dist\" + MyAppName
+#define SourcePath "..\dist\" + MyAppName
 
 [Setup]
 ; NOTE: The value of AppId uniquely identifies this application. Do not use the same AppId value in installers for other applications.
@@ -37,9 +38,9 @@ ChangesAssociations=yes
 DisableProgramGroupPage=yes
 ; Remove the following line to run in administrative install mode (install for all users).
 PrivilegesRequired=lowest
-OutputDir=dist\setup
+OutputDir=..\dist\setup
 OutputBaseFilename=acies-scheduler-setup
-SetupIconFile=acies.ico
+SetupIconFile=..\assets\acies.ico
 SolidCompression=yes
 WizardStyle=modern
 

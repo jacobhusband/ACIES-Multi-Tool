@@ -1,8 +1,30 @@
 # .gitignore
 
+# Build output
 dist/
 build/
 
+# Environment
 .env
 
-nul
+# Logs
+*.log
+plot.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Node
+WireSizerApplication/node_modules/
+WireSizerApplication/dist/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+*.swp
+.idea/

@@ -607,6 +607,191 @@ async function handleSaveNewTemplate() {
   }
 }
 
+function getTemplateKey(template) {
+  const name = String(template?.name || "").trim().toLowerCase();
+  if (TEMPLATE_KEY_BY_NAME[name]) return TEMPLATE_KEY_BY_NAME[name];
+  const sourceName = basename(template?.sourcePath || "").toLowerCase();
+  if (sourceName.includes("narrative of changes")) return "narrative";
+  if (sourceName.includes("plan check") || sourceName.includes("pcc")) return "planCheck";
+  return null;
+}
+
+function getPrimaryDisciplineLabel() {
+  const disciplines = normalizeDisciplineList(userSettings.discipline);
+  return disciplines[0] || "General";
+}
+
+function joinPath(base, child) {
+  const baseStr = String(base || "").trim();
+  const childStr = String(child || "").trim();
+  if (!baseStr) return childStr;
+  if (!childStr) return baseStr;
+  const baseClean = baseStr.replace(/[\\/]+$/, "");
+  const childClean = childStr.replace(/^[\\/]+/, "");
+  return `${baseClean}\\${childClean}`;
+}
+
+function buildAutoTemplateFilename(template, date = new Date()) {
+  const datePrefix = [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
+  const baseName = String(template?.name || "Template").trim() || "Template";
+  return `${datePrefix} ${baseName}`;
+}
+
+function buildAutoTemplateDestination(template, selection) {
+  const projectPath = String(selection?.project?.path || "").trim();
+  if (!projectPath) {
+    return { error: "Selected project does not have a path." };
+  }
+  const discipline = getPrimaryDisciplineLabel();
+  const destination = joinPath(projectPath, discipline);
+  const newName = buildAutoTemplateFilename(template);
+  return { destination, newName };
+}
+
+function formatCopyDeliverableLabel(item) {
+  const projectLabel =
+    item.project?.name || item.project?.nick || item.project?.id || "Untitled Project";
+  const deliverableLabel = item.deliverable?.name || "Untitled Deliverable";
+  const dueLabel = item.due ? humanDate(item.deliverable?.due) : "";
+  const dueSuffix = dueLabel ? ` (Due ${dueLabel})` : "";
+  return `${projectLabel} - ${deliverableLabel}${dueSuffix}`;
+}
+
+function getCopyDialogDeliverableOptions() {
+  const candidates = getAllDeliverables()
+    .map(({ project, deliverable }) => {
+      const name = String(deliverable?.name || "").trim();
+      if (!name) return null;
+      const due = parseDueStr(deliverable?.due);
+      return { project, deliverable, due };
+    })
+    .filter(Boolean);
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const weekStart = getWeekStartDate(today);
+
+  const sortByDue = (a, b) => {
+    if (!a.due && !b.due) return 0;
+    if (!a.due) return 1;
+    if (!b.due) return -1;
+    return a.due - b.due;
+  };
+
+  const withDue = candidates.filter((item) => item.due);
+  const upcoming = withDue.filter((item) => item.due >= weekStart);
+
+  if (upcoming.length) return upcoming.sort(sortByDue);
+  if (withDue.length) return withDue.sort(sortByDue);
+  return candidates;
+}
+
+function populateCopyDeliverableSelect() {
+  const select = document.getElementById("copy_deliverable_select");
+  if (!select) return;
+  select.innerHTML = "";
+  select.appendChild(
+    el("option", { value: "", textContent: "Select deliverable..." })
+  );
+
+  copyDialogDeliverables = getCopyDialogDeliverableOptions();
+  copyDialogDeliverables.forEach((item, index) => {
+    select.appendChild(
+      el("option", {
+        value: String(index),
+        textContent: formatCopyDeliverableLabel(item),
+      })
+    );
+  });
+
+  if (copyDialogDeliverables.length) {
+    select.value = "0";
+  } else {
+    select.value = "";
+  }
+
+  updateCopyDialogAutoFields();
+}
+
+function getSelectedCopyDeliverable() {
+  const select = document.getElementById("copy_deliverable_select");
+  if (!select) return null;
+  const raw = select.value;
+  if (!raw) return null;
+  const index = Number(raw);
+  if (Number.isNaN(index)) return null;
+  return copyDialogDeliverables[index] || null;
+}
+
+function updateCopyDialogAutoFields() {
+  const destinationInput = document.getElementById("copy_destination");
+  const newNameInput = document.getElementById("copy_newName");
+  const copyBtn = document.getElementById("btnExecuteCopy");
+  copyDialogAutoError = "";
+
+  if (!copyDialogTemplateKey) {
+    if (copyBtn) copyBtn.disabled = false;
+    return;
+  }
+
+  const selection = getSelectedCopyDeliverable();
+  if (!selection) {
+    if (destinationInput) destinationInput.value = "";
+    if (newNameInput) newNameInput.value = "";
+    copyDialogAutoError = "Select a deliverable to continue.";
+    if (copyBtn) copyBtn.disabled = true;
+    return;
+  }
+
+  const resolved = buildAutoTemplateDestination(copyDialogTemplate, selection);
+  if (resolved.error) {
+    if (destinationInput) destinationInput.value = "";
+    if (newNameInput) newNameInput.value = "";
+    copyDialogAutoError = resolved.error;
+    if (copyBtn) copyBtn.disabled = true;
+    return;
+  }
+
+  if (destinationInput) destinationInput.value = resolved.destination || "";
+  if (newNameInput) newNameInput.value = resolved.newName || "";
+  if (copyBtn) copyBtn.disabled = false;
+}
+
+function setCopyDialogMode(templateKey) {
+  const deliverableRow = document.getElementById("copy_deliverable_row");
+  const browseBtn = document.getElementById("btnBrowseDestination");
+  const newNameInput = document.getElementById("copy_newName");
+  const destinationInput = document.getElementById("copy_destination");
+  const copyBtn = document.getElementById("btnExecuteCopy");
+
+  const isAuto = Boolean(templateKey);
+  if (deliverableRow) deliverableRow.hidden = !isAuto;
+  if (browseBtn) browseBtn.disabled = isAuto;
+  if (newNameInput) newNameInput.readOnly = isAuto;
+
+  if (destinationInput) {
+    destinationInput.value = "";
+    destinationInput.placeholder = isAuto
+      ? "Auto-set from project and discipline"
+      : "Select destination folder...";
+  }
+
+  if (newNameInput) {
+    newNameInput.value = "";
+    if (isAuto) newNameInput.placeholder = "Auto-generated file name";
+  }
+
+  if (!isAuto) {
+    copyDialogDeliverables = [];
+    copyDialogAutoError = "";
+    if (copyBtn) copyBtn.disabled = false;
+  }
+}
+
 async function handleCopyTemplate(templateId) {
   const dlg = document.getElementById('copyTemplateDlg');
   if (!dlg) return;
@@ -626,6 +811,12 @@ async function handleCopyTemplate(templateId) {
   document.getElementById('copy_destination').value = '';
   document.getElementById('copy_newName').value = '';
   document.getElementById('copy_newName').placeholder = template.name;
+  copyDialogTemplate = template;
+  copyDialogTemplateKey = getTemplateKey(template);
+  setCopyDialogMode(copyDialogTemplateKey);
+  if (copyDialogTemplateKey) {
+    populateCopyDeliverableSelect();
+  }
 
   dlg.showModal();
 }
@@ -643,8 +834,43 @@ async function handleBrowseDestination() {
 
 async function handleExecuteCopy() {
   const templateId = document.getElementById('copy_templateId').value;
-  const destination = document.getElementById('copy_destination').value.trim();
-  const newName = document.getElementById('copy_newName').value.trim();
+  const template = templatesDb.templates.find(t => t.id === templateId);
+  if (!template) {
+    toast('Template not found.');
+    return;
+  }
+
+  let destination = document.getElementById('copy_destination').value.trim();
+  let newName = document.getElementById('copy_newName').value.trim();
+  let context = null;
+  let options = null;
+
+  if (copyDialogTemplateKey) {
+    const selection = getSelectedCopyDeliverable();
+    if (!selection) {
+      toast(copyDialogAutoError || 'Please select a deliverable.');
+      return;
+    }
+    const resolved = buildAutoTemplateDestination(template, selection);
+    if (resolved.error) {
+      toast(resolved.error);
+      return;
+    }
+    destination = resolved.destination;
+    newName = resolved.newName;
+    context = {
+      deliverableName: selection.deliverable?.name || "",
+      projectName:
+        selection.project?.name ||
+        selection.project?.nick ||
+        selection.project?.id ||
+        "",
+    };
+    options = {
+      createDestination: true,
+      templateKey: copyDialogTemplateKey,
+    };
+  }
 
   if (!destination) {
     toast('Please select a destination folder.');
@@ -655,17 +881,16 @@ async function handleExecuteCopy() {
     const result = await window.pywebview.api.copy_template_to_folder(
       templateId,
       destination,
-      newName || null
+      newName || null,
+      context,
+      options
     );
 
     if (result.status === 'success') {
       toast('Template copied successfully.');
       closeDlg('copyTemplateDlg');
 
-      // Offer to open folder
-      if (confirm('Open the destination folder?')) {
-        await window.pywebview.api.open_path(destination);
-      }
+      await window.pywebview.api.open_path(destination);
     } else {
       toast(result.message || 'Failed to copy template.');
     }
@@ -2553,6 +2778,15 @@ let templatesDb = { templates: [], defaultTemplatesInstalled: false, lastModifie
 const DISCIPLINE_OPTIONS = ['General', 'Electrical', 'Mechanical', 'Plumbing'];
 const FILE_TYPE_ICONS = { doc: '📄', docx: '📄', dwg: '📐', xlsx: '📊', xls: '📊' };
 const FILE_TYPE_LABELS = { doc: 'Word Document', docx: 'Word Document', dwg: 'AutoCAD Drawing', xlsx: 'Excel Spreadsheet', xls: 'Excel Spreadsheet' };
+const TEMPLATE_KEY_BY_NAME = {
+  "narrative of changes": "narrative",
+  "plan check comments": "planCheck",
+};
+
+let copyDialogTemplate = null;
+let copyDialogTemplateKey = null;
+let copyDialogDeliverables = [];
+let copyDialogAutoError = "";
 
 const allowedAggregations = {
   "1W": ["day", "week"],
@@ -6479,6 +6713,10 @@ function initEventListeners() {
   document.getElementById("btnSaveNewTemplate").onclick = () => handleSaveNewTemplate();
   document.getElementById("btnBrowseDestination").onclick = () => handleBrowseDestination();
   document.getElementById("btnExecuteCopy").onclick = () => handleExecuteCopy();
+  const copyDeliverableSelect = document.getElementById("copy_deliverable_select");
+  if (copyDeliverableSelect) {
+    copyDeliverableSelect.onchange = () => updateCopyDialogAutoFields();
+  }
   document.getElementById("templatesHelpBtn").onclick = () =>
     openExternalUrl(HELP_LINKS.main); // Uses main help link for now
 

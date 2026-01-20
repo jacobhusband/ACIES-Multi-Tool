@@ -163,6 +163,159 @@ def _ensure_numpy_short_alias():
         np.short = np.int16
 
 
+def _format_long_date(date_value=None):
+    """Format date like 'January 1, 2026'."""
+    if date_value is None:
+        date_value = datetime.date.today()
+    if isinstance(date_value, datetime.datetime):
+        date_value = date_value.date()
+    return f"{date_value.strftime('%B')} {date_value.day}, {date_value.strftime('%Y')}"
+
+
+def _replace_text_in_paragraph(paragraph, replacements):
+    if not paragraph.text:
+        return
+    original = paragraph.text
+    updated = original
+    for find_text, replace_text in replacements.items():
+        if find_text:
+            updated = updated.replace(find_text, replace_text)
+    if updated == original:
+        return
+
+    for run in paragraph.runs:
+        for find_text, replace_text in replacements.items():
+            if find_text and find_text in run.text:
+                run.text = run.text.replace(find_text, replace_text)
+
+    if paragraph.text != updated:
+        paragraph.text = updated
+
+
+def _delete_docx_paragraph(paragraph):
+    element = paragraph._element
+    element.getparent().remove(element)
+
+
+def _remove_to_section_docx(doc):
+    to_remove = []
+    removing = False
+    for paragraph in doc.paragraphs:
+        text = paragraph.text.strip()
+        lower = text.lower()
+        if not removing and lower.startswith("to"):
+            removing = True
+            to_remove.append(paragraph)
+            continue
+        if removing:
+            if "project" in lower or "*project name*" in lower:
+                removing = False
+                continue
+            to_remove.append(paragraph)
+    for paragraph in to_remove:
+        _delete_docx_paragraph(paragraph)
+
+
+def _replace_text_in_docx(doc, replacements):
+    for paragraph in doc.paragraphs:
+        _replace_text_in_paragraph(paragraph, replacements)
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for paragraph in cell.paragraphs:
+                    _replace_text_in_paragraph(paragraph, replacements)
+    for section in doc.sections:
+        for paragraph in section.header.paragraphs:
+            _replace_text_in_paragraph(paragraph, replacements)
+        for paragraph in section.footer.paragraphs:
+            _replace_text_in_paragraph(paragraph, replacements)
+
+
+def _update_docx_file(file_path, replacements, remove_to_section=False):
+    from docx import Document
+
+    doc = Document(file_path)
+    if remove_to_section:
+        _remove_to_section_docx(doc)
+    if replacements:
+        _replace_text_in_docx(doc, replacements)
+    doc.save(file_path)
+
+
+def _remove_to_section_word(doc):
+    removing = False
+    idx = 1
+    while idx <= doc.Paragraphs.Count:
+        paragraph = doc.Paragraphs(idx)
+        text = paragraph.Range.Text.replace("\r", "").strip()
+        lower = text.lower()
+        if not removing and lower.startswith("to"):
+            removing = True
+        if removing:
+            if "project" in lower or "*project name*" in lower:
+                removing = False
+                idx += 1
+                continue
+            paragraph.Range.Delete()
+            continue
+        idx += 1
+
+
+def _update_word_file_via_com(file_path, replacements, remove_to_section=False):
+    import win32com.client
+
+    word = win32com.client.Dispatch("Word.Application")
+    word.Visible = False
+    word.DisplayAlerts = 0
+    doc = None
+    try:
+        doc = word.Documents.Open(file_path)
+        for find_text, replace_text in replacements.items():
+            if not find_text:
+                continue
+            rng = doc.Range()
+            rng.Find.ClearFormatting()
+            rng.Find.Replacement.ClearFormatting()
+            rng.Find.Execute(
+                FindText=find_text,
+                ReplaceWith=replace_text,
+                Replace=2,  # wdReplaceAll
+            )
+        if remove_to_section:
+            _remove_to_section_word(doc)
+        doc.Save()
+    finally:
+        if doc is not None:
+            doc.Close(False)
+        word.Quit()
+
+
+def _apply_template_context(file_path, context=None, options=None):
+    context = context or {}
+    options = options or {}
+    template_key = options.get("templateKey")
+    remove_to_section = bool(options.get("removeToSection"))
+
+    replacements = {
+        "*current date*": _format_long_date(),
+    }
+    deliverable_name = str(context.get("deliverableName") or "").strip()
+    project_name = str(context.get("projectName") or "").strip()
+    if deliverable_name:
+        replacements["*deliverable*"] = deliverable_name
+    if project_name:
+        replacements["*project name*"] = project_name
+
+    if not replacements and not remove_to_section:
+        return
+
+    ext = os.path.splitext(file_path)[1].lower()
+    if ext == ".docx":
+        _update_docx_file(file_path, replacements, remove_to_section=remove_to_section)
+    elif ext == ".doc":
+        _update_word_file_via_com(file_path, replacements, remove_to_section=remove_to_section)
+
+
 # --- Google GenAI (new client) ---
 # Uses GOOGLE_API_KEY from environment/.env
 
@@ -890,6 +1043,10 @@ Return ONLY the JSON object.
             cleaned = (response.text or "").strip()
             project_data = json.loads(cleaned)
 
+            # Handle case where AI returns a list instead of a dict
+            if isinstance(project_data, list):
+                project_data = project_data[0] if project_data else {}
+
             project_data.setdefault("id", "")
             project_data.setdefault("name", "")
             project_data.setdefault("due", "")
@@ -1075,7 +1232,7 @@ Return ONLY the JSON object.
             logging.error(f"Error removing template: {e}")
             return {'status': 'error', 'message': str(e)}
 
-    def copy_template_to_folder(self, template_id, destination_folder, new_name=None):
+    def copy_template_to_folder(self, template_id, destination_folder, new_name=None, context=None, options=None):
         """Copies a template file to the specified folder with optional rename."""
         try:
             data = self.get_templates()
@@ -1089,7 +1246,13 @@ Return ONLY the JSON object.
                 return {'status': 'error', 'message': f'Template file not found: {source}'}
 
             if not os.path.isdir(destination_folder):
-                return {'status': 'error', 'message': 'Destination folder does not exist'}
+                create_destination = False
+                if isinstance(options, dict):
+                    create_destination = bool(options.get('createDestination'))
+                if create_destination:
+                    os.makedirs(destination_folder, exist_ok=True)
+                else:
+                    return {'status': 'error', 'message': 'Destination folder does not exist'}
 
             # Determine output filename
             ext = os.path.splitext(source)[1]
@@ -1108,6 +1271,8 @@ Return ONLY the JSON object.
                 return {'status': 'error', 'message': 'File already exists at destination'}
 
             shutil.copy2(source, dest_path)
+            if context or options:
+                _apply_template_context(dest_path, context=context, options=options)
             return {'status': 'success', 'path': dest_path}
         except Exception as e:
             logging.error(f"Error copying template: {e}")

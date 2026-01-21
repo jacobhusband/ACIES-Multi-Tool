@@ -14,6 +14,7 @@ a = Analysis(
         ('.env', '.'),
         ('assets\\acies.png', '.'),
         ('scripts\\merge_pdfs.py', 'scripts'),
+        ('scripts\\detect_pdf_size.py', 'scripts'),
         ('scripts\\PlotDWGs.ps1', 'scripts'),
         ('scripts\\FreezeLayersDWGs.ps1', 'scripts'),
         ('scripts\\ThawLayersDWGs.ps1', 'scripts'),

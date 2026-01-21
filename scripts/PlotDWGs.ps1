@@ -38,6 +38,7 @@ $paperSizes = @(
 # Get the directory where this script is located
 $scriptRoot = $PSScriptRoot
 $pythonScriptPath = Join-Path $scriptRoot "merge_pdfs.py"
+$detectSizeScriptPath = Join-Path $scriptRoot "detect_pdf_size.py"
 # Check if the Python script exists
 if (-not (Test-Path $pythonScriptPath)) {
   Write-Host "PROGRESS: ERROR: 'merge_pdfs.py' not found."
@@ -62,32 +63,119 @@ if ([string]::IsNullOrEmpty($acadCore) -or -not (Test-Path $acadCore)) {
   exit 1
 }
 
-# --- Let the user select a paper size ---
+# --- Let the user select DWGs FIRST via a file explorer dialog ---
 Write-Host "PROGRESS: Waiting for user input..."
 Add-Type -AssemblyName System.Windows.Forms
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
+$dlg = New-Object System.Windows.Forms.OpenFileDialog
+$dlg.Title = "Select DWG file(s) to plot"
+$dlg.Filter = "DWG files (*.dwg)|*.dwg|All files (*.*)|*.*"
+$dlg.Multiselect = $true
+$dlg.InitialDirectory = [Environment]::GetFolderPath("Desktop")
+if ($dlg.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK -or -not $dlg.FileNames) {
+  Write-Host "PROGRESS: ERROR: No files selected."; exit
+}
+$files = $dlg.FileNames
+
+# --- Detect paper size from existing project PDFs ---
+$detectedPaperSize = ""
+$detectionStatus = "not_checked"
+if (Test-Path $detectSizeScriptPath) {
+  Write-Host "PROGRESS: Detecting paper size from existing PDFs..."
+  try {
+    # Quote the path in case it contains spaces
+    $dwgPathArg = "`"$($files[0])`""
+    $detectOutput = & $pythonExecutable $detectSizeScriptPath $dwgPathArg 2>&1
+
+    # Check if there was an error (stderr output will be error records)
+    $errorOutput = $detectOutput | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }
+    $stdOutput = $detectOutput | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }
+
+    if ($stdOutput) {
+      $detectedPaperSize = ($stdOutput | Out-String).Trim()
+    }
+
+    if ($detectedPaperSize) {
+      Write-Host "PROGRESS: Detected paper size: $detectedPaperSize"
+      $detectionStatus = "detected"
+    } else {
+      if ($errorOutput) {
+        Write-Host "PROGRESS: Detection error: $($errorOutput | Out-String)"
+      }
+      Write-Host "PROGRESS: No matching paper size found in project PDFs."
+      $detectionStatus = "no_match"
+    }
+  }
+  catch {
+    Write-Host "PROGRESS: Could not detect paper size: $_"
+    $detectionStatus = "error"
+    $detectedPaperSize = ""
+  }
+} else {
+  Write-Host "PROGRESS: Detection script not found at: $detectSizeScriptPath"
+  $detectionStatus = "script_missing"
+}
+
+# --- Let the user select/confirm a paper size ---
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "Select Paper Size"
-$form.Size = New-Object System.Drawing.Size(400, 150)
+$form.Size = New-Object System.Drawing.Size(450, 200)
 $form.StartPosition = "CenterScreen"
 
+# Status label to show detection result
+$statusLabel = New-Object System.Windows.Forms.Label
+$statusLabel.Location = New-Object System.Drawing.Point(10, 15)
+$statusLabel.Size = New-Object System.Drawing.Size(420, 20)
+$statusLabel.Font = New-Object System.Drawing.Font($statusLabel.Font.FontFamily, 9, [System.Drawing.FontStyle]::Bold)
+switch ($detectionStatus) {
+  "detected" {
+    $statusLabel.Text = "Paper size detected from existing project PDFs"
+    $statusLabel.ForeColor = [System.Drawing.Color]::Green
+  }
+  "no_match" {
+    $statusLabel.Text = "No matching PDFs found in project folder"
+    $statusLabel.ForeColor = [System.Drawing.Color]::DarkOrange
+  }
+  default {
+    $statusLabel.Text = "Auto-detection not available"
+    $statusLabel.ForeColor = [System.Drawing.Color]::Gray
+  }
+}
+$form.Controls.Add($statusLabel)
+
 $label = New-Object System.Windows.Forms.Label
-$label.Location = New-Object System.Drawing.Point(10, 20)
-$label.Size = New-Object System.Drawing.Size(280, 20)
-$label.Text = "Please select a paper size for plotting:"
+$label.Location = New-Object System.Drawing.Point(10, 45)
+$label.Size = New-Object System.Drawing.Size(420, 20)
+if ($detectedPaperSize) {
+  $label.Text = "Confirm the detected size or select a different one:"
+} else {
+  $label.Text = "Please select a paper size for plotting:"
+}
 $form.Controls.Add($label)
 
 $comboBox = New-Object System.Windows.Forms.ComboBox
-$comboBox.Location = New-Object System.Drawing.Point(10, 40)
-$comboBox.Size = New-Object System.Drawing.Size(360, 20)
+$comboBox.Location = New-Object System.Drawing.Point(10, 70)
+$comboBox.Size = New-Object System.Drawing.Size(410, 20)
 $comboBox.DropDownStyle = "DropDownList"
-$paperSizes | ForEach-Object { [void] $comboBox.Items.Add($_) }
-$comboBox.SelectedIndex = 0
+
+# Add paper sizes with checkmark for detected size
+$selectedIndex = 0
+$index = 0
+foreach ($size in $paperSizes) {
+  if ($detectedPaperSize -and $size -eq $detectedPaperSize) {
+    [void] $comboBox.Items.Add("$size  [Detected]")
+    $selectedIndex = $index
+  } else {
+    [void] $comboBox.Items.Add($size)
+  }
+  $index++
+}
+$comboBox.SelectedIndex = $selectedIndex
 $form.Controls.Add($comboBox)
 
 $okButton = New-Object System.Windows.Forms.Button
-$okButton.Location = New-Object System.Drawing.Point(150, 70)
+$okButton.Location = New-Object System.Drawing.Point(175, 110)
 $okButton.Size = New-Object System.Drawing.Size(75, 23)
 $okButton.Text = "OK"
 $okButton.DialogResult = [System.Windows.Forms.DialogResult]::OK
@@ -100,18 +188,9 @@ $result = $form.ShowDialog()
 if ($result -ne [System.Windows.Forms.DialogResult]::OK) {
   Write-Host "PROGRESS: ERROR: Operation cancelled by user."; exit
 }
-$selectedPaperSize = $comboBox.SelectedItem
 
-# --- Let the user select DWGs via a file explorer dialog ---
-$dlg = New-Object System.Windows.Forms.OpenFileDialog
-$dlg.Title = "Select DWG file(s) to plot"
-$dlg.Filter = "DWG files (*.dwg)|*.dwg|All files (*.*)|*.*"
-$dlg.Multiselect = $true
-$dlg.InitialDirectory = [Environment]::GetFolderPath("Desktop")
-if ($dlg.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK -or -not $dlg.FileNames) {
-  Write-Host "PROGRESS: ERROR: No files selected."; exit
-}
-$files = $dlg.FileNames
+# Remove the " [Detected]" suffix if present to get the actual paper size
+$selectedPaperSize = $comboBox.SelectedItem -replace '\s+\[Detected\]$', ''
 
 # --- BATCH PROCESSING SETUP ---
 Write-Host "PROGRESS: Preparing to plot $($files.Count) file(s)..."

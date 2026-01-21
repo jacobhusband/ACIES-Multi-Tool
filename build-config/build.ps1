@@ -70,6 +70,7 @@ $pyInstallerArgs = @(
     "--add-data", ".env;.",
     "--add-data", "assets\acies.png;.",
     "--add-data", "scripts\merge_pdfs.py;scripts",
+    "--add-data", "scripts\detect_pdf_size.py;scripts",
     "--add-data", "scripts\PlotDWGs.ps1;scripts",
     "--add-data", "scripts\FreezeLayersDWGs.ps1;scripts",
     "--add-data", "scripts\ThawLayersDWGs.ps1;scripts",

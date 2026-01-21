@@ -773,12 +773,13 @@ class Api:
 
     def _run_script_with_progress(self, command, tool_id):
         """
-        Runs a script in a separate thread, captures its stdout, and sends 
+        Runs a script in a separate thread, captures its stdout, and sends
         progress updates to the frontend.
         """
         def script_runner():
             window = webview.windows[0]
             try:
+                print(f"DEBUG THREAD: Starting script for {tool_id}")
                 startupinfo = None
                 if sys.platform == "win32":
                     startupinfo = subprocess.STARTUPINFO()
@@ -808,8 +809,10 @@ class Api:
                         startupinfo=startupinfo
                     )
 
+                print(f"DEBUG THREAD: Process started, reading output...")
                 for line in iter(process.stdout.readline, ''):
                     line = line.strip()
+                    print(f"DEBUG THREAD OUTPUT: {line}")
                     if line.startswith("PROGRESS:"):
                         message = line[len("PROGRESS:"):].strip()
                         js_message = json.dumps(message)
@@ -818,6 +821,7 @@ class Api:
 
                 process.stdout.close()
                 return_code = process.wait()
+                print(f"DEBUG THREAD: Process finished with return code {return_code}")
 
                 if return_code == 0:
                     window.evaluate_js(
@@ -829,6 +833,9 @@ class Api:
                         f'window.updateToolStatus("{tool_id}", "ERROR: " + {js_error})')
 
             except Exception as e:
+                print(f"DEBUG THREAD ERROR: {e}")
+                import traceback
+                traceback.print_exc()
                 logging.error(f"Failed to execute script for {tool_id}: {e}")
                 js_error = json.dumps(str(e))
                 window.evaluate_js(
@@ -2058,17 +2065,66 @@ Return ONLY the JSON object.
 
     def run_clean_xrefs_script(self):
         """Runs the removeXREFPaths.ps1 PowerShell script with progress updates."""
-        script_path = os.path.join(BASE_DIR, "scripts", "removeXREFPaths.ps1")
-        if not os.path.exists(script_path):
-            raise Exception(
-                "removeXREFPaths.ps1 not found in scripts directory.")
-        settings = self.get_user_settings()
-        acad_path = settings.get('autocadPath', '')
-        if not acad_path:
-            raise Exception("No AutoCAD version selected in settings.")
-        command = f'powershell.exe -ExecutionPolicy Bypass -File "{script_path}" -AcadCore "{acad_path}"'
-        self._run_script_with_progress(command, 'toolCleanXrefs')
-        return {'status': 'success'}
+        try:
+            script_path = os.path.join(BASE_DIR, "scripts", "removeXREFPaths.ps1")
+            if not os.path.exists(script_path):
+                raise Exception(
+                    "removeXREFPaths.ps1 not found in scripts directory.")
+            settings = self.get_user_settings()
+            acad_path = settings.get('autocadPath', '')
+            if not acad_path:
+                raise Exception("No AutoCAD version selected in settings.")
+
+            # Use pywebview file dialog to select DWG files
+            window = webview.windows[0]
+            print("DEBUG: Opening file dialog for DWG selection...")
+            file_paths = window.create_file_dialog(
+                webview.FileDialog.OPEN,
+                allow_multiple=True,
+                file_types=('DWG Files (*.dwg)',)
+            )
+            print(f"DEBUG: File dialog returned: {file_paths}")
+            if not file_paths:
+                # User cancelled - update status and return
+                window.evaluate_js('window.updateToolStatus("toolCleanXrefs", "DONE")')
+                return {'status': 'cancelled'}
+
+            discipline = settings.get('discipline', 'Electrical')
+            if isinstance(discipline, list):
+                discipline = next((d for d in discipline if d), 'Electrical')
+            discipline = str(discipline or 'Electrical')
+            discipline_short_map = {
+                'Electrical': 'E',
+                'Mechanical': 'M',
+                'Plumbing': 'P',
+                'General': 'G'
+            }
+            discipline_short = discipline_short_map.get(
+                discipline, (discipline[:1] or 'E').upper())
+
+            # Write file paths to a temp file to avoid command line escaping issues
+            import tempfile
+            temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8')
+            for fp in file_paths:
+                temp_file.write(fp + '\n')
+            temp_file.close()
+            print(f"DEBUG: Wrote {len(file_paths)} files to temp file: {temp_file.name}")
+
+            command = (
+                f'powershell.exe -ExecutionPolicy Bypass -File "{script_path}" '
+                f'-AcadCore "{acad_path}" -DisciplineShort "{discipline_short}" '
+                f'-FilesListPath "{temp_file.name}"'
+            )
+            print(f"DEBUG: Command: {command}")
+            self._run_script_with_progress(command, 'toolCleanXrefs')
+            return {'status': 'success'}
+        except Exception as e:
+            print(f"DEBUG ERROR: {e}")
+            import traceback
+            traceback.print_exc()
+            window = webview.windows[0]
+            window.evaluate_js(f'window.updateToolStatus("toolCleanXrefs", "ERROR: {str(e)}")')
+            return {'status': 'error', 'message': str(e)}
 
     def select_files(self, options):
         """Shows a file dialog and returns selected paths."""

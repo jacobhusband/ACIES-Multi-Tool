@@ -1,9 +1,11 @@
 param(
-  [string]$AcadCore
+  [string]$AcadCore,
+  [string]$DisciplineShort,
+  [string]$FilesListPath
 )
 
 # removeXrefPaths.ps1
-# Select DWGs -> accoreconsole loads your .NET DLL via NETLOAD -> runs STRIPREFPATHS
+# Process DWGs -> accoreconsole loads your .NET DLL via NETLOAD -> runs STRIPREFPATHS
 # All feedback is sent to the console for the main application to display.
 
 Write-Host "PROGRESS: Initializing script..."
@@ -30,23 +32,82 @@ else {
 $scriptRoot = $PSScriptRoot
 $dll = Join-Path $scriptRoot "StripRefPaths.dll"
 
-# Relaunch in STA for file picker
-if ([Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') {
-  $ps = (Get-Process -Id $PID).Path
-  Start-Process -FilePath $ps -ArgumentList @("-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"") -Wait
-  exit
-}
-
 # Validation
-if ([string]::IsNullOrEmpty($acadCore) -or -not (Test-Path $acadCore)) { 
+if ([string]::IsNullOrEmpty($acadCore) -or -not (Test-Path $acadCore)) {
   Write-Host "PROGRESS: ERROR: AutoCAD Core Console not found for versions 2020-2025."
   Write-Host "Please ensure AutoCAD is installed in the default 'C:\Program Files\Autodesk' directory."
-  exit 1 
+  exit 1
 }
 
-if (-not (Test-Path $dll)) { 
+if (-not (Test-Path $dll)) {
   Write-Host "PROGRESS: ERROR: Required component 'StripRefPaths.dll' not found at $dll"
-  exit 1 
+  exit 1
+}
+
+# Validate files list path parameter
+if ([string]::IsNullOrEmpty($FilesListPath) -or -not (Test-Path $FilesListPath)) {
+  Write-Host "PROGRESS: ERROR: No files list provided or file not found."
+  exit 1
+}
+
+function Get-DisciplineShort([string]$value) {
+  $short = ($value -split '[,;/\s]')[0]
+  if ([string]::IsNullOrWhiteSpace($short)) { return "E" }
+  return $short.Trim().ToUpper()
+}
+
+function Join-PathParts([string[]]$parts) {
+  if (-not $parts -or $parts.Count -eq 0) { return "" }
+  # Filter out empty strings (from UNC path splitting)
+  $nonEmpty = $parts | Where-Object { $_ }
+  if ($nonEmpty.Count -eq 0) { return "" }
+
+  # Check if original path was UNC (starts with \\)
+  # If first two parts were empty, it was a UNC path
+  $isUnc = ($parts.Count -ge 2 -and $parts[0] -eq "" -and $parts[1] -eq "")
+
+  if ($isUnc) {
+    # Rebuild UNC path: \\server\share\...
+    return "\\" + ($nonEmpty -join "\")
+  }
+  else {
+    # Regular path
+    $path = $nonEmpty[0]
+    for ($i = 1; $i -lt $nonEmpty.Count; $i++) {
+      $path = Join-Path -Path $path -ChildPath $nonEmpty[$i]
+    }
+    return $path
+  }
+}
+
+function Find-FolderIndex([string[]]$parts, [string]$name) {
+  for ($i = 0; $i -lt $parts.Count; $i++) {
+    if ($parts[$i] -ieq $name) { return $i }
+  }
+  return -1
+}
+
+function Get-SheetIdFromName([string]$name) {
+  $patterns = @(
+    '(?i)\b[A-Z]{1,3}\d{1,3}-\d{1,3}[A-Z]?\b',
+    '(?i)\b[A-Z]{1,3}\d{1,3}\.\d{1,3}[A-Z]?\b'
+  )
+  foreach ($pattern in $patterns) {
+    $match = [regex]::Match($name, $pattern)
+    if ($match.Success) { return $match.Value.ToUpper() }
+  }
+  return $null
+}
+
+function Get-CleanFileName([string]$name) {
+  $invalid = [IO.Path]::GetInvalidFileNameChars()
+  $clean = $name
+  foreach ($char in $invalid) {
+    $clean = $clean -replace [regex]::Escape($char), ''
+  }
+  $clean = $clean.Trim()
+  if ([string]::IsNullOrWhiteSpace($clean)) { return "Sheet" }
+  return $clean
 }
 
 Write-Host "PROGRESS: Staging cleanup commands..."
@@ -108,32 +169,93 @@ QUIT
 "@
 Set-Content -Encoding ASCII -Path $script -Value $scriptContent
 
-# Pick DWGs
-Write-Host "PROGRESS: Waiting for file selection..."
-Add-Type -AssemblyName System.Windows.Forms
-[System.Windows.Forms.Application]::EnableVisualStyles()
-$dlg = New-Object System.Windows.Forms.OpenFileDialog
-$dlg.Title = "Select DWG file(s) to strip saved XREF/underlay/image paths"
-$dlg.Filter = "DWG files (*.dwg)|*.dwg|All files (*.*)|*.*"
-$dlg.Multiselect = $true
-$dlg.InitialDirectory = [Environment]::GetFolderPath("Desktop")
-if ($dlg.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK -or -not $dlg.FileNames) {
-  Write-Host "PROGRESS: ERROR: No files selected."; exit 1
+# Read files from list file (one path per line)
+$files = Get-Content -Path $FilesListPath -Encoding UTF8 |
+  Where-Object { $_ -and $_.Trim() -and (Test-Path $_.Trim()) } |
+  ForEach-Object { $_.Trim() }
+if ($files.Count -eq 0) {
+  Write-Host "PROGRESS: ERROR: No valid files found in list."
+  exit 1
 }
-$files = $dlg.FileNames
+Write-Host "PROGRESS: Processing $($files.Count) file(s)..."
 
+$disciplineShort = Get-DisciplineShort $DisciplineShort
 $failed = @()
 $i = 0
 foreach ($dwg in $files) {
   $i++
   $name = [IO.Path]::GetFileName($dwg)
-  Write-Host "PROGRESS: Processing $i of $($files.Count): $name"
+  Write-Host "PROGRESS: Preparing $i of $($files.Count): $name"
+
+  try {
+    $fullPath = [IO.Path]::GetFullPath($dwg)
+    $parts = $fullPath -split '[\\/]'
+    $xrefIndex = Find-FolderIndex $parts 'Xrefs'
+    if ($xrefIndex -lt 0) { $xrefIndex = Find-FolderIndex $parts 'Xref' }
+    $archIndex = Find-FolderIndex $parts 'Arch'
+
+    $workingPath = $fullPath
+    if ($xrefIndex -ge 0) {
+      # Already in Xrefs/Xref folder - use as-is
+      $workingPath = $fullPath
+    }
+    elseif ($archIndex -ge 0) {
+      # In Arch folder - copy to Xrefs folder (directly, no subfolders)
+      if ($archIndex -le 0) {
+        $projectRoot = $parts[0]
+      }
+      else {
+        $projectRoot = Join-PathParts $parts[0..($archIndex - 1)]
+      }
+      # Put files directly in Xrefs folder (no subfolder preservation)
+      $targetDir = Join-Path -Path $projectRoot -ChildPath "Xrefs"
+      if (-not (Test-Path $targetDir)) {
+        # Only create if it doesn't exist
+        New-Item -Path $targetDir -ItemType Directory -Force | Out-Null
+        Write-Host "PROGRESS: Created Xrefs folder at $targetDir"
+      }
+      $workingPath = Join-Path -Path $targetDir -ChildPath $parts[-1]
+      Copy-Item -LiteralPath $fullPath -Destination $workingPath -Force
+    }
+
+    $baseName = [IO.Path]::GetFileNameWithoutExtension($workingPath)
+    $sheetId = Get-SheetIdFromName $baseName
+    if ($sheetId) {
+      $targetBase = Get-CleanFileName $sheetId
+    }
+    else {
+      $targetBase = Get-CleanFileName $baseName
+    }
+    $targetName = "{0} ({1})" -f $targetBase, $disciplineShort
+    $targetDir = Split-Path -Parent $workingPath
+    $targetPath = Join-Path -Path $targetDir -ChildPath "$targetName.dwg"
+
+    $existing = Get-ChildItem -LiteralPath $targetDir -File |
+      Where-Object { $_.BaseName -ieq $targetName }
+    foreach ($item in $existing) {
+      if ($item.FullName -ne $workingPath) {
+        Remove-Item -LiteralPath $item.FullName -Force
+      }
+    }
+
+    if ($workingPath -ne $targetPath) {
+      Move-Item -LiteralPath $workingPath -Destination $targetPath -Force
+      $workingPath = $targetPath
+    }
+  }
+  catch {
+    Write-Host "PROGRESS: ERROR: Failed to prepare $name - $_"
+    $failed += $dwg
+    continue
+  }
+
+  Write-Host "PROGRESS: Processing $i of $($files.Count): $([IO.Path]::GetFileName($workingPath))"
 
   # IMPORTANT: no /ld here; we NETLOAD via the .scr
   # The 2>&1 redirects stderr to stdout, so the Python wrapper can catch errors.
-  & $acadCore /i "$dwg" /s "$script" 2>&1
+  & $acadCore /i "$workingPath" /s "$script" 2>&1
   $code = $LASTEXITCODE
-  if ($code -ne 0) { $failed += $dwg }
+  if ($code -ne 0) { $failed += $workingPath }
 }
 
 Write-Progress -Activity "Processing DWGs" -Completed

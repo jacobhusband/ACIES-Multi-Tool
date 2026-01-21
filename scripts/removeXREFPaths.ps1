@@ -114,7 +114,7 @@ Write-Host "PROGRESS: Staging cleanup commands..."
 # Stage AutoLISP CLEANUP command so each drawing is tidied after ref paths are stripped
 $lisp = Join-Path $env:TEMP "cleanup_tmp.lsp"
 $lispContent = @'
-(defun c:CLEANUP (/ oldCMDECHO oldTab)
+(defun c:CLEANUP (/ oldCMDECHO oldTab ss i ent entData layerName)
   ;; Remember current command echo setting, then turn it off:
   (setq oldCMDECHO (getvar "CMDECHO")
         oldTab     (getvar "CTAB"))
@@ -130,6 +130,35 @@ $lispContent = @'
   ;;   "Y" => Include blocks?
   (command
     "_.-SETBYLAYER" "All" "" "Y" "Y")
+
+  ;; Change color of non-nested modelspace hatches to 9 (excluding WALL layers)
+  ;; This runs AFTER SETBYLAYER so the color override is preserved
+  ;; ssget "X" with filter: HATCH entities in modelspace (410 = "Model")
+  (setq ss (ssget "X" '((0 . "HATCH") (410 . "Model"))))
+  (if ss
+    (progn
+      (setq i 0)
+      (repeat (sslength ss)
+        (setq ent (ssname ss i))
+        (setq entData (entget ent))
+        (setq layerName (cdr (assoc 8 entData)))
+        ;; Check if layer name does NOT contain "WALL" (case-insensitive)
+        (if (not (wcmatch (strcase layerName) "*WALL*"))
+          (progn
+            ;; Change color to 9 by modifying entity data
+            (if (assoc 62 entData)
+              ;; Color property exists, replace it
+              (setq entData (subst (cons 62 9) (assoc 62 entData) entData))
+              ;; Color property doesn't exist, add it
+              (setq entData (append entData (list (cons 62 9))))
+            )
+            (entmod entData)
+          )
+        )
+        (setq i (1+ i))
+      )
+    )
+  )
 
   ;; Purge the entire drawing; "All", "*" (everything), "No" to confirm each
   (command "_.-PURGE" "All" "*" "N")
@@ -234,7 +263,17 @@ foreach ($dwg in $files) {
       Where-Object { $_.BaseName -ieq $targetName }
     foreach ($item in $existing) {
       if ($item.FullName -ne $workingPath) {
-        Remove-Item -LiteralPath $item.FullName -Force
+        # Archive the existing file instead of deleting it
+        $archiveDir = Join-Path -Path $targetDir -ChildPath "Archive"
+        if (-not (Test-Path $archiveDir)) {
+          New-Item -Path $archiveDir -ItemType Directory -Force | Out-Null
+          Write-Host "PROGRESS: Created Archive folder at $archiveDir"
+        }
+        $timestamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
+        $archiveName = "{0}_{1}{2}" -f $item.BaseName, $timestamp, $item.Extension
+        $archivePath = Join-Path -Path $archiveDir -ChildPath $archiveName
+        Move-Item -LiteralPath $item.FullName -Destination $archivePath -Force
+        Write-Host "PROGRESS: Archived existing file to $archiveName"
       }
     }
 

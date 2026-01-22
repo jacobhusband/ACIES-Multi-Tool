@@ -1331,6 +1331,47 @@ Return ONLY the JSON object.
             logging.error(f"Error copying template: {e}")
             return {'status': 'error', 'message': str(e)}
 
+    def copy_template_to_path(self, template_id, destination_path, context=None, options=None):
+        """Copies a template file to the specified file path."""
+        try:
+            data = self.get_templates()
+            template = next((t for t in data['templates'] if t['id'] == template_id), None)
+
+            if not template:
+                return {'status': 'error', 'message': 'Template not found'}
+
+            source = template['sourcePath']
+            if not os.path.exists(source):
+                return {'status': 'error', 'message': f'Template file not found: {source}'}
+
+            if isinstance(destination_path, (list, tuple)):
+                destination_path = destination_path[0] if destination_path else ''
+
+            dest_path = str(destination_path or '').strip()
+            if not dest_path:
+                return {'status': 'error', 'message': 'Destination path is required'}
+
+            ext = os.path.splitext(source)[1]
+            if ext and not dest_path.lower().endswith(ext.lower()):
+                dest_path = dest_path + ext
+
+            dest_dir = os.path.dirname(dest_path)
+            if not dest_dir:
+                return {'status': 'error', 'message': 'Destination path is invalid'}
+            if not os.path.isdir(dest_dir):
+                os.makedirs(dest_dir, exist_ok=True)
+
+            if os.path.exists(dest_path):
+                return {'status': 'error', 'message': 'File already exists at destination'}
+
+            shutil.copy2(source, dest_path)
+            if context or options:
+                _apply_template_context(dest_path, context=context, options=options)
+            return {'status': 'success', 'path': dest_path}
+        except Exception as e:
+            logging.error(f"Error copying template to path: {e}")
+            return {'status': 'error', 'message': str(e)}
+
     def select_folder(self):
         """Shows a folder selection dialog."""
         try:
@@ -1344,6 +1385,43 @@ Return ONLY the JSON object.
             return {'status': 'success', 'path': folder_path[0] if folder_path else None}
         except Exception as e:
             logging.error(f"Error in folder dialog: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def select_template_save_location(self, default_dir=None, default_name=None, file_type=None):
+        """Shows a save dialog for template output."""
+        try:
+            window = webview.windows[0]
+            directory = str(default_dir or '').strip() or get_default_documents_dir()
+            save_filename = str(default_name or 'Template').strip() or 'Template'
+
+            ext = str(file_type or '').lower().lstrip('.')
+            if ext and not save_filename.lower().endswith(f".{ext}"):
+                save_filename = f"{save_filename}.{ext}"
+
+            file_type_map = {
+                'doc': 'Word Document (*.doc)',
+                'docx': 'Word Document (*.docx)',
+                'dwg': 'AutoCAD Drawing (*.dwg)',
+                'xlsx': 'Excel Spreadsheet (*.xlsx)',
+                'xls': 'Excel Spreadsheet (*.xls)',
+            }
+            file_types = None
+            if ext and ext in file_type_map:
+                file_types = (file_type_map[ext],)
+
+            file_path = window.create_file_dialog(
+                webview.FileDialog.SAVE,
+                directory=directory,
+                save_filename=save_filename,
+                file_types=file_types
+            )
+            if not file_path:
+                return {'status': 'cancelled', 'path': None}
+            if isinstance(file_path, (list, tuple)):
+                file_path = file_path[0] if file_path else ''
+            return {'status': 'success', 'path': file_path}
+        except Exception as e:
+            logging.error(f"Error in save dialog: {e}")
             return {'status': 'error', 'message': str(e)}
 
     def select_template_file(self):

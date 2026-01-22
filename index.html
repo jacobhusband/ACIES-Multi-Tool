@@ -97,7 +97,6 @@
                 <button class="main-tab-btn" data-tab="tools">Tools</button>
                 <button class="main-tab-btn" data-tab="plugins">Plugins</button>
                 <button class="main-tab-btn" data-tab="timesheets">Timesheets</button>
-                <button class="main-tab-btn" data-tab="templates">Templates</button>
             </nav>
         </div>
         <div class="header-actions">
@@ -511,34 +510,6 @@
                 </div>
             </section>
         </div>
-        <!-- Tab Panel for Templates -->
-        <div id="templates-panel" class="tab-panel" hidden>
-            <section class="panel stack">
-                <div class="templates-panel-header">
-                    <div class="templates-panel-heading">
-                        <h3 class="section-title">Document Templates</h3>
-                        <p class="tiny muted">Reusable document templates organized by discipline.</p>
-                    </div>
-                    <div class="toolbar-actions">
-                        <button class="btn btn-primary tiny" id="addTemplateBtn">
-                            + Add Template
-                        </button>
-                        <button class="icon-btn" id="templatesHelpBtn" aria-label="Templates help" title="Templates help">?</button>
-                    </div>
-                </div>
-
-                <div id="templatesContainer" class="templates-container">
-                    <!-- Template sections will be rendered here -->
-                </div>
-
-                <div id="templatesEmptyState" class="templates-empty" style="display: none;">
-                    <div class="empty-icon">📋</div>
-                    <h3>No templates yet</h3>
-                    <p>Add document templates to quickly copy them to project folders.</p>
-                    <button class="btn btn-primary" id="addTemplateEmptyBtn">Add Your First Template</button>
-                </div>
-            </section>
-        </div>
     </main>
     <!-- Timesheet Project Selection Dialog -->
     <dialog id="timesheetProjectDlg">
@@ -637,6 +608,14 @@
                 <div class="col-12">
                     <label class="label">Global Notes</label>
                     <textarea id="f_notes" rows="3" placeholder="Global notes"></textarea>
+                </div>
+                <div class="col-12">
+                    <label class="label">Templates</label>
+                    <div class="inline" style="flex-wrap: wrap;">
+                        <button class="btn tiny" id="editTemplateNarrativeBtn">Narrative of Changes</button>
+                        <button class="btn tiny" id="editTemplatePlanCheckBtn">Plan Check Response Letter</button>
+                    </div>
+                    <p class="tiny muted">Save a copy of a template to this project.</p>
                 </div>
             </div>
             <div class="section-divider"></div>
@@ -1423,3 +1402,4 @@
 </body>
 
 </html>
+

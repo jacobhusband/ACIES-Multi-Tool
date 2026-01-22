@@ -616,6 +616,11 @@ function getTemplateKey(template) {
   return null;
 }
 
+function getTemplateByKey(key) {
+  const templates = templatesDb?.templates || [];
+  return templates.find((template) => getTemplateKey(template) === key) || null;
+}
+
 function getPrimaryDisciplineLabel() {
   const disciplines = normalizeDisciplineList(userSettings.discipline);
   return disciplines[0] || "General";
@@ -915,6 +920,68 @@ async function handleRemoveTemplate(templateId, templateName) {
     }
   } catch (e) {
     toast('Error removing template.');
+  }
+}
+
+async function handleEditTemplateSave(templateKey, label) {
+  const projectPath = document.getElementById("f_path")?.value.trim() || "";
+  if (!projectPath) {
+    toast("Please set a project path first.");
+    return;
+  }
+
+  try {
+    await loadTemplates();
+  } catch (e) {
+    console.warn("Failed to refresh templates:", e);
+  }
+
+  const template = getTemplateByKey(templateKey);
+  if (!template) {
+    toast(`Template "${label}" not found.`);
+    return;
+  }
+
+  const defaultName = String(label || template.name || "Template").trim() || "Template";
+  let selection = null;
+  try {
+    selection = await window.pywebview.api.select_template_save_location(
+      projectPath,
+      defaultName,
+      template.fileType
+    );
+  } catch (e) {
+    toast("Error selecting save location.");
+    return;
+  }
+
+  if (!selection || selection.status === "cancelled") {
+    return;
+  }
+  if (selection.status !== "success" || !selection.path) {
+    toast(selection.message || "Failed to select save location.");
+    return;
+  }
+
+  const context = {
+    projectName: document.getElementById("f_name")?.value.trim() || "",
+  };
+  const options = { templateKey };
+
+  try {
+    const result = await window.pywebview.api.copy_template_to_path(
+      template.id,
+      selection.path,
+      context,
+      options
+    );
+    if (result.status === "success") {
+      toast("Template saved.");
+    } else {
+      toast(result.message || "Failed to save template.");
+    }
+  } catch (e) {
+    toast("Error saving template.");
   }
 }
 
@@ -2781,6 +2848,7 @@ const FILE_TYPE_LABELS = { doc: 'Word Document', docx: 'Word Document', dwg: 'Au
 const TEMPLATE_KEY_BY_NAME = {
   "narrative of changes": "narrative",
   "plan check comments": "planCheck",
+  "plan check response letter": "planCheck",
 };
 
 let copyDialogTemplate = null;
@@ -6706,19 +6774,42 @@ function initEventListeners() {
   document.getElementById("timesheetsHelpBtn").onclick = () =>
     openExternalUrl(HELP_LINKS.timesheets);
 
-  // Templates tab event listeners
-  document.getElementById("addTemplateBtn").onclick = () => handleAddTemplate();
-  document.getElementById("addTemplateEmptyBtn").onclick = () => handleAddTemplate();
-  document.getElementById("btnBrowseTemplateFile").onclick = () => handleBrowseTemplateFile();
-  document.getElementById("btnSaveNewTemplate").onclick = () => handleSaveNewTemplate();
-  document.getElementById("btnBrowseDestination").onclick = () => handleBrowseDestination();
-  document.getElementById("btnExecuteCopy").onclick = () => handleExecuteCopy();
+  // Templates event listeners
+  const addTemplateBtn = document.getElementById("addTemplateBtn");
+  if (addTemplateBtn) addTemplateBtn.onclick = () => handleAddTemplate();
+  const addTemplateEmptyBtn = document.getElementById("addTemplateEmptyBtn");
+  if (addTemplateEmptyBtn) addTemplateEmptyBtn.onclick = () => handleAddTemplate();
+  const browseTemplateBtn = document.getElementById("btnBrowseTemplateFile");
+  if (browseTemplateBtn) browseTemplateBtn.onclick = () => handleBrowseTemplateFile();
+  const saveNewTemplateBtn = document.getElementById("btnSaveNewTemplate");
+  if (saveNewTemplateBtn) saveNewTemplateBtn.onclick = () => handleSaveNewTemplate();
+  const browseDestinationBtn = document.getElementById("btnBrowseDestination");
+  if (browseDestinationBtn) browseDestinationBtn.onclick = () => handleBrowseDestination();
+  const executeCopyBtn = document.getElementById("btnExecuteCopy");
+  if (executeCopyBtn) executeCopyBtn.onclick = () => handleExecuteCopy();
   const copyDeliverableSelect = document.getElementById("copy_deliverable_select");
   if (copyDeliverableSelect) {
     copyDeliverableSelect.onchange = () => updateCopyDialogAutoFields();
   }
-  document.getElementById("templatesHelpBtn").onclick = () =>
-    openExternalUrl(HELP_LINKS.main); // Uses main help link for now
+  const templatesHelpBtn = document.getElementById("templatesHelpBtn");
+  if (templatesHelpBtn) {
+    templatesHelpBtn.onclick = () => openExternalUrl(HELP_LINKS.main);
+  }
+
+  const editTemplateNarrativeBtn = document.getElementById(
+    "editTemplateNarrativeBtn"
+  );
+  if (editTemplateNarrativeBtn) {
+    editTemplateNarrativeBtn.onclick = () =>
+      handleEditTemplateSave("narrative", "Narrative of Changes");
+  }
+  const editTemplatePlanCheckBtn = document.getElementById(
+    "editTemplatePlanCheckBtn"
+  );
+  if (editTemplatePlanCheckBtn) {
+    editTemplatePlanCheckBtn.onclick = () =>
+      handleEditTemplateSave("planCheck", "Plan Check Response Letter");
+  }
 
   document.getElementById("prevWeekBtn").onclick = () =>
     navigateTimesheetWeek(-1);

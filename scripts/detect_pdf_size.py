@@ -4,6 +4,9 @@
 
 import sys
 import os
+import time
+import heapq
+import json
 import fitz  # PyMuPDF library
 
 
@@ -17,6 +20,11 @@ PAPER_SIZES = {
 
 # Tolerance in points (0.5 inch = 36 points)
 TOLERANCE = 36
+
+# Performance guards to keep detection fast
+MAX_CANDIDATE_PDFS = 25
+MAX_SCAN_SECONDS = 4.0
+MAX_PDF_BYTES = 150 * 1024 * 1024
 
 
 def get_project_root(dwg_path):
@@ -59,51 +67,158 @@ def get_project_root(dwg_path):
     except (ValueError, IndexError):
         pass
 
+    # Fallback: walk up from the DWG location to find a folder
+    # that contains typical project subfolders.
+    try:
+        current = os.path.abspath(dwg_path)
+        if os.path.isfile(current):
+            current = os.path.dirname(current)
+    except OSError:
+        return None
+
+    while True:
+        electrical = os.path.join(current, "Electrical")
+        pdf = os.path.join(current, "PDF")
+        if os.path.isdir(electrical) or os.path.isdir(pdf):
+            return current
+
+        parent = os.path.dirname(current)
+        if not parent or parent == current:
+            break
+        current = parent
+
     return None
 
 
-def find_pdf_folder(project_root):
+def find_pdf_folders(project_root):
     """
-    Find the PDF subfolder in the project root.
+    Find PDF-related subfolders to scan for existing sheets.
     """
     if not project_root:
-        return None
+        return []
 
-    pdf_folder = os.path.join(project_root, "PDF")
-    if os.path.isdir(pdf_folder):
-        return pdf_folder
+    folders = [
+        os.path.join(project_root, "PDF"),
+        os.path.join(project_root, "Electrical", "Checkset"),
+    ]
 
-    return None
+    return [folder for folder in folders if os.path.isdir(folder)]
 
 
-def get_most_recent_pdf(pdf_folder):
+def get_recent_pdfs(folders, max_files=MAX_CANDIDATE_PDFS, max_seconds=MAX_SCAN_SECONDS):
     """
-    Get the most recent PDF file(s) from the PDF folder.
-    Looks for the most recently modified PDF.
+    Get a list of the most recent PDFs across multiple folders.
+    Stops scanning when time budget is exceeded.
     """
-    if not pdf_folder or not os.path.isdir(pdf_folder):
-        return None
+    if not folders:
+        return [], None
 
-    pdf_files = []
+    deadline = time.monotonic() + max_seconds
+    heap = []
+    max_mtime = None
 
-    # Walk through all subdirectories to find PDFs
-    for root, dirs, files in os.walk(pdf_folder):
-        for file in files:
-            if file.lower().endswith('.pdf'):
+    for folder in folders:
+        if time.monotonic() > deadline:
+            break
+
+        # Walk through all subdirectories to find PDFs
+        for root, dirs, files in os.walk(folder):
+            if time.monotonic() > deadline:
+                break
+
+            for file in files:
+                if not file.lower().endswith('.pdf'):
+                    continue
+
                 full_path = os.path.join(root, file)
                 try:
                     mtime = os.path.getmtime(full_path)
-                    pdf_files.append((full_path, mtime))
+                    size = os.path.getsize(full_path)
                 except OSError:
                     continue
 
-    if not pdf_files:
-        return None
+                if size > MAX_PDF_BYTES:
+                    continue
+
+                if max_mtime is None or mtime > max_mtime:
+                    max_mtime = mtime
+
+                if len(heap) < max_files:
+                    heapq.heappush(heap, (mtime, full_path))
+                else:
+                    if mtime > heap[0][0]:
+                        heapq.heapreplace(heap, (mtime, full_path))
+
+    if not heap:
+        return [], max_mtime
 
     # Sort by modification time (most recent first)
-    pdf_files.sort(key=lambda x: x[1], reverse=True)
+    heap.sort(key=lambda x: x[0], reverse=True)
+    return [item[1] for item in heap], max_mtime
 
-    return pdf_files[0][0]
+
+def _cache_path(project_root):
+    return os.path.join(project_root, ".pdf_size_cache.json")
+
+
+def load_cache(project_root):
+    try:
+        with open(_cache_path(project_root), "r", encoding="ascii") as cache_file:
+            data = json.load(cache_file)
+            if isinstance(data, dict):
+                return data
+    except (OSError, json.JSONDecodeError, UnicodeError):
+        pass
+    return {}
+
+
+def save_cache(project_root, cache):
+    try:
+        with open(_cache_path(project_root), "w", encoding="ascii") as cache_file:
+            json.dump(cache, cache_file)
+    except OSError:
+        pass
+
+
+def _get_cached_dimensions(pdf_path, cache):
+    pdf_cache = cache.get("pdf_page_cache", {})
+    entry = pdf_cache.get(pdf_path)
+    if not isinstance(entry, dict):
+        return None
+
+    try:
+        mtime = os.path.getmtime(pdf_path)
+        size = os.path.getsize(pdf_path)
+    except OSError:
+        return None
+
+    if entry.get("mtime") != mtime or entry.get("size") != size:
+        return None
+
+    dims = entry.get("dimensions")
+    if (isinstance(dims, list) and len(dims) == 2 and
+            all(isinstance(value, (int, float)) for value in dims)):
+        return (dims[0], dims[1])
+
+    return None
+
+
+def _update_pdf_cache(pdf_path, dimensions, cache):
+    if not dimensions:
+        return
+
+    try:
+        mtime = os.path.getmtime(pdf_path)
+        size = os.path.getsize(pdf_path)
+    except OSError:
+        return
+
+    pdf_cache = cache.setdefault("pdf_page_cache", {})
+    pdf_cache[pdf_path] = {
+        "mtime": mtime,
+        "size": size,
+        "dimensions": [dimensions[0], dimensions[1]],
+    }
 
 
 def detect_pdf_page_size(pdf_path):
@@ -116,7 +231,7 @@ def detect_pdf_page_size(pdf_path):
             if len(pdf) == 0:
                 return None
 
-            page = pdf[0]
+            page = pdf.load_page(0)
             rect = page.rect
             width = rect.width
             height = rect.height
@@ -164,20 +279,44 @@ def detect_paper_size(dwg_path):
     if not project_root:
         return ""
 
-    pdf_folder = find_pdf_folder(project_root)
-    if not pdf_folder:
+    pdf_folders = find_pdf_folders(project_root)
+    if not pdf_folders:
         return ""
 
-    recent_pdf = get_most_recent_pdf(pdf_folder)
-    if not recent_pdf:
+    recent_pdfs, max_mtime = get_recent_pdfs(pdf_folders)
+    if not recent_pdfs:
         return ""
 
-    dimensions = detect_pdf_page_size(recent_pdf)
-    if not dimensions:
-        return ""
+    cache = load_cache(project_root)
+    cache_dirty = False
+    if max_mtime is not None:
+        cached_size = cache.get("paper_size")
+        cached_mtime = cache.get("max_mtime")
+        if (cached_size in PAPER_SIZES and isinstance(cached_mtime, (int, float)) and
+                cached_mtime >= max_mtime):
+            return cached_size
 
-    matched_size = match_paper_size(dimensions)
-    return matched_size if matched_size else ""
+    for pdf_path in recent_pdfs:
+        dimensions = _get_cached_dimensions(pdf_path, cache)
+        if not dimensions:
+            dimensions = detect_pdf_page_size(pdf_path)
+            if dimensions:
+                _update_pdf_cache(pdf_path, dimensions, cache)
+                cache_dirty = True
+        if not dimensions:
+            continue
+
+        matched_size = match_paper_size(dimensions)
+        if matched_size:
+            cache["paper_size"] = matched_size
+            cache["max_mtime"] = max_mtime
+            save_cache(project_root, cache)
+            return matched_size
+
+    if cache_dirty:
+        save_cache(project_root, cache)
+
+    return ""
 
 
 if __name__ == "__main__":

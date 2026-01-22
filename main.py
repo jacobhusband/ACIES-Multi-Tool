@@ -123,6 +123,55 @@ def get_default_documents_dir():
     return os.path.join(user_profile, 'Documents')
 
 
+_LEGACY_MIGRATION_DONE = False
+
+
+def _get_windows_documents_dir():
+    user_profile = os.getenv('USERPROFILE')
+    if user_profile:
+        return os.path.join(user_profile, 'Documents')
+    return os.path.expanduser('~')
+
+
+def _migrate_legacy_app_data():
+    global _LEGACY_MIGRATION_DONE
+    if _LEGACY_MIGRATION_DONE or sys.platform != "win32":
+        return
+    _LEGACY_MIGRATION_DONE = True
+
+    user_profile = os.getenv('USERPROFILE') or os.path.expanduser('~')
+    appdata_base = os.getenv('APPDATA') or os.path.join(
+        user_profile, 'AppData', 'Roaming')
+    old_dir = os.path.join(appdata_base, 'ProjectManagementApp')
+    if not os.path.isdir(old_dir):
+        return
+
+    new_dir = os.path.join(_get_windows_documents_dir(), 'ProjectManagementApp')
+    os.makedirs(new_dir, exist_ok=True)
+
+    try:
+        items = os.listdir(old_dir)
+    except OSError as exc:
+        logging.warning(f"Could not list legacy data directory: {exc}")
+        return
+
+    for name in items:
+        src = os.path.join(old_dir, name)
+        dst = os.path.join(new_dir, name)
+        if os.path.exists(dst):
+            logging.info(
+                f"Skipping legacy data item because target exists: {dst}")
+            continue
+        try:
+            if os.path.isdir(src):
+                shutil.copytree(src, dst)
+            else:
+                shutil.copy2(src, dst)
+            logging.info(f"Migrated legacy data item: {src} -> {dst}")
+        except Exception as exc:
+            logging.warning(f"Failed to migrate legacy data item {src}: {exc}")
+
+
 def build_timesheet_filename(user_name, week_key):
     tokens = [t for t in str(user_name or '').strip().split() if t]
     if len(tokens) >= 2:
@@ -332,13 +381,10 @@ def get_app_data_path(file_name="tasks.json"):
     writes to AppData to a package-specific virtualized location.
     """
     if sys.platform == "win32":
+        _migrate_legacy_app_data()
         # Use Documents folder - it is NOT virtualized by Windows Store Python
         # This ensures both dev (python main.py) and packaged apps use the same location
-        user_profile = os.getenv('USERPROFILE')
-        if user_profile:
-            base_dir = os.path.join(user_profile, 'Documents')
-        else:
-            base_dir = os.path.expanduser('~')
+        base_dir = _get_windows_documents_dir()
     elif sys.platform == "darwin":  # macOS
         base_dir = os.path.join(os.path.expanduser(
             '~'), 'Library', 'Application Support')

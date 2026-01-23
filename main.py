@@ -1557,6 +1557,7 @@ Return ONLY the JSON object.
             # If expense data is provided, also populate the expense sheet
             expense_data = data.get('expenses', {})
             expense_projects = expense_data.get('projects', [])
+            temp_files_to_cleanup = []
 
             if expense_projects:
                 sheet_name = "Project Expense Sheet"
@@ -1634,7 +1635,6 @@ Return ONLY the JSON object.
                         current_row = total_row + 2
 
                     # Add images starting at row 45, spanning columns A-E
-                    temp_files_to_cleanup = []
                     if all_images:
                         image_start_row = 45
                         # Width spanning A to E (approximately 5 columns ~500 pixels)

@@ -84,6 +84,8 @@ const DISCIPLINE_TO_FUNCTION = {
 const MAX_HOURS_PER_DAY = 8;
 const WFH_SUFFIX = " - WFH";
 const TIMESHEET_SUMMARY_DELIVERABLE_ID = "__summary__";
+const WEEKLY_MEETING_NAME = "workload meeting";
+const WEEKLY_MEETING_DEFAULT_HOURS = 1;
 
 // Cache for loaded descriptions to prevent re-fetching
 const DESCRIPTION_CACHE = {};
@@ -168,6 +170,14 @@ function getTimesheetEntryDescription(entry, fallback = "") {
   return String(desc).trim();
 }
 
+function getTimesheetTaskNumberForDeliverable(name) {
+  const text = String(name || "").toLowerCase();
+  if (text.includes("rfi") || text.includes("submittal")) return "0.CA";
+  if (text.includes("asr")) return "0.05";
+  if (text.includes("survey")) return "0.SV";
+  return "0.00";
+}
+
 function hasWfhSuffix(value) {
   const trimmed = String(value || "").trimEnd();
   const upper = trimmed.toUpperCase();
@@ -196,12 +206,16 @@ function normalizeDeliverableNames(deliverables) {
   (deliverables || []).forEach((deliverable) => {
     const raw =
       typeof deliverable === "string" ? deliverable : deliverable?.name || "";
-    const name = String(raw || "").trim();
-    if (!name) return;
-    const key = name.toLowerCase();
-    if (seen.has(key)) return;
-    seen.add(key);
-    names.push(name);
+    String(raw || "")
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .forEach((name) => {
+        const key = name.toLowerCase();
+        if (seen.has(key)) return;
+        seen.add(key);
+        names.push(name);
+      });
   });
   return names;
 }
@@ -1167,20 +1181,23 @@ function createTimesheetRow(entry, index) {
 }
 
 function enableTimesheetRowDrag(row, entryId) {
-  row.draggable = true;
+  const handle = row.querySelector(".ts-drag-handle");
+  if (!handle) return;
+  handle.draggable = true;
 
-  row.addEventListener("dragstart", (e) => {
-    const handle = e.target.closest(".ts-drag-handle");
-    if (!handle) {
-      e.preventDefault();
-      return;
-    }
+  handle.addEventListener("dragstart", (e) => {
     timesheetDragEntryId = entryId;
     row.classList.add("ts-dragging");
     if (e.dataTransfer) {
       e.dataTransfer.effectAllowed = "move";
       e.dataTransfer.setData("text/plain", entryId);
     }
+  });
+
+  handle.addEventListener("dragend", () => {
+    timesheetDragEntryId = null;
+    row.classList.remove("ts-dragging");
+    clearTimesheetDragStyles();
   });
 
   row.addEventListener("dragover", (e) => {
@@ -1223,10 +1240,6 @@ function enableTimesheetRowDrag(row, entryId) {
     timesheetDragEntryId = null;
   });
 
-  row.addEventListener("dragend", () => {
-    timesheetDragEntryId = null;
-    clearTimesheetDragStyles();
-  });
 }
 
 function createHourDragBar(entry, day, hours, row) {
@@ -1362,9 +1375,13 @@ function renderTimesheetSuggestions() {
   const weekKey = formatWeekKey(currentTimesheetWeek);
   const entries = getWeekEntries(weekKey);
 
+  const weeklyCard = createWeeklyMeetingCard();
+  if (weeklyCard) container.appendChild(weeklyCard);
+
   if (!suggestions.length) {
-    container.innerHTML =
-      '<p class="muted">No projects due this week or next.</p>';
+    container.appendChild(
+      el("p", { className: "muted", textContent: "No projects due this week or next." })
+    );
     return;
   }
 
@@ -1437,6 +1454,39 @@ function renderTimesheetSuggestions() {
   });
 }
 
+function createWeeklyMeetingCard() {
+  const card = el("div", { className: "ts-suggestion-card" });
+  card.onclick = () => addWeeklyMeetingToTimesheet();
+
+  const header = el("div", { className: "ts-suggestion-header" });
+  header.appendChild(
+    el("span", { className: "ts-suggestion-id", textContent: "--" })
+  );
+  header.appendChild(
+    el("span", {
+      className: "ts-suggestion-due ok",
+      textContent: "Weekly",
+    })
+  );
+  card.appendChild(header);
+
+  card.appendChild(
+    el("div", {
+      className: "ts-suggestion-name",
+      textContent: WEEKLY_MEETING_NAME,
+    })
+  );
+
+  card.appendChild(
+    el("div", {
+      className: "ts-suggestion-deliverable",
+      textContent: WEEKLY_MEETING_NAME,
+    })
+  );
+
+  return card;
+}
+
 function createSuggestionCard(
   project,
   deliverableNames,
@@ -1445,11 +1495,8 @@ function createSuggestionCard(
 ) {
   const {
     count = 0,
-    hasWfh = false,
-    hasOffice = false,
     needsUpdate = false,
   } = entryStatus;
-  const isFullyAdded = count >= 2;
   const showAddedStyle = count > 0 && !needsUpdate;
   const card = el("div", {
     className: `ts-suggestion-card ${showAddedStyle ? "added" : ""}`,
@@ -1481,12 +1528,17 @@ function createSuggestionCard(
   );
 
   card.appendChild(
-    el("div", {
-      className: "ts-suggestion-deliverable",
-      textContent: deliverableNames.length
-        ? deliverableNames.join(", ")
-        : "No deliverables listed",
-    })
+    (() => {
+      const deliverableEl = el("div", { className: "ts-suggestion-deliverable" });
+      if (!deliverableNames.length) {
+        deliverableEl.textContent = "No deliverables listed";
+        return deliverableEl;
+      }
+      deliverableNames.forEach((name) => {
+        deliverableEl.appendChild(el("div", { textContent: name }));
+      });
+      return deliverableEl;
+    })()
   );
 
   if (needsUpdate) {
@@ -1496,21 +1548,11 @@ function createSuggestionCard(
         textContent: "Click to append new deliverables",
       })
     );
-  } else if (isFullyAdded) {
-    card.appendChild(
-      el("div", {
-        className: "ts-suggestion-added",
-        textContent: "Office + WFH added",
-      })
-    );
   } else if (count > 0) {
-    let note = "Added to timesheet";
-    if (hasOffice && !hasWfh) note = "Office added";
-    if (hasWfh && !hasOffice) note = "WFH added";
     card.appendChild(
       el("div", {
         className: "ts-suggestion-added",
-        textContent: note,
+        textContent: "Added to timesheet",
       })
     );
   }
@@ -1550,6 +1592,40 @@ function buildProjectSummaryEntry({
   };
 }
 
+function addWeeklyMeetingToTimesheet() {
+  const weekKey = formatWeekKey(currentTimesheetWeek);
+  const entries = getWeekEntries(weekKey);
+  const hours = {
+    sun: 0,
+    mon: WEEKLY_MEETING_DEFAULT_HOURS,
+    tue: 0,
+    wed: 0,
+    thu: 0,
+    fri: 0,
+    sat: 0,
+  };
+  const taskNumber = getTimesheetTaskNumberForDeliverable(WEEKLY_MEETING_NAME);
+
+  entries.push({
+    id: createTimesheetEntryId(),
+    projectId: "",
+    projectName: WEEKLY_MEETING_NAME,
+    deliverableId: "",
+    deliverableName: WEEKLY_MEETING_NAME,
+    pmInitials: getDefaultPmInitials(),
+    serviceDescription: WEEKLY_MEETING_NAME,
+    function: getDisciplineFunction(),
+    hours,
+    mileage: 0,
+    taskNumber,
+  });
+
+  setWeekEntries(weekKey, entries);
+  saveTimesheets();
+  renderTimesheets();
+  toast("Added workload meeting entry.");
+}
+
 function addProjectDeliverablesToTimesheet(project, deliverables) {
   const weekKey = formatWeekKey(currentTimesheetWeek);
   const entries = getWeekEntries(weekKey);
@@ -1561,6 +1637,13 @@ function addProjectDeliverablesToTimesheet(project, deliverables) {
     return;
   }
 
+  const baseDescription = deliverableNames.join(", ");
+
+  if (!baseDescription) {
+    toast("No deliverables due this week.");
+    return;
+  }
+
   const summaryEntries = entries.filter(
     (entry) =>
       isProjectSummaryEntry(entry) &&
@@ -1569,11 +1652,6 @@ function addProjectDeliverablesToTimesheet(project, deliverables) {
 
   const projectId = project.id || "";
   const projectName = project.nick || project.name || "";
-  const baseDescription = deliverableNames.join(", ");
-  let updated = false;
-  let created = false;
-  let addedOffice = false;
-  let addedWfh = false;
 
   const updateEntryDescription = (entry) => {
     const currentDesc = getTimesheetEntryDescription(entry);
@@ -1584,84 +1662,30 @@ function addProjectDeliverablesToTimesheet(project, deliverables) {
       const nextDesc = isWfh ? appendWfhSuffix(merged) : merged;
       entry.serviceDescription = nextDesc;
       entry.deliverableName = nextDesc;
-      updated = true;
     }
   };
 
-  if (summaryEntries.length) {
-    summaryEntries.forEach(updateEntryDescription);
+  if (summaryEntries.length) summaryEntries.forEach(updateEntryDescription);
 
-    if (!updated && summaryEntries.length === 1) {
-      const existingEntry = summaryEntries[0];
-      const existingDesc = stripWfhSuffix(
-        getTimesheetEntryDescription(existingEntry)
-      );
-      const description = existingDesc || baseDescription;
+  const referenceEntry = summaryEntries[0];
 
-      if (!description) {
-        toast("No deliverables to add.");
-        return;
-      }
+  entries.push(
+    buildProjectSummaryEntry({
+      projectId: referenceEntry?.projectId || projectId,
+      projectName: referenceEntry?.projectName || projectName,
+      pmInitials: referenceEntry?.pmInitials || getDefaultPmInitials(),
+      functionName: referenceEntry?.function || getDisciplineFunction(),
+      taskNumber: getTimesheetTaskNumberForDeliverable(baseDescription),
+      description: baseDescription,
+      isWfh: false,
+    })
+  );
 
-      const entryBase = {
-        projectId: existingEntry.projectId || projectId,
-        projectName: existingEntry.projectName || projectName,
-        pmInitials: existingEntry.pmInitials || getDefaultPmInitials(),
-        functionName: existingEntry.function || getDisciplineFunction(),
-        taskNumber: existingEntry.taskNumber || "",
-        description,
-      };
+  setWeekEntries(weekKey, entries);
+  saveTimesheets();
+  renderTimesheets();
 
-      if (hasWfhSuffix(getTimesheetEntryDescription(existingEntry))) {
-        entries.push(buildProjectSummaryEntry({ ...entryBase, isWfh: false }));
-        addedOffice = true;
-      } else {
-        entries.push(buildProjectSummaryEntry({ ...entryBase, isWfh: true }));
-        addedWfh = true;
-      }
-
-      created = true;
-    }
-  } else {
-    if (!baseDescription) {
-      toast("No deliverables due this week.");
-      return;
-    }
-
-    entries.push(
-      buildProjectSummaryEntry({
-        projectId,
-        projectName,
-        pmInitials: getDefaultPmInitials(),
-        functionName: getDisciplineFunction(),
-        taskNumber: "",
-        description: baseDescription,
-        isWfh: false,
-      })
-    );
-    created = true;
-    addedOffice = true;
-  }
-
-  if (created || updated) {
-    setWeekEntries(weekKey, entries);
-    saveTimesheets();
-    renderTimesheets();
-  }
-
-  if (updated) {
-    toast("Updated timesheet description.");
-    return;
-  }
-  if (created) {
-    if (addedWfh) {
-      toast("Added WFH timesheet entry.");
-    } else if (addedOffice) {
-      toast("Added timesheet entry.");
-    }
-    return;
-  }
-  toast("No new deliverables to add.");
+  toast("Added timesheet entry.");
 }
 
 function addProjectToTimesheet(project, deliverable) {
@@ -1672,33 +1696,23 @@ function addProjectToTimesheet(project, deliverable) {
   const existingEntries = entries.filter(
     (e) => e.projectId === projectId && e.deliverableId === deliverableId
   );
-  if (existingEntries.length >= 2) {
-    toast("Office and WFH entries already on the timesheet.");
-    return;
-  }
 
-  const hasWfhEntry = existingEntries.some((entry) =>
-    hasWfhSuffix(
-      getTimesheetEntryDescription(entry, deliverable?.name || "")
-    )
-  );
   const referenceEntry = existingEntries[0];
   const baseDescription = referenceEntry
     ? stripWfhSuffix(
         getTimesheetEntryDescription(referenceEntry, deliverable?.name || "")
       )
     : deliverable?.name || "";
-  const addWfh = existingEntries.length === 1 && !hasWfhEntry;
-  const serviceDescription = addWfh
-    ? appendWfhSuffix(baseDescription)
-    : baseDescription;
+  const serviceDescription = baseDescription;
   const projectName =
     referenceEntry?.projectName || project.nick || project.name || "";
   const deliverableName =
     deliverable?.name || referenceEntry?.deliverableName || "";
   const pmInitials = referenceEntry?.pmInitials || getDefaultPmInitials();
   const functionName = referenceEntry?.function || getDisciplineFunction();
-  const taskNumber = referenceEntry?.taskNumber || "";
+  const taskNumber = getTimesheetTaskNumberForDeliverable(
+    deliverableName || baseDescription
+  );
 
   const entry = {
     id: createTimesheetEntryId(),
@@ -1716,13 +1730,7 @@ function addProjectToTimesheet(project, deliverable) {
 
   entries.push(entry);
   setWeekEntries(weekKey, entries);
-  if (addWfh) {
-    toast("Added WFH timesheet entry.");
-  } else if (existingEntries.length === 1 && hasWfhEntry) {
-    toast("Added office timesheet entry.");
-  } else {
-    toast("Added timesheet entry.");
-  }
+  toast("Added timesheet entry.");
   saveTimesheets();
   renderTimesheets();
 }
@@ -1742,7 +1750,7 @@ function addManualTimesheetEntry() {
     function: getDisciplineFunction(),
     hours: { sun: 0, mon: 0, tue: 0, wed: 0, thu: 0, fri: 0, sat: 0 },
     mileage: 0,
-    taskNumber: "",
+    taskNumber: "0.00",
   };
 
   entries.push(entry);

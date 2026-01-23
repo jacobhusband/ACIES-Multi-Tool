@@ -380,8 +380,13 @@
                         </button>
                         <button class="btn tiny" id="currentWeekBtn">Today</button>
                     </div>
-                    <div class="toolbar-actions">
-                        <button class="btn-primary tiny" id="exportTimesheetBtn" title="Export timesheet and project expense sheet to Excel">
+                    <div class="toolbar-actions timesheet-toolbar-actions">
+                        <div class="timesheet-weekly-total" aria-live="polite">
+                            <span class="weekly-total-label">Weekly Total</span>
+                            <span class="weekly-total-hours" id="weeklyTotalHours">0.0</span>
+                            <span class="weekly-total-unit">hrs</span>
+                        </div>
+                        <button class="btn btn-export" id="exportTimesheetBtn" title="Export timesheet and project expense sheet to Excel">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px;">
                                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                                 <polyline points="7 10 12 15 17 10"></polyline>
@@ -391,12 +396,6 @@
                         </button>
                         <button class="icon-btn" id="timesheetsHelpBtn" aria-label="Timesheets help" title="Timesheets help">?</button>
                     </div>
-                </div>
-
-                <div class="timesheet-totals-bar">
-                    <span class="total-label">Weekly Total:</span>
-                    <span class="total-hours" id="weeklyTotalHours">0.0</span>
-                    <span class="total-label">hours</span>
                 </div>
 
                 <div class="timesheet-grid-container">

@@ -1051,10 +1051,9 @@ class Api:
                 'message': 'AI API key is not configured. Please provide it in the app settings or set GOOGLE_API_KEY in your .env file.'
             }
 
-        self._ensure_aiohttp()
         current_date = datetime.date.today().strftime("%m/%d/%Y")
         disciplines_str = ', '.join(discipline) if isinstance(
-            discipline, list) else discipline
+            discipline, list) else (discipline or 'Engineering')
         prompt = f"""
 You are an intelligent assistant for {user_name}, a(n) {disciplines_str} engineering project manager. Your task is to analyze an email and extract specific project details. Focus ONLY on the primary {disciplines_str} engineering tasks mentioned. Ignore tasks for other disciplines.
 Analyze the following email text and extract the information into a valid JSON object with the following keys: "id", "name", "due", "path", "tasks", "notes".
@@ -1072,6 +1071,7 @@ Here is the email:
 Return ONLY the JSON object.
 """.strip()
         try:
+            self._ensure_aiohttp()
             client = genai.Client(api_key=final_api_key)
             model = "gemini-3-flash-preview"
 
@@ -1093,7 +1093,27 @@ Return ONLY the JSON object.
                 config=generate_content_config,
             )
 
-            cleaned = (response.text or "").strip()
+            # Log response for debugging
+            logging.debug(f"AI response object: {response}")
+
+            # Handle case where response.text might be None or empty
+            raw_text = response.text
+            if raw_text is None:
+                # Try accessing via parts if .text is None
+                if hasattr(response, 'parts') and response.parts:
+                    raw_text = ''.join(
+                        part.text for part in response.parts
+                        if hasattr(part, 'text') and part.text
+                    )
+                if not raw_text:
+                    logging.error(f"AI returned empty response. Full response: {response}")
+                    return {'status': 'error', 'message': 'AI returned an empty response. Please try again.'}
+
+            cleaned = raw_text.strip()
+            if not cleaned:
+                return {'status': 'error', 'message': 'AI returned an empty response. Please try again.'}
+
+            logging.debug(f"AI response text: {cleaned[:500]}...")
             project_data = json.loads(cleaned)
 
             # Handle case where AI returns a list instead of a dict
@@ -1113,9 +1133,13 @@ Return ONLY the JSON object.
 
             return {'status': 'success', 'data': project_data}
 
+        except json.JSONDecodeError as e:
+            logging.error(f"Failed to parse AI response as JSON: {e}")
+            return {'status': 'error', 'message': 'AI returned invalid JSON. Please try again.'}
         except Exception as e:
             msg = str(e)
             lower = msg.lower()
+            logging.error(f"Error processing email with AI: {type(e).__name__}: {e}")
             if ("api key expired" in lower or
                 "api_key_invalid" in lower or
                     "invalid api key" in lower):
@@ -1123,7 +1147,12 @@ Return ONLY the JSON object.
                         'message': ('Your Google API key is expired/invalid. '
                                     'Create a new key in Google AI Studio → API keys, '
                                     'update your settings, then try again.')}
-            logging.error(f"Error processing email with AI: {e}")
+            if "model" in lower and ("not found" in lower or "does not exist" in lower):
+                return {'status': 'error',
+                        'message': 'AI model not available. The Gemini 3 Flash model may not be accessible with your API key.'}
+            if "quota" in lower or "rate limit" in lower:
+                return {'status': 'error',
+                        'message': 'API rate limit exceeded. Please wait a moment and try again.'}
             return {'status': 'error', 'message': f"AI error: {msg}"}
 
     def get_tasks(self):

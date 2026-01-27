@@ -153,12 +153,37 @@ $extractLspContent = @"
   (princ)
 )
 
+;;; Try to create ObjectDBX document with version-specific ProgIDs
+(defun _create-dbx-doc (/ dbxDoc progIds progId)
+  (setq progIds (list
+    "ObjectDBX.AxDbDocument.25"  ; AutoCAD 2026
+    "ObjectDBX.AxDbDocument.24"  ; AutoCAD 2025
+    "ObjectDBX.AxDbDocument.23"  ; AutoCAD 2024
+    "ObjectDBX.AxDbDocument.22"  ; AutoCAD 2023
+    "ObjectDBX.AxDbDocument.21"  ; AutoCAD 2022
+    "ObjectDBX.AxDbDocument.20"  ; AutoCAD 2021
+    "ObjectDBX.AxDbDocument.19"  ; AutoCAD 2020
+    "ObjectDBX.AxDbDocument.18"  ; AutoCAD 2019
+    "ObjectDBX.AxDbDocument"     ; Generic fallback
+  ))
+  (setq dbxDoc nil)
+  (foreach progId progIds
+    (if (null dbxDoc)
+      (setq dbxDoc (vl-catch-all-apply 'vlax-create-object (list progId)))
+    )
+    (if (vl-catch-all-error-p dbxDoc)
+      (setq dbxDoc nil)
+    )
+  )
+  dbxDoc
+)
+
 ;;; ObjectDBX-based layer extraction (fast, database-only access)
 (defun _extract-layers-dbx (dwgPath reportFile / fixedPath dbxDoc layers layObj f openErr)
   (setq fixedPath (_fix-path dwgPath))
   (if fixedPath
     (progn
-      (setq dbxDoc (vlax-create-object "ObjectDBX.AxDbDocument"))
+      (setq dbxDoc (_create-dbx-doc))
       (if dbxDoc
         (progn
           (setq openErr

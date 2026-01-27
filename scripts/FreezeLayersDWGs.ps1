@@ -114,6 +114,8 @@ $scanListFile = Join-Path $ToolDir "scan_files.txt"
 $scanListForLisp = ($scanListFile -replace '\\', '/')
 
 $extractLspContent = @"
+(vl-load-com)
+
 (defun _read-lines (path / f line lines)
   (setq f (open path "r"))
   (if f
@@ -129,6 +131,12 @@ $extractLspContent = @"
   )
 )
 
+;;; Convert forward slashes to backslashes for Windows paths
+(defun _fix-path (path)
+  (vl-string-translate "/" "\\" path)
+)
+
+;;; Fallback: Original tblnext-based extraction for current document
 (defun c:ExtractLayers (/ f lay)
   (setq f (open "$lispReportPath" "a"))
   (if f
@@ -145,13 +153,73 @@ $extractLspContent = @"
   (princ)
 )
 
-(defun c:ExtractLayersBatch (/ files)
+;;; ObjectDBX-based layer extraction (fast, database-only access)
+(defun _extract-layers-dbx (dwgPath reportFile / fixedPath dbxDoc layers layObj f openErr)
+  (setq fixedPath (_fix-path dwgPath))
+  (if fixedPath
+    (progn
+      (setq dbxDoc (vlax-create-object "ObjectDBX.AxDbDocument"))
+      (if dbxDoc
+        (progn
+          (setq openErr
+            (vl-catch-all-apply
+              'vlax-invoke-method
+              (list dbxDoc 'Open fixedPath)))
+
+          (if (not (vl-catch-all-error-p openErr))
+            (progn
+              (setq f (open reportFile "a"))
+              (if f
+                (progn
+                  (write-line
+                    (strcat "###DWG:" (strcat (vl-filename-base fixedPath) ".dwg"))
+                    f)
+                  (setq layers (vlax-get-property dbxDoc 'Layers))
+                  (vlax-for layObj layers
+                    (write-line (vlax-get-property layObj 'Name) f)
+                  )
+                  (close f)
+                  (vlax-release-object dbxDoc)
+                  T
+                )
+                (progn (vlax-release-object dbxDoc) nil)
+              )
+            )
+            (progn (vlax-release-object dbxDoc) nil)
+          )
+        )
+        nil
+      )
+    )
+    nil
+  )
+)
+
+;;; Batch: Try ObjectDBX first, fall back to OPEN (with xrefs disabled) for failures
+(defun c:ExtractLayersBatch (/ files dwgPath failedFiles oldXloadctl)
   (setq files (_read-lines "$scanListForLisp"))
+  (setq failedFiles nil)
+
   (if files
     (progn
-      (foreach f files
-        (command "_.OPEN" f)
-        (c:ExtractLayers)
+      ;; First pass: Try ObjectDBX for all files
+      (foreach dwgPath files
+        (if (not (_extract-layers-dbx dwgPath "$lispReportPath"))
+          (setq failedFiles (cons dwgPath failedFiles))
+        )
+      )
+
+      ;; Second pass: Fallback with XLOADCTL=0 to skip xref loading
+      (if failedFiles
+        (progn
+          (setq oldXloadctl (getvar "XLOADCTL"))
+          (setvar "XLOADCTL" 0)
+          (foreach f (reverse failedFiles)
+            (command "_.OPEN" f)
+            (c:ExtractLayers)
+          )
+          (setvar "XLOADCTL" oldXloadctl)
+        )
       )
     )
   )

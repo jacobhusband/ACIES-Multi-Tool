@@ -315,6 +315,26 @@
                             </div>
                             <div class="tool-card-status"></div>
                         </div>
+                        <div id="toolCreateNarrativeTemplate" class="tool-card" role="button" tabindex="0">
+                            <div class="tool-card-content">
+                                <div class="tool-icon">NC</div>
+                                <div class="tool-card-header">Create Narrative of Changes Template</div>
+                                <div class="tool-card-body">
+                                    Generates a Narrative of Changes document from the bundled template.
+                                </div>
+                            </div>
+                            <div class="tool-card-status"></div>
+                        </div>
+                        <div id="toolCreatePlanCheckTemplate" class="tool-card" role="button" tabindex="0">
+                            <div class="tool-card-content">
+                                <div class="tool-icon">PCC</div>
+                                <div class="tool-card-header">Create Plan Check Comments Template</div>
+                                <div class="tool-card-body">
+                                    Generates a Plan Check Comments document from the bundled template.
+                                </div>
+                            </div>
+                            <div class="tool-card-status"></div>
+                        </div>
                     </div>
                 </div>
 
@@ -344,7 +364,6 @@
                                 </div>
                             </div>
                             <div class="tool-card-status"></div>
-                        </div>
                     </div>
                 </div>
             </section>
@@ -362,7 +381,6 @@
                         <div class="toolbar-actions">
                             <button class="icon-btn" id="pluginsHelpBtn" aria-label="Plugins help"
                                 title="Plugins help">?</button>
-                        </div>
                     </div>
                     <div id="commands-container" class="tools-grid">
                         <!-- Command cards will be dynamically inserted here -->
@@ -477,7 +495,6 @@
                         <div>
                             <h4 class="section-title">Project Expense Sheet</h4>
                             <p class="tiny muted">Track expenses for projects on this week's timesheet</p>
-                        </div>
                     </div>
 
                     <div class="expense-sheet-add-section">
@@ -513,7 +530,6 @@
                         <div class="expense-total-item grand-total">
                             <span class="total-label">Grand Total:</span>
                             <span class="total-value" id="expenseGrandTotal">$0.00</span>
-                        </div>
                     </div>
                 </div>
             </section>
@@ -616,14 +632,6 @@
                 <div class="col-12">
                     <label class="label">Global Notes</label>
                     <textarea id="f_notes" rows="3" placeholder="Global notes"></textarea>
-                </div>
-                <div class="col-12">
-                    <label class="label">Templates</label>
-                    <div class="inline" style="flex-wrap: wrap;">
-                        <button class="btn tiny" id="editTemplateNarrativeBtn">Narrative of Changes</button>
-                        <button class="btn tiny" id="editTemplatePlanCheckBtn">Plan Check Response Letter</button>
-                    </div>
-                    <p class="tiny muted">Save a copy of a template to this project.</p>
                 </div>
             </div>
             <div class="section-divider"></div>
@@ -876,7 +884,6 @@
                             <label class="tiny muted" style="min-width: 160px;">Reduce combined PDF to</label>
                             <input type="range" id="settings_publish_shrinkPercent" min="5" max="100" step="5" />
                             <span class="tiny" id="settings_publish_shrinkValue">100%</span>
-                        </div>
                     </div>
                     <div class="tiny muted" style="margin-top: 0.35rem;">If unchecked, you'll manually enter a page
                         size.</div>
@@ -930,7 +937,6 @@
                     <div class="setting-info">
                         <div class="setting-label">Scan and merge similar projects together</div>
                         <div class="setting-desc">Thoroughly compares project IDs and names, then merges any matches.
-                        </div>
                     </div>
                     <button class="btn" id="btnMergeSimilarProjects">Run Action</button>
                 </div>
@@ -1210,7 +1216,6 @@
                         <div class="feature-item">
                             <span class="feature-icon">🔧</span>
                             <span>AutoCAD automation tools</span>
-                        </div>
                     </div>
                 </div>
             </div>
@@ -1243,7 +1248,6 @@
                                     value="Mechanical"> Mechanical</label>
                             <label class="radio-label"><input type="checkbox" name="onboarding_discipline_checkbox"
                                     value="Plumbing"> Plumbing</label>
-                        </div>
                     </div>
                 </div>
             </div>
@@ -1318,7 +1322,6 @@
                             <button class="filter-chip" data-range="1M">1 Month</button>
                             <button class="filter-chip active" data-range="1Y">1 Year</button>
                             <button class="filter-chip" data-range="3Y">3 Years</button>
-                        </div>
                     </div>
                     <div class="col-6">
                         <div class="filter-label">Aggregation</div>
@@ -1327,7 +1330,6 @@
                             <button class="filter-chip" data-agg="week">Weeks</button>
                             <button class="filter-chip active" data-agg="month">Months</button>
                             <button class="filter-chip" data-agg="quarter">Quarters</button>
-                        </div>
                     </div>
                 </div>
             </div>

@@ -412,14 +412,14 @@ DEFAULT_TEMPLATES = [
         "name": "Narrative of Changes",
         "discipline": "General",
         "fileType": "docx",
-        "sourcePath": r"C:\Users\JacobH\OneDrive - ACIES Engineering\Documents\Company Files\Narrative of Changes.docx",
+        "sourcePath": str(BASE_DIR / "templates" / "Narrative of Changes.docx"),
         "description": "Standard narrative of changes template with MEP sections"
     },
     {
         "name": "Plan Check Comments",
         "discipline": "General",
-        "fileType": "doc",
-        "sourcePath": r"C:\Users\JacobH\OneDrive - ACIES Engineering\Documents\Company Files\PCC.doc",
+        "fileType": "docx",
+        "sourcePath": str(BASE_DIR / "templates" / "Plan Check Comments.docx"),
         "description": "Plan check comments response table template"
     }
 ]
@@ -1250,11 +1250,13 @@ Return ONLY the JSON object.
             if not data.get('defaultTemplatesInstalled'):
                 data = self._install_default_templates(data)
 
+            data = self._ensure_default_templates(data)
             return data
         except (FileNotFoundError, json.JSONDecodeError):
             # First run - create initial structure with defaults
             data = {'templates': [], 'defaultTemplatesInstalled': False, 'lastModified': None}
             data = self._install_default_templates(data)
+            data = self._ensure_default_templates(data)
             return data
 
     def _install_default_templates(self, data):
@@ -1276,6 +1278,54 @@ Return ONLY the JSON object.
         data['defaultTemplatesInstalled'] = True
         data['lastModified'] = datetime.datetime.now().isoformat()
         self.save_templates(data)
+        return data
+
+    def _ensure_default_templates(self, data):
+        """Ensure bundled default templates exist and update paths if needed."""
+        templates = data.get('templates') or []
+        updated = False
+        for tpl_def in DEFAULT_TEMPLATES:
+            name_key = str(tpl_def.get('name', '')).strip().lower()
+            expected_path = tpl_def.get('sourcePath')
+            existing = next(
+                (
+                    t for t in templates
+                    if t.get('isDefault') and str(t.get('name', '')).strip().lower() == name_key
+                ),
+                None
+            )
+
+            if existing:
+                existing_path = str(existing.get('sourcePath') or '')
+                expected_abs = os.path.abspath(expected_path) if expected_path else ''
+                existing_abs = os.path.abspath(existing_path) if existing_path else ''
+                if expected_abs and (not os.path.exists(existing_path) or existing_abs != expected_abs):
+                    existing['sourcePath'] = expected_path
+                    existing['fileType'] = tpl_def.get('fileType')
+                    existing['discipline'] = tpl_def.get('discipline')
+                    existing['description'] = tpl_def.get('description', '')
+                    updated = True
+                continue
+
+            if expected_path and os.path.exists(expected_path):
+                template = {
+                    'id': f"tpl_{os.urandom(6).hex()}",
+                    'name': tpl_def['name'],
+                    'discipline': tpl_def['discipline'],
+                    'fileType': tpl_def['fileType'],
+                    'sourcePath': expected_path,
+                    'isDefault': True,
+                    'dateAdded': datetime.datetime.now().isoformat(),
+                    'description': tpl_def.get('description', '')
+                }
+                templates.append(template)
+                updated = True
+
+        if updated:
+            data['templates'] = templates
+            data['defaultTemplatesInstalled'] = True
+            data['lastModified'] = datetime.datetime.now().isoformat()
+            self.save_templates(data)
         return data
 
     def save_templates(self, data):

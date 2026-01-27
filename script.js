@@ -944,13 +944,26 @@ async function handleRemoveTemplate(templateId, templateName) {
   }
 }
 
-async function handleEditTemplateSave(templateKey, label) {
-  const projectPath = document.getElementById("f_path")?.value.trim() || "";
-  if (!projectPath) {
-    toast("Please set a project path first.");
-    return;
+function getTemplateToolContext() {
+  let projectPath = "";
+  let projectName = "";
+  const existingProject = editIndex >= 0 && db[editIndex] ? db[editIndex] : null;
+  if (existingProject) {
+    projectPath = String(existingProject.path || "").trim();
+    projectName = String(existingProject.name || existingProject.nick || existingProject.id || "").trim();
   }
 
+  if (!projectPath) {
+    projectPath = document.getElementById("f_path")?.value.trim() || "";
+  }
+  if (!projectName) {
+    projectName = document.getElementById("f_name")?.value.trim() || "";
+  }
+
+  return { projectPath, projectName };
+}
+
+async function handleTemplateToolSave(templateKey, label) {
   try {
     await loadTemplates();
   } catch (e) {
@@ -963,11 +976,12 @@ async function handleEditTemplateSave(templateKey, label) {
     return;
   }
 
+  const { projectPath, projectName } = getTemplateToolContext();
   const defaultName = String(label || template.name || "Template").trim() || "Template";
   let selection = null;
   try {
     selection = await window.pywebview.api.select_template_save_location(
-      projectPath,
+      projectPath || null,
       defaultName,
       template.fileType
     );
@@ -984,9 +998,8 @@ async function handleEditTemplateSave(templateKey, label) {
     return;
   }
 
-  const context = {
-    projectName: document.getElementById("f_name")?.value.trim() || "",
-  };
+  const context = {};
+  if (projectName) context.projectName = projectName;
   const options = { templateKey };
 
   try {
@@ -7050,21 +7063,6 @@ function initEventListeners() {
     templatesHelpBtn.onclick = () => openExternalUrl(HELP_LINKS.main);
   }
 
-  const editTemplateNarrativeBtn = document.getElementById(
-    "editTemplateNarrativeBtn"
-  );
-  if (editTemplateNarrativeBtn) {
-    editTemplateNarrativeBtn.onclick = () =>
-      handleEditTemplateSave("narrative", "Narrative of Changes");
-  }
-  const editTemplatePlanCheckBtn = document.getElementById(
-    "editTemplatePlanCheckBtn"
-  );
-  if (editTemplatePlanCheckBtn) {
-    editTemplatePlanCheckBtn.onclick = () =>
-      handleEditTemplateSave("planCheck", "Plan Check Response Letter");
-  }
-
   document.getElementById("prevWeekBtn").onclick = () =>
     navigateTimesheetWeek(-1);
   document.getElementById("nextWeekBtn").onclick = () =>
@@ -7293,6 +7291,36 @@ function initEventListeners() {
       window.updateToolStatus("toolCleanXrefs", "Initializing...");
       await window.pywebview.api.run_clean_xrefs_script();
     });
+
+  const narrativeTemplateBtn = document.getElementById(
+    "toolCreateNarrativeTemplate"
+  );
+  if (narrativeTemplateBtn) {
+    const handler = () =>
+      handleTemplateToolSave("narrative", "Narrative of Changes");
+    narrativeTemplateBtn.addEventListener("click", handler);
+    narrativeTemplateBtn.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        handler();
+      }
+    });
+  }
+
+  const planCheckTemplateBtn = document.getElementById(
+    "toolCreatePlanCheckTemplate"
+  );
+  if (planCheckTemplateBtn) {
+    const handler = () =>
+      handleTemplateToolSave("planCheck", "Plan Check Comments");
+    planCheckTemplateBtn.addEventListener("click", handler);
+    planCheckTemplateBtn.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        handler();
+      }
+    });
+  }
 
 
   const wireSizerBtn = document.getElementById("toolWireSizer");

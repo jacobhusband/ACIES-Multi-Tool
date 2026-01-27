@@ -2087,6 +2087,103 @@ dialog::backdrop {
   gap: 1rem;
 }
 
+/* Tool Settings Modals */
+.tool-settings-body {
+  gap: 1rem;
+}
+
+.tool-settings-intro {
+  padding: 0.85rem 1rem;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+}
+
+.tool-settings-title {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--text);
+  margin-bottom: 0.35rem;
+}
+
+.tool-settings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.tool-setting {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.9rem 1rem;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+}
+
+[data-theme="light"] .tool-setting {
+  background: var(--accent-dim);
+  border-color: rgba(34, 197, 94, 0.25);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.tool-setting-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.tool-setting-title {
+  font-weight: 600;
+  font-size: 0.88rem;
+  color: var(--text);
+}
+
+.tool-setting-desc {
+  font-size: 0.78rem;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.tool-setting-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  white-space: nowrap;
+}
+
+.tool-setting-slider {
+  min-width: 200px;
+  justify-content: flex-end;
+  gap: 0.6rem;
+}
+
+.tool-setting-slider input[type="range"] {
+  flex: 1;
+}
+
+.toggle-label {
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+@media (max-width: 640px) {
+  .tool-setting {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .tool-setting-control,
+  .tool-setting-slider {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}
+
 /* Utilities */
 .col-4 {
   grid-column: span 4;

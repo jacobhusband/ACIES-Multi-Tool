@@ -989,13 +989,39 @@
             <div class="title">Publish CAD DWGs Settings</div>
             <button class="btn ghost" onclick="closeDlg('publishSettingsDlg')">Close</button>
         </div>
-        <div class="modal-body stack">
-            <label class="radio-label"><input type="checkbox" id="publish_modal_autoDetectPaperSize"> Auto-detect page
-                size</label>
-            <div class="inline" style="gap: 0.5rem; align-items: center;">
-                <label class="tiny muted" style="min-width: 160px;">Reduce combined PDF to</label>
-                <input type="range" id="publish_modal_shrinkPercent" min="5" max="100" step="5" />
-                <span class="tiny" id="publish_modal_shrinkValue">100%</span>
+        <div class="modal-body stack tool-settings-body">
+            <div class="tool-settings-intro">
+                <div class="tool-settings-title">How these toggles work</div>
+                <p class="tiny muted">On means the tool performs the action when you run it. Off skips that step. Changes
+                    save automatically and apply next time the tool runs.</p>
+            </div>
+            <div class="tool-settings-list">
+                <div class="tool-setting">
+                    <div class="tool-setting-text">
+                        <div class="tool-setting-title">Auto-detect page size</div>
+                        <div class="tool-setting-desc">On: looks for matching PDFs in the project folder and
+                            preselects a size. Off: you manually enter or select a paper size.</div>
+                    </div>
+                    <div class="tool-setting-control">
+                        <span class="toggle-label">Off</span>
+                        <label class="switch" aria-label="Auto-detect page size">
+                            <input type="checkbox" id="publish_modal_autoDetectPaperSize">
+                            <span class="slider"></span>
+                        </label>
+                        <span class="toggle-label">On</span>
+                    </div>
+                </div>
+                <div class="tool-setting">
+                    <div class="tool-setting-text">
+                        <div class="tool-setting-title">Output scale</div>
+                        <div class="tool-setting-desc">Controls the size of the combined PDF. 100% keeps the original
+                            scale; lower values shrink the output.</div>
+                    </div>
+                    <div class="tool-setting-control tool-setting-slider">
+                        <input type="range" id="publish_modal_shrinkPercent" min="5" max="100" step="5" />
+                        <span class="tiny" id="publish_modal_shrinkValue">100%</span>
+                    </div>
+                </div>
             </div>
         </div>
     </dialog>
@@ -1005,9 +1031,29 @@
             <div class="title">Freeze Layers Settings</div>
             <button class="btn ghost" onclick="closeDlg('freezeSettingsDlg')">Close</button>
         </div>
-        <div class="modal-body stack">
-            <label class="radio-label"><input type="checkbox" id="freeze_modal_scanAllLayers"> Scan all selected DWG
-                layers</label>
+        <div class="modal-body stack tool-settings-body">
+            <div class="tool-settings-intro">
+                <div class="tool-settings-title">How these toggles work</div>
+                <p class="tiny muted">On means the tool performs the action when you run it. Off skips that step. Changes
+                    save automatically and apply next time the tool runs.</p>
+            </div>
+            <div class="tool-settings-list">
+                <div class="tool-setting">
+                    <div class="tool-setting-text">
+                        <div class="tool-setting-title">Scan all selected DWGs for layers</div>
+                        <div class="tool-setting-desc">On: scans every selected DWG to build a complete layer list.
+                            Off: scans only the first DWG (faster, but may miss layers).</div>
+                    </div>
+                    <div class="tool-setting-control">
+                        <span class="toggle-label">Off</span>
+                        <label class="switch" aria-label="Scan all selected DWGs for layers">
+                            <input type="checkbox" id="freeze_modal_scanAllLayers">
+                            <span class="slider"></span>
+                        </label>
+                        <span class="toggle-label">On</span>
+                    </div>
+                </div>
+            </div>
         </div>
     </dialog>
     <!-- Tool Settings: Thaw -->
@@ -1016,9 +1062,29 @@
             <div class="title">Thaw Layers Settings</div>
             <button class="btn ghost" onclick="closeDlg('thawSettingsDlg')">Close</button>
         </div>
-        <div class="modal-body stack">
-            <label class="radio-label"><input type="checkbox" id="thaw_modal_scanAllLayers"> Scan all selected DWG
-                layers</label>
+        <div class="modal-body stack tool-settings-body">
+            <div class="tool-settings-intro">
+                <div class="tool-settings-title">How these toggles work</div>
+                <p class="tiny muted">On means the tool performs the action when you run it. Off skips that step. Changes
+                    save automatically and apply next time the tool runs.</p>
+            </div>
+            <div class="tool-settings-list">
+                <div class="tool-setting">
+                    <div class="tool-setting-text">
+                        <div class="tool-setting-title">Scan all selected DWGs for layers</div>
+                        <div class="tool-setting-desc">On: scans every selected DWG to build a complete layer list.
+                            Off: scans only the first DWG (faster, but may miss layers).</div>
+                    </div>
+                    <div class="tool-setting-control">
+                        <span class="toggle-label">Off</span>
+                        <label class="switch" aria-label="Scan all selected DWGs for layers">
+                            <input type="checkbox" id="thaw_modal_scanAllLayers">
+                            <span class="slider"></span>
+                        </label>
+                        <span class="toggle-label">On</span>
+                    </div>
+                </div>
+            </div>
         </div>
     </dialog>
     <!-- Tool Settings: Prepare CAD DWG for Reference -->
@@ -1027,14 +1093,89 @@
             <div class="title">Prepare CAD DWG Settings</div>
             <button class="btn ghost" onclick="closeDlg('cleanSettingsDlg')">Close</button>
         </div>
-        <div class="modal-body stack">
-            <label class="radio-label"><input type="checkbox" id="clean_modal_stripXrefs"> Strip saved XREF paths</label>
-            <label class="radio-label"><input type="checkbox" id="clean_modal_setByLayer"> Set all objects to
-                &quot;ByLayer&quot;</label>
-            <label class="radio-label"><input type="checkbox" id="clean_modal_purge"> Purge</label>
-            <label class="radio-label"><input type="checkbox" id="clean_modal_audit"> Audit</label>
-            <label class="radio-label"><input type="checkbox" id="clean_modal_hatchColor"> Set all non-wall hatches to
-                color &quot;9&quot;</label>
+        <div class="modal-body stack tool-settings-body">
+            <div class="tool-settings-intro">
+                <div class="tool-settings-title">How these toggles work</div>
+                <p class="tiny muted">On means the tool performs the action when you run it. Off skips that step. Changes
+                    save automatically and apply next time the tool runs.</p>
+            </div>
+            <div class="tool-settings-list">
+                <div class="tool-setting">
+                    <div class="tool-setting-text">
+                        <div class="tool-setting-title">Strip saved XREF paths</div>
+                        <div class="tool-setting-desc">On: removes stored XREF file paths from the DWG. Off: keeps
+                            existing XREF paths unchanged.</div>
+                    </div>
+                    <div class="tool-setting-control">
+                        <span class="toggle-label">Off</span>
+                        <label class="switch" aria-label="Strip saved XREF paths">
+                            <input type="checkbox" id="clean_modal_stripXrefs">
+                            <span class="slider"></span>
+                        </label>
+                        <span class="toggle-label">On</span>
+                    </div>
+                </div>
+                <div class="tool-setting">
+                    <div class="tool-setting-text">
+                        <div class="tool-setting-title">Set all objects to &quot;ByLayer&quot;</div>
+                        <div class="tool-setting-desc">On: forces object colors/linetypes to follow their layer. Off:
+                            leaves existing object overrides intact.</div>
+                    </div>
+                    <div class="tool-setting-control">
+                        <span class="toggle-label">Off</span>
+                        <label class="switch" aria-label="Set all objects to ByLayer">
+                            <input type="checkbox" id="clean_modal_setByLayer">
+                            <span class="slider"></span>
+                        </label>
+                        <span class="toggle-label">On</span>
+                    </div>
+                </div>
+                <div class="tool-setting">
+                    <div class="tool-setting-text">
+                        <div class="tool-setting-title">Purge</div>
+                        <div class="tool-setting-desc">On: removes unused blocks, layers, and styles. Off: keeps all
+                            existing definitions.</div>
+                    </div>
+                    <div class="tool-setting-control">
+                        <span class="toggle-label">Off</span>
+                        <label class="switch" aria-label="Purge unused definitions">
+                            <input type="checkbox" id="clean_modal_purge">
+                            <span class="slider"></span>
+                        </label>
+                        <span class="toggle-label">On</span>
+                    </div>
+                </div>
+                <div class="tool-setting">
+                    <div class="tool-setting-text">
+                        <div class="tool-setting-title">Audit</div>
+                        <div class="tool-setting-desc">On: runs AutoCAD audit to find and fix drawing errors. Off: skips
+                            the audit step.</div>
+                    </div>
+                    <div class="tool-setting-control">
+                        <span class="toggle-label">Off</span>
+                        <label class="switch" aria-label="Run audit">
+                            <input type="checkbox" id="clean_modal_audit">
+                            <span class="slider"></span>
+                        </label>
+                        <span class="toggle-label">On</span>
+                    </div>
+                </div>
+                <div class="tool-setting">
+                    <div class="tool-setting-text">
+                        <div class="tool-setting-title">Set non-wall hatches to color 9</div>
+                        <div class="tool-setting-desc">On: forces non-wall hatch objects to color 9. Off: leaves hatch
+                            colors unchanged.</div>
+                    </div>
+                    <div class="tool-setting-control">
+                        <span class="toggle-label">Off</span>
+                        <label class="switch" aria-label="Set non-wall hatches to color 9">
+                            <input type="checkbox" id="clean_modal_hatchColor">
+                            <span class="slider"></span>
+                        </label>
+                        <span class="toggle-label">On</span>
+                    </div>
+                </div>
+            </div>
         </div>
     </dialog>
     <!-- Onboarding Modal -->

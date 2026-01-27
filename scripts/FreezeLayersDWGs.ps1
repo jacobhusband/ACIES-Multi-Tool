@@ -1,6 +1,24 @@
 param(
-  [string]$AcadCore
+  [string]$AcadCore,
+  [string]$ScanAllLayers = "true"
 )
+
+function Convert-ToBool {
+  param(
+    [object]$Value,
+    [bool]$DefaultValue = $true
+  )
+  if ($null -eq $Value) { return $DefaultValue }
+  $text = $Value.ToString().Trim()
+  if ($text.StartsWith('$')) { $text = $text.Substring(1) }
+  switch -Regex ($text) {
+    '^(1|true|t|yes|y)$' { return $true }
+    '^(0|false|f|no|n)$' { return $false }
+    default { return $DefaultValue }
+  }
+}
+
+$ScanAllLayers = Convert-ToBool $ScanAllLayers $true
 
 # ---------------- CONFIGURATION ----------------
 $ProcessTimeoutSeconds = 180
@@ -35,6 +53,9 @@ if ([System.Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') {
   $ps = (Get-Process -Id $PID).Path
   $argsList = @("-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"")
   if ($AcadCore) { $argsList += @("-AcadCore", "`"$AcadCore`"") }
+  if ($PSBoundParameters.ContainsKey('ScanAllLayers')) {
+    $argsList += @("-ScanAllLayers", $ScanAllLayers)
+  }
   Start-Process -FilePath $ps -ArgumentList $argsList -Wait
   exit
 }
@@ -127,10 +148,16 @@ N
 "@
 Set-Content -Path $extractScr -Value $extractScrContent -Encoding ASCII
 
-Write-Host "PROGRESS: Scanning $($files.Count) files for layers..."
+if ($ScanAllLayers) {
+  Write-Host "PROGRESS: Scanning $($files.Count) files for layers..."
+}
+else {
+  Write-Host "PROGRESS: Scanning first file only for layers..."
+}
 $allLayers = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
 
-foreach ($file in $files) {
+$filesToScan = if ($ScanAllLayers) { $files } else { @($files[0]) }
+foreach ($file in $filesToScan) {
   Write-Host -NoNewline "."
   $base = Split-Path $file -LeafBase
   $outLog = Join-Path $ToolDir "extract_$base.out.txt"

@@ -896,7 +896,30 @@ class Api:
             with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except (FileNotFoundError, json.JSONDecodeError):
-            return {'userName': '', 'discipline': ['Electrical'], 'apiKey': '', 'autocadPath': '', 'showSetupHelp': True}
+            return {
+                'userName': '',
+                'discipline': ['Electrical'],
+                'apiKey': '',
+                'autocadPath': '',
+                'showSetupHelp': True,
+                'cleanDwgOptions': {
+                    'stripXrefs': True,
+                    'setByLayer': True,
+                    'purge': True,
+                    'audit': True,
+                    'hatchColor': True
+                },
+                'publishDwgOptions': {
+                    'autoDetectPaperSize': True,
+                    'shrinkPercent': 100
+                },
+                'freezeLayerOptions': {
+                    'scanAllLayers': True
+                },
+                'thawLayerOptions': {
+                    'scanAllLayers': True
+                }
+            }
 
     def save_user_settings(self, data):
         """Saves user settings to settings.json."""
@@ -2184,7 +2207,19 @@ Return ONLY the JSON object.
         acad_path = settings.get('autocadPath', '')
         if not acad_path:
             raise Exception("No AutoCAD version selected in settings.")
-        command = f'powershell.exe -ExecutionPolicy Bypass -File "{script_path}" -AcadCore "{acad_path}"'
+        publish_options = settings.get('publishDwgOptions') or {}
+        auto_detect = publish_options.get('autoDetectPaperSize', True)
+        shrink_percent = publish_options.get('shrinkPercent', 100)
+
+        def _ps_bool(value):
+            return "1" if value else "0"
+
+        command = (
+            f'powershell.exe -ExecutionPolicy Bypass -File "{script_path}" '
+            f'-AcadCore "{acad_path}" '
+            f'-AutoDetectPaperSize {_ps_bool(auto_detect)} '
+            f'-ShrinkPercent {shrink_percent}'
+        )
         self._run_script_with_progress(command, 'toolPublishDwgs')
         return {'status': 'success'}
 
@@ -2198,7 +2233,17 @@ Return ONLY the JSON object.
         acad_path = settings.get('autocadPath', '')
         if not acad_path:
             raise Exception("No AutoCAD version selected in settings.")
-        command = f'powershell.exe -ExecutionPolicy Bypass -File "{script_path}" -AcadCore "{acad_path}"'
+        freeze_options = settings.get('freezeLayerOptions') or {}
+        scan_all = freeze_options.get('scanAllLayers', True)
+
+        def _ps_bool(value):
+            return "1" if value else "0"
+
+        command = (
+            f'powershell.exe -ExecutionPolicy Bypass -File "{script_path}" '
+            f'-AcadCore "{acad_path}" '
+            f'-ScanAllLayers {_ps_bool(scan_all)}'
+        )
         self._run_script_with_progress(command, 'toolFreezeLayers')
         return {'status': 'success'}
 
@@ -2212,7 +2257,17 @@ Return ONLY the JSON object.
         acad_path = settings.get('autocadPath', '')
         if not acad_path:
             raise Exception("No AutoCAD version selected in settings.")
-        command = f'powershell.exe -ExecutionPolicy Bypass -File "{script_path}" -AcadCore "{acad_path}"'
+        thaw_options = settings.get('thawLayerOptions') or {}
+        scan_all = thaw_options.get('scanAllLayers', True)
+
+        def _ps_bool(value):
+            return "1" if value else "0"
+
+        command = (
+            f'powershell.exe -ExecutionPolicy Bypass -File "{script_path}" '
+            f'-AcadCore "{acad_path}" '
+            f'-ScanAllLayers {_ps_bool(scan_all)}'
+        )
         self._run_script_with_progress(command, 'toolThawLayers')
         return {'status': 'success'}
 
@@ -2255,6 +2310,20 @@ Return ONLY the JSON object.
             discipline_short = discipline_short_map.get(
                 discipline, (discipline[:1] or 'E').upper())
 
+            clean_options = settings.get('cleanDwgOptions') or {}
+            def _bool_setting(key, default=True):
+                value = clean_options.get(key, default)
+                return bool(value) if value is not None else default
+
+            strip_xrefs = _bool_setting('stripXrefs', True)
+            set_by_layer = _bool_setting('setByLayer', True)
+            purge = _bool_setting('purge', True)
+            audit = _bool_setting('audit', True)
+            hatch_color = _bool_setting('hatchColor', True)
+
+            def _ps_bool(value):
+                return "1" if value else "0"
+
             # Write file paths to a temp file to avoid command line escaping issues
             import tempfile
             temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8')
@@ -2266,7 +2335,12 @@ Return ONLY the JSON object.
             command = (
                 f'powershell.exe -ExecutionPolicy Bypass -File "{script_path}" '
                 f'-AcadCore "{acad_path}" -DisciplineShort "{discipline_short}" '
-                f'-FilesListPath "{temp_file.name}"'
+                f'-FilesListPath "{temp_file.name}" '
+                f'-StripXrefs {_ps_bool(strip_xrefs)} '
+                f'-SetByLayer {_ps_bool(set_by_layer)} '
+                f'-Purge {_ps_bool(purge)} '
+                f'-Audit {_ps_bool(audit)} '
+                f'-HatchColor {_ps_bool(hatch_color)}'
             )
             print(f"DEBUG: Command: {command}")
             self._run_script_with_progress(command, 'toolCleanXrefs')

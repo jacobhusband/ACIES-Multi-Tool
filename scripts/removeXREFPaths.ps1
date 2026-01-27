@@ -1,7 +1,12 @@
 param(
   [string]$AcadCore,
   [string]$DisciplineShort,
-  [string]$FilesListPath
+  [string]$FilesListPath,
+  [bool]$StripXrefs = $true,
+  [bool]$SetByLayer = $true,
+  [bool]$Purge = $true,
+  [bool]$Audit = $true,
+  [bool]$HatchColor = $true
 )
 
 # removeXrefPaths.ps1
@@ -39,7 +44,7 @@ if ([string]::IsNullOrEmpty($acadCore) -or -not (Test-Path $acadCore)) {
   exit 1
 }
 
-if (-not (Test-Path $dll)) {
+if ($StripXrefs -and -not (Test-Path $dll)) {
   Write-Host "PROGRESS: ERROR: Required component 'StripRefPaths.dll' not found at $dll"
   exit 1
 }
@@ -88,14 +93,16 @@ function Find-FolderIndex([string[]]$parts, [string]$name) {
 }
 
 function Get-SheetIdFromName([string]$name) {
-  $patterns = @(
-    '(?i)\b[A-Z]{1,3}\d{1,3}-\d{1,3}[A-Z]?\b',
-    '(?i)\b[A-Z]{1,3}\d{1,3}\.\d{1,3}[A-Z]?\b'
-  )
-  foreach ($pattern in $patterns) {
-    $match = [regex]::Match($name, $pattern)
-    if ($match.Success) { return $match.Value.ToUpper() }
-  }
+  # Prefer sheet IDs that start with A (ex: A00-00), then fall back to
+  # single-letter dash patterns (ex: E-1-02-100).
+  $preferredPattern = '(?i)\bA\d{1,3}-\d{1,3}[A-Z]?\b'
+  $preferredMatch = [regex]::Match($name, $preferredPattern)
+  if ($preferredMatch.Success) { return $preferredMatch.Value.ToUpper() }
+
+  $fallbackPattern = '(?i)\b[A-Z]-\d{1,3}-\d{2}-\d+\b'
+  $fallbackMatch = [regex]::Match($name, $fallbackPattern)
+  if ($fallbackMatch.Success) { return $fallbackMatch.Value.ToUpper() }
+
   return $null
 }
 
@@ -113,24 +120,21 @@ function Get-CleanFileName([string]$name) {
 Write-Host "PROGRESS: Staging cleanup commands..."
 # Stage AutoLISP CLEANUP command so each drawing is tidied after ref paths are stripped
 $lisp = Join-Path $env:TEMP "cleanup_tmp.lsp"
-$lispContent = @'
-(defun c:CLEANUP (/ oldCMDECHO oldTab ss i ent entData layerName)
-  ;; Remember current command echo setting, then turn it off:
-  (setq oldCMDECHO (getvar "CMDECHO")
-        oldTab     (getvar "CTAB"))
-  (setvar "CMDECHO" 0)
-
-  ;; Ensure commands run from Model space
-  (if (/= oldTab "Model")
-    (command "_.MODEL")
-  )
-
+$setByLayerBlock = ""
+if ($SetByLayer) {
+  $setByLayerBlock = @'
   ;; Use SETBYLAYER on everything in the current space
   ;;   "Y" => Change ByBlock to ByLayer?
   ;;   "Y" => Include blocks?
   (command
     "_.-SETBYLAYER" "All" "" "Y" "Y")
 
+'@
+}
+
+$hatchBlock = ""
+if ($HatchColor) {
+  $hatchBlock = @'
   ;; Change color of non-nested modelspace hatches to 9 (excluding WALL layers)
   ;; This runs AFTER SETBYLAYER so the color override is preserved
   ;; ssget "X" with filter: HATCH entities in modelspace (410 = "Model")
@@ -160,12 +164,40 @@ $lispContent = @'
     )
   )
 
+'@
+}
+
+$purgeBlock = ""
+if ($Purge) {
+  $purgeBlock = @'
   ;; Purge the entire drawing; "All", "*" (everything), "No" to confirm each
   (command "_.-PURGE" "All" "*" "N")
 
+'@
+}
+
+$auditBlock = ""
+if ($Audit) {
+  $auditBlock = @'
   ;; Audit the drawing; "Yes" to fix errors
   (command "_.AUDIT" "Y")
 
+'@
+}
+
+$lispContent = @"
+(defun c:CLEANUP (/ oldCMDECHO oldTab ss i ent entData layerName)
+  ;; Remember current command echo setting, then turn it off:
+  (setq oldCMDECHO (getvar "CMDECHO")
+        oldTab     (getvar "CTAB"))
+  (setvar "CMDECHO" 0)
+
+  ;; Ensure commands run from Model space
+  (if (/= oldTab "Model")
+    (command "_.MODEL")
+  )
+
+$setByLayerBlock$hatchBlock$purgeBlock$auditBlock
   ;; Restore layout/model state if it changed
   (if (/= oldTab (getvar "CTAB"))
     (if (= oldTab "Model")
@@ -178,24 +210,32 @@ $lispContent = @'
   (setvar "CMDECHO" oldCMDECHO)
   (princ)
 )
-'@
+"@
 Set-Content -Encoding ASCII -Path $lisp -Value $lispContent
 
-# Make .scr that NETLOADs the DLL, strips refs, and then runs CLEANUP
+# Make .scr that runs the requested steps
 $script = Join-Path $env:TEMP "run_STRIP.scr"
 $lispPathForScript = ($lisp -replace '\\', '/')
-$scriptContent = @"
-CMDECHO 1
-FILEDIA 0
-SECURELOAD 0
-NETLOAD
-"$dll"
-STRIPREFPATHS
-(load "$lispPathForScript")
-CLEANUP
-QSAVE
-QUIT
-"@
+$scriptLines = @(
+  "CMDECHO 1",
+  "FILEDIA 0",
+  "SECURELOAD 0"
+)
+if ($StripXrefs) {
+  $scriptLines += "NETLOAD"
+  $scriptLines += "`"$dll`""
+  $scriptLines += "STRIPREFPATHS"
+}
+
+$runCleanup = $SetByLayer -or $Purge -or $Audit -or $HatchColor
+if ($runCleanup) {
+  $scriptLines += "(load `"$lispPathForScript`")"
+  $scriptLines += "CLEANUP"
+}
+
+$scriptLines += "QSAVE"
+$scriptLines += "QUIT"
+$scriptContent = $scriptLines -join "`r`n"
 Set-Content -Encoding ASCII -Path $script -Value $scriptContent
 
 # Read files from list file (one path per line)

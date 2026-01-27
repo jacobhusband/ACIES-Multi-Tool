@@ -90,6 +90,13 @@ const WEEKLY_MEETING_DEFAULT_HOURS = 1;
 // Cache for loaded descriptions to prevent re-fetching
 const DESCRIPTION_CACHE = {};
 let bundlesPrefetchStarted = false;
+let bundlesCache = null;
+let bundlesCacheKey = "";
+let bundlesLastRenderKey = "";
+let bundlesLoadingPromise = null;
+let bundlesNeedsRender = false;
+let bundlesLastCheckAt = 0;
+let bundlesUpdateCheckInFlight = false;
 
 // ===================== UTILITIES & HELPERS =====================
 
@@ -2824,6 +2831,24 @@ let currentSort = { key: "due", dir: "desc" };
 let statusFilter = "all";
 let dueFilter = "all";
 
+const DEFAULT_CLEAN_DWG_OPTIONS = {
+  stripXrefs: true,
+  setByLayer: true,
+  purge: true,
+  audit: true,
+  hatchColor: true,
+};
+const DEFAULT_PUBLISH_DWG_OPTIONS = {
+  autoDetectPaperSize: true,
+  shrinkPercent: 100,
+};
+const DEFAULT_FREEZE_LAYER_OPTIONS = {
+  scanAllLayers: true,
+};
+const DEFAULT_THAW_LAYER_OPTIONS = {
+  scanAllLayers: true,
+};
+
 let userSettings = {
   userName: "",
   discipline: ["Electrical"],
@@ -2834,6 +2859,10 @@ let userSettings = {
   lightingTemplates: [],
   autoPrimary: false,
   defaultPmInitials: "",
+  cleanDwgOptions: { ...DEFAULT_CLEAN_DWG_OPTIONS },
+  publishDwgOptions: { ...DEFAULT_PUBLISH_DWG_OPTIONS },
+  freezeLayerOptions: { ...DEFAULT_FREEZE_LAYER_OPTIONS },
+  thawLayerOptions: { ...DEFAULT_THAW_LAYER_OPTIONS },
 };
 let hideNonPrimary = true;
 let activeNoteTab = null;
@@ -3066,9 +3095,89 @@ async function loadUserSettings() {
     const storedSettings = await window.pywebview.api.get_user_settings();
     if (storedSettings) userSettings = { ...userSettings, ...storedSettings };
     userSettings.discipline = normalizeDisciplineList(userSettings.discipline);
+    userSettings.cleanDwgOptions = {
+      ...DEFAULT_CLEAN_DWG_OPTIONS,
+      ...(userSettings.cleanDwgOptions || {}),
+    };
+    userSettings.publishDwgOptions = {
+      ...DEFAULT_PUBLISH_DWG_OPTIONS,
+      ...(userSettings.publishDwgOptions || {}),
+    };
+    userSettings.freezeLayerOptions = {
+      ...DEFAULT_FREEZE_LAYER_OPTIONS,
+      ...(userSettings.freezeLayerOptions || {}),
+    };
+    userSettings.thawLayerOptions = {
+      ...DEFAULT_THAW_LAYER_OPTIONS,
+      ...(userSettings.thawLayerOptions || {}),
+    };
   } catch (e) {
     console.error("Failed to load settings:", e);
   }
+}
+
+function setCheckboxValue(id, value) {
+  const checkbox = document.getElementById(id);
+  if (checkbox) checkbox.checked = !!value;
+}
+
+function setRangeValue(id, value) {
+  const slider = document.getElementById(id);
+  if (!slider) return;
+  const numeric = Number(value);
+  slider.value = Number.isFinite(numeric) ? String(numeric) : slider.value;
+}
+
+function setTextValue(id, value) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = value;
+}
+
+function syncCleanOptionsInputs() {
+  const cleanOptions = userSettings.cleanDwgOptions || {};
+  setCheckboxValue("settings_clean_stripXrefs", cleanOptions.stripXrefs);
+  setCheckboxValue("settings_clean_setByLayer", cleanOptions.setByLayer);
+  setCheckboxValue("settings_clean_purge", cleanOptions.purge);
+  setCheckboxValue("settings_clean_audit", cleanOptions.audit);
+  setCheckboxValue("settings_clean_hatchColor", cleanOptions.hatchColor);
+  setCheckboxValue("clean_modal_stripXrefs", cleanOptions.stripXrefs);
+  setCheckboxValue("clean_modal_setByLayer", cleanOptions.setByLayer);
+  setCheckboxValue("clean_modal_purge", cleanOptions.purge);
+  setCheckboxValue("clean_modal_audit", cleanOptions.audit);
+  setCheckboxValue("clean_modal_hatchColor", cleanOptions.hatchColor);
+}
+
+function syncPublishOptionsInputs() {
+  const publishOptions = userSettings.publishDwgOptions || {};
+  setCheckboxValue(
+    "settings_publish_autoDetectPaperSize",
+    publishOptions.autoDetectPaperSize
+  );
+  setCheckboxValue(
+    "publish_modal_autoDetectPaperSize",
+    publishOptions.autoDetectPaperSize
+  );
+  const percent = Number(publishOptions.shrinkPercent ?? 100);
+  const normalized = Number.isFinite(percent) ? percent : 100;
+  setRangeValue("settings_publish_shrinkPercent", normalized);
+  setRangeValue("publish_modal_shrinkPercent", normalized);
+  setTextValue("settings_publish_shrinkValue", `${normalized}%`);
+  setTextValue("publish_modal_shrinkValue", `${normalized}%`);
+}
+
+function syncFreezeOptionsInputs() {
+  const freezeOptions = userSettings.freezeLayerOptions || {};
+  setCheckboxValue(
+    "settings_freeze_scanAllLayers",
+    freezeOptions.scanAllLayers
+  );
+  setCheckboxValue("freeze_modal_scanAllLayers", freezeOptions.scanAllLayers);
+}
+
+function syncThawOptionsInputs() {
+  const thawOptions = userSettings.thawLayerOptions || {};
+  setCheckboxValue("settings_thaw_scanAllLayers", thawOptions.scanAllLayers);
+  setCheckboxValue("thaw_modal_scanAllLayers", thawOptions.scanAllLayers);
 }
 
 async function populateSettingsModal() {
@@ -3088,6 +3197,11 @@ async function populateSettingsModal() {
 
   const autoPrimaryCheck = document.getElementById("settings_autoPrimary");
   if (autoPrimaryCheck) autoPrimaryCheck.checked = !!userSettings.autoPrimary;
+
+  syncCleanOptionsInputs();
+  syncPublishOptionsInputs();
+  syncFreezeOptionsInputs();
+  syncThawOptionsInputs();
 
   await refreshTimesheetsInfo();
 
@@ -5458,111 +5572,223 @@ async function fetchDescriptionForBundle(bundleName) {
   }
 }
 
-async function loadAndRenderBundles() {
-  const container = document.getElementById("commands-container");
-  if (!container) return;
-  container.innerHTML = '<div class="spinner">Loading...</div>';
+function computeBundleKey(bundles) {
+  if (!Array.isArray(bundles)) return "";
+  return bundles
+    .map((bundle) => {
+      const name = bundle.name || "";
+      const state = bundle.state || "";
+      const local = bundle.local_version || "";
+      const remote = bundle.remote_version || "";
+      const bundleName = bundle.bundle_name || "";
+      return `${name}|${state}|${local}|${remote}|${bundleName}`;
+    })
+    .sort()
+    .join(";;");
+}
 
-  try {
+async function fetchBundleStatuses({ silent = false } = {}) {
+  if (bundlesLoadingPromise) return bundlesLoadingPromise;
+  bundlesLoadingPromise = (async () => {
     const response = await window.pywebview.api.get_bundle_statuses();
     if (response.status !== "success") throw new Error(response.message);
+    const data = Array.isArray(response.data) ? response.data : [];
+    bundlesCache = data;
+    bundlesCacheKey = computeBundleKey(data);
+    bundlesLastCheckAt = Date.now();
+    return data;
+  })();
 
-    container.innerHTML = "";
-    if (response.data.length === 0) {
-      container.textContent = "No command bundles found.";
+  try {
+    return await bundlesLoadingPromise;
+  } catch (e) {
+    if (!silent) throw e;
+    return null;
+  } finally {
+    bundlesLoadingPromise = null;
+  }
+}
+
+function prefetchBundleDescriptions(bundles) {
+  if (!Array.isArray(bundles) || bundles.length === 0) return;
+  bundles.forEach((bundle) => {
+    fetchDescriptionForBundle(bundle.name);
+  });
+}
+
+async function renderBundles(bundles) {
+  const container = document.getElementById("commands-container");
+  if (!container) return;
+
+  container.innerHTML = "";
+  if (!Array.isArray(bundles) || bundles.length === 0) {
+    container.textContent = "No command bundles found.";
+    return;
+  }
+
+  const tagJobs = [];
+
+  // Process each bundle
+  for (const bundle of bundles) {
+    // Normalize name
+    const coreName = bundle.name
+      .replace("ElectricalCommands.", "")
+      .replace(".bundle", "");
+
+    const card = el("div", { className: "release-card" });
+    let statusClass, statusTitle, btnText, btnClass;
+
+    if (bundle.state === "installed") {
+      statusClass = "installed";
+      statusTitle = `Installed (v${bundle.local_version})`;
+      btnText = "Uninstall";
+      btnClass = "btn-danger";
+    } else if (bundle.state === "update_available") {
+      statusClass = "update-available";
+      statusTitle = `Update Available (v${bundle.remote_version})`;
+      btnText = "Update";
+      btnClass = "btn-accent";
+    } else {
+      statusClass = "not-installed";
+      statusTitle = "Not Installed";
+      btnText = "Install";
+      btnClass = "btn-primary";
+    }
+
+    const header = el("div", { className: "release-card-header" }, [
+      el("div", { className: "release-card-title" }, [
+        el("div", {
+          className: `bundle-status ${statusClass}`,
+          title: statusTitle,
+        }),
+        el("span", { textContent: coreName }),
+      ]),
+    ]);
+
+    const body = el("div", { className: "release-card-body" });
+    const tags = el("div", { className: "command-tags" });
+    body.append(tags);
+
+    const footer = el("div", { className: "release-card-footer" });
+    const btn = el("button", {
+      className: `btn ${btnClass}`,
+      textContent: btnText,
+    });
+    btn.dataset.bundleName = bundle.bundle_name;
+    btn.dataset.actionType = btnText;
+
+    // Note: We rely on 'bundle.asset' from the backend for installation URL.
+    // If backend doesn't provide it, we assume standard release naming.
+    if (bundle.state !== "installed" && bundle.asset) {
+      btn.dataset.asset = JSON.stringify(bundle.asset);
+    }
+
+    footer.append(btn);
+    card.append(header, body, footer);
+    container.append(card);
+
+    const descriptionPromise = fetchDescriptionForBundle(bundle.name)
+      .then((description) => {
+        if (description && description.commands) {
+          Object.keys(description.commands).forEach((cmd) => {
+            const link = description.links?.[cmd];
+            const title =
+              description.commands[cmd] || (link ? "Open documentation" : "");
+            const tagEl = link
+              ? el("button", {
+                className: "command-tag command-link",
+                textContent: cmd,
+                title,
+                onclick: () => openExternalUrl(link),
+              })
+              : el("span", { className: "command-tag", textContent: cmd, title });
+            tags.append(tagEl);
+          });
+        }
+      })
+      .catch(() => { });
+    tagJobs.push(descriptionPromise);
+  }
+
+  Promise.allSettled(tagJobs).catch(() => { });
+}
+
+async function ensureBundlesRendered({ force = false } = {}) {
+  const container = document.getElementById("commands-container");
+  if (!container) return;
+
+  const shouldFetch = force || !bundlesCache;
+  if (shouldFetch) {
+    container.innerHTML = '<div class="spinner">Loading...</div>';
+    try {
+      await fetchBundleStatuses();
+    } catch (e) {
+      container.innerHTML = `<div class="error-message">Error: ${e.message}</div>`;
       return;
     }
-
-    // Process each bundle
-    for (const bundle of response.data) {
-      // Normalize name
-      const coreName = bundle.name
-        .replace("ElectricalCommands.", "")
-        .replace(".bundle", "");
-
-      // Fetch description (background)
-      const description = await fetchDescriptionForBundle(bundle.name);
-
-      const card = el("div", { className: "release-card" });
-      let statusClass, statusTitle, btnText, btnClass;
-
-      if (bundle.state === "installed") {
-        statusClass = "installed";
-        statusTitle = `Installed (v${bundle.local_version})`;
-        btnText = "Uninstall";
-        btnClass = "btn-danger";
-      } else if (bundle.state === "update_available") {
-        statusClass = "update-available";
-        statusTitle = `Update Available (v${bundle.remote_version})`;
-        btnText = "Update";
-        btnClass = "btn-accent";
-      } else {
-        statusClass = "not-installed";
-        statusTitle = "Not Installed";
-        btnText = "Install";
-        btnClass = "btn-primary";
-      }
-
-      const header = el("div", { className: "release-card-header" }, [
-        el("div", { className: "release-card-title" }, [
-          el("div", {
-            className: `bundle-status ${statusClass}`,
-            title: statusTitle,
-          }),
-          el("span", { textContent: coreName }),
-        ]),
-      ]);
-
-      const body = el("div", { className: "release-card-body" });
-      const tags = el("div", { className: "command-tags" });
-
-      if (description && description.commands) {
-        Object.keys(description.commands).forEach((cmd) => {
-          const link = description.links?.[cmd];
-          const title =
-            description.commands[cmd] || (link ? "Open documentation" : "");
-          const tagEl = link
-            ? el("button", {
-              className: "command-tag command-link",
-              textContent: cmd,
-              title,
-              onclick: () => openExternalUrl(link),
-            })
-            : el("span", { className: "command-tag", textContent: cmd, title });
-          tags.append(tagEl);
-        });
-      }
-      body.append(tags);
-
-      const footer = el("div", { className: "release-card-footer" });
-      const btn = el("button", {
-        className: `btn ${btnClass}`,
-        textContent: btnText,
-      });
-      btn.dataset.bundleName = bundle.bundle_name;
-      btn.dataset.actionType = btnText;
-
-      // Note: We rely on 'bundle.asset' from the backend for installation URL.
-      // If backend doesn't provide it, we assume standard release naming.
-      if (bundle.state !== "installed" && bundle.asset) {
-        btn.dataset.asset = JSON.stringify(bundle.asset);
-      }
-
-      footer.append(btn);
-      card.append(header, body, footer);
-      container.append(card);
-    }
-  } catch (e) {
-    container.innerHTML = `<div class="error-message">Error: ${e.message}</div>`;
+  } else if (!force && bundlesLastRenderKey === bundlesCacheKey && !bundlesNeedsRender) {
+    return;
   }
+
+  await renderBundles(bundlesCache || []);
+  bundlesLastRenderKey = bundlesCacheKey;
+  bundlesNeedsRender = false;
 }
 
 function prefetchBundles() {
   if (bundlesPrefetchStarted) return;
   bundlesPrefetchStarted = true;
   setTimeout(() => {
-    loadAndRenderBundles();
+    fetchBundleStatuses({ silent: true })
+      .then((data) => {
+        if (data) prefetchBundleDescriptions(data);
+      })
+      .catch(() => { });
   }, 0);
+}
+
+function setUpdateCheckIndicator(visible, text = "Checking for updates...") {
+  const indicator = document.getElementById("updateCheckIndicator");
+  if (!indicator) return;
+  if (visible) {
+    indicator.textContent = text;
+    indicator.hidden = false;
+    indicator.classList.add("visible");
+  } else {
+    indicator.classList.remove("visible");
+    indicator.hidden = true;
+  }
+}
+
+function isPluginsTabActive() {
+  const panel = document.getElementById("plugins-panel");
+  return !!panel && !panel.hidden;
+}
+
+async function checkBundlesForUpdates({ showIndicator = true } = {}) {
+  if (bundlesUpdateCheckInFlight) return;
+  const now = Date.now();
+  if (now - bundlesLastCheckAt < 15000) return;
+
+  bundlesUpdateCheckInFlight = true;
+  if (showIndicator) setUpdateCheckIndicator(true);
+
+  const previousKey = bundlesCacheKey;
+  try {
+    const data = await fetchBundleStatuses({ silent: true });
+    if (!data) return;
+    prefetchBundleDescriptions(data);
+    if (bundlesCacheKey !== previousKey) {
+      bundlesNeedsRender = true;
+      if (isPluginsTabActive()) {
+        await ensureBundlesRendered({ force: true });
+      }
+    }
+  } finally {
+    bundlesUpdateCheckInFlight = false;
+    bundlesLastCheckAt = Date.now();
+    if (showIndicator) setUpdateCheckIndicator(false);
+  }
 }
 
 async function handleBundleAction(e) {
@@ -5589,7 +5815,7 @@ async function handleBundleAction(e) {
   } catch (err) {
     toast(`⚠️ ${err.message}`, 5000);
   } finally {
-    await loadAndRenderBundles();
+    await ensureBundlesRendered({ force: true });
 
   }
 }
@@ -6730,7 +6956,7 @@ function initTabbedInterfaces() {
     if (notesResults) notesResults.innerHTML = "";
 
     if (tab === "plugins") {
-      loadAndRenderBundles();
+      ensureBundlesRendered();
     } else if (tab === "projects") {
       render();
     } else if (tab === "timesheets") {
@@ -6755,6 +6981,26 @@ function initEventListeners() {
     openExternalUrl(HELP_LINKS.main);
   document.getElementById("projectsHelpBtn").onclick = () =>
     openExternalUrl(HELP_LINKS.projects);
+
+  document.querySelectorAll(".tool-card-settings").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const targetId = btn.dataset.settingsTarget;
+      if (!targetId) return;
+      if (targetId === "publishSettingsDlg") syncPublishOptionsInputs();
+      if (targetId === "freezeSettingsDlg") syncFreezeOptionsInputs();
+      if (targetId === "thawSettingsDlg") syncThawOptionsInputs();
+      if (targetId === "cleanSettingsDlg") syncCleanOptionsInputs();
+      const dlg = document.getElementById(targetId);
+      if (dlg) dlg.showModal();
+    });
+  });
+
+  const handleAppFocus = () => checkBundlesForUpdates({ showIndicator: true });
+  window.addEventListener("focus", handleAppFocus);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) handleAppFocus();
+  });
 
   const toggleNonPrimaryBtn = document.getElementById("toggleNonPrimaryBtn");
   const updateToggleNonPrimaryState = () => {
@@ -7300,6 +7546,98 @@ function initEventListeners() {
       };
     });
 
+  ["settings_publish_autoDetectPaperSize", "publish_modal_autoDetectPaperSize"]
+    .map((id) => document.getElementById(id))
+    .filter(Boolean)
+    .forEach((checkbox) => {
+      checkbox.onchange = (e) => {
+        if (!userSettings.publishDwgOptions) {
+          userSettings.publishDwgOptions = { ...DEFAULT_PUBLISH_DWG_OPTIONS };
+        }
+        userSettings.publishDwgOptions.autoDetectPaperSize = e.target.checked;
+        syncPublishOptionsInputs();
+        debouncedSaveUserSettings();
+      };
+    });
+
+  [
+    ["settings_publish_shrinkPercent", "settings_publish_shrinkValue"],
+    ["publish_modal_shrinkPercent", "publish_modal_shrinkValue"],
+  ].forEach(([sliderId, labelId]) => {
+    const slider = document.getElementById(sliderId);
+    const label = document.getElementById(labelId);
+    if (!slider) return;
+    const updateLabel = () => {
+      if (label) label.textContent = `${slider.value}%`;
+    };
+    slider.oninput = (e) => {
+      if (!userSettings.publishDwgOptions) {
+        userSettings.publishDwgOptions = { ...DEFAULT_PUBLISH_DWG_OPTIONS };
+      }
+      const nextValue = Number(e.target.value);
+      userSettings.publishDwgOptions.shrinkPercent = Number.isFinite(nextValue)
+        ? nextValue
+        : 100;
+      updateLabel();
+      syncPublishOptionsInputs();
+      debouncedSaveUserSettings();
+    };
+    updateLabel();
+  });
+
+  ["settings_freeze_scanAllLayers", "freeze_modal_scanAllLayers"]
+    .map((id) => document.getElementById(id))
+    .filter(Boolean)
+    .forEach((checkbox) => {
+      checkbox.onchange = (e) => {
+        if (!userSettings.freezeLayerOptions) {
+          userSettings.freezeLayerOptions = { ...DEFAULT_FREEZE_LAYER_OPTIONS };
+        }
+        userSettings.freezeLayerOptions.scanAllLayers = e.target.checked;
+        syncFreezeOptionsInputs();
+        debouncedSaveUserSettings();
+      };
+    });
+
+  ["settings_thaw_scanAllLayers", "thaw_modal_scanAllLayers"]
+    .map((id) => document.getElementById(id))
+    .filter(Boolean)
+    .forEach((checkbox) => {
+      checkbox.onchange = (e) => {
+        if (!userSettings.thawLayerOptions) {
+          userSettings.thawLayerOptions = { ...DEFAULT_THAW_LAYER_OPTIONS };
+        }
+        userSettings.thawLayerOptions.scanAllLayers = e.target.checked;
+        syncThawOptionsInputs();
+        debouncedSaveUserSettings();
+      };
+    });
+
+  const cleanOptionBindings = [
+    ["settings_clean_stripXrefs", "stripXrefs"],
+    ["settings_clean_setByLayer", "setByLayer"],
+    ["settings_clean_purge", "purge"],
+    ["settings_clean_audit", "audit"],
+    ["settings_clean_hatchColor", "hatchColor"],
+    ["clean_modal_stripXrefs", "stripXrefs"],
+    ["clean_modal_setByLayer", "setByLayer"],
+    ["clean_modal_purge", "purge"],
+    ["clean_modal_audit", "audit"],
+    ["clean_modal_hatchColor", "hatchColor"],
+  ];
+  cleanOptionBindings.forEach(([id, key]) => {
+    const checkbox = document.getElementById(id);
+    if (!checkbox) return;
+    checkbox.onchange = (e) => {
+      if (!userSettings.cleanDwgOptions) {
+        userSettings.cleanDwgOptions = { ...DEFAULT_CLEAN_DWG_OPTIONS };
+      }
+      userSettings.cleanDwgOptions[key] = e.target.checked;
+      syncCleanOptionsInputs();
+      debouncedSaveUserSettings();
+    };
+  });
+
   document.getElementById("btnPasteImport").onclick = () => {
     const rows = parseCSV(val("pasteArea"));
     importRows(rows, document.getElementById("hasHeader").checked);
@@ -7414,7 +7752,7 @@ function initEventListeners() {
       const response = await window.pywebview.api.uninstall_all_plugins();
       if (response.status === "success") {
         toast(`Uninstalled ${response.count} plugins.`);
-        loadAndRenderBundles();
+        ensureBundlesRendered({ force: true });
       } else {
         toast("Failed to uninstall plugins.");
       }
@@ -7438,7 +7776,7 @@ function initEventListeners() {
         toast("Installed!");
         closeDlg("installPrereqDlg");
         updateCleanDwgToolState();
-        loadAndRenderBundles();
+        ensureBundlesRendered({ force: true });
       }
     } catch (e) {
       toast("Installation failed.");

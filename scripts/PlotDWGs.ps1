@@ -1,6 +1,25 @@
 param(
-  [string]$AcadCore
+  [string]$AcadCore,
+  [string]$AutoDetectPaperSize = "true",
+  [int]$ShrinkPercent = 100
 )
+
+function Convert-ToBool {
+  param(
+    [object]$Value,
+    [bool]$DefaultValue = $true
+  )
+  if ($null -eq $Value) { return $DefaultValue }
+  $text = $Value.ToString().Trim()
+  if ($text.StartsWith('$')) { $text = $text.Substring(1) }
+  switch -Regex ($text) {
+    '^(1|true|t|yes|y)$' { return $true }
+    '^(0|false|f|no|n)$' { return $false }
+    default { return $DefaultValue }
+  }
+}
+
+$AutoDetectPaperSize = Convert-ToBool $AutoDetectPaperSize $true
 
 # --- SCRIPT CONFIGURATION ---
 # Logic to find AutoCAD Core Console
@@ -39,6 +58,7 @@ $paperSizes = @(
 $scriptRoot = $PSScriptRoot
 $pythonScriptPath = Join-Path $scriptRoot "merge_pdfs.py"
 $detectSizeScriptPath = Join-Path $scriptRoot "detect_pdf_size.py"
+$shrinkScriptPath = Join-Path $scriptRoot "shrink_pdf.py"
 # Check if the Python script exists
 if (-not (Test-Path $pythonScriptPath)) {
   Write-Host "PROGRESS: ERROR: 'merge_pdfs.py' not found."
@@ -53,7 +73,15 @@ if (-not $pythonCheck) {
 # Relaunch in STA mode for the file picker dialog to work correctly
 if ([System.Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') {
   $ps = (Get-Process -Id $PID).Path
-  Start-Process -FilePath $ps -ArgumentList @("-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"") -Wait
+  $argsList = @("-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"")
+  if ($AcadCore) { $argsList += @("-AcadCore", "`"$AcadCore`"") }
+  if ($PSBoundParameters.ContainsKey('AutoDetectPaperSize')) {
+    $argsList += @("-AutoDetectPaperSize", $AutoDetectPaperSize)
+  }
+  if ($PSBoundParameters.ContainsKey('ShrinkPercent')) {
+    $argsList += @("-ShrinkPercent", $ShrinkPercent)
+  }
+  Start-Process -FilePath $ps -ArgumentList $argsList -Wait
   exit
 }
 # Validate that accoreconsole.exe exists
@@ -81,40 +109,46 @@ $files = $dlg.FileNames
 # --- Detect paper size from existing project PDFs ---
 $detectedPaperSize = ""
 $detectionStatus = "not_checked"
-if (Test-Path $detectSizeScriptPath) {
-  Write-Host "PROGRESS: Detecting paper size from existing PDFs..."
-  try {
-    # Quote the path in case it contains spaces
-    $dwgPathArg = "`"$($files[0])`""
-    $detectOutput = & $pythonExecutable $detectSizeScriptPath $dwgPathArg 2>&1
+if ($AutoDetectPaperSize) {
+  if (Test-Path $detectSizeScriptPath) {
+    Write-Host "PROGRESS: Detecting paper size from existing PDFs..."
+    try {
+      # Quote the path in case it contains spaces
+      $dwgPathArg = "`"$($files[0])`""
+      $detectOutput = & $pythonExecutable $detectSizeScriptPath $dwgPathArg 2>&1
 
-    # Check if there was an error (stderr output will be error records)
-    $errorOutput = $detectOutput | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }
-    $stdOutput = $detectOutput | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }
+      # Check if there was an error (stderr output will be error records)
+      $errorOutput = $detectOutput | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }
+      $stdOutput = $detectOutput | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }
 
-    if ($stdOutput) {
-      $detectedPaperSize = ($stdOutput | Out-String).Trim()
-    }
-
-    if ($detectedPaperSize) {
-      Write-Host "PROGRESS: Detected paper size: $detectedPaperSize"
-      $detectionStatus = "detected"
-    } else {
-      if ($errorOutput) {
-        Write-Host "PROGRESS: Detection error: $($errorOutput | Out-String)"
+      if ($stdOutput) {
+        $detectedPaperSize = ($stdOutput | Out-String).Trim()
       }
-      Write-Host "PROGRESS: No matching paper size found in project PDFs."
-      $detectionStatus = "no_match"
+
+      if ($detectedPaperSize) {
+        Write-Host "PROGRESS: Detected paper size: $detectedPaperSize"
+        $detectionStatus = "detected"
+      } else {
+        if ($errorOutput) {
+          Write-Host "PROGRESS: Detection error: $($errorOutput | Out-String)"
+        }
+        Write-Host "PROGRESS: No matching paper size found in project PDFs."
+        $detectionStatus = "no_match"
+      }
     }
+    catch {
+      Write-Host "PROGRESS: Could not detect paper size: $_"
+      $detectionStatus = "error"
+      $detectedPaperSize = ""
+    }
+  } else {
+    Write-Host "PROGRESS: Detection script not found at: $detectSizeScriptPath"
+    $detectionStatus = "script_missing"
   }
-  catch {
-    Write-Host "PROGRESS: Could not detect paper size: $_"
-    $detectionStatus = "error"
-    $detectedPaperSize = ""
-  }
-} else {
-  Write-Host "PROGRESS: Detection script not found at: $detectSizeScriptPath"
-  $detectionStatus = "script_missing"
+}
+else {
+  Write-Host "PROGRESS: Auto-detect disabled. Please enter paper size manually."
+  $detectionStatus = "disabled"
 }
 
 # --- Let the user select/confirm a paper size ---
@@ -137,6 +171,10 @@ switch ($detectionStatus) {
     $statusLabel.Text = "No matching PDFs found in project folder"
     $statusLabel.ForeColor = [System.Drawing.Color]::DarkOrange
   }
+  "disabled" {
+    $statusLabel.Text = "Auto-detect disabled"
+    $statusLabel.ForeColor = [System.Drawing.Color]::Gray
+  }
   default {
     $statusLabel.Text = "Auto-detection not available"
     $statusLabel.ForeColor = [System.Drawing.Color]::Gray
@@ -149,15 +187,22 @@ $label.Location = New-Object System.Drawing.Point(10, 45)
 $label.Size = New-Object System.Drawing.Size(420, 20)
 if ($detectedPaperSize) {
   $label.Text = "Confirm the detected size or select a different one:"
-} else {
+} elseif ($AutoDetectPaperSize) {
   $label.Text = "Please select a paper size for plotting:"
+} else {
+  $label.Text = "Please enter or select a paper size for plotting:"
 }
 $form.Controls.Add($label)
 
 $comboBox = New-Object System.Windows.Forms.ComboBox
 $comboBox.Location = New-Object System.Drawing.Point(10, 70)
 $comboBox.Size = New-Object System.Drawing.Size(410, 20)
-$comboBox.DropDownStyle = "DropDownList"
+if ($AutoDetectPaperSize) {
+  $comboBox.DropDownStyle = "DropDownList"
+}
+else {
+  $comboBox.DropDownStyle = "DropDown"
+}
 
 # Add paper sizes with checkmark for detected size
 $selectedIndex = 0
@@ -171,7 +216,9 @@ foreach ($size in $paperSizes) {
   }
   $index++
 }
-$comboBox.SelectedIndex = $selectedIndex
+if ($AutoDetectPaperSize -and $comboBox.Items.Count -gt 0) {
+  $comboBox.SelectedIndex = $selectedIndex
+}
 $form.Controls.Add($comboBox)
 
 $okButton = New-Object System.Windows.Forms.Button
@@ -190,7 +237,11 @@ if ($result -ne [System.Windows.Forms.DialogResult]::OK) {
 }
 
 # Remove the " [Detected]" suffix if present to get the actual paper size
-$selectedPaperSize = $comboBox.SelectedItem -replace '\s+\[Detected\]$', ''
+$selectedPaperSize = ($comboBox.Text -replace '\s+\[Detected\]$', '').Trim()
+if ([string]::IsNullOrWhiteSpace($selectedPaperSize)) {
+  Write-Host "PROGRESS: ERROR: No paper size selected."
+  exit 1
+}
 
 # --- BATCH PROCESSING SETUP ---
 Write-Host "PROGRESS: Preparing to plot $($files.Count) file(s)..."
@@ -326,6 +377,29 @@ if ($allGeneratedPdfs.Count -gt 0) {
   if ($LASTEXITCODE -eq 0) {
     "Python script executed successfully." | Out-File $logFile -Append
     "$mergeOutput" | Out-File $logFile -Append
+
+    $shrinkPercentInt = [int]$ShrinkPercent
+    if ($shrinkPercentInt -lt 5) { $shrinkPercentInt = 5 }
+    if ($shrinkPercentInt -gt 100) { $shrinkPercentInt = 100 }
+    if ($shrinkPercentInt -lt 100) {
+      if (Test-Path $shrinkScriptPath) {
+        $shrunkName = "combined-shrunk-$shrinkPercentInt-percent.pdf"
+        $shrunkPath = Join-Path $batchOutputDir $shrunkName
+        Write-Host "PROGRESS: Shrinking combined PDF to $shrinkPercentInt%..."
+        $shrinkOutput = & $pythonExecutable $shrinkScriptPath "`"$combinedPdfPath`"" "`"$shrunkPath`"" $shrinkPercentInt 2>&1
+        if ($LASTEXITCODE -eq 0) {
+          "Shrunk PDF created: $shrunkName" | Out-File $logFile -Append
+          "$shrinkOutput" | Out-File $logFile -Append
+        } else {
+          Write-Host "PROGRESS: ERROR: PDF shrinking failed."
+          "PDF shrinking failed. Output from Python script:" | Out-File $logFile -Append
+          "$shrinkOutput" | Out-File $logFile -Append
+        }
+      } else {
+        Write-Host "PROGRESS: ERROR: 'shrink_pdf.py' not found."
+        "'shrink_pdf.py' not found; skipped shrinking." | Out-File $logFile -Append
+      }
+    }
   }
   else {
     Write-Host "PROGRESS: ERROR: PDF merging failed."

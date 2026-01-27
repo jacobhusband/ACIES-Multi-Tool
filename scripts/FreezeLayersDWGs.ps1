@@ -110,8 +110,25 @@ $lispReportPath = ($layerDumpFile -replace '\\', '/')
 
 $extractLsp = Join-Path $ToolDir "extract.lsp"
 $extractLspForLisp = ($extractLsp -replace '\\', '/')
+$scanListFile = Join-Path $ToolDir "scan_files.txt"
+$scanListForLisp = ($scanListFile -replace '\\', '/')
 
 $extractLspContent = @"
+(defun _read-lines (path / f line lines)
+  (setq f (open path "r"))
+  (if f
+    (progn
+      (while (setq line (read-line f))
+        (if (> (strlen line) 0)
+          (setq lines (cons line lines))
+        )
+      )
+      (close f)
+      (reverse lines)
+    )
+  )
+)
+
 (defun c:ExtractLayers (/ f lay)
   (setq f (open "$lispReportPath" "a"))
   (if f
@@ -127,26 +144,25 @@ $extractLspContent = @"
   )
   (princ)
 )
+
+(defun c:ExtractLayersBatch (/ files)
+  (setq files (_read-lines "$scanListForLisp"))
+  (if files
+    (progn
+      (foreach f files
+        (command "_.OPEN" f)
+        (c:ExtractLayers)
+      )
+    )
+  )
+  (command "_.QUIT" "_N")
+  (princ)
+)
 (princ)
 "@
 Set-Content -Path $extractLsp -Value $extractLspContent -Encoding ASCII
 
 $extractScr = Join-Path $ToolDir "extract.scr"
-$extractScrContent = @"
-FILEDIA
-0
-CMDDIA
-0
-PROXYNOTICE
-0
-SECURELOAD
-0
-(load "$extractLspForLisp")
-(c:ExtractLayers)
-QUIT
-N
-"@
-Set-Content -Path $extractScr -Value $extractScrContent -Encoding ASCII
 
 if ($ScanAllLayers) {
   Write-Host "PROGRESS: Scanning $($files.Count) files for layers..."
@@ -157,18 +173,38 @@ else {
 $allLayers = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
 
 $filesToScan = if ($ScanAllLayers) { $files } else { @($files[0]) }
-foreach ($file in $filesToScan) {
-  Write-Host -NoNewline "."
-  $base = Split-Path $file -LeafBase
-  $outLog = Join-Path $ToolDir "extract_$base.out.txt"
-  $errLog = Join-Path $ToolDir "extract_$base.err.txt"
-  if (Test-Path $outLog) { Remove-Item $outLog -Force }
-  if (Test-Path $errLog) { Remove-Item $errLog -Force }
-
-  $r = Invoke-AcadCore -DwgPath $file -ScriptPath $extractScr -OutLog $outLog -ErrLog $errLog -TimeoutSeconds $ProcessTimeoutSeconds
-  if ($r.TimedOut) { Write-Host "!" -NoNewline -ForegroundColor Red }
+if ($filesToScan.Count -eq 0) {
+  Write-Warning "No files selected."
+  exit
 }
-Write-Host "`nReading extracted data..."
+
+$filesToScan | ForEach-Object { ($_ -replace '\\', '/') } |
+  Set-Content -Path $scanListFile -Encoding ASCII
+
+$extractScrLines = @(
+  "FILEDIA",
+  "0",
+  "CMDDIA",
+  "0",
+  "PROXYNOTICE",
+  "0",
+  "SECURELOAD",
+  "0",
+  "(load `"$extractLspForLisp`")",
+  "(c:ExtractLayersBatch)"
+)
+Set-Content -Path $extractScr -Value ($extractScrLines -join "`r`n") -Encoding ASCII
+
+$outLog = Join-Path $ToolDir "extract_batch.out.txt"
+$errLog = Join-Path $ToolDir "extract_batch.err.txt"
+if (Test-Path $outLog) { Remove-Item $outLog -Force }
+if (Test-Path $errLog) { Remove-Item $errLog -Force }
+
+$scanTimeoutSeconds = $ProcessTimeoutSeconds * $filesToScan.Count
+$r = Invoke-AcadCore -DwgPath $filesToScan[0] -ScriptPath $extractScr -OutLog $outLog -ErrLog $errLog -TimeoutSeconds $scanTimeoutSeconds
+if ($r.TimedOut) { Write-Host "Layer scan timed out." -ForegroundColor Red }
+
+Write-Host "Reading extracted data..."
 
 if (-not (Test-Path $layerDumpFile)) {
   Write-Warning "No layer dump file was created. Check logs in: $ToolDir"
@@ -253,6 +289,13 @@ $btnCancel.FlatStyle = [System.Windows.Forms.FlatStyle]::System
 $form.Controls.Add($btnCancel)
 $form.CancelButton = $btnCancel
 
+$form.add_Shown({
+    $form.Activate()
+    $form.TopMost = $true
+    $form.TopMost = $false
+    $listBox.Focus()
+  })
+
 function Update-LayerList {
   param([string]$filterText)
 
@@ -313,12 +356,32 @@ $freezeReportForLisp = ($freezeReport -replace '\\', '/')
 
 $updateLsp = Join-Path $ToolDir "update_layers.lsp"
 $updateLspForLisp = ($updateLsp -replace '\\', '/')
+$updateListFile = Join-Path $ToolDir "update_files.txt"
+$updateListForLisp = ($updateListFile -replace '\\', '/')
 
 $lispLayerList = $layersToFreeze | ForEach-Object { "`"$_`"" }
 $lispLayerListStr = $lispLayerList -join " "
 
+$files | ForEach-Object { ($_ -replace '\\', '/') } |
+  Set-Content -Path $updateListFile -Encoding ASCII
+
 $updateLspContent = @"
 (defun _t (b) (if b "T" "F"))
+
+(defun _read-lines (path / f line lines)
+  (setq f (open path "r"))
+  (if f
+    (progn
+      (while (setq line (read-line f))
+        (if (> (strlen line) 0)
+          (setq lines (cons line lines))
+        )
+      )
+      (close f)
+      (reverse lines)
+    )
+  )
+)
 
 (defun _flags (rec / v)
   (setq v (assoc 70 rec))
@@ -422,6 +485,19 @@ $updateLspContent = @"
   (_log f dwg "<DWG_SAVE>" "T" "?" "?" "?" "?" "QSAVE" "?" saveStatus)
 
   (close f)
+  (princ)
+)
+
+(defun c:BatchFreezeFiles (/ files)
+  (setq files (_read-lines "$updateListForLisp"))
+  (if files
+    (progn
+      (foreach f files
+        (command "_.OPEN" f)
+        (c:BatchFreeze)
+      )
+    )
+  )
   (command "_.QUIT" "_N")
   (princ)
 )
@@ -430,55 +506,50 @@ $updateLspContent = @"
 Set-Content -Path $updateLsp -Value $updateLspContent -Encoding ASCII
 
 $updateScr = Join-Path $ToolDir "update.scr"
-$updateScrContent = @"
-FILEDIA
-0
-CMDDIA
-0
-PROXYNOTICE
-0
-SECURELOAD
-0
-(load "$updateLspForLisp")
-(c:BatchFreeze)
-"@
-Set-Content -Path $updateScr -Value $updateScrContent -Encoding ASCII
+$updateScrLines = @(
+  "FILEDIA",
+  "0",
+  "CMDDIA",
+  "0",
+  "PROXYNOTICE",
+  "0",
+  "SECURELOAD",
+  "0",
+  "(load `"$updateLspForLisp`")",
+  "(c:BatchFreezeFiles)"
+)
+Set-Content -Path $updateScr -Value ($updateScrLines -join "`r`n") -Encoding ASCII
 
 # ---------------- 7) EXECUTE UPDATES ----------------
 $logFile = Join-Path ([Environment]::GetFolderPath("Desktop")) "LayerUpdateLog.txt"
 "Starting Update at $(Get-Date)" | Out-File $logFile
+"Files:" | Out-File $logFile -Append
+$files | ForEach-Object { $_ | Out-File $logFile -Append }
 
 Write-Host "PROGRESS: Updating files..."
 
-foreach ($file in $files) {
-  $leaf = Split-Path $file -Leaf
-  Write-Host "Processing: $leaf"
+$outLog = Join-Path $ToolDir "update_batch.out.txt"
+$errLog = Join-Path $ToolDir "update_batch.err.txt"
+if (Test-Path $outLog) { Remove-Item $outLog -Force }
+if (Test-Path $errLog) { Remove-Item $errLog -Force }
 
-  $base = Split-Path $file -LeafBase
-  $outLog = Join-Path $ToolDir "update_$base.out.txt"
-  $errLog = Join-Path $ToolDir "update_$base.err.txt"
-  if (Test-Path $outLog) { Remove-Item $outLog -Force }
-  if (Test-Path $errLog) { Remove-Item $errLog -Force }
+$updateTimeoutSeconds = $ProcessTimeoutSeconds * $files.Count
+$r = Invoke-AcadCore -DwgPath $files[0] -ScriptPath $updateScr -OutLog $outLog -ErrLog $errLog -TimeoutSeconds $updateTimeoutSeconds
 
-  $r = Invoke-AcadCore -DwgPath $file -ScriptPath $updateScr -OutLog $outLog -ErrLog $errLog -TimeoutSeconds $ProcessTimeoutSeconds
-
-  if ($r.TimedOut) {
-    Write-Host "  -> TIMEOUT. Killed." -ForegroundColor Red
-    "FAILED (Timeout): $file" | Out-File $logFile -Append
-    continue
-  }
-
-  if ($r.ExitCode -eq 0) {
-    Write-Host "  -> ExitCode 0" -ForegroundColor Green
-    "DONE (0): $file" | Out-File $logFile -Append
-  }
-  else {
-    Write-Host "  -> ExitCode $($r.ExitCode)" -ForegroundColor Yellow
-    "DONE ($($r.ExitCode)): $file" | Out-File $logFile -Append
-  }
+if ($r.TimedOut) {
+  Write-Host "  -> TIMEOUT. Killed." -ForegroundColor Red
+  "FAILED (Timeout): Batch" | Out-File $logFile -Append
+}
+elseif ($r.ExitCode -eq 0) {
+  Write-Host "  -> ExitCode 0" -ForegroundColor Green
+  "DONE (0): Batch" | Out-File $logFile -Append
+}
+else {
+  Write-Host "  -> ExitCode $($r.ExitCode)" -ForegroundColor Yellow
+  "DONE ($($r.ExitCode)): Batch" | Out-File $logFile -Append
 }
 
 Write-Host "Done."
 Write-Host "Report: $freezeReport"
-Write-Host "Per-file logs: $ToolDir"
+Write-Host "Logs: $ToolDir"
 Write-Host "Summary log: $logFile"

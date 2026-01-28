@@ -6,9 +6,14 @@ param(
 $ErrorActionPreference = "Stop"
 
 $versionPath = Join-Path $PSScriptRoot "VERSION"
+$repoRootVersionPath = Join-Path (Split-Path $PSScriptRoot -Parent) "VERSION"
 if (!(Test-Path $versionPath)) {
-    Write-Error "VERSION file not found at $versionPath"
-    exit 1
+    if (Test-Path $repoRootVersionPath) {
+        $versionPath = $repoRootVersionPath
+    } else {
+        Write-Error "VERSION file not found at $versionPath or $repoRootVersionPath"
+        exit 1
+    }
 }
 $version = (Get-Content -Raw $versionPath).Trim()
 if (-not $version) {
@@ -35,9 +40,14 @@ if (-not $SkipBuild) {
 }
 
 $assetPath = Join-Path $PSScriptRoot "dist/setup/acies-scheduler-setup.exe"
+$repoRootAssetPath = Join-Path (Split-Path $PSScriptRoot -Parent) "dist/setup/acies-scheduler-setup.exe"
 if (!(Test-Path $assetPath)) {
-    Write-Error "Installer not found at $assetPath"
-    exit 1
+    if (Test-Path $repoRootAssetPath) {
+        $assetPath = $repoRootAssetPath
+    } else {
+        Write-Error "Installer not found at $assetPath or $repoRootAssetPath"
+        exit 1
+    }
 }
 
 # Create git tag if it doesn't exist

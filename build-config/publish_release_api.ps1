@@ -9,7 +9,9 @@ $ErrorActionPreference = "Stop"
 $repo = "jacobhusband/ACIES-Multi-Tool"
 $assetName = "acies-scheduler-setup.exe"
 $versionPath = Join-Path $PSScriptRoot "VERSION"
+$repoRootVersionPath = Join-Path (Split-Path $PSScriptRoot -Parent) "VERSION"
 $assetPath = Join-Path $PSScriptRoot "dist\\setup\\$assetName"
+$repoRootAssetPath = Join-Path (Split-Path $PSScriptRoot -Parent) "dist\\setup\\$assetName"
 
 # --- Token ---
 $token = $env:GITHUB_TOKEN
@@ -20,8 +22,12 @@ if (-not $token) {
 
 # --- Version ---
 if (!(Test-Path $versionPath)) {
-    Write-Error "VERSION file not found at $versionPath"
-    exit 1
+    if (Test-Path $repoRootVersionPath) {
+        $versionPath = $repoRootVersionPath
+    } else {
+        Write-Error "VERSION file not found at $versionPath or $repoRootVersionPath"
+        exit 1
+    }
 }
 $version = (Get-Content -Raw $versionPath).Trim()
 if (-not $version) {
@@ -37,8 +43,12 @@ if ($Build) {
 }
 
 if (!(Test-Path $assetPath)) {
-    Write-Error "Installer not found at $assetPath. Build first or pass -Build."
-    exit 1
+    if (Test-Path $repoRootAssetPath) {
+        $assetPath = $repoRootAssetPath
+    } else {
+        Write-Error "Installer not found at $assetPath or $repoRootAssetPath. Build first or pass -Build."
+        exit 1
+    }
 }
 
 $headers = @{

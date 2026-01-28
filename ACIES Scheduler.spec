@@ -5,7 +5,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('VERSION', '.'), ('index.html', '.'), ('styles.css', '.'), ('script.js', '.'), ('.env', '.'), ('assets\\acies.png', '.'), ('scripts\\merge_pdfs.py', 'scripts'), ('scripts\\detect_pdf_size.py', 'scripts'), ('scripts\\shrink_pdf.py', 'scripts'), ('scripts\\PlotDWGs.ps1', 'scripts'), ('scripts\\FreezeLayersDWGs.ps1', 'scripts'), ('scripts\\ThawLayersDWGs.ps1', 'scripts'), ('scripts\\removeXREFPaths.ps1', 'scripts'), ('scripts\\StripRefPaths.dll', 'scripts'), ('WireSizerApplication\\\\dist', 'WireSizerApplication\\\\dist')],
+    datas=[('VERSION', '.'), ('index.html', '.'), ('styles.css', '.'), ('script.js', '.'), ('.env', '.'), ('assets\\acies.png', '.'), ('scripts\\merge_pdfs.py', 'scripts'), ('scripts\\detect_pdf_size.py', 'scripts'), ('scripts\\PlotDWGs.ps1', 'scripts'), ('scripts\\FreezeLayersDWGs.ps1', 'scripts'), ('scripts\\ThawLayersDWGs.ps1', 'scripts'), ('scripts\\removeXREFPaths.ps1', 'scripts'), ('scripts\\StripRefPaths.dll', 'scripts'), ('WireSizerApplication\\\\dist', 'WireSizerApplication\\\\dist')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

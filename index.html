@@ -883,7 +883,7 @@
                         <label class="radio-label"><input type="checkbox"
                                 id="settings_publish_autoDetectPaperSize"> Auto-detect page size</label>
                         <div class="inline" style="gap: 0.5rem; align-items: center;">
-                            <label class="tiny muted" style="min-width: 160px;">Reduce combined PDF to</label>
+                            <label class="tiny muted" style="min-width: 160px;">Reduce combined PDF quality to</label>
                             <input type="range" id="settings_publish_shrinkPercent" min="5" max="100" step="5" />
                             <span class="tiny" id="settings_publish_shrinkValue">100%</span>
                         </div>
@@ -1022,9 +1022,9 @@
                 </div>
                 <div class="tool-setting">
                     <div class="tool-setting-text">
-                        <div class="tool-setting-title">Output scale</div>
-                        <div class="tool-setting-desc">Controls the size of the combined PDF. 100% keeps the original
-                            scale; lower values shrink the output.</div>
+                        <div class="tool-setting-title">Output quality</div>
+                        <div class="tool-setting-desc">Controls the rasterization quality of the combined PDF. 100%
+                            keeps the sharpest output; lower values compress more but can soften text.</div>
                     </div>
                     <div class="tool-setting-control tool-setting-slider">
                         <input type="range" id="publish_modal_shrinkPercent" min="5" max="100" step="5" />

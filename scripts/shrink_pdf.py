@@ -1,6 +1,8 @@
 # --- shrink_pdf.py ---
 # Creates a lower-resolution copy of a PDF by rasterizing pages with PyMuPDF.
 
+import os
+import shutil
 import sys
 import fitz  # PyMuPDF
 
@@ -14,20 +16,48 @@ def shrink_pdf(input_path, output_path, percent):
         print("Percent is 100; no shrinking requested.")
         return
 
-    scale = percent / 100.0
+    # Map the percent slider to a safer DPI range to avoid extreme blurring.
+    # 100% -> 200 DPI (AutoCAD default), 50% -> ~148 DPI, 5% -> ~101 DPI.
+    min_dpi = 96
+    max_dpi = 200
+    target_dpi = min_dpi + (max_dpi - min_dpi) * (percent / 100.0)
+    scale = target_dpi / 72.0  # 72 DPI is the PDF user space baseline.
+
     src = fitz.open(input_path)
     dst = fitz.open()
 
     for page in src:
         rect = page.rect
         mat = fitz.Matrix(scale, scale)
-        pix = page.get_pixmap(matrix=mat, alpha=False)
+        pix = page.get_pixmap(
+            matrix=mat,
+            alpha=True,
+            colorspace=fitz.csRGB,
+        )
         new_page = dst.new_page(width=rect.width, height=rect.height)
         new_page.insert_image(rect, pixmap=pix)
 
-    dst.save(output_path, garbage=4, deflate=True, clean=True)
+    tmp_output = output_path + ".tmp"
+    dst.save(tmp_output, garbage=4, deflate=True, clean=True)
     dst.close()
     src.close()
+
+    # If the rasterized output is larger, keep the original to avoid bloat.
+    try:
+        input_size = os.path.getsize(input_path)
+        output_size = os.path.getsize(tmp_output)
+        if output_size >= input_size:
+            shutil.copyfile(input_path, output_path)
+            os.remove(tmp_output)
+            print("Shrunk PDF would be larger; kept the original instead.")
+        else:
+            os.replace(tmp_output, output_path)
+    except OSError:
+        # Fall back to the tmp output if size checks fail.
+        try:
+            os.replace(tmp_output, output_path)
+        except OSError:
+            pass
 
 
 def main():

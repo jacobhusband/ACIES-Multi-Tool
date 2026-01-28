@@ -381,6 +381,7 @@
                         <div class="toolbar-actions">
                             <button class="icon-btn" id="pluginsHelpBtn" aria-label="Plugins help"
                                 title="Plugins help">?</button>
+                        </div>
                     </div>
                     <div id="commands-container" class="tools-grid">
                         <!-- Command cards will be dynamically inserted here -->
@@ -495,12 +496,12 @@
                         <div>
                             <h4 class="section-title">Project Expense Sheet</h4>
                             <p class="tiny muted">Track expenses for projects on this week's timesheet</p>
-                    </div>
-
-                    <div class="expense-sheet-add-section">
-                        <button class="btn" id="addExpenseProjectBtn">
-                            + Add Project Expense
-                        </button>
+                        </div>
+                        <div class="expense-sheet-add-section">
+                            <button class="btn" id="addExpenseProjectBtn">
+                                + Add Project Expense
+                            </button>
+                        </div>
                     </div>
 
                     <div id="expenseSheetContainer" class="expense-sheet-container">
@@ -530,6 +531,7 @@
                         <div class="expense-total-item grand-total">
                             <span class="total-label">Grand Total:</span>
                             <span class="total-value" id="expenseGrandTotal">$0.00</span>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -884,6 +886,7 @@
                             <label class="tiny muted" style="min-width: 160px;">Reduce combined PDF to</label>
                             <input type="range" id="settings_publish_shrinkPercent" min="5" max="100" step="5" />
                             <span class="tiny" id="settings_publish_shrinkValue">100%</span>
+                        </div>
                     </div>
                     <div class="tiny muted" style="margin-top: 0.35rem;">If unchecked, you'll manually enter a page
                         size.</div>
@@ -936,7 +939,7 @@
                 <div class="setting-row">
                     <div class="setting-info">
                         <div class="setting-label">Scan and merge similar projects together</div>
-                        <div class="setting-desc">Thoroughly compares project IDs and names, then merges any matches.
+                        <div class="setting-desc">Thoroughly compares project IDs and names, then merges any matches.</div>
                     </div>
                     <button class="btn" id="btnMergeSimilarProjects">Run Action</button>
                 </div>

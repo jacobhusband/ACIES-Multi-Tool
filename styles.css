@@ -2566,6 +2566,12 @@ dialog::backdrop {
   font-weight: 600;
   color: var(--text);
   font-size: 13px;
+  margin-bottom: 2px;
+}
+
+.setting-info {
+  flex: 1;
+  min-width: 0;
 }
 
 .setting-desc {

@@ -36,18 +36,57 @@ if (-not $version) {
 }
 $tag = "v$version"
 
-# --- Optional build ---
-if ($Build) {
-    & "$PSScriptRoot/build.ps1"
-    if ($LASTEXITCODE -ne 0) { exit 1 }
-}
-
+# --- Resolve asset path ---
 if (!(Test-Path $assetPath)) {
     if (Test-Path $repoRootAssetPath) {
         $assetPath = $repoRootAssetPath
+    }
+}
+
+# --- Version check: extract version from built installer and compare to VERSION file ---
+function Get-InstallerVersion {
+    param([string]$InstallerPath)
+    if (!(Test-Path $InstallerPath)) { return $null }
+    try {
+        $versionInfo = (Get-Item $InstallerPath).VersionInfo
+        return $versionInfo.ProductVersion
+    } catch {
+        return $null
+    }
+}
+
+$needsBuild = $Build
+if (!$needsBuild -and (Test-Path $assetPath)) {
+    $installerVersion = Get-InstallerVersion -InstallerPath $assetPath
+    if ($installerVersion -and $installerVersion -ne $version) {
+        Write-Host "Version mismatch detected:" -ForegroundColor Yellow
+        Write-Host "  VERSION file: $version" -ForegroundColor Yellow
+        Write-Host "  Installer:    $installerVersion" -ForegroundColor Yellow
+        Write-Host "Triggering automatic rebuild..." -ForegroundColor Yellow
+        $needsBuild = $true
+    } elseif (!$installerVersion) {
+        Write-Host "Could not determine installer version. Triggering rebuild to be safe..." -ForegroundColor Yellow
+        $needsBuild = $true
     } else {
-        Write-Error "Installer not found at $assetPath or $repoRootAssetPath. Build first or pass -Build."
-        exit 1
+        Write-Host "Version check passed: $version" -ForegroundColor Green
+    }
+} elseif (!(Test-Path $assetPath)) {
+    Write-Host "Installer not found. Triggering build..." -ForegroundColor Yellow
+    $needsBuild = $true
+}
+
+# --- Build if needed ---
+if ($needsBuild) {
+    & "$PSScriptRoot/build.ps1"
+    if ($LASTEXITCODE -ne 0) { exit 1 }
+    # Re-resolve asset path after build
+    if (!(Test-Path $assetPath)) {
+        if (Test-Path $repoRootAssetPath) {
+            $assetPath = $repoRootAssetPath
+        } else {
+            Write-Error "Installer not found after build at $assetPath or $repoRootAssetPath"
+            exit 1
+        }
     }
 }
 

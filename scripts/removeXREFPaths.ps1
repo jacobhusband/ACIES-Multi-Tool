@@ -2,11 +2,11 @@ param(
   [string]$AcadCore,
   [string]$DisciplineShort,
   [string]$FilesListPath,
-  [bool]$StripXrefs = $true,
-  [bool]$SetByLayer = $true,
-  [bool]$Purge = $true,
-  [bool]$Audit = $true,
-  [bool]$HatchColor = $true
+  [int]$StripXrefs = 1,
+  [int]$SetByLayer = 1,
+  [int]$Purge = 1,
+  [int]$Audit = 1,
+  [int]$HatchColor = 1
 )
 
 # removeXrefPaths.ps1

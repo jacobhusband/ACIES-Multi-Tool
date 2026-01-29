@@ -28,3 +28,6 @@ Thumbs.db
 .vscode/
 *.swp
 .idea/
+
+CircuitBreakerAI/temp_uploads/
+CircuitBreakerAI/ElectricalPanels/Filled_Panel_Schedules.xlsx

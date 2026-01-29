@@ -240,7 +240,6 @@ document.addEventListener('DOMContentLoaded', () => {
             const statusDiv = pane.querySelector('.panel-status');
             const resultDiv = pane.querySelector('.panel-result');
             const statusText = pane.querySelector('.status-text');
-            const dataPreview = pane.querySelector('.data-preview');
 
             pane.querySelector('.card').classList.add('faded');
             statusDiv.classList.remove('hidden');
@@ -281,13 +280,9 @@ document.addEventListener('DOMContentLoaded', () => {
                                 if (eventData.event === 'gemini_started') {
                                     statusText.textContent = "Analyzing panel with Gemini AI...";
                                 } else if (eventData.event === 'complete') {
-                                    statusText.textContent = "Done!";
                                     statusDiv.classList.add('hidden');
                                     pane.querySelector('.card').classList.remove('faded');
-
-                                    // Show result
                                     resultDiv.classList.remove('hidden');
-                                    dataPreview.textContent = JSON.stringify(eventData.data, null, 2);
 
                                 } else if (eventData.event === 'error') {
                                     alert("Error: " + eventData.detail);
@@ -300,12 +295,6 @@ document.addEventListener('DOMContentLoaded', () => {
                         }
                     }
                 }
-
-                // Toggle Data Button
-                const btnData = pane.querySelector('.btn-toggle-data');
-                btnData.onclick = () => {
-                    dataPreview.classList.toggle('hidden');
-                };
 
             } catch (err) {
                 console.error(err);

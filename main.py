@@ -2272,9 +2272,12 @@ Return ONLY the JSON object.
 
         python_exe = sys.executable
 
-        # Build environment with API key
+        # Build environment with API key - prefer user settings, then env vars
         env = os.environ.copy()
-        api_key = os.environ.get('GEMINI_API_KEY', os.environ.get('GOOGLE_API_KEY', ''))
+        settings = self.get_user_settings()
+        api_key = settings.get('apiKey', '').strip()
+        if not api_key:
+            api_key = os.environ.get('GEMINI_API_KEY', os.environ.get('GOOGLE_API_KEY', ''))
         if api_key:
             env['GEMINI_API_KEY'] = api_key
 

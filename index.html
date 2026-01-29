@@ -354,6 +354,16 @@
                             </div>
                             <div class="tool-card-status"></div>
                         </div>
+                        <div id="toolCircuitBreaker" class="tool-card" role="button" tabindex="0">
+                            <div class="tool-card-content">
+                                <div class="tool-icon">CB</div>
+                                <div class="tool-card-header">Panel Schedule AI</div>
+                                <div class="tool-card-body">
+                                    Analyze electrical panel photos with AI to auto-generate panel schedules.
+                                </div>
+                            </div>
+                            <div class="tool-card-status"></div>
+                        </div>
                         <div id="toolLightingSchedule" class="tool-card" role="button" tabindex="0" hidden
                             aria-hidden="true">
                             <div class="tool-card-content">
@@ -1517,6 +1527,22 @@
             <div class="wire-sizer-body">
                 <div id="wireSizerEmptyState" class="wire-sizer-empty" hidden></div>
                 <iframe id="wireSizerFrame" class="wire-sizer-frame" title="Wire Sizer"></iframe>
+            </div>
+        </div>
+    </dialog>
+
+    <dialog id="circuitBreakerDlg" class="circuit-breaker-dialog">
+        <div class="circuit-breaker-shell">
+            <div class="circuit-breaker-header">
+                <div class="circuit-breaker-title">
+                    <div class="title">Panel Schedule AI</div>
+                    <p class="tiny muted">AI-powered electrical panel analysis and schedule generation.</p>
+                </div>
+                <button class="icon-btn" id="circuitBreakerCloseBtn" aria-label="Close Panel Schedule AI" title="Close">X</button>
+            </div>
+            <div class="circuit-breaker-body">
+                <div id="circuitBreakerEmptyState" class="circuit-breaker-empty" hidden></div>
+                <iframe id="circuitBreakerFrame" class="circuit-breaker-frame" title="Panel Schedule AI"></iframe>
             </div>
         </div>
     </dialog>

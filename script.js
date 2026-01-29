@@ -5939,6 +5939,72 @@ function closeWireSizer() {
   if (frame) frame.src = "about:blank";
 }
 
+// --- Circuit Breaker AI (Panel Schedule) ---
+
+function setCircuitBreakerMessage(message) {
+  const emptyState = document.getElementById("circuitBreakerEmptyState");
+  if (!emptyState) return;
+  if (message) {
+    emptyState.textContent = message;
+    emptyState.hidden = false;
+  } else {
+    emptyState.textContent = "";
+    emptyState.hidden = true;
+  }
+}
+
+async function openCircuitBreaker() {
+  const dlg = document.getElementById("circuitBreakerDlg");
+  const frame = document.getElementById("circuitBreakerFrame");
+  if (!dlg || !frame) return;
+
+  setCircuitBreakerMessage("Starting Panel Schedule AI server...");
+  frame.src = "about:blank";
+
+  if (!dlg.open) dlg.showModal();
+
+  if (window.pywebview?.api?.start_circuit_breaker_server) {
+    try {
+      const res = await window.pywebview.api.start_circuit_breaker_server();
+      if (res.status === "success" && res.url) {
+        const loadTimeout = setTimeout(() => {
+          setCircuitBreakerMessage(
+            "Server is starting up. This may take a moment for the first load..."
+          );
+        }, 6000);
+        frame.onload = () => {
+          clearTimeout(loadTimeout);
+          if (frame.src && !frame.src.startsWith("about:")) {
+            setCircuitBreakerMessage("");
+          }
+        };
+        frame.onerror = () => {
+          clearTimeout(loadTimeout);
+          setCircuitBreakerMessage(
+            "Panel Schedule AI failed to load. Please close and try again."
+          );
+        };
+        frame.src = res.url;
+        return;
+      }
+      setCircuitBreakerMessage(res.message || "Panel Schedule AI is unavailable.");
+      return;
+    } catch (e) {
+      setCircuitBreakerMessage("Panel Schedule AI failed to start: " + (e.message || e));
+      return;
+    }
+  }
+
+  setCircuitBreakerMessage("Panel Schedule AI is unavailable in this environment.");
+}
+
+function closeCircuitBreaker() {
+  const dlg = document.getElementById("circuitBreakerDlg");
+  const frame = document.getElementById("circuitBreakerFrame");
+  if (frame) frame.src = "about:blank";
+  if (dlg && dlg.open) dlg.close();
+}
+
 const debouncedSaveLightingSchedule = debounce(() => save(), 400);
 
 function autoResizeTextarea(textarea) {
@@ -7345,6 +7411,32 @@ function initEventListeners() {
       const frame = document.getElementById("wireSizerFrame");
       if (frame) frame.src = "about:blank";
       setWireSizerMessage("");
+    });
+  }
+
+  // Circuit Breaker AI event listeners
+  const circuitBreakerBtn = document.getElementById("toolCircuitBreaker");
+  if (circuitBreakerBtn) {
+    circuitBreakerBtn.addEventListener("click", openCircuitBreaker);
+    circuitBreakerBtn.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        openCircuitBreaker();
+      }
+    });
+  }
+
+  const circuitBreakerCloseBtn = document.getElementById("circuitBreakerCloseBtn");
+  if (circuitBreakerCloseBtn) {
+    circuitBreakerCloseBtn.addEventListener("click", closeCircuitBreaker);
+  }
+
+  const circuitBreakerDlg = document.getElementById("circuitBreakerDlg");
+  if (circuitBreakerDlg) {
+    circuitBreakerDlg.addEventListener("close", () => {
+      const frame = document.getElementById("circuitBreakerFrame");
+      if (frame) frame.src = "about:blank";
+      setCircuitBreakerMessage("");
     });
   }
 

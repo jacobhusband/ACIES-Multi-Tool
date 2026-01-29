@@ -2248,6 +2248,82 @@ Return ONLY the JSON object.
             'message': 'Wire Sizer build not found. Run npm install and npm run build in WireSizerApplication.'
         }
 
+    # --- Circuit Breaker AI (Panel Schedule) ---
+
+    def _find_free_port(self):
+        """Find an available TCP port."""
+        import socket
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(('127.0.0.1', 0))
+            return s.getsockname()[1]
+
+    def start_circuit_breaker_server(self):
+        """Start the CircuitBreakerAI FastAPI server as a subprocess."""
+        # If already running, return the URL
+        if hasattr(self, '_cb_process') and self._cb_process and self._cb_process.poll() is None:
+            return {'status': 'success', 'url': f'http://127.0.0.1:{self._cb_port}'}
+
+        server_script = BASE_DIR / "CircuitBreakerAI" / "server.py"
+        if not server_script.exists():
+            return {'status': 'error', 'message': 'CircuitBreakerAI server.py not found.'}
+
+        port = self._find_free_port()
+        self._cb_port = port
+
+        python_exe = sys.executable
+
+        # Build environment with API key
+        env = os.environ.copy()
+        api_key = os.environ.get('GEMINI_API_KEY', os.environ.get('GOOGLE_API_KEY', ''))
+        if api_key:
+            env['GEMINI_API_KEY'] = api_key
+
+        try:
+            startupinfo = None
+            creationflags = 0
+            if sys.platform == "win32":
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = 0  # SW_HIDE
+                creationflags = subprocess.CREATE_NO_WINDOW
+
+            self._cb_process = subprocess.Popen(
+                [python_exe, str(server_script), "--port", str(port)],
+                cwd=str(server_script.parent),
+                startupinfo=startupinfo,
+                creationflags=creationflags,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                env=env,
+            )
+
+            # Wait for server to be ready (poll the port)
+            import socket
+            for _ in range(100):  # 10 seconds max
+                try:
+                    with socket.create_connection(('127.0.0.1', port), timeout=0.1):
+                        return {'status': 'success', 'url': f'http://127.0.0.1:{port}'}
+                except (ConnectionRefusedError, OSError):
+                    time.sleep(0.1)
+
+            return {'status': 'error', 'message': 'CircuitBreakerAI server failed to start.'}
+        except Exception as e:
+            logging.error(f"Error starting CircuitBreakerAI server: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def stop_circuit_breaker_server(self):
+        """Stop the CircuitBreakerAI server subprocess."""
+        if hasattr(self, '_cb_process') and self._cb_process:
+            try:
+                self._cb_process.terminate()
+                self._cb_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self._cb_process.kill()
+            except Exception:
+                pass
+            self._cb_process = None
+        return {'status': 'success'}
+
     def run_publish_script(self):
         """Runs the PlotDWGs.ps1 PowerShell script with progress updates."""
         script_path = os.path.join(BASE_DIR, "scripts", "PlotDWGs.ps1")
@@ -2513,3 +2589,5 @@ if __name__ == '__main__':
     )
     # --- FIX: Removed the line that caused the circular reference ---
     webview.start()
+    # Cleanup subprocesses on exit
+    api.stop_circuit_breaker_server()

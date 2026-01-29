@@ -1780,6 +1780,59 @@ dialog.wire-sizer-dialog {
   pointer-events: none;
 }
 
+/* Circuit Breaker AI Dialog */
+dialog.circuit-breaker-dialog {
+  width: min(1400px, 96vw);
+  height: min(900px, 95vh);
+}
+
+.circuit-breaker-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.circuit-breaker-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 1.25rem;
+  border-bottom: 1px solid var(--glass-border);
+  background: var(--bg-tertiary);
+}
+
+.circuit-breaker-title {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.circuit-breaker-body {
+  position: relative;
+  flex: 1;
+  background: var(--bg);
+}
+
+.circuit-breaker-frame {
+  width: 100%;
+  height: 100%;
+  border: none;
+}
+
+.circuit-breaker-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 1.5rem;
+  color: var(--muted);
+  background: transparent;
+  pointer-events: none;
+}
+
 /* Lighting Schedule Dialog */
 dialog.lighting-schedule-dialog {
   width: min(1400px, 96vw);

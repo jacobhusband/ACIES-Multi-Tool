@@ -209,7 +209,8 @@ def update_excel_workbook(panel_data: PanelData, folder_name: str):
     global session_initialized
 
     # On first panel of the session, start fresh from template
-    if not session_initialized:
+    # Also reset if the output file was cleaned up externally.
+    if (not session_initialized) or (not os.path.exists(OUTPUT_FILE)):
         # Delete existing output file if it exists
         if os.path.exists(OUTPUT_FILE):
             os.remove(OUTPUT_FILE)

@@ -283,6 +283,9 @@ document.addEventListener('DOMContentLoaded', () => {
                                     statusDiv.classList.add('hidden');
                                     pane.querySelector('.card').classList.remove('faded');
                                     resultDiv.classList.remove('hidden');
+                                    // Show the save button now that a panel has been processed
+                                    const sessionActions = document.getElementById('session-actions');
+                                    if (sessionActions) sessionActions.style.display = '';
 
                                 } else if (eventData.event === 'error') {
                                     alert("Error: " + eventData.detail);
@@ -314,12 +317,7 @@ document.addEventListener('DOMContentLoaded', () => {
         btnSaveSchedule.addEventListener('click', async () => {
             const panelNames = collectPanelNames();
             const suggestedName = buildFilename(panelNames);
-
-            if ('showSaveFilePicker' in window) {
-                await saveWithFilePicker(suggestedName);
-            } else {
-                await saveWithFallback(suggestedName);
-            }
+            await downloadSchedule(suggestedName);
         });
     }
 
@@ -343,39 +341,62 @@ document.addEventListener('DOMContentLoaded', () => {
         return 'Panels_' + panelNames.join('_') + '.xlsx';
     }
 
-    async function saveWithFilePicker(suggestedName) {
-        try {
-            const handle = await window.showSaveFilePicker({
-                suggestedName: suggestedName,
-                types: [{
-                    description: 'Excel Workbook',
-                    accept: {
-                        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx']
-                    }
-                }]
-            });
+    async function requestHostSaveSchedule(suggestedName, timeoutMs = 15000) {
+        if (!window.parent || window.parent === window || !window.parent.postMessage) {
+            return null;
+        }
+        return new Promise((resolve) => {
+            const requestId = `cb-save-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
-            const response = await fetch('/api/download-schedule');
-            if (!response.ok) {
-                alert('No schedule file found. Please generate at least one panel first.');
+            const handleMessage = (event) => {
+                const data = event.data || {};
+                if (data.type !== 'circuit-breaker-save-schedule-response' || data.requestId !== requestId) {
+                    return;
+                }
+                window.removeEventListener('message', handleMessage);
+                resolve(data.result || null);
+            };
+
+            window.addEventListener('message', handleMessage);
+            window.parent.postMessage({
+                type: 'circuit-breaker-save-schedule',
+                requestId,
+                suggestedName
+            }, '*');
+
+            setTimeout(() => {
+                window.removeEventListener('message', handleMessage);
+                resolve(null);
+            }, timeoutMs);
+        });
+    }
+
+    async function saveScheduleViaHost(suggestedName) {
+        if (window.pywebview?.api?.save_circuit_breaker_schedule) {
+            try {
+                return await window.pywebview.api.save_circuit_breaker_schedule(suggestedName);
+            } catch (e) {
+                return { status: 'error', message: e?.message || String(e) };
+            }
+        }
+        return await requestHostSaveSchedule(suggestedName);
+    }
+
+    async function downloadSchedule(suggestedName) {
+        try {
+            const hostResult = await saveScheduleViaHost(suggestedName);
+            if (hostResult) {
+                if (hostResult.status === 'success') {
+                    alert(`Saved schedule to:\n${hostResult.path}`);
+                    return;
+                }
+                if (hostResult.status === 'cancelled' || hostResult.status === 'canceled') {
+                    return;
+                }
+                alert(hostResult.message || 'Failed to save schedule.');
                 return;
             }
 
-            const blob = await response.blob();
-            const writable = await handle.createWritable();
-            await writable.write(blob);
-            await writable.close();
-
-            alert(`Schedule saved as: ${handle.name}`);
-        } catch (err) {
-            if (err.name === 'AbortError') return;
-            console.error('Save failed:', err);
-            alert('Failed to save file. ' + err.message);
-        }
-    }
-
-    async function saveWithFallback(suggestedName) {
-        try {
             const response = await fetch('/api/download-schedule');
             if (!response.ok) {
                 alert('No schedule file found. Please generate at least one panel first.');

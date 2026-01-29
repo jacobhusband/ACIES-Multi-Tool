@@ -2327,6 +2327,44 @@ Return ONLY the JSON object.
             self._cb_process = None
         return {'status': 'success'}
 
+    def save_circuit_breaker_schedule(self, suggested_name=None):
+        """Save the CircuitBreakerAI schedule to a user-selected path."""
+        try:
+            if isinstance(suggested_name, dict):
+                suggested_name = suggested_name.get('suggestedName') or suggested_name.get('suggested_name')
+
+            output_path = BASE_DIR / "CircuitBreakerAI" / "ElectricalPanels" / "Filled_Panel_Schedules.xlsx"
+            if not output_path.exists():
+                return {'status': 'error', 'message': 'No schedule file found. Please generate a panel first.'}
+
+            default_name = str(suggested_name or 'Panel_Schedule').strip() or 'Panel_Schedule'
+            selection = self.select_template_save_location(default_name=default_name, file_type='xlsx')
+            if selection.get('status') != 'success':
+                return selection
+
+            dest_path = selection.get('path')
+            if not dest_path:
+                return {'status': 'cancelled', 'path': None}
+
+            if not dest_path.lower().endswith('.xlsx'):
+                dest_path = f"{dest_path}.xlsx"
+
+            dest_dir = os.path.dirname(dest_path)
+            if dest_dir and not os.path.isdir(dest_dir):
+                os.makedirs(dest_dir, exist_ok=True)
+
+            shutil.copy2(str(output_path), dest_path)
+
+            try:
+                os.remove(output_path)
+            except Exception as cleanup_error:
+                logging.warning(f"Could not remove CircuitBreakerAI temp schedule: {cleanup_error}")
+
+            return {'status': 'success', 'path': dest_path}
+        except Exception as e:
+            logging.error(f"Error saving CircuitBreakerAI schedule: {e}")
+            return {'status': 'error', 'message': str(e)}
+
     def run_publish_script(self):
         """Runs the PlotDWGs.ps1 PowerShell script with progress updates."""
         script_path = os.path.join(BASE_DIR, "scripts", "PlotDWGs.ps1")

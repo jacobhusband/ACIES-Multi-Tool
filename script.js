@@ -6005,6 +6005,38 @@ function closeCircuitBreaker() {
   if (dlg && dlg.open) dlg.close();
 }
 
+window.addEventListener("message", async (event) => {
+  const data = event.data || {};
+  if (data.type !== "circuit-breaker-save-schedule") return;
+
+  const frame = document.getElementById("circuitBreakerFrame");
+  if (frame && event.source !== frame.contentWindow) return;
+
+  let result = { status: "error", message: "Panel Schedule AI save is unavailable." };
+  if (window.pywebview?.api?.save_circuit_breaker_schedule) {
+    try {
+      result = await window.pywebview.api.save_circuit_breaker_schedule(
+        data.suggestedName
+      );
+    } catch (e) {
+      result = { status: "error", message: e?.message || String(e) };
+    }
+  }
+
+  try {
+    event.source?.postMessage(
+      {
+        type: "circuit-breaker-save-schedule-response",
+        requestId: data.requestId,
+        result,
+      },
+      "*"
+    );
+  } catch (e) {
+    // Ignore postMessage errors.
+  }
+});
+
 const debouncedSaveLightingSchedule = debounce(() => save(), 400);
 
 function autoResizeTextarea(textarea) {

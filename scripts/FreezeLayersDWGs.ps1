@@ -449,32 +449,11 @@ $freezeReportForLisp = ($freezeReport -replace '\\', '/')
 
 $updateLsp = Join-Path $ToolDir "update_layers.lsp"
 $updateLspForLisp = ($updateLsp -replace '\\', '/')
-$updateListFile = Join-Path $ToolDir "update_files.txt"
-$updateListForLisp = ($updateListFile -replace '\\', '/')
-
 $lispLayerList = $layersToFreeze | ForEach-Object { "`"$_`"" }
 $lispLayerListStr = $lispLayerList -join " "
 
-$files | ForEach-Object { ($_ -replace '\\', '/') } |
-  Set-Content -Path $updateListFile -Encoding ASCII
-
 $updateLspContent = @"
 (defun _t (b) (if b "T" "F"))
-
-(defun _read-lines (path / f line lines)
-  (setq f (open path "r"))
-  (if f
-    (progn
-      (while (setq line (read-line f))
-        (if (> (strlen line) 0)
-          (setq lines (cons line lines))
-        )
-      )
-      (close f)
-      (reverse lines)
-    )
-  )
-)
 
 (defun _flags (rec / v)
   (setq v (assoc 70 rec))
@@ -581,16 +560,8 @@ $updateLspContent = @"
   (princ)
 )
 
-(defun c:BatchFreezeFiles (/ files)
-  (setq files (_read-lines "$updateListForLisp"))
-  (if files
-    (progn
-      (foreach f files
-        (command "_.OPEN" f)
-        (c:BatchFreeze)
-      )
-    )
-  )
+(defun c:BatchFreezeFiles (/)
+  (c:BatchFreeze)
   (command "_.QUIT" "_N")
   (princ)
 )
@@ -619,27 +590,30 @@ $logFile = Join-Path ([Environment]::GetFolderPath("Desktop")) "LayerUpdateLog.t
 "Files:" | Out-File $logFile -Append
 $files | ForEach-Object { $_ | Out-File $logFile -Append }
 
-Write-Host "PROGRESS: Updating files..."
+Write-Host "PROGRESS: Updating $($files.Count) file(s)..."
 
 $outLog = Join-Path $ToolDir "update_batch.out.txt"
 $errLog = Join-Path $ToolDir "update_batch.err.txt"
-if (Test-Path $outLog) { Remove-Item $outLog -Force }
-if (Test-Path $errLog) { Remove-Item $errLog -Force }
 
-$updateTimeoutSeconds = $ProcessTimeoutSeconds * $files.Count
-$r = Invoke-AcadCore -DwgPath $files[0] -ScriptPath $updateScr -OutLog $outLog -ErrLog $errLog -TimeoutSeconds $updateTimeoutSeconds
+foreach ($dwgFile in $files) {
+  Write-Host "  Processing: $dwgFile"
+  if (Test-Path $outLog) { Remove-Item $outLog -Force }
+  if (Test-Path $errLog) { Remove-Item $errLog -Force }
 
-if ($r.TimedOut) {
-  Write-Host "  -> TIMEOUT. Killed." -ForegroundColor Red
-  "FAILED (Timeout): Batch" | Out-File $logFile -Append
-}
-elseif ($r.ExitCode -eq 0) {
-  Write-Host "  -> ExitCode 0" -ForegroundColor Green
-  "DONE (0): Batch" | Out-File $logFile -Append
-}
-else {
-  Write-Host "  -> ExitCode $($r.ExitCode)" -ForegroundColor Yellow
-  "DONE ($($r.ExitCode)): Batch" | Out-File $logFile -Append
+  $r = Invoke-AcadCore -DwgPath $dwgFile -ScriptPath $updateScr -OutLog $outLog -ErrLog $errLog -TimeoutSeconds $ProcessTimeoutSeconds
+
+  if ($r.TimedOut) {
+    Write-Host "    -> TIMEOUT. Killed." -ForegroundColor Red
+    "FAILED (Timeout): $dwgFile" | Out-File $logFile -Append
+  }
+  elseif ($r.ExitCode -eq 0) {
+    Write-Host "    -> ExitCode 0" -ForegroundColor Green
+    "DONE (0): $dwgFile" | Out-File $logFile -Append
+  }
+  else {
+    Write-Host "    -> ExitCode $($r.ExitCode)" -ForegroundColor Yellow
+    "DONE ($($r.ExitCode)): $dwgFile" | Out-File $logFile -Append
+  }
 }
 
 Write-Host "Done."

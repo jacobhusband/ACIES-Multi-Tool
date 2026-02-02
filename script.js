@@ -5941,101 +5941,371 @@ function closeWireSizer() {
 
 // --- Circuit Breaker AI (Panel Schedule) ---
 
-function setCircuitBreakerMessage(message) {
-  const emptyState = document.getElementById("circuitBreakerEmptyState");
-  if (!emptyState) return;
-  if (message) {
-    emptyState.textContent = message;
-    emptyState.hidden = false;
+const circuitBreakerState = {
+  breakerPath: "",
+  directoryPath: "",
+  breakerFile: null,
+  directoryFile: null,
+  outputMode: "new",
+  newOutputPath: "",
+  existingOutputPath: "",
+  panelName: "",
+  running: false,
+};
+
+function getCircuitBreakerOutputPath() {
+  return circuitBreakerState.outputMode === "existing"
+    ? circuitBreakerState.existingOutputPath
+    : circuitBreakerState.newOutputPath;
+}
+
+function getCircuitBreakerFileLabel(path, file) {
+  if (file?.name) return file.name;
+  if (!path) return "No file selected";
+  const parts = String(path).split(/[\\/]/);
+  return parts[parts.length - 1] || path;
+}
+
+function setCircuitBreakerStatus(message, isError = false) {
+  const statusEl = document.getElementById("cbRunStatus");
+  if (!statusEl) return;
+  statusEl.textContent = message || "";
+  statusEl.classList.toggle("text-danger", Boolean(isError));
+}
+
+function updateCircuitBreakerUi() {
+  const breakerFile = document.getElementById("cbBreakerFile");
+  const directoryFile = document.getElementById("cbDirectoryFile");
+  const newRow = document.getElementById("cbNewScheduleRow");
+  const existingRow = document.getElementById("cbExistingScheduleRow");
+  const newPath = document.getElementById("cbNewSchedulePath");
+  const existingPath = document.getElementById("cbExistingSchedulePath");
+  const panelNameInput = document.getElementById("cbPanelName");
+  const runBtn = document.getElementById("cbRunPanelScheduleBtn");
+  const modeNew = document.getElementById("cbOutputModeNew");
+  const modeExisting = document.getElementById("cbOutputModeExisting");
+  const breakerDrop = document.getElementById("cbBreakerDrop");
+  const directoryDrop = document.getElementById("cbDirectoryDrop");
+  const runningOverlay = document.getElementById("cbRunningOverlay");
+
+  if (breakerFile) {
+    const label = getCircuitBreakerFileLabel(
+      circuitBreakerState.breakerPath,
+      circuitBreakerState.breakerFile
+    );
+    breakerFile.textContent = label;
+    breakerFile.dataset.empty =
+      circuitBreakerState.breakerPath || circuitBreakerState.breakerFile
+        ? "false"
+        : "true";
+  }
+  if (directoryFile) {
+    const label = getCircuitBreakerFileLabel(
+      circuitBreakerState.directoryPath,
+      circuitBreakerState.directoryFile
+    );
+    directoryFile.textContent = label;
+    directoryFile.dataset.empty =
+      circuitBreakerState.directoryPath || circuitBreakerState.directoryFile
+        ? "false"
+        : "true";
+  }
+  if (newPath) {
+    const label = circuitBreakerState.newOutputPath || "No file selected";
+    newPath.textContent = label;
+    newPath.dataset.empty = circuitBreakerState.newOutputPath ? "false" : "true";
+  }
+  if (existingPath) {
+    const label = circuitBreakerState.existingOutputPath || "No file selected";
+    existingPath.textContent = label;
+    existingPath.dataset.empty = circuitBreakerState.existingOutputPath
+      ? "false"
+      : "true";
+  }
+
+  if (modeNew) {
+    const isActive = circuitBreakerState.outputMode === "new";
+    modeNew.classList.toggle("is-active", isActive);
+    modeNew.setAttribute("aria-pressed", isActive ? "true" : "false");
+  }
+  if (modeExisting) {
+    const isActive = circuitBreakerState.outputMode === "existing";
+    modeExisting.classList.toggle("is-active", isActive);
+    modeExisting.setAttribute("aria-pressed", isActive ? "true" : "false");
+  }
+
+  if (newRow) newRow.hidden = circuitBreakerState.outputMode !== "new";
+  if (existingRow) existingRow.hidden = circuitBreakerState.outputMode !== "existing";
+
+  if (panelNameInput && panelNameInput.value !== circuitBreakerState.panelName) {
+    panelNameInput.value = circuitBreakerState.panelName;
+  }
+
+  const ready =
+    (circuitBreakerState.breakerPath || circuitBreakerState.breakerFile) &&
+    (circuitBreakerState.directoryPath || circuitBreakerState.directoryFile) &&
+    getCircuitBreakerOutputPath();
+
+  if (runBtn) {
+    runBtn.disabled = circuitBreakerState.running || !ready;
+  }
+
+  if (breakerDrop) {
+    breakerDrop.dataset.hasFile =
+      circuitBreakerState.breakerPath || circuitBreakerState.breakerFile
+        ? "true"
+        : "false";
+    breakerDrop.classList.toggle("is-disabled", circuitBreakerState.running);
+  }
+  if (directoryDrop) {
+    directoryDrop.dataset.hasFile =
+      circuitBreakerState.directoryPath || circuitBreakerState.directoryFile
+        ? "true"
+        : "false";
+    directoryDrop.classList.toggle("is-disabled", circuitBreakerState.running);
+  }
+
+  if (modeNew) modeNew.disabled = circuitBreakerState.running;
+  if (modeExisting) modeExisting.disabled = circuitBreakerState.running;
+  if (panelNameInput) panelNameInput.disabled = circuitBreakerState.running;
+
+  if (circuitBreakerState.running && !ready) {
+    circuitBreakerState.running = false;
+  }
+  if (runningOverlay) {
+    runningOverlay.hidden = !circuitBreakerState.running;
+  }
+
+  if (circuitBreakerState.running) {
+    setCircuitBreakerStatus("Running in the background...");
+  } else if (ready) {
+    setCircuitBreakerStatus("Ready when you are.");
   } else {
-    emptyState.textContent = "";
-    emptyState.hidden = true;
+    setCircuitBreakerStatus("Select the required photos and schedule file.");
+  }
+}
+
+function resetCircuitBreakerForm() {
+  circuitBreakerState.breakerPath = "";
+  circuitBreakerState.directoryPath = "";
+  circuitBreakerState.breakerFile = null;
+  circuitBreakerState.directoryFile = null;
+  circuitBreakerState.outputMode = "new";
+  circuitBreakerState.newOutputPath = "";
+  circuitBreakerState.existingOutputPath = "";
+  circuitBreakerState.panelName = "";
+  circuitBreakerState.running = false;
+  updateCircuitBreakerUi();
+}
+
+function setCircuitBreakerFile(kind, file) {
+  if (kind === "breaker") {
+    circuitBreakerState.breakerFile = file || null;
+    if (file) circuitBreakerState.breakerPath = "";
+  } else {
+    circuitBreakerState.directoryFile = file || null;
+    if (file) circuitBreakerState.directoryPath = "";
+  }
+  updateCircuitBreakerUi();
+}
+
+async function selectCircuitBreakerImage(kind) {
+  if (!window.pywebview?.api?.select_files) {
+    toast("File picker is unavailable.");
+    return;
+  }
+  try {
+    const result = await window.pywebview.api.select_files({
+      allow_multiple: false,
+      file_types: ["Image Files (*.jpg;*.jpeg;*.png;*.bmp;*.gif;*.tif;*.tiff)"],
+    });
+    if (result.status === "success" && result.paths?.length) {
+      if (kind === "breaker") {
+        circuitBreakerState.breakerPath = result.paths[0];
+        circuitBreakerState.breakerFile = null;
+      } else {
+        circuitBreakerState.directoryPath = result.paths[0];
+        circuitBreakerState.directoryFile = null;
+      }
+      updateCircuitBreakerUi();
+    }
+  } catch (e) {
+    toast("Error selecting photo.");
+  }
+}
+
+async function selectCircuitBreakerSchedulePath(mode) {
+  if (!window.pywebview?.api) {
+    toast("File picker is unavailable.");
+    return;
+  }
+  if (mode === "new") {
+    try {
+      const selection = await window.pywebview.api.select_template_save_location(
+        null,
+        "Panel_Schedule",
+        "xlsx"
+      );
+      if (selection?.status === "success" && selection.path) {
+        circuitBreakerState.newOutputPath = selection.path;
+        updateCircuitBreakerUi();
+      }
+    } catch (e) {
+      toast("Error selecting save location.");
+    }
+    return;
+  }
+
+  try {
+    const selection = await window.pywebview.api.select_files({
+      allow_multiple: false,
+      file_types: ["Excel Files (*.xlsx)"],
+    });
+    if (selection?.status === "success" && selection.paths?.length) {
+      circuitBreakerState.existingOutputPath = selection.paths[0];
+      updateCircuitBreakerUi();
+    }
+  } catch (e) {
+    toast("Error selecting panel schedule.");
   }
 }
 
 async function openCircuitBreaker() {
   const dlg = document.getElementById("circuitBreakerDlg");
-  const frame = document.getElementById("circuitBreakerFrame");
-  if (!dlg || !frame) return;
-
-  setCircuitBreakerMessage("Starting Panel Schedule AI server...");
-  frame.src = "about:blank";
-
-  if (!dlg.open) dlg.showModal();
-
-  if (window.pywebview?.api?.start_circuit_breaker_server) {
-    try {
-      const res = await window.pywebview.api.start_circuit_breaker_server();
-      if (res.status === "success" && res.url) {
-        const loadTimeout = setTimeout(() => {
-          setCircuitBreakerMessage(
-            "Server is starting up. This may take a moment for the first load..."
-          );
-        }, 6000);
-        frame.onload = () => {
-          clearTimeout(loadTimeout);
-          if (frame.src && !frame.src.startsWith("about:")) {
-            setCircuitBreakerMessage("");
-          }
-        };
-        frame.onerror = () => {
-          clearTimeout(loadTimeout);
-          setCircuitBreakerMessage(
-            "Panel Schedule AI failed to load. Please close and try again."
-          );
-        };
-        frame.src = res.url;
-        return;
-      }
-      setCircuitBreakerMessage(res.message || "Panel Schedule AI is unavailable.");
-      return;
-    } catch (e) {
-      setCircuitBreakerMessage("Panel Schedule AI failed to start: " + (e.message || e));
-      return;
-    }
+  if (!dlg) return;
+  if (!circuitBreakerState.running) {
+    resetCircuitBreakerForm();
+  } else {
+    circuitBreakerState.running = false;
+    updateCircuitBreakerUi();
   }
-
-  setCircuitBreakerMessage("Panel Schedule AI is unavailable in this environment.");
+  if (!dlg.open) dlg.showModal();
+  updateCircuitBreakerUi();
 }
 
 function closeCircuitBreaker() {
   const dlg = document.getElementById("circuitBreakerDlg");
-  const frame = document.getElementById("circuitBreakerFrame");
-  if (frame) frame.src = "about:blank";
   if (dlg && dlg.open) dlg.close();
 }
 
-window.addEventListener("message", async (event) => {
-  const data = event.data || {};
-  if (data.type !== "circuit-breaker-save-schedule") return;
+function openCircuitBreakerFilePicker(kind) {
+  if (circuitBreakerState.running) return;
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "image/*";
+  input.onchange = () => {
+    const file = input.files && input.files[0];
+    if (file) setCircuitBreakerFile(kind, file);
+  };
+  input.click();
+}
 
-  const frame = document.getElementById("circuitBreakerFrame");
-  if (frame && event.source !== frame.contentWindow) return;
+function handleCircuitBreakerDrop(kind, e, zone) {
+  e.preventDefault();
+  if (zone) zone.classList.remove("is-dragover");
+  if (circuitBreakerState.running) return;
+  const file = e.dataTransfer?.files?.[0];
+  if (file) setCircuitBreakerFile(kind, file);
+}
 
-  let result = { status: "error", message: "Panel Schedule AI save is unavailable." };
-  if (window.pywebview?.api?.save_circuit_breaker_schedule) {
-    try {
-      result = await window.pywebview.api.save_circuit_breaker_schedule(
-        data.suggestedName
-      );
-    } catch (e) {
-      result = { status: "error", message: e?.message || String(e) };
-    }
+function handleCircuitBreakerDragOver(e, zone) {
+  e.preventDefault();
+  if (circuitBreakerState.running) return;
+  if (zone) zone.classList.add("is-dragover");
+}
+
+function handleCircuitBreakerDragLeave(e, zone) {
+  e.preventDefault();
+  if (zone) zone.classList.remove("is-dragover");
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error || new Error("Failed to read file."));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function fileToUploadPayload(file) {
+  if (!file) return null;
+  const dataUrl = await readFileAsDataUrl(file);
+  return { name: file.name || "upload", dataUrl };
+}
+
+async function runCircuitBreakerInBackground() {
+  const outputPath = getCircuitBreakerOutputPath();
+  if (
+    (!circuitBreakerState.breakerPath && !circuitBreakerState.breakerFile) ||
+    (!circuitBreakerState.directoryPath && !circuitBreakerState.directoryFile)
+  ) {
+    toast("Select one breaker photo and one directory photo.");
+    return;
   }
+  if (!outputPath) {
+    toast("Choose where to save or select an existing panel schedule.");
+    return;
+  }
+  if (!window.pywebview?.api?.run_panel_schedule_background) {
+    toast("Panel Schedule AI is unavailable in this environment.");
+    return;
+  }
+
+  circuitBreakerState.running = true;
+  updateCircuitBreakerUi();
+
+  const payload = {
+    breakerPath: circuitBreakerState.breakerPath,
+    directoryPath: circuitBreakerState.directoryPath,
+    breakerUploads: circuitBreakerState.breakerFile
+      ? [await fileToUploadPayload(circuitBreakerState.breakerFile)]
+      : [],
+    directoryUploads: circuitBreakerState.directoryFile
+      ? [await fileToUploadPayload(circuitBreakerState.directoryFile)]
+      : [],
+    outputMode: circuitBreakerState.outputMode,
+    outputPath,
+    panelName: circuitBreakerState.panelName?.trim() || "",
+  };
 
   try {
-    event.source?.postMessage(
-      {
-        type: "circuit-breaker-save-schedule-response",
-        requestId: data.requestId,
-        result,
-      },
-      "*"
-    );
+    const res = await window.pywebview.api.run_panel_schedule_background(payload);
+    if (res?.status === "error") {
+      circuitBreakerState.running = false;
+      updateCircuitBreakerUi();
+      toast(res.message || "Failed to start Panel Schedule AI.");
+      return;
+    }
+    closeCircuitBreaker();
+    toast("Panel Schedule AI is running in the background.");
   } catch (e) {
-    // Ignore postMessage errors.
+    circuitBreakerState.running = false;
+    updateCircuitBreakerUi();
+    toast("Failed to start Panel Schedule AI.");
   }
-});
+}
+
+window.handlePanelScheduleResult = async function (payload) {
+  circuitBreakerState.running = false;
+  updateCircuitBreakerUi();
+  if (!payload) return;
+  if (payload.status === "success") {
+    toast(payload.message || "Panel Schedule AI complete.");
+    const folder =
+      payload.outputFolder ||
+      (payload.outputPath ? payload.outputPath.split(/[\\/]/).slice(0, -1).join("\\") : "");
+    if (folder && window.pywebview?.api?.open_path) {
+      try {
+        await window.pywebview.api.open_path(folder);
+      } catch (e) {
+        // Ignore open errors.
+      }
+    }
+  } else {
+    toast(payload.message || "Panel Schedule AI failed.", 6000);
+  }
+};
 
 const debouncedSaveLightingSchedule = debounce(() => save(), 400);
 
@@ -7466,10 +7736,85 @@ function initEventListeners() {
   const circuitBreakerDlg = document.getElementById("circuitBreakerDlg");
   if (circuitBreakerDlg) {
     circuitBreakerDlg.addEventListener("close", () => {
-      const frame = document.getElementById("circuitBreakerFrame");
-      if (frame) frame.src = "about:blank";
-      setCircuitBreakerMessage("");
+      if (!circuitBreakerState.running) {
+        resetCircuitBreakerForm();
+      }
     });
+  }
+
+  const cbBreakerDrop = document.getElementById("cbBreakerDrop");
+  if (cbBreakerDrop) {
+    cbBreakerDrop.addEventListener("click", () =>
+      openCircuitBreakerFilePicker("breaker")
+    );
+    cbBreakerDrop.addEventListener("dragover", (e) =>
+      handleCircuitBreakerDragOver(e, cbBreakerDrop)
+    );
+    cbBreakerDrop.addEventListener("dragleave", (e) =>
+      handleCircuitBreakerDragLeave(e, cbBreakerDrop)
+    );
+    cbBreakerDrop.addEventListener("drop", (e) =>
+      handleCircuitBreakerDrop("breaker", e, cbBreakerDrop)
+    );
+    cbBreakerDrop.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        openCircuitBreakerFilePicker("breaker");
+      }
+    });
+  }
+
+  const cbDirectoryDrop = document.getElementById("cbDirectoryDrop");
+  if (cbDirectoryDrop) {
+    cbDirectoryDrop.addEventListener("click", () =>
+      openCircuitBreakerFilePicker("directory")
+    );
+    cbDirectoryDrop.addEventListener("dragover", (e) =>
+      handleCircuitBreakerDragOver(e, cbDirectoryDrop)
+    );
+    cbDirectoryDrop.addEventListener("dragleave", (e) =>
+      handleCircuitBreakerDragLeave(e, cbDirectoryDrop)
+    );
+    cbDirectoryDrop.addEventListener("drop", (e) =>
+      handleCircuitBreakerDrop("directory", e, cbDirectoryDrop)
+    );
+    cbDirectoryDrop.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        openCircuitBreakerFilePicker("directory");
+      }
+    });
+  }
+
+  const cbOutputModeNew = document.getElementById("cbOutputModeNew");
+  if (cbOutputModeNew) {
+    cbOutputModeNew.addEventListener("click", async () => {
+      circuitBreakerState.outputMode = "new";
+      updateCircuitBreakerUi();
+      await selectCircuitBreakerSchedulePath("new");
+    });
+  }
+
+  const cbOutputModeExisting = document.getElementById("cbOutputModeExisting");
+  if (cbOutputModeExisting) {
+    cbOutputModeExisting.addEventListener("click", async () => {
+      circuitBreakerState.outputMode = "existing";
+      updateCircuitBreakerUi();
+      await selectCircuitBreakerSchedulePath("existing");
+    });
+  }
+
+  const cbPanelNameInput = document.getElementById("cbPanelName");
+  if (cbPanelNameInput) {
+    cbPanelNameInput.addEventListener("input", (e) => {
+      circuitBreakerState.panelName = e.target.value;
+      updateCircuitBreakerUi();
+    });
+  }
+
+  const cbRunPanelBtn = document.getElementById("cbRunPanelScheduleBtn");
+  if (cbRunPanelBtn) {
+    cbRunPanelBtn.addEventListener("click", runCircuitBreakerInBackground);
   }
 
   const lightingScheduleBtn = document.getElementById("toolLightingSchedule");

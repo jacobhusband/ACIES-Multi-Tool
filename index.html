@@ -1541,8 +1541,74 @@
                 <button class="icon-btn" id="circuitBreakerCloseBtn" aria-label="Close Panel Schedule AI" title="Close">X</button>
             </div>
             <div class="circuit-breaker-body">
-                <div id="circuitBreakerEmptyState" class="circuit-breaker-empty" hidden></div>
-                <iframe id="circuitBreakerFrame" class="circuit-breaker-frame" title="Panel Schedule AI"></iframe>
+                <div class="circuit-breaker-form">
+                    <section class="cb-section">
+                        <div class="cb-section-title">1. Upload panel photos</div>
+                        <p class="tiny muted">Upload one photo of the circuit breakers and one photo of the circuit directory.</p>
+                        <div class="cb-upload-grid">
+                        <div class="cb-upload-card">
+                            <div class="cb-upload-title">Circuit breakers photo</div>
+                            <p class="tiny muted">Clear photo of the breaker labels and handles.</p>
+                            <div id="cbBreakerDrop" class="cb-drop-zone" role="button" tabindex="0">
+                                <div class="cb-drop-icon">📷</div>
+                                <div class="cb-drop-text">Drag &amp; drop a photo or click to select</div>
+                                <div class="tiny muted">JPG, PNG, HEIC supported</div>
+                            </div>
+                            <div class="cb-upload-actions">
+                                <span id="cbBreakerFile" class="cb-file-pill" data-empty="true">No file selected</span>
+                            </div>
+                        </div>
+                        <div class="cb-upload-card">
+                            <div class="cb-upload-title">Circuit directory photo</div>
+                            <p class="tiny muted">Photo of the directory or schedule labels.</p>
+                            <div id="cbDirectoryDrop" class="cb-drop-zone" role="button" tabindex="0">
+                                <div class="cb-drop-icon">🗂️</div>
+                                <div class="cb-drop-text">Drag &amp; drop a photo or click to select</div>
+                                <div class="tiny muted">JPG, PNG, HEIC supported</div>
+                            </div>
+                            <div class="cb-upload-actions">
+                                <span id="cbDirectoryFile" class="cb-file-pill" data-empty="true">No file selected</span>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                    <section class="cb-section">
+                        <div class="cb-section-title">2. Panel schedule file</div>
+                        <div class="cb-choice-row">
+                            <button class="cb-choice-btn" id="cbOutputModeNew" type="button">
+                                Create a new panel schedule (.xlsx)
+                            </button>
+                            <button class="cb-choice-btn" id="cbOutputModeExisting" type="button">
+                                Add sheets to an existing panel schedule
+                            </button>
+                        </div>
+                        <div id="cbNewScheduleRow" class="cb-file-row">
+                            <span id="cbNewSchedulePath" class="cb-file-pill" data-empty="true">No file selected</span>
+                        </div>
+                        <div id="cbExistingScheduleRow" class="cb-file-row" hidden>
+                            <span id="cbExistingSchedulePath" class="cb-file-pill" data-empty="true">No file selected</span>
+                        </div>
+                    </section>
+
+                    <section class="cb-section">
+                        <div class="cb-section-title">3. Panel name (optional)</div>
+                        <input id="cbPanelName" type="text" placeholder="e.g. Panel A" />
+                    </section>
+                </div>
+
+                <div class="circuit-breaker-footer">
+                    <div id="cbRunStatus" class="cb-status-pill">Ready when you are.</div>
+                    <button class="btn-primary" id="cbRunPanelScheduleBtn" type="button">
+                        Run in the background and notify me when ready
+                    </button>
+                </div>
+                <div id="cbRunningOverlay" class="cb-running-overlay" hidden>
+                    <div class="cb-running-card">
+                        <div class="spinner">Analyzing photos</div>
+                        <p class="tiny muted">We’ll notify you when the schedule is ready.</p>
+                    </div>
+                </div>
             </div>
         </div>
     </dialog>

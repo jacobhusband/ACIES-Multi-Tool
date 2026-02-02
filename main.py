@@ -17,6 +17,15 @@ import datetime
 import threading
 import requests  # Added for GitHub API calls
 import zipfile   # Added for extracting bundles
+import math
+import random
+import re
+import base64
+from typing import List
+import openpyxl
+from openpyxl.worksheet.copier import WorksheetCopy
+from pydantic import BaseModel, Field
+from PIL import Image as PILImage
 
 # Helper functions for date parsing and status management
 STATUS_CANON = ["Waiting", "Working",
@@ -201,15 +210,19 @@ def build_timesheet_filename(user_name, week_key):
 
 
 def _ensure_numpy_short_alias():
-    """Provide numpy.short alias for numpy 2.0 compatibility."""
+    """Provide numpy short/ushort aliases for numpy 2.0 compatibility."""
     try:
         import numpy as np
     except Exception:
         return
     if not hasattr(np, "int16"):
         np.int16 = int
+    if not hasattr(np, "uint16"):
+        np.uint16 = int
     if not hasattr(np, "short"):
         np.short = np.int16
+    if not hasattr(np, "ushort"):
+        np.ushort = np.uint16
 
 
 def _format_long_date(date_value=None):
@@ -426,6 +439,265 @@ DEFAULT_TEMPLATES = [
 
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s')
+
+# --- Circuit Breaker AI helpers ---
+CB_TEMPLATE_PATH = BASE_DIR / "CircuitBreakerAI" / "ElectricalPanels" / "Template.xlsx"
+CB_RATE_LIMIT_MAX_REQUESTS = 2
+CB_RATE_LIMIT_WINDOW = 61
+_cb_api_call_timestamps = []
+
+CB_COL_L_NOTE = "B"
+CB_COL_L_TYPE = "C"
+CB_COL_L_POLE = "D"
+CB_COL_L_TRIP = "E"
+CB_COL_L_DESC = "F"
+CB_COL_L_KVA = "I"
+CB_COL_VOLTAGE = "G"
+CB_COL_R_KVA = "K"
+CB_COL_R_DESC = "L"
+CB_COL_R_POLE = "O"
+CB_COL_R_TRIP = "P"
+CB_COL_R_TYPE = "Q"
+CB_COL_R_NOTE = "R"
+
+
+class CircuitItem(BaseModel):
+    circuit_number: int = Field(
+        ..., description="The first circuit number of the breaker")
+    description: str = Field(..., description="Load description")
+    breaker_amps: str = Field(..., description="Amperage (e.g., '20')")
+    poles: int = Field(1, description="Number of poles (1, 2, or 3)")
+    load_type: str = Field(..., description="Code: 'C', 'D', 'G', 'K', 'M'")
+
+
+class PanelData(BaseModel):
+    panel_name: str = Field(..., description="Panel Name")
+    voltage: str = Field(..., description="Voltage")
+    bus_rating: str = Field(..., description="Bus Rating")
+    phase: str = Field(..., description="Phase")
+    wire: str = Field(..., description="Wire")
+    mounting: str = Field(..., description="Mounting")
+    enclosure: str = Field(..., description="Enclosure")
+    circuits: List[CircuitItem] = Field(
+        ..., description="List of detected breakers")
+
+
+def cb_enforce_rate_limit():
+    global _cb_api_call_timestamps
+    now = time.time()
+    _cb_api_call_timestamps = [
+        t for t in _cb_api_call_timestamps if now - t < CB_RATE_LIMIT_WINDOW
+    ]
+    if len(_cb_api_call_timestamps) >= CB_RATE_LIMIT_MAX_REQUESTS:
+        earliest_call = _cb_api_call_timestamps[0]
+        wait_time = (earliest_call + CB_RATE_LIMIT_WINDOW) - now
+        if wait_time > 0:
+            time.sleep(wait_time)
+    _cb_api_call_timestamps.append(time.time())
+
+
+def cb_clean_text(text):
+    if text is None:
+        return ""
+    return str(text).upper().strip()
+
+
+def cb_calculate_estimated_load(amps_str, description, load_type):
+    desc = cb_clean_text(description)
+
+    if any(x in desc for x in ["SPARE", "SPACE", "UNUSED"]):
+        return 0.00
+
+    try:
+        numeric_amps = float("".join(filter(str.isdigit, str(amps_str))))
+        breaker_kva = (numeric_amps * 120) / 1000
+    except Exception:
+        numeric_amps = 0
+        breaker_kva = 0
+
+    if any(x in desc for x in ["A/C", "AC", "AIR COND", "CONDENSER", "HVAC", "COOLING", "COMPRESSOR"]):
+        return round(breaker_kva * 0.70, 2)
+
+    if any(x in desc for x in ["WATER HEATER", "WH", "HWH", "HOT WATER"]):
+        return round(breaker_kva * 0.60, 2)
+
+    if any(x in desc for x in ["FAN", "EXHAUST", "VENTILAT", "VENT FAN"]):
+        return round(breaker_kva * 0.50, 2)
+
+    if "ATM" in desc:
+        return 0.60
+
+    if any(x in desc for x in ["POLE LIGHT", "POLE LT", "PARKING LOT", "LOT LIGHT"]):
+        return random.choice([1.0, 1.1, 1.2])
+
+    if any(x in desc for x in ["EXT LIGHT", "EXTERIOR LIGHT", "OUTSIDE LIGHT", "OUTDOOR LIGHT",
+                                "EXT LT", "EXTERIOR LT", "SIGN", "FACADE", "BUILDING LIGHT"]):
+        return random.choice([0.6, 0.7, 0.8, 0.9, 1.0])
+
+    if any(x in desc for x in ["LIGHT", "LT", "LTG", "LIGHTING", "LAMP"]):
+        large_room_keywords = ["LOBBY", "HALL", "CONFERENCE", "MEETING", "AUDITORIUM", "GYM",
+                               "WAREHOUSE", "SHOWROOM", "DINING", "MAIN", "OPEN", "COMMON"]
+        medium_room_keywords = ["OFFICE", "BREAK", "STORAGE", "KITCHEN", "LUNCH"]
+
+        if any(kw in desc for kw in large_room_keywords):
+            return random.choice([0.7, 0.8, 0.9])
+        if any(kw in desc for kw in medium_room_keywords):
+            return random.choice([0.5, 0.6, 0.7])
+        return random.choice([0.3, 0.4, 0.5])
+
+    if any(x in desc for x in ["PLUG", "RECEP", "DUPLEX", "OUTLET", "REC", "RCPT"]):
+        high_recep_keywords = ["KITCHEN", "BREAK", "LAB", "WORKSTATION", "COMPUTER", "SERVER",
+                               "OFFICE", "CONF", "MEETING", "NURSE", "MEDICAL"]
+        medium_recep_keywords = ["STORAGE", "UTILITY", "MECH", "CLOSET", "REST", "BATH"]
+
+        if any(kw in desc for kw in high_recep_keywords):
+            return random.choice([0.72, 0.9])
+        if any(kw in desc for kw in medium_recep_keywords):
+            return random.choice([0.36, 0.54])
+        return random.choice([0.36, 0.54, 0.72, 0.9])
+
+    l_type = cb_clean_text(load_type)
+    factor = 0.50 if l_type in ['C', 'G'] else 0.80
+    return round((numeric_amps * factor * 120) / 1000, 2)
+
+
+def cb_fix_nema_type(raw_type):
+    t = str(raw_type).upper()
+    return "NEMA 3R" if any(x in t for x in ["3R", "OUT", "EXT", "WEATHER"]) else "NEMA 1"
+
+
+def cb_resolve_ditto_marks(circuits: List[CircuitItem]) -> List[CircuitItem]:
+    ditto_pattern = re.compile(r'^[\""\u2018\u2019\u201c\u201d\.]+$|^(SAME|DO)$', re.IGNORECASE)
+    odds = sorted([c for c in circuits if c.circuit_number % 2 != 0], key=lambda x: x.circuit_number)
+    evens = sorted([c for c in circuits if c.circuit_number % 2 == 0], key=lambda x: x.circuit_number)
+
+    def process_column(col_list):
+        last_desc = ""
+        for ckt in col_list:
+            if ditto_pattern.match(ckt.description.strip()):
+                if last_desc:
+                    ckt.description = last_desc
+            elif ckt.description.strip() and ckt.description.strip() != "---":
+                last_desc = ckt.description
+        return col_list
+
+    return process_column(odds) + process_column(evens)
+
+
+def cb_make_unique_sheet_name(raw_name, existing_names):
+    base = cb_clean_text(raw_name) or "PANEL"
+    base = base.replace("/", "-").replace("\\", "-")
+    base = base[:31] if base else "PANEL"
+    if base not in existing_names:
+        return base
+    suffix = 2
+    while True:
+        suffix_str = f"-{suffix}"
+        trimmed = base[: max(1, 31 - len(suffix_str))]
+        candidate = f"{trimmed}{suffix_str}"
+        if candidate not in existing_names:
+            return candidate
+        suffix += 1
+
+
+def cb_ensure_template_sheet(wb):
+    if "TEMPLATE" in wb.sheetnames:
+        return
+    if not CB_TEMPLATE_PATH.exists():
+        raise ValueError("Panel schedule template not found.")
+    template_wb = openpyxl.load_workbook(CB_TEMPLATE_PATH)
+    try:
+        source = template_wb["TEMPLATE"] if "TEMPLATE" in template_wb.sheetnames else template_wb.active
+        target = wb.create_sheet("TEMPLATE")
+        WorksheetCopy(source, target).copy_worksheet()
+    finally:
+        template_wb.close()
+
+
+def cb_update_excel_workbook(panel_data: PanelData, workbook_path: str) -> str:
+    wb = openpyxl.load_workbook(workbook_path)
+    cb_ensure_template_sheet(wb)
+
+    source = wb["TEMPLATE"]
+    target = wb.copy_worksheet(source)
+    target.sheet_view.showGridLines = False
+
+    safe_name = cb_make_unique_sheet_name(panel_data.panel_name, wb.sheetnames)
+    target.title = safe_name
+    target["A3"] = f"(E) PANEL '{safe_name}'"
+
+    target[f"{CB_COL_VOLTAGE}2"] = cb_clean_text(panel_data.voltage)
+    target["G3"] = cb_clean_text(panel_data.bus_rating)
+    target["K2"] = cb_clean_text(panel_data.wire)
+    target["K3"] = cb_clean_text(panel_data.phase)
+    target["K4"] = cb_fix_nema_type(panel_data.enclosure)
+    target["N2"] = cb_clean_text(panel_data.mounting)
+
+    start_row = 8
+    max_row = 28
+    occupied_slots = set()
+
+    circuits = cb_resolve_ditto_marks(panel_data.circuits or [])
+    sorted_ckts = sorted(circuits, key=lambda x: x.circuit_number)
+
+    for ckt in sorted_ckts:
+        try:
+            c_num = int(ckt.circuit_number)
+        except Exception:
+            continue
+        if c_num <= 0 or c_num > 42:
+            continue
+
+        row_idx = start_row + math.ceil(c_num / 2) - 1
+        if row_idx > max_row:
+            continue
+
+        is_odd = (c_num % 2 != 0)
+        side = "L" if is_odd else "R"
+        if (side, row_idx) in occupied_slots:
+            continue
+
+        if is_odd:
+            c_note, c_type, c_pole, c_trip, c_desc, c_kva = (
+                CB_COL_L_NOTE, CB_COL_L_TYPE, CB_COL_L_POLE, CB_COL_L_TRIP, CB_COL_L_DESC, CB_COL_L_KVA
+            )
+        else:
+            c_note, c_type, c_pole, c_trip, c_desc, c_kva = (
+                CB_COL_R_NOTE, CB_COL_R_TYPE, CB_COL_R_POLE, CB_COL_R_TRIP, CB_COL_R_DESC, CB_COL_R_KVA
+            )
+
+        desc_text = cb_clean_text(ckt.description)
+        is_spare = any(x in desc_text for x in ["SPARE", "SPACE", "UNUSED"])
+
+        kva_val = "" if is_spare else cb_calculate_estimated_load(
+            ckt.breaker_amps, ckt.description, ckt.load_type
+        )
+        note_val = "" if is_spare else "1"
+        type_val = "" if is_spare else cb_clean_text(ckt.load_type)
+
+        target[f"{c_desc}{row_idx}"] = desc_text
+        target[f"{c_pole}{row_idx}"] = ckt.poles
+        target[f"{c_trip}{row_idx}"] = cb_clean_text(ckt.breaker_amps)
+        target[f"{c_kva}{row_idx}"] = kva_val
+        target[f"{c_note}{row_idx}"] = note_val
+        target[f"{c_type}{row_idx}"] = type_val
+
+        occupied_slots.add((side, row_idx))
+
+        if ckt.poles and ckt.poles > 1:
+            for i in range(1, ckt.poles):
+                ext_row = row_idx + i
+                if ext_row <= max_row:
+                    target[f"{c_desc}{ext_row}"] = "---"
+                    target[f"{c_pole}{ext_row}"] = "-"
+                    target[f"{c_trip}{ext_row}"] = "-"
+                    target[f"{c_kva}{ext_row}"] = kva_val
+                    target[f"{c_type}{ext_row}"] = type_val
+                    target[f"{c_note}{ext_row}"] = note_val
+                    occupied_slots.add((side, ext_row))
+
+    wb.save(workbook_path)
+    return safe_name
 
 # --- API Class ---
 
@@ -2364,6 +2636,279 @@ Return ONLY the JSON object.
         except Exception as e:
             logging.error(f"Error saving CircuitBreakerAI schedule: {e}")
             return {'status': 'error', 'message': str(e)}
+
+    def run_panel_schedule_background(self, payload):
+        """Runs Panel Schedule AI in a background thread and notifies the UI."""
+        if getattr(self, "_panel_schedule_running", False):
+            return {'status': 'error', 'message': 'Panel Schedule AI is already running.'}
+
+        self._panel_schedule_running = True
+        thread = threading.Thread(
+            target=self._panel_schedule_worker,
+            args=(payload,),
+            daemon=True
+        )
+        self._panel_schedule_thread = thread
+        thread.start()
+        return {'status': 'started'}
+
+    def _panel_schedule_worker(self, payload):
+        window = webview.windows[0]
+        result = {'status': 'error', 'message': 'Panel Schedule AI failed.'}
+        try:
+            result = self._process_panel_schedule_payload(payload)
+        except Exception as e:
+            logging.error(f"Panel Schedule AI error: {e}")
+            result = {'status': 'error', 'message': str(e)}
+        finally:
+            self._panel_schedule_running = False
+
+        try:
+            js_payload = json.dumps(result)
+            window.evaluate_js(
+                f"window.handlePanelScheduleResult({js_payload})"
+            )
+        except Exception as e:
+            logging.error(f"Failed to notify Panel Schedule AI result: {e}")
+
+    def _normalize_panel_schedule_paths(self, value):
+        if isinstance(value, (list, tuple)):
+            return [str(v) for v in value if v]
+        if value:
+            return [str(value)]
+        return []
+
+    def _decode_data_url(self, data_url):
+        if not data_url or "base64," not in data_url:
+            raise ValueError("Invalid image data.")
+        header, encoded = data_url.split("base64,", 1)
+        mime = ""
+        if header.startswith("data:"):
+            mime = header.split(";", 1)[0].replace("data:", "").strip()
+        return base64.b64decode(encoded), mime
+
+    def _panel_schedule_save_uploads(self, uploads, label):
+        temp_paths = []
+        resolved_paths = []
+        for upload in uploads or []:
+            if not isinstance(upload, dict):
+                continue
+            data_url = upload.get("dataUrl") or upload.get("data_url")
+            if not data_url:
+                continue
+            file_name = str(upload.get("name") or f"{label}.jpg")
+            try:
+                raw, mime = self._decode_data_url(data_url)
+            except Exception:
+                continue
+            suffix = os.path.splitext(file_name)[1] or ""
+            if not suffix:
+                if mime.endswith("png"):
+                    suffix = ".png"
+                elif mime.endswith("jpeg") or mime.endswith("jpg"):
+                    suffix = ".jpg"
+                elif mime.endswith("heic"):
+                    suffix = ".heic"
+                else:
+                    suffix = ".img"
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+            tmp.write(raw)
+            tmp.close()
+            temp_paths.append(tmp.name)
+            resolved_paths.append(tmp.name)
+        return resolved_paths, temp_paths
+
+    def _resolve_panel_schedule_api_key(self):
+        settings = self.get_user_settings()
+        api_key = settings.get('apiKey', '').strip()
+        if not api_key:
+            api_key = os.environ.get('GEMINI_API_KEY') or os.environ.get('GOOGLE_API_KEY') or ''
+        return (api_key or '').strip()
+
+    def _format_panel_schedule_ai_error(self, exc):
+        msg = str(exc)
+        lower = msg.lower()
+        if ("api key expired" in lower or
+                "api_key_invalid" in lower or
+                "invalid api key" in lower):
+            return ('Your Google API key is expired/invalid. '
+                    'Create a new key in Google AI Studio, update your settings, then try again.')
+        if "model" in lower and ("not found" in lower or "does not exist" in lower):
+            return 'AI model not available. The Gemini 3 Flash model may not be accessible with your API key.'
+        if "quota" in lower or "rate limit" in lower:
+            return 'API rate limit exceeded. Please wait a moment and try again.'
+        return msg
+
+    def _analyze_panel_schedule_images(self, panel_name, breaker_paths, directory_paths):
+        api_key = self._resolve_panel_schedule_api_key()
+        if not api_key:
+            raise RuntimeError(
+                'AI API key is not configured. Please add it in Settings or set GOOGLE_API_KEY in your .env.'
+            )
+
+        self._ensure_aiohttp()
+        client = genai.Client(api_key=api_key)
+
+        num_breaker_imgs = len(breaker_paths)
+        num_dir_imgs = len(directory_paths)
+
+        prompt = f"""
+Analyze these electrical panel photos for Panel: {panel_name}.
+
+You are provided with {num_breaker_imgs} images of the CIRCUIT BREAKERS (first {num_breaker_imgs} images)
+and {num_dir_imgs} images of the CIRCUIT DIRECTORY (last {num_dir_imgs} images).
+
+TASK 1: HEADER
+- Extract Voltage, Bus Rating, Wire, Phase, Mounting, Enclosure.
+- Look at the directory images or labels on the panel.
+
+TASK 2: CIRCUITS & POLES
+- Identify every breaker visible in the Breaker Images.
+- CRITICAL: Determine the 'poles' (1, 2, or 3).
+    - A 1-pole breaker takes up 1 circuit space.
+    - A 2-pole breaker has a tied handle and takes up 2 vertical circuit spaces (e.g. 1 & 3).
+    - A 3-pole breaker has a tied handle and takes up 3 vertical circuit spaces (e.g. 1, 3, & 5).
+- Provide the circuit_number as the TOP-most circuit number the breaker occupies.
+- Extract Amperage and Load Description from the labels (Breaker Images) or circuit directory (Directory Images).
+- Resolve ditto marks (") if seen in the directory.
+
+TASK 3: LOAD TYPES
+- LIGHTING -> 'C', RECEPTACLES -> 'G', MOTORS/HVAC -> 'M', KITCHEN -> 'K', DEDICATED -> 'D'
+""".strip()
+
+        gemini_images = []
+        try:
+            for path in breaker_paths + directory_paths:
+                if not os.path.exists(path):
+                    raise ValueError(f"Image not found: {path}")
+                gemini_images.append(PILImage.open(path))
+
+            cb_enforce_rate_limit()
+
+            response = client.models.generate_content(
+                model="gemini-3-flash-preview",
+                contents=[prompt, *gemini_images],
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=PanelData
+                ),
+            )
+        finally:
+            for img in gemini_images:
+                try:
+                    img.close()
+                except Exception:
+                    pass
+
+        panel_data = response.parsed
+        if panel_data is None:
+            raw_text = response.text or ""
+            if not raw_text.strip():
+                raise RuntimeError("AI returned an empty response. Please try again.")
+            data = json.loads(raw_text)
+            if hasattr(PanelData, "model_validate"):
+                panel_data = PanelData.model_validate(data)
+            else:
+                panel_data = PanelData.parse_obj(data)
+
+        panel_data.panel_name = panel_name
+        return panel_data
+
+    def _process_panel_schedule_payload(self, payload):
+        data = payload or {}
+        if isinstance(data, str):
+            try:
+                data = json.loads(data)
+            except Exception:
+                data = {}
+
+        breaker_paths = self._normalize_panel_schedule_paths(
+            data.get('breakerPaths') or data.get('breakerPath')
+        )
+        directory_paths = self._normalize_panel_schedule_paths(
+            data.get('directoryPaths') or data.get('directoryPath')
+        )
+
+        temp_paths = []
+        breaker_uploads = data.get('breakerUploads') or data.get('breaker_uploads') or []
+        directory_uploads = data.get('directoryUploads') or data.get('directory_uploads') or []
+        if breaker_uploads:
+            uploaded_paths, created = self._panel_schedule_save_uploads(
+                breaker_uploads, "breaker"
+            )
+            breaker_paths.extend(uploaded_paths)
+            temp_paths.extend(created)
+        if directory_uploads:
+            uploaded_paths, created = self._panel_schedule_save_uploads(
+                directory_uploads, "directory"
+            )
+            directory_paths.extend(uploaded_paths)
+            temp_paths.extend(created)
+
+        if not breaker_paths or not directory_paths:
+            raise ValueError("Both a breaker photo and a directory photo are required.")
+
+        output_mode = str(
+            data.get('outputMode') or data.get('output_mode') or 'new'
+        ).strip().lower()
+        if output_mode not in ("new", "existing"):
+            output_mode = "new"
+
+        output_path = (
+            data.get('outputPath')
+            or data.get('output_path')
+            or (data.get('newOutputPath') if output_mode == "new" else data.get('existingOutputPath'))
+        )
+        output_path = str(output_path or '').strip()
+        if not output_path:
+            raise ValueError("Panel schedule file is required.")
+
+        output_path = os.path.normpath(output_path)
+
+        if output_mode == "new":
+            if not output_path.lower().endswith(".xlsx"):
+                output_path = f"{output_path}.xlsx"
+            if os.path.exists(output_path):
+                raise ValueError("The selected file already exists. Choose a new name or add to the existing schedule.")
+            if not CB_TEMPLATE_PATH.exists():
+                raise ValueError("Panel schedule template not found.")
+            dest_dir = os.path.dirname(output_path)
+            if dest_dir:
+                os.makedirs(dest_dir, exist_ok=True)
+            shutil.copy2(str(CB_TEMPLATE_PATH), output_path)
+        else:
+            if not output_path.lower().endswith(".xlsx"):
+                raise ValueError("Panel schedule must be an .xlsx file.")
+            if not os.path.exists(output_path):
+                raise ValueError("Selected panel schedule was not found.")
+
+        panel_name = str(data.get('panelName') or data.get('panel_name') or '').strip()
+        if not panel_name:
+            panel_name = "PANEL"
+
+        try:
+            panel_data = self._analyze_panel_schedule_images(
+                panel_name, breaker_paths, directory_paths
+            )
+        except Exception as e:
+            raise RuntimeError(self._format_panel_schedule_ai_error(e)) from e
+        finally:
+            for temp_path in temp_paths:
+                try:
+                    os.remove(temp_path)
+                except Exception:
+                    pass
+
+        sheet_name = cb_update_excel_workbook(panel_data, output_path)
+        output_folder = os.path.dirname(output_path)
+
+        return {
+            'status': 'success',
+            'message': f"Panel '{sheet_name}' added to schedule.",
+            'outputPath': output_path,
+            'outputFolder': output_folder,
+            'sheetName': sheet_name
+        }
 
     def run_publish_script(self):
         """Runs the PlotDWGs.ps1 PowerShell script with progress updates."""

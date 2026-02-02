@@ -2569,6 +2569,10 @@ function setStat(id, value) {
 }
 
 function closeDlg(id) {
+  if (id === "editDlg" && _aiMatchSnapshot) {
+    db[_aiMatchSnapshot.index] = normalizeProject(_aiMatchSnapshot.data);
+    _aiMatchSnapshot = null;
+  }
   document.getElementById(id).close();
 }
 
@@ -2840,6 +2844,7 @@ let db = [];
 let notesDb = {};
 let noteTabs = [];
 let editIndex = -1;
+let _aiMatchSnapshot = null;
 let currentSort = { key: "due", dir: "desc" };
 let statusFilter = "all";
 let dueFilter = "all";
@@ -4553,6 +4558,78 @@ function areProjectsSimilar(a, b) {
   return false;
 }
 
+function findBestProjectMatch(aiProject) {
+  if (!aiProject || !db.length) return null;
+  const MATCH_THRESHOLD = 0.8;
+  const aiId = normalizeProjectId(aiProject.id);
+  const aiBaseKey = getProjectBaseKey(aiProject.path);
+  const aiName = normalizeProjectMatchValue(aiProject.name);
+  const aiNick = normalizeProjectMatchValue(aiProject.nick);
+  let bestMatch = null;
+  for (let i = 0; i < db.length; i++) {
+    const existing = db[i];
+    if (!existing) continue;
+    let candidateScore = 0;
+    let candidateMethod = "";
+    const existingId = normalizeProjectId(existing.id);
+    if (aiId && existingId) {
+      if (aiId === existingId) {
+        candidateScore = 1.0;
+        candidateMethod = "id-exact";
+      } else if (
+        aiId.length >= 4 &&
+        existingId.length >= 4 &&
+        (aiId.includes(existingId) || existingId.includes(aiId))
+      ) {
+        candidateScore = 0.95;
+        candidateMethod = "id-substring";
+      }
+    }
+    if (candidateScore < 0.9 && aiBaseKey) {
+      const existingBaseKey = getProjectBaseKey(existing.path);
+      if (existingBaseKey && aiBaseKey === existingBaseKey) {
+        candidateScore = 0.9;
+        candidateMethod = "path";
+      }
+    }
+    if (candidateScore < MATCH_THRESHOLD && aiName) {
+      const existingName = normalizeProjectMatchValue(existing.name);
+      if (existingName) {
+        const nameScore = nameSimilarityScore(aiName, existingName);
+        if (nameScore >= MATCH_THRESHOLD && nameScore > candidateScore) {
+          candidateScore = nameScore;
+          candidateMethod = "name";
+        }
+      }
+    }
+    if (candidateScore < MATCH_THRESHOLD) {
+      const existingNick = normalizeProjectMatchValue(existing.nick);
+      if (existingNick) {
+        if (aiName) {
+          const nickScore = nameSimilarityScore(aiName, existingNick) * 0.95;
+          if (nickScore >= MATCH_THRESHOLD && nickScore > candidateScore) {
+            candidateScore = nickScore;
+            candidateMethod = "nick";
+          }
+        }
+        if (aiNick) {
+          const nickScore2 = nameSimilarityScore(aiNick, existingNick) * 0.95;
+          if (nickScore2 >= MATCH_THRESHOLD && nickScore2 > candidateScore) {
+            candidateScore = nickScore2;
+            candidateMethod = "nick";
+          }
+        }
+      }
+    }
+    if (candidateScore >= MATCH_THRESHOLD) {
+      if (!bestMatch || candidateScore > bestMatch.score) {
+        bestMatch = { index: i, score: candidateScore, method: candidateMethod };
+      }
+    }
+  }
+  return bestMatch;
+}
+
 function pickShortestPath(projects = []) {
   let shortest = "";
   projects.forEach((p) => {
@@ -4990,6 +5067,7 @@ function duplicate(i) {
 function onSaveProject() {
   const data = readForm();
   autoSetPrimary(data);
+  _aiMatchSnapshot = null;
   if (editIndex >= 0) {
     db[editIndex] = data;
     toast("Project updated successfully.");
@@ -7990,21 +8068,32 @@ function initEventListeners() {
       if (res.status === "success") {
         closeDlg("emailDlg");
         const aiProject = normalizeProject(res.data);
-        const baseKey = getProjectBaseKey(aiProject?.path);
-        const matchIndex = baseKey
-          ? db.findIndex((project) => getProjectBaseKey(project?.path) === baseKey)
-          : -1;
-        if (matchIndex >= 0) {
-          const target = normalizeProject(db[matchIndex]);
-          const incomingDeliverables = Array.isArray(aiProject?.deliverables)
-            ? aiProject.deliverables.map(normalizeDeliverable)
-            : [createDeliverable()];
-          target.deliverables.push(...incomingDeliverables);
-          autoSetPrimary(target);
-          db[matchIndex] = target;
-          save();
-          render();
-          toast("Added deliverable to existing project.");
+        const match = findBestProjectMatch(aiProject);
+        if (match) {
+          const snapshot = JSON.parse(JSON.stringify(db[match.index]));
+          const target = normalizeProject(db[match.index]);
+          const newDeliverable = createDeliverable({
+            name: guessDeliverableName(res.data),
+            due: res.data.due || "",
+            notes: res.data.notes || "",
+            tasks: res.data.tasks || [],
+          });
+          if (!target.path && aiProject.path) target.path = aiProject.path;
+          if (!target.id && aiProject.id) target.id = aiProject.id;
+          target.deliverables.push(newDeliverable);
+          target.overviewDeliverableId = newDeliverable.id;
+          db[match.index] = target;
+          editIndex = match.index;
+          _aiMatchSnapshot = { index: match.index, data: snapshot };
+          document.getElementById("dlgTitle").textContent =
+            `Edit Project \u2014 ${target.id || "Untitled"}`;
+          document.getElementById("btnSaveProject").textContent = "Save Changes";
+          fillForm(target);
+          document.getElementById("editDlg").showModal();
+          toast(
+            `Matched existing project (${match.method}, ` +
+            `${Math.round(match.score * 100)}% confidence).`
+          );
         } else {
           openNew();
           fillForm(res.data);

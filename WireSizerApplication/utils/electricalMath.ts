@@ -1,4 +1,4 @@
-import { WIRE_DATA, GROUND_DATA, CONDUIT_EMT_40_PERCENT, K_FACTOR_CU, K_FACTOR_AL } from '../constants';
+import { WIRE_DATA, GROUND_DATA, GEC_DATA, CONDUIT_EMT_40_PERCENT, K_FACTOR_CU, K_FACTOR_AL } from '../constants';
 import { AppState, CalculationResult, WireSizeData } from '../types';
 
 export const isThreePhaseAllowed = (voltage: number) => voltage !== 120 && voltage !== 277;
@@ -81,11 +81,26 @@ export const calculateEverything = (state: AppState): CalculationResult => {
     actualAmpacity = finalTempRating === 60 ? selectedWire.ampacity60Al : selectedWire.ampacity75Al;
   }
 
-  // 3. Grounding Conductor Sizing (NEC 250.122)
-  const groundRow = GROUND_DATA.find(g => g.rating >= amperage);
-  const groundWireSize = groundRow 
-    ? (material === 'Copper' ? groundRow.cuSize : groundRow.alSize)
-    : "See Eng.";
+  // 3. Grounding Conductor Sizing
+  let groundWireSize: string;
+
+  if (state.groundingTable === 'GEC') {
+    // NEC Table 250.66 — lookup by service-entrance conductor size (circular mils)
+    const conductorCM = selectedWire.circularMils * sets;
+    const gecRow = GEC_DATA.find(g => {
+      const threshold = material === 'Copper' ? g.maxCuCM : g.maxAlCM;
+      return conductorCM <= threshold;
+    });
+    groundWireSize = gecRow
+      ? (material === 'Copper' ? gecRow.gecCuSize : gecRow.gecAlSize)
+      : "See Eng.";
+  } else {
+    // NEC Table 250.122 — lookup by overcurrent device rating
+    const groundRow = GROUND_DATA.find(g => g.rating >= amperage);
+    groundWireSize = groundRow
+      ? (material === 'Copper' ? groundRow.cuSize : groundRow.alSize)
+      : "See Eng.";
+  }
 
   // 4. Conduit Fill Calculation
   const hotCount = getHotCount(effectivePhase, voltage);

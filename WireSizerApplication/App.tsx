@@ -20,6 +20,7 @@ function App() {
     sets: 1,
     powerFactor: 0.9,
     oversizeConduit: false,
+    groundingTable: 'EGC',
   });
 
   const [results, setResults] = useState<CalculationResult | null>(null);
@@ -65,9 +66,10 @@ function App() {
     const numHots = getHotCount(effectivePhase, state.voltage);
     const wireSize = results.recommendedSize;
     const gndSize = results.groundWireSize;
-    
+    const gndLabel = state.groundingTable === 'GEC' ? 'GEC' : 'G';
+
     const setsPrefix = (state.sets !== '' && state.sets > 1) ? `(${state.sets} sets) ` : '';
-    const line1 = `${setsPrefix}${conduit}, ${numHots}#${wireSize} H, 1#${wireSize} N, 1#${gndSize} G`;
+    const line1 = `${setsPrefix}${conduit}, ${numHots}#${wireSize} H, 1#${wireSize} N, 1#${gndSize} ${gndLabel}`;
     
     const line2 = `LENGTH ~= ${state.distance}'`;
     const line3 = `VOLTAGE DROP ~= ${results.voltageDropPercentage.toFixed(2)}%`;
@@ -218,6 +220,24 @@ function App() {
                          <div className="bg-slate-50 rounded-lg p-3 border border-slate-100 text-center min-w-[100px]">
                            <span className="text-[10px] font-bold text-slate-400 block mb-1 uppercase">Ground</span>
                            <span className="text-lg font-bold text-slate-700">#{results.groundWireSize}</span>
+                           <span className="text-[9px] text-slate-400 block">
+                             {state.groundingTable === 'EGC' ? 'T. 250.122' : 'T. 250.66'}
+                           </span>
+                           <div className="grid grid-cols-2 bg-gray-100 p-0.5 rounded-md mt-2">
+                             {(['EGC', 'GEC'] as const).map(t => (
+                               <button
+                                 key={t}
+                                 onClick={() => handleChange('groundingTable', t)}
+                                 className={`py-1 text-[10px] font-bold rounded transition-all ${
+                                   state.groundingTable === t
+                                     ? 'bg-white shadow-sm text-blue-600'
+                                     : 'text-gray-400 hover:text-gray-600'
+                                 }`}
+                               >
+                                 {t}
+                               </button>
+                             ))}
+                           </div>
                          </div>
                          <div className="bg-blue-50 rounded-lg p-3 border border-blue-100 text-center min-w-[100px]">
                            <span className="text-[10px] font-bold text-blue-400 block mb-1 uppercase">Conduit</span>

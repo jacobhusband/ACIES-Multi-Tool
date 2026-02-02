@@ -1,4 +1,4 @@
-import { WireSizeData, GroundingData } from './types';
+import { WireSizeData, GroundingData, GECData } from './types';
 
 // Simplified Table 310.16 (60°C and 75°C Columns) + Physical Properties
 export const WIRE_DATA: WireSizeData[] = [
@@ -38,6 +38,17 @@ export const GROUND_DATA: GroundingData[] = [
   { rating: 1000, cuSize: "2/0", alSize: "4/0" },
   { rating: 1200, cuSize: "3/0", alSize: "250" },
   { rating: 1600, cuSize: "4/0", alSize: "350" },
+];
+
+// Table 250.66 Grounding Electrode Conductor for AC Systems
+export const GEC_DATA: GECData[] = [
+  { maxCuCM: 66360,    maxAlCM: 105600,   gecCuSize: "8",   gecAlSize: "6" },
+  { maxCuCM: 105600,   maxAlCM: 167800,   gecCuSize: "6",   gecAlSize: "4" },
+  { maxCuCM: 167800,   maxAlCM: 250000,   gecCuSize: "4",   gecAlSize: "2" },
+  { maxCuCM: 350000,   maxAlCM: 500000,   gecCuSize: "2",   gecAlSize: "1/0" },
+  { maxCuCM: 600000,   maxAlCM: 900000,   gecCuSize: "1/0", gecAlSize: "3/0" },
+  { maxCuCM: 1100000,  maxAlCM: 1750000,  gecCuSize: "2/0", gecAlSize: "4/0" },
+  { maxCuCM: Infinity, maxAlCM: Infinity,  gecCuSize: "3/0", gecAlSize: "250" },
 ];
 
 // Simplified internal area of EMT Conduit (Trade Size -> Sq Inches @ 40% fill)

@@ -1,5 +1,6 @@
 export type ConductorMaterial = 'Copper' | 'Aluminum';
 export type Phase = 1 | 3;
+export type GroundingTableType = 'EGC' | 'GEC';
 
 export interface WireSizeData {
   size: string;
@@ -15,6 +16,13 @@ export interface GroundingData {
   rating: number; // Rating of overcurrent device
   cuSize: string;
   alSize: string;
+}
+
+export interface GECData {
+  maxCuCM: number;   // Max circular mils for copper service conductor
+  maxAlCM: number;   // Max circular mils for aluminum service conductor
+  gecCuSize: string;  // GEC size in copper
+  gecAlSize: string;  // GEC size in aluminum
 }
 
 export interface CalculationResult {
@@ -42,4 +50,5 @@ export interface AppState {
   sets: number | ''; // Parallel runs
   powerFactor: number;
   oversizeConduit: boolean;
+  groundingTable: GroundingTableType;
 }

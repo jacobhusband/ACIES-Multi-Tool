@@ -21,6 +21,8 @@ export const WIRE_DATA: WireSizeData[] = [
   { size: "400", circularMils: 400000, ampacity60Cu: 280, ampacity75Cu: 335, ampacity60Al: 225, ampacity75Al: 270, areaSqIn: 0.5863 },
   { size: "500", circularMils: 500000, ampacity60Cu: 320, ampacity75Cu: 380, ampacity60Al: 260, ampacity75Al: 310, areaSqIn: 0.7073 },
   { size: "600", circularMils: 600000, ampacity60Cu: 350, ampacity75Cu: 420, ampacity60Al: 285, ampacity75Al: 340, areaSqIn: 0.8676 },
+  { size: "700", circularMils: 700000, ampacity60Cu: 385, ampacity75Cu: 460, ampacity60Al: 310, ampacity75Al: 375, areaSqIn: 0.9887 },
+  { size: "750", circularMils: 750000, ampacity60Cu: 400, ampacity75Cu: 475, ampacity60Al: 320, ampacity75Al: 385, areaSqIn: 1.0496 },
 ];
 
 // Table 250.122 Minimum Size Equipment Grounding Conductors
@@ -68,3 +70,7 @@ export const CONDUIT_EMT_40_PERCENT: { size: string; area: number }[] = [
 
 export const K_FACTOR_CU = 12.9;
 export const K_FACTOR_AL = 21.2;
+
+// Maximum wire sizes by material for parallel set calculations
+export const MAX_WIRE_SIZE_CU = "600"; // 600 kcmil max for copper
+export const MAX_WIRE_SIZE_AL = "750"; // 750 kcmil max for aluminum

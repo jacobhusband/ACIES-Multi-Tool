@@ -38,6 +38,7 @@ export interface CalculationResult {
   wireAreaTotal: number;
   conduitFillPercentage: number;
   tempRatingUsed: 60 | 75;
+  sets: number; // Auto-calculated number of parallel sets
 }
 
 export interface AppState {

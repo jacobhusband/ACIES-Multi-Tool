@@ -68,7 +68,7 @@ function App() {
     const gndSize = results.groundWireSize;
     const gndLabel = state.groundingTable === 'GEC' ? 'GEC' : 'G';
 
-    const setsPrefix = (state.sets !== '' && state.sets > 1) ? `(${state.sets} sets) ` : '';
+    const setsPrefix = (results && results.sets > 1) ? `(${results.sets} sets) ` : '';
     const line1 = `${setsPrefix}${conduit}, ${numHots}#${wireSize} H, 1#${wireSize} N, 1#${gndSize} ${gndLabel}`;
     
     const line2 = `LENGTH ~= ${state.distance}'`;
@@ -174,7 +174,7 @@ function App() {
                    <InputGroup label="V.D. Max %">
                      <input type="number" step="0.1" value={state.maxVoltageDrop} onChange={(e) => handleNumChange('maxVoltageDrop', e.target.value)} className={inputClass} />
                   </InputGroup>
-                  <InputGroup label="Parallel Sets">
+                  <InputGroup label="Min. Parallel Sets">
                     <input type="number" min="1" value={state.sets} onChange={(e) => handleNumChange('sets', e.target.value)} className={inputClass} />
                   </InputGroup>
                 </div>
@@ -207,7 +207,7 @@ function App() {
                          <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1 block">Feeder Specification</span>
                          <div className="flex items-baseline gap-2">
                            <span className="text-4xl font-black text-slate-900">
-                             {state.sets !== '' && state.sets > 1 ? `${state.sets}x ` : ''}{results.recommendedSize}
+                             {results.sets > 1 ? `${results.sets}x ` : ''}{results.recommendedSize}
                            </span>
                            <span className="text-lg text-slate-500 font-bold">AWG</span>
                          </div>
@@ -242,6 +242,9 @@ function App() {
                          <div className="bg-blue-50 rounded-lg p-3 border border-blue-100 text-center min-w-[100px]">
                            <span className="text-[10px] font-bold text-blue-400 block mb-1 uppercase">Conduit</span>
                            <span className="text-lg font-bold text-blue-700">{results.conduitSize}"</span>
+                           {results.sets > 1 && (
+                             <span className="text-[9px] text-blue-400 block">per set</span>
+                           )}
                          </div>
                        </div>
                      </div>

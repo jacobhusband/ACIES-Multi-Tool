@@ -22,6 +22,15 @@ import random
 import re
 import base64
 from typing import List
+# Patch numpy 2.0+ for openpyxl compatibility (must run before importing openpyxl)
+try:
+    import numpy as np
+    if not hasattr(np, "short"):
+        np.short = np.int16
+    if not hasattr(np, "ushort"):
+        np.ushort = np.uint16
+except ImportError:
+    pass
 import openpyxl
 from openpyxl.worksheet.copier import WorksheetCopy
 from pydantic import BaseModel, Field
@@ -208,21 +217,6 @@ def build_timesheet_filename(user_name, week_key):
 
     return f"{initials}-TS-{monday.strftime('%m%d')}-{friday.strftime('%m%d%Y')}.xlsx"
 
-
-def _ensure_numpy_short_alias():
-    """Provide numpy short/ushort aliases for numpy 2.0 compatibility."""
-    try:
-        import numpy as np
-    except Exception:
-        return
-    if not hasattr(np, "int16"):
-        np.int16 = int
-    if not hasattr(np, "uint16"):
-        np.uint16 = int
-    if not hasattr(np, "short"):
-        np.short = np.int16
-    if not hasattr(np, "ushort"):
-        np.ushort = np.uint16
 
 
 def _format_long_date(date_value=None):
@@ -1835,7 +1829,6 @@ Return ONLY the JSON object.
     def export_timesheet_excel(self, data):
         """Exports timesheet data to an Excel file using a template."""
         try:
-            _ensure_numpy_short_alias()
             import openpyxl
             from openpyxl.drawing.image import Image as XLImage
             from PIL import Image as PILImage
@@ -2097,7 +2090,6 @@ Return ONLY the JSON object.
     def export_expense_sheet_excel(self, data):
         """Exports expense sheet data to an Excel file with images."""
         try:
-            _ensure_numpy_short_alias()
             import openpyxl
             from openpyxl.drawing.image import Image as XLImage
             from PIL import Image as PILImage

@@ -22,16 +22,77 @@ import random
 import re
 import base64
 from typing import List
-# Patch numpy 2.0+ for openpyxl compatibility (must run before importing openpyxl)
+import importlib
+
+# Work around NumPy 2.x removing scalar aliases used by openpyxl.
+_NUMPY_ALIAS_MAP = {
+    "short": "int16",
+    "ushort": "uint16",
+    "intc": "int32",
+    "uintc": "uint32",
+    "int_": "int64",
+    "uint": "uint64",
+    "longlong": "int64",
+    "ulonglong": "uint64",
+    "half": "float16",
+    "single": "float32",
+    "double": "float64",
+}
+_NUMPY_ATTR_FALLBACKS = {
+    "int8": int,
+    "int16": int,
+    "int32": int,
+    "int64": int,
+    "uint8": int,
+    "uint16": int,
+    "uint32": int,
+    "uint64": int,
+    "intp": int,
+    "uintp": int,
+    "float16": float,
+    "float32": float,
+    "float64": float,
+    "longdouble": float,
+    "bool_": bool,
+    "floating": float,
+    "integer": int,
+}
+
+
+def _patch_numpy_aliases():
+    try:
+        import numpy as _np  # noqa: F401
+    except Exception:
+        return False
+    changed = False
+    for _name, _fallback in _NUMPY_ATTR_FALLBACKS.items():
+        if not hasattr(_np, _name):
+            setattr(_np, _name, _fallback)
+            changed = True
+    for _alias, _target in _NUMPY_ALIAS_MAP.items():
+        if not hasattr(_np, _alias):
+            if hasattr(_np, _target):
+                setattr(_np, _alias, getattr(_np, _target))
+            else:
+                setattr(_np, _alias, _NUMPY_ATTR_FALLBACKS.get(_target, int))
+            changed = True
+    return changed
+
+
+_patch_numpy_aliases()
+
 try:
-    import numpy as np
-    if not hasattr(np, "short"):
-        np.short = np.int16
-    if not hasattr(np, "ushort"):
-        np.ushort = np.uint16
-except ImportError:
-    pass
-import openpyxl
+    import openpyxl
+except AttributeError as _exc:
+    _msg = str(_exc)
+    if "numpy" in _msg:
+        _patch_numpy_aliases()
+        for _name in ("openpyxl.compat.numbers", "openpyxl.compat", "openpyxl"):
+            sys.modules.pop(_name, None)
+        importlib.invalidate_caches()
+        import openpyxl
+    else:
+        raise
 from openpyxl.worksheet.copier import WorksheetCopy
 from pydantic import BaseModel, Field
 from PIL import Image as PILImage

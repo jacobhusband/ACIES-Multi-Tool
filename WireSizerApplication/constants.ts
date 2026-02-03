@@ -23,6 +23,13 @@ export const WIRE_DATA: WireSizeData[] = [
   { size: "600", circularMils: 600000, ampacity60Cu: 350, ampacity75Cu: 420, ampacity60Al: 285, ampacity75Al: 340, areaSqIn: 0.8676 },
   { size: "700", circularMils: 700000, ampacity60Cu: 385, ampacity75Cu: 460, ampacity60Al: 310, ampacity75Al: 375, areaSqIn: 0.9887 },
   { size: "750", circularMils: 750000, ampacity60Cu: 400, ampacity75Cu: 475, ampacity60Al: 320, ampacity75Al: 385, areaSqIn: 1.0496 },
+  { size: "800", circularMils: 800000, ampacity60Cu: 410, ampacity75Cu: 490, ampacity60Al: 330, ampacity75Al: 395, areaSqIn: 1.1085 },
+  { size: "900", circularMils: 900000, ampacity60Cu: 435, ampacity75Cu: 520, ampacity60Al: 355, ampacity75Al: 425, areaSqIn: 1.2311 },
+  { size: "1000", circularMils: 1000000, ampacity60Cu: 455, ampacity75Cu: 545, ampacity60Al: 375, ampacity75Al: 445, areaSqIn: 1.3478 },
+  { size: "1250", circularMils: 1250000, ampacity60Cu: 495, ampacity75Cu: 590, ampacity60Al: 405, ampacity75Al: 485, areaSqIn: 1.718 },
+  { size: "1500", circularMils: 1500000, ampacity60Cu: 525, ampacity75Cu: 625, ampacity60Al: 435, ampacity75Al: 520, areaSqIn: 2.0157 },
+  { size: "1750", circularMils: 1750000, ampacity60Cu: 545, ampacity75Cu: 650, ampacity60Al: 455, ampacity75Al: 545, areaSqIn: 2.3127 },
+  { size: "2000", circularMils: 2000000, ampacity60Cu: 555, ampacity75Cu: 665, ampacity60Al: 470, ampacity75Al: 560, areaSqIn: 2.6073 },
 ];
 
 // Table 250.122 Minimum Size Equipment Grounding Conductors
@@ -74,3 +81,4 @@ export const K_FACTOR_AL = 21.2;
 // Maximum wire sizes by material for parallel set calculations
 export const MAX_WIRE_SIZE_CU = "600"; // 600 kcmil max for copper
 export const MAX_WIRE_SIZE_AL = "750"; // 750 kcmil max for aluminum
+export const MAX_WIRE_SIZE_FORCED = "2000"; // Max allowed when forcing sets

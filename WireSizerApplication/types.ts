@@ -38,7 +38,8 @@ export interface CalculationResult {
   wireAreaTotal: number;
   conduitFillPercentage: number;
   tempRatingUsed: 60 | 75;
-  sets: number; // Auto-calculated number of parallel sets
+  sets: number; // Effective number of parallel sets (forced or recommended)
+  recommendedSets: number; // Auto-calculated number of parallel sets
 }
 
 export interface AppState {
@@ -49,6 +50,7 @@ export interface AppState {
   material: ConductorMaterial;
   maxVoltageDrop: number | ''; // percentage
   sets: number | ''; // Parallel runs
+  forceSets: boolean; // Force user-defined sets to override recommendation
   powerFactor: number;
   oversizeConduit: boolean;
   groundingTable: GroundingTableType;

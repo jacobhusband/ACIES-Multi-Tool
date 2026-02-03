@@ -1,4 +1,4 @@
-import { WIRE_DATA, GROUND_DATA, GEC_DATA, CONDUIT_EMT_40_PERCENT, K_FACTOR_CU, K_FACTOR_AL, MAX_WIRE_SIZE_CU, MAX_WIRE_SIZE_AL } from '../constants';
+import { WIRE_DATA, GROUND_DATA, GEC_DATA, CONDUIT_EMT_40_PERCENT, K_FACTOR_CU, K_FACTOR_AL, MAX_WIRE_SIZE_CU, MAX_WIRE_SIZE_AL, MAX_WIRE_SIZE_FORCED } from '../constants';
 import { AppState, CalculationResult, WireSizeData, ConductorMaterial } from '../types';
 
 export const isThreePhaseAllowed = (voltage: number) => voltage !== 120 && voltage !== 277;
@@ -15,10 +15,10 @@ export const getHotCount = (phase: number, voltage: number) => {
 const indexOf1_0 = WIRE_DATA.findIndex(w => w.size === "1/0");
 
 /** Returns WIRE_DATA filtered to the max allowed size for the given material. */
-function getWireTableForMaterial(material: ConductorMaterial): WireSizeData[] {
-  const maxSize = material === 'Copper' ? MAX_WIRE_SIZE_CU : MAX_WIRE_SIZE_AL;
+function getWireTableForMaterial(material: ConductorMaterial, maxSizeOverride?: string): WireSizeData[] {
+  const maxSize = maxSizeOverride ?? (material === 'Copper' ? MAX_WIRE_SIZE_CU : MAX_WIRE_SIZE_AL);
   const maxIndex = WIRE_DATA.findIndex(w => w.size === maxSize);
-  return WIRE_DATA.slice(0, maxIndex + 1);
+  return maxIndex === -1 ? WIRE_DATA : WIRE_DATA.slice(0, maxIndex + 1);
 }
 
 /** Returns the NEC 310.16 ampacity for a wire based on material and temperature rating rules. */
@@ -52,9 +52,10 @@ function findOptimalWireAndSets(
   maxVoltageDrop: number,
   material: ConductorMaterial,
   phaseFactor: number,
-  kFactor: number
+  kFactor: number,
+  maxSizeOverride?: string
 ): WireSelection {
-  const wireTable = getWireTableForMaterial(material);
+  const wireTable = getWireTableForMaterial(material, maxSizeOverride);
   const maxDropVolts = voltage * (maxVoltageDrop / 100);
   const MAX_SETS = 10;
 
@@ -110,6 +111,47 @@ function findOptimalWireAndSets(
   };
 }
 
+function selectWireForSets(
+  amperage: number,
+  distance: number,
+  voltage: number,
+  maxVoltageDrop: number,
+  material: ConductorMaterial,
+  phaseFactor: number,
+  kFactor: number,
+  sets: number,
+  maxSizeOverride?: string
+): WireSelection {
+  const wireTable = getWireTableForMaterial(material, maxSizeOverride);
+  const ampsPerSet = amperage / sets;
+
+  let foundWire: WireSizeData | undefined;
+  for (let i = 0; i < wireTable.length; i++) {
+    const globalIndex = WIRE_DATA.findIndex(w => w.size === wireTable[i].size);
+    const ampacity = getAmpacity(wireTable[i], material, globalIndex);
+    if (ampacity >= ampsPerSet) {
+      foundWire = wireTable[i];
+      break;
+    }
+  }
+  if (!foundWire) {
+    foundWire = wireTable[wireTable.length - 1];
+  }
+
+  const maxDropVolts = voltage * (maxVoltageDrop / 100);
+  if (maxDropVolts > 0 && distance > 0) {
+    const requiredCM = (kFactor * ampsPerSet * distance * phaseFactor) / maxDropVolts;
+    if (foundWire.circularMils < requiredCM) {
+      const upsized = wireTable.find(w => w.circularMils >= requiredCM);
+      if (upsized) foundWire = upsized;
+    }
+  }
+
+  const finalIndex = WIRE_DATA.findIndex(w => w.size === foundWire.size);
+  const tempRating: 60 | 75 = finalIndex < indexOf1_0 ? 60 : 75;
+  return { wire: foundWire, sets, tempRating };
+}
+
 export const calculateEverything = (state: AppState): CalculationResult => {
   const { voltage, phase, material, oversizeConduit } = state;
   const effectivePhase = isThreePhaseAllowed(voltage) ? phase : 1;
@@ -119,8 +161,9 @@ export const calculateEverything = (state: AppState): CalculationResult => {
   const distance = state.distance === '' ? 0 : state.distance;
   const maxVoltageDrop = state.maxVoltageDrop === '' ? 3 : state.maxVoltageDrop;
 
-  // User's manual sets value (acts as a minimum override)
+  // User's manual sets value
   const userSets = (state.sets === '' || state.sets === 0) ? 1 : state.sets;
+  const forceSets = state.forceSets;
 
   const kFactor = material === 'Copper' ? K_FACTOR_CU : K_FACTOR_AL;
   const phaseFactor = effectivePhase === 3 ? 1.732 : 2;
@@ -130,49 +173,25 @@ export const calculateEverything = (state: AppState): CalculationResult => {
     amperage, distance, voltage, maxVoltageDrop, material, phaseFactor, kFactor
   );
 
-  // Use the greater of user's manual sets and auto-calculated sets
-  const effectiveSets = Math.max(userSets, autoResult.sets);
+  // Use the greater of user's manual sets and auto-calculated sets unless forcing
+  const effectiveSets = forceSets ? userSets : Math.max(userSets, autoResult.sets);
 
   // If user override forced more sets, re-select wire for the higher set count
   let selectedWire: WireSizeData;
   let finalTempRating: 60 | 75;
 
-  if (effectiveSets > autoResult.sets) {
-    // Re-run selection with the user's higher set count
-    const overrideResult = findOptimalWireAndSets(
-      amperage, distance, voltage, maxVoltageDrop, material, phaseFactor, kFactor
+  if (forceSets) {
+    const forcedResult = selectWireForSets(
+      amperage, distance, voltage, maxVoltageDrop, material, phaseFactor, kFactor, effectiveSets, MAX_WIRE_SIZE_FORCED
     );
-    // But force it to use at least effectiveSets — since more sets means less per-set load,
-    // just recalculate with the effective sets directly
-    const wireTable = getWireTableForMaterial(material);
-    const ampsPerSet = amperage / effectiveSets;
-
-    let foundWire: WireSizeData | undefined;
-    for (let i = 0; i < wireTable.length; i++) {
-      const globalIndex = WIRE_DATA.findIndex(w => w.size === wireTable[i].size);
-      const ampacity = getAmpacity(wireTable[i], material, globalIndex);
-      if (ampacity >= ampsPerSet) {
-        foundWire = wireTable[i];
-        break;
-      }
-    }
-    if (!foundWire) {
-      foundWire = wireTable[wireTable.length - 1];
-    }
-
-    // Check voltage drop
-    const maxDropVolts = voltage * (maxVoltageDrop / 100);
-    if (maxDropVolts > 0 && distance > 0) {
-      const requiredCM = (kFactor * ampsPerSet * distance * phaseFactor) / maxDropVolts;
-      if (foundWire.circularMils < requiredCM) {
-        const upsized = wireTable.find(w => w.circularMils >= requiredCM);
-        if (upsized) foundWire = upsized;
-      }
-    }
-
-    selectedWire = foundWire;
-    const finalIndex = WIRE_DATA.findIndex(w => w.size === selectedWire.size);
-    finalTempRating = finalIndex < indexOf1_0 ? 60 : 75;
+    selectedWire = forcedResult.wire;
+    finalTempRating = forcedResult.tempRating;
+  } else if (effectiveSets > autoResult.sets) {
+    const overrideResult = selectWireForSets(
+      amperage, distance, voltage, maxVoltageDrop, material, phaseFactor, kFactor, effectiveSets
+    );
+    selectedWire = overrideResult.wire;
+    finalTempRating = overrideResult.tempRating;
   } else {
     selectedWire = autoResult.wire;
     finalTempRating = autoResult.tempRating;
@@ -261,5 +280,6 @@ export const calculateEverything = (state: AppState): CalculationResult => {
     conduitFillPercentage: recommendedConduit ? (totalFillArea / (recommendedConduit.area / 0.4)) * 100 : 100,
     tempRatingUsed: finalTempRating as 60 | 75,
     sets,
+    recommendedSets: autoResult.sets,
   };
 };

@@ -18,6 +18,7 @@ function App() {
     material: 'Copper',
     maxVoltageDrop: 3,
     sets: 1,
+    forceSets: false,
     powerFactor: 0.9,
     oversizeConduit: false,
     groundingTable: 'EGC',
@@ -174,8 +175,22 @@ function App() {
                    <InputGroup label="V.D. Max %">
                      <input type="number" step="0.1" value={state.maxVoltageDrop} onChange={(e) => handleNumChange('maxVoltageDrop', e.target.value)} className={inputClass} />
                   </InputGroup>
-                  <InputGroup label="Min. Parallel Sets">
+                  <InputGroup label="Number of Parallel Sets">
                     <input type="number" min="1" value={state.sets} onChange={(e) => handleNumChange('sets', e.target.value)} className={inputClass} />
+                    {results && state.sets !== '' && state.sets !== results.recommendedSets && (
+                      <p className="mt-2 text-xs font-semibold text-red-600">
+                        Note: Recommended Number of Parallel Sets is {results.recommendedSets}
+                      </p>
+                    )}
+                    <label className="mt-3 flex items-center gap-2 text-xs font-semibold text-gray-600">
+                      <input
+                        type="checkbox"
+                        checked={state.forceSets}
+                        onChange={(e) => handleChange('forceSets', e.target.checked)}
+                        className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                      />
+                      Force parallel sets (override recommended)
+                    </label>
                   </InputGroup>
                 </div>
 

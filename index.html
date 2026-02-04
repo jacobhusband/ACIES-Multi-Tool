@@ -750,14 +750,28 @@
     <!-- Update Overdue Due Date Modal -->
     <dialog id="overdueDueDateDlg">
         <div class="modal-header">
-            <div class="title">Update Due Date</div>
+            <div class="title">Update Overdue Deliverable</div>
         </div>
         <div class="modal-body stack">
-            <p>Would you like to change the deliverable due date to today?</p>
-            <div class="inline" style="justify-content: flex-end; gap: 1rem;">
-                <button class="btn ghost" id="btnCancelOverdueDueDate">No</button>
-                <button class="btn-primary" id="btnConfirmOverdueDueDate">Yes</button>
+            <!-- Initial view with deliverable info and buttons -->
+            <div id="overdueDateInitialView" class="stack">
+                <div class="overdue-modal-icon">🗓️</div>
+                <div>
+                    <strong id="overdueDeliverableName"></strong>
+                    <div class="muted" style="font-size: 12px; margin-top: 4px;">
+                        Current due date: <span id="overdueCurrentDate"></span>
+                    </div>
+                </div>
+                <p style="margin-top: 0.5rem;">Would you like to update the due date?</p>
+                <div class="inline" style="justify-content: flex-end; gap: 0.75rem; margin-top: 0.5rem;">
+                    <button class="btn ghost" id="btnCancelOverdueDueDate">No</button>
+                    <button class="btn" id="btnSetCustomDueDate">Set due date</button>
+                    <button class="btn-primary" id="btnConfirmOverdueDueDate">Yes, set to today</button>
+                </div>
             </div>
+
+            <!-- Calendar view (hidden initially, shown when "Set due date" clicked) -->
+            <div id="overdueDateCalendarView" style="display: none;"></div>
         </div>
     </dialog>
     <!-- Delete All Notes Confirmation Modal -->
@@ -1726,7 +1740,11 @@
                     </div>
                     <div class="field">
                         <label class="label">Due Date</label>
-                        <input class="d-due" placeholder="MM/DD/YY" />
+                        <div class="input-with-calendar">
+                            <input class="d-due" placeholder="MM/DD/YYYY" />
+                            <button type="button" class="calendar-icon-btn" title="Pick a date">📅</button>
+                            <div class="date-validation-msg"></div>
+                        </div>
                     </div>
                 </div>
                 <div class="deliverable-controls">

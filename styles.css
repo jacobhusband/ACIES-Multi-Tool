@@ -4854,3 +4854,215 @@ dialog::backdrop {
   margin: 0;
   font-size: 0.875rem;
 }
+
+/* ===== Overdue Due Date Modal & Calendar ===== */
+
+.overdue-modal-icon {
+  font-size: 2.5rem;
+  text-align: center;
+  margin-bottom: 0.5rem;
+}
+
+.overdue-calendar {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  max-width: 320px;
+  margin: 0 auto;
+}
+
+.calendar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem;
+}
+
+.calendar-month-year {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+  flex: 1;
+  text-align: center;
+}
+
+.calendar-nav-btn {
+  background: var(--surface);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--text);
+  font-size: 14px;
+  transition: all 0.15s ease;
+}
+
+.calendar-nav-btn:hover {
+  background: var(--surface-hover);
+  border-color: var(--accent);
+}
+
+.calendar-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.calendar-weekdays > div {
+  text-align: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  padding: 4px;
+}
+
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+
+.calendar-day {
+  aspect-ratio: 1;
+  border: 1px solid var(--glass-border);
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  min-height: 36px;
+}
+
+.calendar-day:hover:not(.other-month):not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--accent);
+  transform: scale(1.05);
+}
+
+.calendar-day.today {
+  border: 2px solid var(--accent);
+  font-weight: 600;
+}
+
+.calendar-day.selected {
+  background: var(--accent);
+  color: var(--btn-text-on-accent);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+.calendar-day.other-month {
+  color: var(--muted);
+  opacity: 0.4;
+}
+
+.calendar-day:disabled {
+  cursor: not-allowed;
+  opacity: 0.3;
+}
+
+.calendar-footer {
+  display: flex;
+  justify-content: center;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--glass-border);
+}
+
+/* ===== Input with Calendar Icon ===== */
+
+.input-with-calendar {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto auto;
+  gap: 0.25rem 0.5rem;
+}
+
+.input-with-calendar input {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.input-with-calendar .calendar-icon-btn {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.input-with-calendar .date-validation-msg {
+  grid-column: 1 / -1;
+  grid-row: 2;
+}
+
+.calendar-icon-btn {
+  background: var(--surface);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 16px;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+  padding: 0;
+}
+
+.calendar-icon-btn:hover {
+  background: var(--surface-hover);
+  border-color: var(--accent);
+  transform: scale(1.05);
+}
+
+.date-validation-msg {
+  font-size: 11px;
+  min-height: 14px;
+  margin: 0;
+  padding: 0;
+}
+
+.date-validation-msg.error {
+  color: var(--danger);
+}
+
+.date-validation-msg.warning {
+  color: var(--warning);
+}
+
+input.input-error {
+  border-color: var(--danger) !important;
+  background: rgba(239, 68, 68, 0.05);
+}
+
+input.input-warning {
+  border-color: var(--warning) !important;
+  background: rgba(245, 158, 11, 0.05);
+}
+
+/* ===== Inline Calendar Picker ===== */
+
+.inline-calendar-picker {
+  background: var(--modal-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  padding: 1rem;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(8px);
+}
+
+.inline-calendar {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  max-width: 320px;
+}

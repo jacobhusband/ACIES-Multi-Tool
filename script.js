@@ -2632,17 +2632,481 @@ function humanDate(s) {
 function formatDueDateShort(date) {
   if (!(date instanceof Date) || isNaN(date)) return "";
   return date.toLocaleDateString(undefined, {
-    year: "2-digit",
+    year: "numeric",
     month: "2-digit",
     day: "2-digit",
   });
 }
 
+// Date validation and formatting functions
+function autoFormatDateInput(inputElement) {
+  let value = inputElement.value.trim();
+  if (!value) return;
+
+  // Remove extra whitespace and normalize separators
+  value = value.replace(/\s+/g, '').replace(/[.]/g, '/');
+
+  // Check if it's MM/DD/YY format (2-digit year)
+  const parts = value.split('/');
+  if (parts.length === 3) {
+    let [mm, dd, yy] = parts;
+
+    // If year is 2 digits, expand to 4 digits
+    if (yy.length === 2) {
+      yy = '20' + yy;
+      inputElement.value = `${mm}/${dd}/${yy}`;
+    }
+  }
+}
+
+function validateDueDateInput(inputElement) {
+  const value = inputElement.value.trim();
+  const validationMsg = inputElement.parentElement.querySelector('.date-validation-msg');
+
+  // Clear previous validation
+  inputElement.classList.remove('input-error', 'input-warning');
+  if (validationMsg) validationMsg.textContent = '';
+
+  // Empty is valid (optional field)
+  if (!value) {
+    return true;
+  }
+
+  // Check for incomplete date (missing year)
+  const parts = value.replace(/[.\s]/g, '/').split('/');
+  if (parts.length < 3) {
+    inputElement.classList.add('input-error');
+    if (validationMsg) {
+      validationMsg.textContent = 'Incomplete date. Use MM/DD/YYYY';
+      validationMsg.className = 'date-validation-msg error';
+    }
+    return false;
+  }
+
+  // Check if year is present and valid (at least 2 digits)
+  const yearPart = parts[2];
+  if (!yearPart || yearPart.length < 2) {
+    inputElement.classList.add('input-error');
+    if (validationMsg) {
+      validationMsg.textContent = 'Year required. Use MM/DD/YYYY';
+      validationMsg.className = 'date-validation-msg error';
+    }
+    return false;
+  }
+
+  // Try to parse
+  const parsed = parseDueStr(value);
+
+  // Invalid format
+  if (!parsed) {
+    inputElement.classList.add('input-error');
+    if (validationMsg) {
+      validationMsg.textContent = 'Invalid date format. Use MM/DD/YYYY';
+      validationMsg.className = 'date-validation-msg error';
+    }
+    return false;
+  }
+
+  // Valid but in the past
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  if (parsed < today) {
+    inputElement.classList.add('input-warning');
+    if (validationMsg) {
+      validationMsg.textContent = 'Warning: This date is in the past';
+      validationMsg.className = 'date-validation-msg warning';
+    }
+    return true; // Warning, not blocking
+  }
+
+  // Valid and future
+  return true;
+}
+
+function validateAllDueDates() {
+  const inputs = document.querySelectorAll('.d-due');
+  let allValid = true;
+
+  inputs.forEach(input => {
+    if (!validateDueDateInput(input)) {
+      allValid = false;
+    }
+  });
+
+  return allValid;
+}
+
+// Calendar utility functions
+function getDaysInMonth(year, month) {
+  return new Date(year, month + 1, 0).getDate();
+}
+
+function getFirstDayOfMonth(year, month) {
+  return new Date(year, month, 1).getDay();
+}
+
+function isSameDay(date1, date2) {
+  return date1.getFullYear() === date2.getFullYear() &&
+         date1.getMonth() === date2.getMonth() &&
+         date1.getDate() === date2.getDate();
+}
+
+function createCalendarGrid(year, month, onDateSelect) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const daysInMonth = getDaysInMonth(year, month);
+  const firstDay = getFirstDayOfMonth(year, month);
+  const prevMonth = month === 0 ? 11 : month - 1;
+  const prevYear = month === 0 ? year - 1 : year;
+  const daysInPrevMonth = getDaysInMonth(prevYear, prevMonth);
+
+  const grid = el('div', { className: 'calendar-grid' });
+
+  // Previous month days
+  for (let i = firstDay - 1; i >= 0; i--) {
+    const day = daysInPrevMonth - i;
+    const btn = el('button', {
+      className: 'calendar-day other-month',
+      textContent: day,
+      type: 'button'
+    });
+    btn.onclick = () => {
+      const date = new Date(prevYear, prevMonth, day);
+      onDateSelect(date);
+    };
+    grid.appendChild(btn);
+  }
+
+  // Current month days
+  for (let day = 1; day <= daysInMonth; day++) {
+    const date = new Date(year, month, day);
+    const isToday = isSameDay(date, today);
+    const classes = ['calendar-day'];
+    if (isToday) classes.push('today');
+
+    const btn = el('button', {
+      className: classes.join(' '),
+      textContent: day,
+      type: 'button'
+    });
+    btn.onclick = () => onDateSelect(date);
+    grid.appendChild(btn);
+  }
+
+  // Next month days to fill grid
+  const totalCells = grid.children.length;
+  const remainingCells = totalCells % 7 === 0 ? 0 : 7 - (totalCells % 7);
+  const nextMonth = month === 11 ? 0 : month + 1;
+  const nextYear = month === 11 ? year + 1 : year;
+
+  for (let day = 1; day <= remainingCells; day++) {
+    const btn = el('button', {
+      className: 'calendar-day other-month',
+      textContent: day,
+      type: 'button'
+    });
+    btn.onclick = () => {
+      const date = new Date(nextYear, nextMonth, day);
+      onDateSelect(date);
+    };
+    grid.appendChild(btn);
+  }
+
+  return grid;
+}
+
+function renderOverdueCalendar(year, month, onDateSelect, onCancel) {
+  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',
+                      'July', 'August', 'September', 'October', 'November', 'December'];
+
+  const container = el('div', { className: 'overdue-calendar' });
+
+  // Header with navigation
+  const header = el('div', { className: 'calendar-header' });
+
+  const prevBtn = el('button', {
+    className: 'calendar-nav-btn',
+    textContent: '◀',
+    type: 'button',
+    id: 'calPrevMonth'
+  });
+
+  const monthYearLabel = el('div', {
+    className: 'calendar-month-year',
+    textContent: `${monthNames[month]} ${year}`,
+    id: 'calMonthYear'
+  });
+
+  const nextBtn = el('button', {
+    className: 'calendar-nav-btn',
+    textContent: '▶',
+    type: 'button',
+    id: 'calNextMonth'
+  });
+
+  header.appendChild(prevBtn);
+  header.appendChild(monthYearLabel);
+  header.appendChild(nextBtn);
+  container.appendChild(header);
+
+  // Weekday labels
+  const weekdays = el('div', { className: 'calendar-weekdays' });
+  ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].forEach(day => {
+    weekdays.appendChild(el('div', { textContent: day }));
+  });
+  container.appendChild(weekdays);
+
+  // Calendar grid (will be re-rendered on navigation)
+  const gridContainer = el('div', { id: 'calendarGridContainer' });
+  gridContainer.appendChild(createCalendarGrid(year, month, onDateSelect));
+  container.appendChild(gridContainer);
+
+  // Footer with cancel button
+  const footer = el('div', { className: 'calendar-footer' });
+  const cancelBtn = el('button', {
+    className: 'btn ghost',
+    textContent: 'Cancel',
+    type: 'button'
+  });
+  cancelBtn.onclick = onCancel;
+  footer.appendChild(cancelBtn);
+  container.appendChild(footer);
+
+  // Navigation handlers
+  prevBtn.onclick = () => {
+    const newMonth = month === 0 ? 11 : month - 1;
+    const newYear = month === 0 ? year - 1 : year;
+    showCalendarView(newYear, newMonth);
+  };
+
+  nextBtn.onclick = () => {
+    const newMonth = month === 11 ? 0 : month + 1;
+    const newYear = month === 11 ? year + 1 : year;
+    showCalendarView(newYear, newMonth);
+  };
+
+  return container;
+}
+
+function showCalendarView(year, month) {
+  const calendarView = document.getElementById('overdueDateCalendarView');
+  if (!calendarView) return;
+
+  calendarView.innerHTML = '';
+
+  const onDateSelect = async (date) => {
+    if (!pendingOverdueDueDateDeliverable) return;
+    pendingOverdueDueDateDeliverable.due = formatDueDateShort(date);
+    await save();
+    render();
+    closeDlg('overdueDueDateDlg');
+  };
+
+  const onCancel = () => {
+    document.getElementById('overdueDateInitialView').style.display = 'flex';
+    calendarView.style.display = 'none';
+  };
+
+  const calendar = renderOverdueCalendar(year, month, onDateSelect, onCancel);
+  calendarView.appendChild(calendar);
+  calendarView.style.display = 'block';
+}
+
+// Inline calendar picker for input fields
+function showCalendarForInput(inputElement, onSelectCallback) {
+  // Remove any existing calendar
+  const existingCalendar = document.getElementById('inlineCalendarPicker');
+  if (existingCalendar) existingCalendar.remove();
+
+  // Get current value or default to today
+  const currentDate = parseDueStr(inputElement.value) || new Date();
+
+  // Create calendar container
+  const calendarContainer = el('div', {
+    className: 'inline-calendar-picker',
+    id: 'inlineCalendarPicker'
+  });
+
+  // Render calendar
+  const calendar = renderInlineCalendar(
+    currentDate.getFullYear(),
+    currentDate.getMonth(),
+    (selectedDate) => {
+      // On date selection
+      inputElement.value = formatDueDateShort(selectedDate);
+      // Trigger validation
+      validateDueDateInput(inputElement);
+      // Callback
+      if (onSelectCallback) onSelectCallback(selectedDate);
+      // Remove calendar
+      calendarContainer.remove();
+    },
+    () => {
+      // On cancel
+      calendarContainer.remove();
+    }
+  );
+
+  calendarContainer.appendChild(calendar);
+
+  // Append inside the closest dialog (top layer) so it's not hidden behind it.
+  // Fall back to document.body if not inside a dialog.
+  const parentDialog = inputElement.closest('dialog');
+  const anchorParent = parentDialog || document.body;
+  anchorParent.appendChild(calendarContainer);
+
+  // Position the calendar above the input so it doesn't extend the modal
+  const rect = inputElement.getBoundingClientRect();
+  const parentRect = anchorParent.getBoundingClientRect();
+  calendarContainer.style.position = 'absolute';
+  calendarContainer.style.left = `${rect.left - parentRect.left + anchorParent.scrollLeft}px`;
+  calendarContainer.style.zIndex = '999999';
+
+  // Measure the calendar's height, then place it above the input
+  calendarContainer.style.visibility = 'hidden';
+  calendarContainer.style.top = '0px';
+  const calHeight = calendarContainer.offsetHeight;
+  calendarContainer.style.top = `${rect.top - parentRect.top + anchorParent.scrollTop - calHeight - 5}px`;
+  calendarContainer.style.visibility = '';
+
+  // Close on outside click
+  setTimeout(() => {
+    const closeOnOutsideClick = (e) => {
+      if (!calendarContainer.contains(e.target) && e.target !== inputElement) {
+        calendarContainer.remove();
+        document.removeEventListener('click', closeOnOutsideClick);
+      }
+    };
+    document.addEventListener('click', closeOnOutsideClick);
+  }, 100);
+}
+
+function renderInlineCalendar(year, month, onDateSelect, onCancel) {
+  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',
+                      'July', 'August', 'September', 'October', 'November', 'December'];
+
+  const container = el('div', { className: 'inline-calendar' });
+
+  // Header with navigation
+  const header = el('div', { className: 'calendar-header' });
+
+  const prevBtn = el('button', {
+    className: 'calendar-nav-btn',
+    textContent: '◀',
+    type: 'button'
+  });
+
+  const monthYearLabel = el('div', {
+    className: 'calendar-month-year',
+    textContent: `${monthNames[month]} ${year}`
+  });
+
+  const nextBtn = el('button', {
+    className: 'calendar-nav-btn',
+    textContent: '▶',
+    type: 'button'
+  });
+
+  header.appendChild(prevBtn);
+  header.appendChild(monthYearLabel);
+  header.appendChild(nextBtn);
+  container.appendChild(header);
+
+  // Weekday labels
+  const weekdays = el('div', { className: 'calendar-weekdays' });
+  ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].forEach(day => {
+    weekdays.appendChild(el('div', { textContent: day }));
+  });
+  container.appendChild(weekdays);
+
+  // Calendar grid
+  const gridContainer = el('div');
+  gridContainer.appendChild(createCalendarGrid(year, month, onDateSelect));
+  container.appendChild(gridContainer);
+
+  // Footer with cancel button
+  const footer = el('div', { className: 'calendar-footer' });
+  const cancelBtn = el('button', {
+    className: 'btn ghost',
+    textContent: 'Cancel',
+    type: 'button'
+  });
+  cancelBtn.onclick = onCancel;
+  footer.appendChild(cancelBtn);
+  container.appendChild(footer);
+
+  // Navigation: only swap the grid and update the label to keep DOM stable
+  function navigateMonth(newYear, newMonth) {
+    monthYearLabel.textContent = `${monthNames[newMonth]} ${newYear}`;
+    gridContainer.innerHTML = '';
+    gridContainer.appendChild(createCalendarGrid(newYear, newMonth, onDateSelect));
+
+    // Rebind arrows for the new month
+    prevBtn.onclick = () => {
+      const m = newMonth === 0 ? 11 : newMonth - 1;
+      const y = newMonth === 0 ? newYear - 1 : newYear;
+      navigateMonth(y, m);
+    };
+    nextBtn.onclick = () => {
+      const m = newMonth === 11 ? 0 : newMonth + 1;
+      const y = newMonth === 11 ? newYear + 1 : newYear;
+      navigateMonth(y, m);
+    };
+  }
+
+  prevBtn.onclick = () => {
+    const m = month === 0 ? 11 : month - 1;
+    const y = month === 0 ? year - 1 : year;
+    navigateMonth(y, m);
+  };
+
+  nextBtn.onclick = () => {
+    const m = month === 11 ? 0 : month + 1;
+    const y = month === 11 ? year + 1 : year;
+    navigateMonth(y, m);
+  };
+
+  return container;
+}
+
 function openOverdueDueDateDialog(deliverable) {
   if (!deliverable) return;
   pendingOverdueDueDateDeliverable = deliverable;
+
+  // Reset to initial view
+  const initialView = document.getElementById('overdueDateInitialView');
+  const calendarView = document.getElementById('overdueDateCalendarView');
+  if (initialView) initialView.style.display = 'flex';
+  if (calendarView) calendarView.style.display = 'none';
+
+  // Update deliverable info
+  const nameEl = document.getElementById('overdueDeliverableName');
+  const dateEl = document.getElementById('overdueCurrentDate');
+  if (nameEl) nameEl.textContent = deliverable.name || 'Untitled Deliverable';
+  if (dateEl) dateEl.textContent = humanDate(deliverable.due) || 'No date';
+
   const dlg = document.getElementById("overdueDueDateDlg");
   if (dlg) showDialog(dlg);
+}
+
+// Extract account name from file path
+// Handles: P:\Account\..., M:\Account\..., or \\acies.lan\cachedrive\projects2?\Account\...
+function extractAccountFromPath(path) {
+  if (!path) return null;
+
+  // Normalize path separators to forward slashes
+  const normalized = path.replace(/\\/g, '/');
+
+  // Try P: or M: drive pattern first
+  let match = normalized.match(/^([PM]):\/?([^\/]+)/i);
+  if (match) return match[2];
+
+  // Try network cached drive pattern: \\acies.lan\cachedrive\projects2?\Account\...
+  match = normalized.match(/^\/\/[^\/]+\/cachedrive\/projects2?\/([^\/]+)/i);
+  if (match) return match[1];
+
+  return null;
 }
 
 function basename(path) {
@@ -4922,10 +5386,21 @@ function render() {
     } else {
       nameCell.textContent = p.name || "--";
     }
-    if (p.nick)
+
+    // Add account if available (from P:\ or M:\ drive path)
+    const account = extractAccountFromPath(p.path);
+    if (account) {
+      nameCell.append(
+        el("small", { className: "muted", textContent: ` (${account})` })
+      );
+    }
+
+    // Add nickname if available
+    if (p.nick) {
       nameCell.append(
         el("small", { className: "muted", textContent: ` (${p.nick})` })
       );
+    }
     const projectNotes = (p.notes || "").trim();
     if (projectNotes) {
       nameCell.append(
@@ -5103,6 +5578,19 @@ function duplicate(i) {
   document.getElementById("editDlg").showModal();
 }
 function onSaveProject() {
+  // Validate all due dates first
+  if (!validateAllDueDates()) {
+    // Focus first invalid input
+    const firstInvalid = document.querySelector('.d-due.input-error');
+    if (firstInvalid) {
+      firstInvalid.focus();
+      // Scroll to the invalid input
+      firstInvalid.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+    toast("Please fix invalid date formats before saving.", "error");
+    return;
+  }
+
   const data = readForm();
   autoSetPrimary(data);
   _aiMatchSnapshot = null;
@@ -5194,6 +5682,30 @@ function addDeliverableCard(deliverable, primaryId, options = {}) {
     }
   });
   statusContainer.appendChild(picker);
+
+  // Wire up calendar icon button and date validation
+  const calendarBtn = card.querySelector('.calendar-icon-btn');
+  const dueInput = card.querySelector('.d-due');
+
+  if (calendarBtn && dueInput) {
+    calendarBtn.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      showCalendarForInput(dueInput);
+    };
+
+    // Add auto-formatting and validation on blur
+    dueInput.addEventListener('blur', () => {
+      autoFormatDateInput(dueInput);
+      validateDueDateInput(dueInput);
+    });
+
+    // Add validation on change
+    dueInput.addEventListener('change', () => {
+      autoFormatDateInput(dueInput);
+      validateDueDateInput(dueInput);
+    });
+  }
 
   if (insertAtTop && list.firstChild) {
     list.prepend(card);
@@ -8380,6 +8892,18 @@ function initEventListeners() {
       await save();
       render();
       closeDlg("overdueDueDateDlg");
+    };
+  }
+
+  // Set custom due date button handler
+  const setCustomDueDateBtn = document.getElementById("btnSetCustomDueDate");
+  if (setCustomDueDateBtn) {
+    setCustomDueDateBtn.onclick = () => {
+      const initialView = document.getElementById('overdueDateInitialView');
+      if (initialView) initialView.style.display = 'none';
+
+      const today = new Date();
+      showCalendarView(today.getFullYear(), today.getMonth());
     };
   }
 

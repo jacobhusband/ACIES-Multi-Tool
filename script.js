@@ -2629,6 +2629,22 @@ function humanDate(s) {
   });
 }
 
+function formatDueDateShort(date) {
+  if (!(date instanceof Date) || isNaN(date)) return "";
+  return date.toLocaleDateString(undefined, {
+    year: "2-digit",
+    month: "2-digit",
+    day: "2-digit",
+  });
+}
+
+function openOverdueDueDateDialog(deliverable) {
+  if (!deliverable) return;
+  pendingOverdueDueDateDeliverable = deliverable;
+  const dlg = document.getElementById("overdueDueDateDlg");
+  if (dlg) showDialog(dlg);
+}
+
 function basename(path) {
   try {
     if (!path) return "";
@@ -2848,6 +2864,7 @@ let _aiMatchSnapshot = null;
 let currentSort = { key: "due", dir: "desc" };
 let statusFilter = "all";
 let dueFilter = "all";
+let pendingOverdueDueDateDeliverable = null;
 
 const DEFAULT_CLEAN_DWG_OPTIONS = {
   stripXrefs: true,
@@ -4041,6 +4058,27 @@ function createCardHeader(deliverable, isPrimary, card) {
     const badgeClass = `deliverable-due-badge ${ds === "overdue" ? "overdue" : ds === "dueSoon" ? "due-soon" : "ok"}`;
     const badgeText = ds === "overdue" ? "OVERDUE" : humanDate(deliverable.due).replace(/\//g, "/").toUpperCase();
     const badge = el("div", { className: badgeClass, textContent: badgeText });
+    if (ds === "overdue") {
+      badge.classList.add("is-clickable");
+      badge.setAttribute("role", "button");
+      badge.setAttribute("tabindex", "0");
+      badge.setAttribute("title", "Click to change due date to today");
+      badge.setAttribute(
+        "aria-label",
+        "Overdue. Click to change the due date to today."
+      );
+      const handleOpen = (e) => {
+        e.stopPropagation();
+        openOverdueDueDateDialog(deliverable);
+      };
+      badge.addEventListener("click", handleOpen);
+      badge.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          handleOpen(e);
+        }
+      });
+    }
     leftSection.appendChild(badge);
   }
 
@@ -5165,6 +5203,46 @@ function addDeliverableCard(deliverable, primaryId, options = {}) {
 
   const hasPrimary = list.querySelector(".d-primary:checked");
   if (!hasPrimary && !primaryId) primaryInput.checked = true;
+
+  return card;
+}
+
+function getMostRecentDeliverableCard() {
+  const list = document.getElementById("deliverableList");
+  if (!list) return null;
+  const primaryInput = list.querySelector(".d-primary:checked");
+  if (primaryInput) return primaryInput.closest(".deliverable-card");
+  const cards = Array.from(list.querySelectorAll(".deliverable-card"));
+  if (!cards.length) return null;
+  let latestCard = null;
+  let latestDue = null;
+  cards.forEach((card) => {
+    const due = parseDueStr(card.querySelector(".d-due")?.value.trim());
+    if (!due) return;
+    if (!latestDue || due > latestDue) {
+      latestDue = due;
+      latestCard = card;
+    }
+  });
+  return latestCard || cards[0];
+}
+
+function isDeliverableCardComplete(card) {
+  if (!card) return false;
+  const statuses = readStatusPickerFrom(
+    card.querySelector(".deliverable-status")
+  );
+  return statuses.includes("Complete");
+}
+
+function setPrimaryDeliverableCard(card) {
+  const list = document.getElementById("deliverableList");
+  if (!list || !card) return;
+  list.querySelectorAll(".d-primary").forEach((input) => {
+    input.checked = false;
+  });
+  const primaryInput = card.querySelector(".d-primary");
+  if (primaryInput) primaryInput.checked = true;
 }
 
 function buildStatusPicker(selected = [], onToggle) {
@@ -5300,8 +5378,15 @@ function addRefRowFrom(L = {}) {
   document.getElementById("refList").append(row);
 }
 
-window.addDeliverable = () =>
-  addDeliverableCard(createDeliverable(), null, { insertAtTop: true });
+window.addDeliverable = () => {
+  const mostRecentCard = getMostRecentDeliverableCard();
+  const shouldSetPrimary =
+    mostRecentCard && isDeliverableCardComplete(mostRecentCard);
+  const newCard = addDeliverableCard(createDeliverable(), null, {
+    insertAtTop: true,
+  });
+  if (shouldSetPrimary && newCard) setPrimaryDeliverableCard(newCard);
+};
 window.addRefRow = () => addRefRowFrom({});
 window.closeDlg = closeDlg;
 
@@ -8269,6 +8354,34 @@ function initEventListeners() {
       }
       closeDlg("markOverdueDeliveredDlg");
     };
+
+  const overdueDueDateDlg = document.getElementById("overdueDueDateDlg");
+  if (overdueDueDateDlg) {
+    overdueDueDateDlg.addEventListener("close", () => {
+      pendingOverdueDueDateDeliverable = null;
+    });
+  }
+  const cancelOverdueDueDateBtn = document.getElementById(
+    "btnCancelOverdueDueDate"
+  );
+  if (cancelOverdueDueDateBtn) {
+    cancelOverdueDueDateBtn.onclick = () => closeDlg("overdueDueDateDlg");
+  }
+  const confirmOverdueDueDateBtn = document.getElementById(
+    "btnConfirmOverdueDueDate"
+  );
+  if (confirmOverdueDueDateBtn) {
+    confirmOverdueDueDateBtn.onclick = async () => {
+      if (!pendingOverdueDueDateDeliverable) {
+        closeDlg("overdueDueDateDlg");
+        return;
+      }
+      pendingOverdueDueDateDeliverable.due = formatDueDateShort(new Date());
+      await save();
+      render();
+      closeDlg("overdueDueDateDlg");
+    };
+  }
 
   document.getElementById("btnDeleteAll").onclick = () => {
     document.getElementById("deleteConfirmInput").value = "";

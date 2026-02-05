@@ -6307,9 +6307,88 @@ function handleNoteInput(e) {
   debouncedSaveNotes();
 }
 
+function focusAndSelectNoteSnippet(textarea, noteText, options = {}) {
+  if (!textarea || !noteText) return;
+  const { scrollWindow = false } = options;
+  if (scrollWindow) {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  const currentVal = textarea.value || "";
+  const start = currentVal.indexOf(noteText);
+  if (start === -1) {
+    toast("Note content changed. Please refresh search.");
+    return;
+  }
+  const end = start + noteText.length;
+
+  textarea.blur();
+  textarea.setSelectionRange(start, end);
+  textarea.focus();
+
+  const mirror = document.createElement("div");
+  const style = window.getComputedStyle(textarea);
+
+  mirror.style.visibility = "hidden";
+  mirror.style.position = "absolute";
+  mirror.style.top = "-9999px";
+  mirror.style.whiteSpace = "pre-wrap";
+  mirror.style.wordWrap = "break-word";
+
+  ["fontFamily", "fontSize", "fontWeight", "lineHeight", "letterSpacing", "padding"].forEach(
+    (prop) => {
+      mirror.style[prop] = style[prop];
+    }
+  );
+
+  mirror.style.boxSizing = "border-box";
+  mirror.style.width = `${textarea.clientWidth}px`;
+  mirror.style.border = "none";
+  mirror.textContent = currentVal.substring(0, start);
+
+  document.body.appendChild(mirror);
+  const targetY = mirror.clientHeight;
+  document.body.removeChild(mirror);
+
+  textarea.scrollTop = Math.max(0, targetY - textarea.clientHeight * 0.3);
+}
+
+function createNoteSearchResultItem(noteText, onEdit) {
+  const item = el("div", {
+    className: "note-result-item",
+    style: "position: relative;",
+  });
+  const contentDiv = el("div", { className: "note-result-content" });
+  contentDiv.append(el("div", { className: "snippet", textContent: noteText }));
+
+  const copyIcon = el("button", {
+    className: "note-action-icon copy-icon",
+    textContent: "\uD83D\uDCCB",
+    title: "Copy",
+    type: "button",
+  });
+  copyIcon.onclick = () => {
+    navigator.clipboard.writeText(noteText).then(() => toast("Copied!"));
+  };
+
+  const editIcon = el("button", {
+    className: "note-action-icon edit-icon",
+    textContent: "\u270F\uFE0F",
+    title: "Edit",
+    type: "button",
+  });
+  editIcon.onclick = () => {
+    if (typeof onEdit === "function") onEdit();
+  };
+
+  item.append(contentDiv, copyIcon, editIcon);
+  return item;
+}
+
 function renderNoteSearchResults() {
   const query = val("notesSearch").toLowerCase();
   const resultsContainer = document.getElementById("notesSearchResults");
+  if (!resultsContainer) return;
   resultsContainer.innerHTML = "";
 
   if (!query || !activeNoteTab) return;
@@ -6324,95 +6403,52 @@ function renderNoteSearchResults() {
 
   notes.forEach((noteText) => {
     const lowerNoteText = noteText.toLowerCase();
+    if (!queryWords.every((word) => lowerNoteText.includes(word))) return;
 
-    if (queryWords.every((word) => lowerNoteText.includes(word))) {
-      const item = el("div", {
-        className: "note-result-item",
-        style: "position: relative;",
-      });
-      const contentDiv = el("div", { className: "note-result-content" });
-      contentDiv.append(
-        el("div", { className: "snippet", textContent: noteText })
-      );
-
-      const copyIcon = el("button", {
-        className: "note-action-icon copy-icon",
-        textContent: "📋",
-        title: "Copy",
-      });
-      copyIcon.onclick = () => {
-        navigator.clipboard.writeText(noteText).then(() => toast("Copied!"));
-      };
-
-      const editIcon = el("button", {
-        className: "note-action-icon edit-icon",
-        textContent: "✏️",
-        title: "Edit",
-      });
-
-      editIcon.onclick = () => {
-        // 1. Scroll the main Page View to the top immediately
-        window.scrollTo({ top: 0, behavior: "smooth" });
-
+    resultsContainer.append(
+      createNoteSearchResultItem(noteText, () => {
         const textarea = document.getElementById("notesTextarea");
-        const currentVal = textarea.value;
-        const start = currentVal.indexOf(noteText);
-
-        if (start !== -1) {
-          const end = start + noteText.length;
-
-          // 2. Focus and Select Text
-          textarea.blur();
-          textarea.setSelectionRange(start, end);
-          textarea.focus();
-
-          // 3. Calculate Exact Position using Mirror Div (Precision Scroll)
-          const mirror = document.createElement("div");
-          const style = window.getComputedStyle(textarea);
-
-          mirror.style.visibility = "hidden";
-          mirror.style.position = "absolute";
-          mirror.style.top = "-9999px";
-          mirror.style.whiteSpace = "pre-wrap";
-          mirror.style.wordWrap = "break-word";
-
-          [
-            "fontFamily",
-            "fontSize",
-            "fontWeight",
-            "lineHeight",
-            "letterSpacing",
-            "padding",
-          ].forEach((p) => {
-            mirror.style[p] = style[p];
-          });
-
-          mirror.style.boxSizing = "border-box";
-          mirror.style.width = `${textarea.clientWidth}px`;
-          mirror.style.border = "none";
-
-          mirror.textContent = currentVal.substring(0, start);
-
-          document.body.appendChild(mirror);
-          const targetY = mirror.clientHeight;
-          document.body.removeChild(mirror);
-
-          // 4. Scroll the Textarea internally to the specific line
-          textarea.scrollTop = Math.max(
-            0,
-            targetY - textarea.clientHeight * 0.3
-          );
-        } else {
-          toast("Note content changed. Please refresh search.");
-        }
-      };
-
-      item.append(contentDiv, copyIcon, editIcon);
-      resultsContainer.append(item);
-    }
+        focusAndSelectNoteSnippet(textarea, noteText, { scrollWindow: true });
+      })
+    );
   });
 }
 
+function renderWorkroomNoteSearchResults() {
+  const searchInput = document.getElementById("workroomNotesSearchInput");
+  const resultsContainer = document.getElementById("workroomNotesSearchResults");
+  const workroomTextarea = document.getElementById("workroomGeneralNotesTextarea");
+  if (!searchInput || !resultsContainer || !workroomTextarea) return;
+
+  const query = (searchInput.value || "").trim().toLowerCase();
+  resultsContainer.innerHTML = "";
+  if (!query || !activeNoteTab) return;
+
+  const queryWords = query.split(" ").filter(Boolean);
+  if (!queryWords.length) return;
+
+  const content = notesDb[activeNoteTab];
+  if (!content) return;
+
+  const notes = content.split(/\n\s*\n/).filter((note) => note.trim() !== "");
+  let matchCount = 0;
+  notes.forEach((noteText) => {
+    const lowerNoteText = noteText.toLowerCase();
+    if (!queryWords.every((word) => lowerNoteText.includes(word))) return;
+    matchCount += 1;
+
+    resultsContainer.append(
+      createNoteSearchResultItem(noteText, () => {
+        focusAndSelectNoteSnippet(workroomTextarea, noteText);
+      })
+    );
+  });
+
+  if (matchCount === 0) {
+    resultsContainer.innerHTML =
+      "<p class='muted tiny' style='text-align:center;padding:0.75rem'>No results found.</p>";
+  }
+}
 // ===================== CHECKLISTS RENDERING =====================
 
 let activeChecklistTabId = null;
@@ -7114,7 +7150,11 @@ function renderWorkroomGeneralNotesPanel() {
   const tabsContainer = document.getElementById("workroomNotesTabs");
   const addBtn = document.getElementById("workroomAddNotePageBtn");
   const notesTextarea = document.getElementById("workroomGeneralNotesTextarea");
-  if (!tabsContainer || !addBtn || !notesTextarea) return;
+  const searchInput = document.getElementById("workroomNotesSearchInput");
+  const searchBtn = document.getElementById("workroomNotesSearchBtn");
+  const resultsContainer = document.getElementById("workroomNotesSearchResults");
+  if (!tabsContainer || !addBtn || !notesTextarea || !searchInput || !searchBtn || !resultsContainer)
+    return;
 
   ensureActiveNoteTabSelection();
   tabsContainer.innerHTML = "";
@@ -7181,6 +7221,15 @@ function renderWorkroomGeneralNotesPanel() {
     renderNoteSearchResults();
   };
 
+  searchBtn.onclick = () => {
+    renderWorkroomNoteSearchResults();
+  };
+  searchInput.onkeydown = (e) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    renderWorkroomNoteSearchResults();
+  };
+
   notesTextarea.disabled = !activeNoteTab;
   notesTextarea.placeholder = activeNoteTab
     ? `Enter notes for ${activeNoteTab}...`
@@ -7199,6 +7248,12 @@ function renderWorkroomGeneralNotesPanel() {
     saveNotes();
     syncMainNotesFromWorkroom();
   };
+
+  if ((searchInput.value || "").trim()) {
+    renderWorkroomNoteSearchResults();
+  } else {
+    resultsContainer.innerHTML = "";
+  }
 }
 
 document.getElementById("checklistDeliverableSelect")?.addEventListener("change", (e) => {
@@ -7217,6 +7272,10 @@ document.getElementById("checklistModal")?.addEventListener("close", () => {
   activeChecklistView = null;
   checklistModalState.appliedTabs = [];
   checklistModalState.activeInstanceId = null;
+  const workroomSearchInput = document.getElementById("workroomNotesSearchInput");
+  const workroomResults = document.getElementById("workroomNotesSearchResults");
+  if (workroomSearchInput) workroomSearchInput.value = "";
+  if (workroomResults) workroomResults.innerHTML = "";
 });
 
 // Close button handler

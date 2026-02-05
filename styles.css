@@ -5591,7 +5591,8 @@ input.input-warning {
 
 .workroom-body {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(360px, 0.95fr);
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 0.95fr) minmax(170px, 210px);
+  grid-template-areas: "left notes tools";
   gap: 0.6rem;
   flex: 1;
   min-height: 0;
@@ -5600,6 +5601,7 @@ input.input-warning {
 }
 
 .workroom-left-column {
+  grid-area: left;
   display: flex;
   flex-direction: column;
   gap: 0.55rem;
@@ -5609,6 +5611,13 @@ input.input-warning {
 }
 
 .workroom-right-column {
+  grid-area: notes;
+  min-width: 0;
+  display: flex;
+}
+
+.workroom-tools-column {
+  grid-area: tools;
   min-width: 0;
   display: flex;
 }
@@ -5652,6 +5661,59 @@ input.input-warning {
 
 .workroom-general-notes-panel {
   flex: 1;
+}
+
+.workroom-tools-panel {
+  flex: 1;
+}
+
+.workroom-tools-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  overflow-y: auto;
+  min-height: 0;
+  padding-right: 0;
+}
+
+.workroom-tool-item {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  padding: 0.24rem 0.28rem;
+  min-height: 30px;
+}
+
+.workroom-tool-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  line-height: 1;
+}
+
+.workroom-tool-text {
+  min-width: 0;
+  font-size: 0.68rem;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workroom-tool-run-btn {
+  min-height: 20px;
+  padding: 0.08rem 0.38rem;
+  font-size: 0.62rem;
+}
+
+.workroom-tool-empty {
+  color: var(--muted);
+  font-size: 0.7rem;
 }
 
 .workroom-checklist-controls {
@@ -5928,6 +5990,19 @@ input.input-warning {
   right: 24px;
 }
 
+@media (max-width: 1400px) {
+  .workroom-body {
+    grid-template-columns: minmax(0, 1fr) minmax(340px, 0.95fr);
+    grid-template-areas:
+      "left notes"
+      "left tools";
+  }
+
+  .workroom-tools-column {
+    min-height: 150px;
+  }
+}
+
 @media (max-width: 1200px) {
   .workroom-modal[open] {
     width: min(98vw, 1320px);
@@ -5936,6 +6011,10 @@ input.input-warning {
 
   .workroom-body {
     grid-template-columns: 1fr;
+    grid-template-areas:
+      "left"
+      "notes"
+      "tools";
     overflow-y: auto;
   }
 
@@ -5946,6 +6025,10 @@ input.input-warning {
 
   .workroom-right-column {
     min-height: 220px;
+  }
+
+  .workroom-tools-column {
+    min-height: 0;
   }
 
   .workroom-general-notes-textarea {

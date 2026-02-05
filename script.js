@@ -72,8 +72,6 @@ const PIN_ICON_PATH =
   "M12 2C8.13 2 5 5.13 5 9c0 2.76 1.87 5.08 4.42 5.76L10 22l2-3 2 3-.42-7.24C16.13 14.08 18 11.76 18 9c0-3.87-3.13-7-7-7zm0 8.5A2.5 2.5 0 1 1 12 5a2.5 2.5 0 0 1 0 5z";
 const PENCIL_ICON_PATH =
   "M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zm17.71-10.21c.39-.39.39-1.02 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z";
-const COPY_ICON_PATH =
-  "M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z";
 const TRASH_ICON_PATH =
   "M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zm13-15h-3.5l-1-1h-5l-1 1H5v2h14V4z";
 
@@ -5606,13 +5604,6 @@ function render() {
         onClick: () => openChecklistModal(idx),
       }),
       createIconButton({
-        className: "btn icon-only",
-        title: "Duplicate",
-        ariaLabel: "Duplicate project",
-        path: COPY_ICON_PATH,
-        onClick: () => duplicate(idx),
-      }),
-      createIconButton({
         className: "btn btn-danger icon-only",
         title: "Delete",
         ariaLabel: "Delete project",
@@ -5719,25 +5710,6 @@ function removeProject(i) {
   db.splice(i, 1);
   save();
   render();
-}
-function duplicate(i) {
-  const original = db[i];
-  const deliverable = createDeliverable();
-  const newProjectData = {
-    id: original?.id || "",
-    name: original?.name || "",
-    path: original?.path || "",
-    nick: original?.nick || "",
-    notes: "",
-    refs: [],
-    deliverables: [deliverable],
-    overviewDeliverableId: deliverable.id,
-  };
-  editIndex = -1;
-  document.getElementById("dlgTitle").textContent = "Duplicate Project";
-  document.getElementById("btnSaveProject").textContent = "Create Duplicate";
-  fillForm(newProjectData);
-  document.getElementById("editDlg").showModal();
 }
 function onSaveProject() {
   // Validate all due dates first
@@ -6745,6 +6717,85 @@ function renderProjectWorkroom() {
   renderWorkroomTasksPanel();
   renderWorkroomDeliverableNotesPanel();
   renderWorkroomGeneralNotesPanel();
+  renderWorkroomToolsPanel();
+}
+
+function getWorkroomVisibleTools() {
+  return Array.from(
+    document.querySelectorAll("#tools-panel .tool-card:not([hidden])")
+  )
+    .map((card) => {
+      const id = card.id;
+      if (!id) return null;
+      return {
+        id,
+        icon: card.querySelector(".tool-icon")?.textContent?.trim() || "TOOL",
+        title:
+          card.querySelector(".tool-card-header")?.textContent?.trim() ||
+          "Unnamed Tool",
+      };
+    })
+    .filter(Boolean);
+}
+
+function triggerWorkroomTool(toolId) {
+  if (!toolId) return;
+  const sourceCard = document.getElementById(toolId);
+  if (!sourceCard || sourceCard.hidden) {
+    toast("Selected tool is unavailable.");
+    return;
+  }
+  sourceCard.click();
+}
+
+function renderWorkroomToolsPanel() {
+  const toolsList = document.getElementById("workroomToolsList");
+  if (!toolsList) return;
+
+  const tools = getWorkroomVisibleTools();
+  toolsList.innerHTML = "";
+
+  if (!tools.length) {
+    toolsList.appendChild(
+      el("div", {
+        className: "workroom-tool-empty",
+        textContent: "No tools available.",
+      })
+    );
+    return;
+  }
+
+  tools.forEach((tool) => {
+    const item = el("div", { className: "workroom-tool-item" });
+    item.appendChild(
+      el("span", {
+        className: "workroom-tool-icon",
+        textContent: tool.icon,
+        "aria-hidden": "true",
+      })
+    );
+    item.appendChild(
+      el("span", {
+        className: "workroom-tool-text",
+        textContent: tool.title,
+        title: tool.title,
+      })
+    );
+    item.appendChild(
+      el("button", {
+        className: "btn tiny workroom-tool-run-btn",
+        type: "button",
+        textContent: "Run",
+        title: `Run ${tool.title}`,
+        "aria-label": `Run ${tool.title}`,
+        onclick: (e) => {
+          e.stopPropagation();
+          triggerWorkroomTool(tool.id);
+        },
+      })
+    );
+    toolsList.appendChild(item);
+  });
 }
 
 function renderWorkroomChecklistPanel() {

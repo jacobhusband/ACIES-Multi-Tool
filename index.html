@@ -278,6 +278,46 @@
             opacity: 0.6;
         }
 
+        .checklist-task-remove {
+            width: 24px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: transparent;
+            border: none;
+            color: var(--muted);
+            cursor: pointer;
+            border-radius: var(--radius-sm);
+            transition: all 0.2s;
+        }
+
+        .checklist-task-remove:hover {
+            background: var(--danger-bg);
+            color: var(--danger);
+        }
+
+        .checklist-notes-section {
+            margin-bottom: 1.5rem;
+        }
+
+        .checklist-notes-container {
+            margin-top: 1rem;
+            padding: 0.75rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--glass-border);
+            border-radius: var(--radius-sm);
+            color: var(--text);
+            line-height: 1.5;
+            white-space: pre-wrap;
+            min-height: 60px;
+        }
+
+        .checklist-no-notes {
+            color: var(--muted);
+            font-style: italic;
+        }
+
         .checklist-tabs-section {
             margin-top: 1.5rem;
         }
@@ -2101,17 +2141,27 @@
                 </select>
             </div>
 
-            <!-- Tasks & Notes Section (Above Checklist) -->
-            <div class="checklist-tasks-notes-section">
+            <!-- Tasks Section -->
+            <div class="checklist-tasks-section">
                 <div class="section-divider"></div>
                 <div class="inline" style="justify-content:space-between">
-                    <div class="title section-header">Tasks & Notes</div>
+                    <div class="title section-header">Tasks</div>
                     <button class="btn-accent tiny" id="checklistAddTaskBtn">+ Add Task</button>
                 </div>
                 <div id="checklistTasksContainer" class="checklist-tasks-container">
                     <!-- Tasks from selected deliverable -->
                 </div>
+            </div>
+
+            <!-- Notes Section -->
+            <div class="checklist-notes-section">
                 <div class="section-divider"></div>
+                <div class="inline" style="justify-content:space-between">
+                    <div class="title section-header">Notes</div>
+                </div>
+                <div id="checklistNotesContainer" class="checklist-notes-container">
+                    <!-- Notes from deliverable -->
+                </div>
             </div>
 
             <!-- Checklist Tabs -->

@@ -3607,6 +3607,16 @@ async function save() {
   }
 }
 
+// Debounced save for inline edits
+let saveTimeout = null;
+function debouncedSave() {
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    save();
+    saveTimeout = null;
+  }, 500);
+}
+
 async function refreshAppUpdateStatus({ manual = false } = {}) {
   const versionLabel = document.getElementById("appVersionLabel");
   const versionChip = document.getElementById("versionChip");
@@ -6620,8 +6630,9 @@ function populateChecklistDeliverableSelect(project) {
     activeChecklistDeliverable = 0;
   }
 
-  // Render tasks for selected deliverable
+  // Render tasks and notes for selected deliverable
   renderChecklistTasks(project, activeChecklistDeliverable);
+  renderChecklistNotes(project, activeChecklistDeliverable);
 
   // Initialize checklist tabs for this deliverable
   initChecklistModalTabs(project, activeChecklistDeliverable);
@@ -6633,6 +6644,7 @@ document.getElementById("checklistDeliverableSelect")?.addEventListener("change"
 
   activeChecklistDeliverable = e.target.value;
   renderChecklistTasks(project, activeChecklistDeliverable);
+  renderChecklistNotes(project, activeChecklistDeliverable);
   initChecklistModalTabs(project, activeChecklistDeliverable);
 });
 
@@ -6644,11 +6656,11 @@ function renderChecklistTasks(project, deliverableIndex) {
   const deliverable = deliverables[deliverableIndex];
 
   if (!deliverable || !deliverable.tasks || deliverable.tasks.length === 0) {
-    container.innerHTML = '<p class="muted tiny">No tasks for this deliverable. Add tasks below.</p>';
+    container.innerHTML = '<p class="muted tiny">No tasks for this deliverable. Add tasks using the + Add Task button or press Enter in an empty field.</p>';
     return;
   }
 
-  deliverable.tasks.forEach((task) => {
+  deliverable.tasks.forEach((task, taskIndex) => {
     const row = el("div", {
       className: `checklist-task-row ${task.done ? "checklist-task-done" : ""}`,
     });
@@ -6660,18 +6672,80 @@ function renderChecklistTasks(project, deliverableIndex) {
       onchange: () => {
         task.done = checkbox.checked;
         save();
-        renderChecklistTasks(project, activeChecklistDeliverable);
+        renderChecklistTasks(project, deliverableIndex);
       },
     });
 
-    const text = el("span", {
-      className: "checklist-task-text",
-      textContent: task.text || "",
+    // Editable task text input with Enter key support
+    const textInput = el("input", {
+      type: "text",
+      className: "checklist-task-text-input",
+      value: task.text || "",
+      placeholder: "Task description...",
+      oninput: (e) => {
+        task.text = e.target.value;
+        debouncedSave();
+      },
+      onkeydown: (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          // If this is the last task and has text, add a new task below
+          if (taskIndex === deliverable.tasks.length - 1 && task.text.trim()) {
+            if (!deliverable.tasks) deliverable.tasks = [];
+            deliverable.tasks.push({ text: "", done: false });
+            save();
+            renderChecklistTasks(project, deliverableIndex);
+            // Focus the new task input after render
+            setTimeout(() => {
+              const inputs = container.querySelectorAll(".checklist-task-text-input");
+              if (inputs.length > 0) inputs[inputs.length - 1].focus();
+            }, 0);
+          }
+        }
+      },
     });
 
-    row.append(checkbox, text);
+    const removeBtn = el("button", {
+      type: "button",
+      className: "checklist-task-remove",
+      textContent: "×",
+      title: "Remove task",
+      onclick: () => {
+        if (confirm("Remove this task?")) {
+          deliverable.tasks.splice(taskIndex, 1);
+          save();
+          renderChecklistTasks(project, deliverableIndex);
+        }
+      },
+    });
+
+    row.append(checkbox, textInput, removeBtn);
     container.appendChild(row);
   });
+}
+
+function renderChecklistNotes(project, deliverableIndex) {
+  const container = document.getElementById("checklistNotesContainer");
+  container.innerHTML = "";
+
+  const deliverables = getProjectDeliverables(project);
+  const deliverable = deliverables[deliverableIndex];
+
+  const notes = deliverable?.notes || "";
+
+  // Editable notes textarea
+  const notesTextarea = el("textarea", {
+    className: "checklist-notes-textarea",
+    placeholder: "Add notes for this deliverable...",
+    rows: 4,
+    value: notes,
+    oninput: (e) => {
+      deliverable.notes = e.target.value;
+      debouncedSave();
+    },
+  });
+
+  container.appendChild(notesTextarea);
 }
 
 document.getElementById("checklistAddTaskBtn")?.addEventListener("click", () => {

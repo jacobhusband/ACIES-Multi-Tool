@@ -56,19 +56,106 @@ if ([System.Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') {
   if ($PSBoundParameters.ContainsKey('ScanAllLayers')) {
     $argsList += @("-ScanAllLayers", $ScanAllLayers)
   }
-  Start-Process -FilePath $ps -ArgumentList $argsList -Wait
-  exit
+  $child = Start-Process -FilePath $ps -ArgumentList $argsList -Wait -PassThru
+  exit $child.ExitCode
 }
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-$dlg = New-Object System.Windows.Forms.OpenFileDialog
-$dlg.Title = "Select DWG file(s)"
-$dlg.Filter = "DWG files (*.dwg)|*.dwg"
-$dlg.Multiselect = $true
-if ($dlg.ShowDialog() -ne 'OK') { exit }
-$files = $dlg.FileNames
+function Show-DwgFileSelectionPrompt {
+  $promptForm = New-Object System.Windows.Forms.Form
+  $promptForm.Text = "Select DWG file(s)"
+  $promptForm.StartPosition = "CenterScreen"
+  $promptForm.Size = New-Object System.Drawing.Size(560, 190)
+  $promptForm.MinimumSize = New-Object System.Drawing.Size(560, 190)
+  $promptForm.MaximumSize = New-Object System.Drawing.Size(560, 190)
+  $promptForm.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
+  $promptForm.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::Font
+  $promptForm.MaximizeBox = $false
+  $promptForm.MinimizeBox = $false
+  $promptForm.TopMost = $true
+  $promptForm.ShowInTaskbar = $true
+
+  $lblPrompt = New-Object System.Windows.Forms.Label
+  $lblPrompt.Text = "Choose one or more DWG files to process. This window stays on top until files are selected or you exit."
+  $lblPrompt.Location = New-Object System.Drawing.Point(16, 16)
+  $lblPrompt.Size = New-Object System.Drawing.Size(520, 52)
+  $lblPrompt.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+  $promptForm.Controls.Add($lblPrompt)
+
+  $btnSelectFiles = New-Object System.Windows.Forms.Button
+  $btnSelectFiles.Text = "Select DWG Files..."
+  $btnSelectFiles.Size = New-Object System.Drawing.Size(210, 44)
+  $btnSelectFiles.Location = New-Object System.Drawing.Point(222, 92)
+  $btnSelectFiles.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Right
+  $btnSelectFiles.Font = New-Object System.Drawing.Font("Segoe UI", 9.5, [System.Drawing.FontStyle]::Bold)
+  $btnSelectFiles.FlatStyle = [System.Windows.Forms.FlatStyle]::System
+  $promptForm.Controls.Add($btnSelectFiles)
+
+  $btnExitPrompt = New-Object System.Windows.Forms.Button
+  $btnExitPrompt.Text = "Exit"
+  $btnExitPrompt.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+  $btnExitPrompt.Size = New-Object System.Drawing.Size(110, 44)
+  $btnExitPrompt.Location = New-Object System.Drawing.Point(434, 92)
+  $btnExitPrompt.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Right
+  $btnExitPrompt.Font = New-Object System.Drawing.Font("Segoe UI", 10)
+  $btnExitPrompt.FlatStyle = [System.Windows.Forms.FlatStyle]::System
+  $promptForm.Controls.Add($btnExitPrompt)
+
+  $promptForm.CancelButton = $btnExitPrompt
+  $promptForm.AcceptButton = $btnSelectFiles
+
+  $dlg = New-Object System.Windows.Forms.OpenFileDialog
+  $dlg.Title = "Select DWG file(s)"
+  $dlg.Filter = "DWG files (*.dwg)|*.dwg"
+  $dlg.Multiselect = $true
+  $dlg.CheckFileExists = $true
+  $dlg.CheckPathExists = $true
+  $dlg.RestoreDirectory = $true
+
+  $btnSelectFiles.add_Click({
+      $promptForm.TopMost = $true
+      $promptForm.Activate()
+      $result = $dlg.ShowDialog($promptForm)
+      if ($result -eq [System.Windows.Forms.DialogResult]::OK -and $dlg.FileNames.Count -gt 0) {
+        $promptForm.Tag = [string[]]$dlg.FileNames
+        $promptForm.DialogResult = [System.Windows.Forms.DialogResult]::OK
+        $promptForm.Close()
+        return
+      }
+      $promptForm.TopMost = $true
+      $promptForm.Activate()
+      $promptForm.BringToFront()
+    })
+
+  $promptForm.add_Shown({
+      $promptForm.Activate()
+      $promptForm.BringToFront()
+      $btnSelectFiles.PerformClick()
+    })
+
+  # Keep this prompt from being minimized so it remains actionable.
+  $promptForm.add_Resize({
+      if ($promptForm.WindowState -eq [System.Windows.Forms.FormWindowState]::Minimized) {
+        $promptForm.WindowState = [System.Windows.Forms.FormWindowState]::Normal
+        $promptForm.Activate()
+        $promptForm.BringToFront()
+      }
+    })
+
+  $promptResult = $promptForm.ShowDialog()
+  if ($promptResult -eq [System.Windows.Forms.DialogResult]::OK) {
+    $selectedFiles = @($promptForm.Tag)
+    if ($selectedFiles.Count -gt 0) {
+      return $selectedFiles
+    }
+  }
+  return $null
+}
+
+$files = Show-DwgFileSelectionPrompt
+if (-not $files -or $files.Count -eq 0) { exit }
 
 # ---------------- 3) PREP TOOL FOLDER ----------------
 if (-not (Test-Path $ToolDir)) { New-Item -ItemType Directory -Path $ToolDir | Out-Null }
@@ -316,55 +403,110 @@ if ($allLayers.Count -eq 0) {
   exit 1
 }
 
-# ---------------- 5) USER SELECTION (GUI with FILTER + nicer button) ----------------
+# ---------------- 5) USER SELECTION (GUI with DUAL LISTS) ----------------
 $allSorted = @($allLayers | Sort-Object)
+$layersToThawSet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
 
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "Select Layers to THAW"
 $form.StartPosition = "CenterScreen"
-$form.Size = New-Object System.Drawing.Size(520, 640)
-$form.MinimumSize = New-Object System.Drawing.Size(520, 640)
+$form.Size = New-Object System.Drawing.Size(940, 680)
+$form.MinimumSize = New-Object System.Drawing.Size(940, 680)
 $form.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::Font
 
 $lbl = New-Object System.Windows.Forms.Label
 $lbl.Location = New-Object System.Drawing.Point(12, 12)
-$lbl.Size = New-Object System.Drawing.Size(488, 20)
+$lbl.Size = New-Object System.Drawing.Size(910, 20)
 $lbl.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
 $form.Controls.Add($lbl)
 
 $lblFilter = New-Object System.Windows.Forms.Label
-$lblFilter.Text = "Filter:"
+$lblFilter.Text = "Filter available:"
 $lblFilter.Location = New-Object System.Drawing.Point(12, 40)
-$lblFilter.Size = New-Object System.Drawing.Size(40, 22)
+$lblFilter.Size = New-Object System.Drawing.Size(98, 22)
 $form.Controls.Add($lblFilter)
 
 $txtFilter = New-Object System.Windows.Forms.TextBox
-$txtFilter.Location = New-Object System.Drawing.Point(60, 38)
-$txtFilter.Size = New-Object System.Drawing.Size(360, 26)
-$txtFilter.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+$txtFilter.Location = New-Object System.Drawing.Point(112, 38)
+$txtFilter.Size = New-Object System.Drawing.Size(240, 26)
+$txtFilter.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left
 $form.Controls.Add($txtFilter)
 
 $btnClear = New-Object System.Windows.Forms.Button
 $btnClear.Text = "Clear"
-$btnClear.Location = New-Object System.Drawing.Point(430, 36)
+$btnClear.Location = New-Object System.Drawing.Point(360, 36)
 $btnClear.Size = New-Object System.Drawing.Size(70, 28)
-$btnClear.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Right
+$btnClear.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left
 $btnClear.FlatStyle = [System.Windows.Forms.FlatStyle]::System
 $form.Controls.Add($btnClear)
 
-$listBox = New-Object System.Windows.Forms.ListBox
-$listBox.Location = New-Object System.Drawing.Point(12, 72)
-$listBox.Size = New-Object System.Drawing.Size(488, 460)
-$listBox.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
-$listBox.SelectionMode = "MultiExtended"
-$listBox.IntegralHeight = $false
-$form.Controls.Add($listBox)
+$lblAvailable = New-Object System.Windows.Forms.Label
+$lblAvailable.Location = New-Object System.Drawing.Point(12, 74)
+$lblAvailable.Size = New-Object System.Drawing.Size(410, 18)
+$lblAvailable.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left
+$form.Controls.Add($lblAvailable)
+
+$lblThaw = New-Object System.Windows.Forms.Label
+$lblThaw.Location = New-Object System.Drawing.Point(548, 74)
+$lblThaw.Size = New-Object System.Drawing.Size(370, 18)
+$lblThaw.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+$form.Controls.Add($lblThaw)
+
+$listAvailable = New-Object System.Windows.Forms.ListBox
+$listAvailable.Location = New-Object System.Drawing.Point(12, 96)
+$listAvailable.Size = New-Object System.Drawing.Size(410, 470)
+$listAvailable.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left
+$listAvailable.SelectionMode = "MultiExtended"
+$listAvailable.IntegralHeight = $false
+$form.Controls.Add($listAvailable)
+
+$movePanel = New-Object System.Windows.Forms.Panel
+$movePanel.Location = New-Object System.Drawing.Point(434, 170)
+$movePanel.Size = New-Object System.Drawing.Size(100, 260)
+$movePanel.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left
+$form.Controls.Add($movePanel)
+
+$btnAddSelected = New-Object System.Windows.Forms.Button
+$btnAddSelected.Text = ">"
+$btnAddSelected.Size = New-Object System.Drawing.Size(64, 38)
+$btnAddSelected.Location = New-Object System.Drawing.Point(18, 16)
+$btnAddSelected.FlatStyle = [System.Windows.Forms.FlatStyle]::System
+$movePanel.Controls.Add($btnAddSelected)
+
+$btnAddAll = New-Object System.Windows.Forms.Button
+$btnAddAll.Text = ">>"
+$btnAddAll.Size = New-Object System.Drawing.Size(64, 38)
+$btnAddAll.Location = New-Object System.Drawing.Point(18, 62)
+$btnAddAll.FlatStyle = [System.Windows.Forms.FlatStyle]::System
+$movePanel.Controls.Add($btnAddAll)
+
+$btnRemoveSelected = New-Object System.Windows.Forms.Button
+$btnRemoveSelected.Text = "<"
+$btnRemoveSelected.Size = New-Object System.Drawing.Size(64, 38)
+$btnRemoveSelected.Location = New-Object System.Drawing.Point(18, 128)
+$btnRemoveSelected.FlatStyle = [System.Windows.Forms.FlatStyle]::System
+$movePanel.Controls.Add($btnRemoveSelected)
+
+$btnRemoveAll = New-Object System.Windows.Forms.Button
+$btnRemoveAll.Text = "<<"
+$btnRemoveAll.Size = New-Object System.Drawing.Size(64, 38)
+$btnRemoveAll.Location = New-Object System.Drawing.Point(18, 174)
+$btnRemoveAll.FlatStyle = [System.Windows.Forms.FlatStyle]::System
+$movePanel.Controls.Add($btnRemoveAll)
+
+$listToThaw = New-Object System.Windows.Forms.ListBox
+$listToThaw.Location = New-Object System.Drawing.Point(548, 96)
+$listToThaw.Size = New-Object System.Drawing.Size(370, 470)
+$listToThaw.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+$listToThaw.SelectionMode = "MultiExtended"
+$listToThaw.IntegralHeight = $false
+$form.Controls.Add($listToThaw)
 
 $btnOk = New-Object System.Windows.Forms.Button
-$btnOk.Text = "Thaw Selected"
+$btnOk.Text = "Thaw Layers on Right"
 $btnOk.DialogResult = [System.Windows.Forms.DialogResult]::OK
-$btnOk.Size = New-Object System.Drawing.Size(190, 48)
-$btnOk.Location = New-Object System.Drawing.Point(310, 548)
+$btnOk.Size = New-Object System.Drawing.Size(220, 48)
+$btnOk.Location = New-Object System.Drawing.Point(698, 580)
 $btnOk.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Right
 $btnOk.Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
 $btnOk.FlatStyle = [System.Windows.Forms.FlatStyle]::System
@@ -375,7 +517,7 @@ $btnCancel = New-Object System.Windows.Forms.Button
 $btnCancel.Text = "Cancel"
 $btnCancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
 $btnCancel.Size = New-Object System.Drawing.Size(110, 48)
-$btnCancel.Location = New-Object System.Drawing.Point(190, 548)
+$btnCancel.Location = New-Object System.Drawing.Point(580, 580)
 $btnCancel.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Right
 $btnCancel.Font = New-Object System.Drawing.Font("Segoe UI", 10)
 $btnCancel.FlatStyle = [System.Windows.Forms.FlatStyle]::System
@@ -384,54 +526,134 @@ $form.CancelButton = $btnCancel
 
 $form.add_Shown({
     $form.Activate()
-    $form.TopMost = $true
-    $form.TopMost = $false
-    $listBox.Focus()
+    $listAvailable.Focus()
   })
 
-function Update-LayerList {
+function Update-MoveButtons {
+  $btnAddSelected.Enabled = $listAvailable.SelectedItems.Count -gt 0
+  $btnAddAll.Enabled = $listAvailable.Items.Count -gt 0
+  $btnRemoveSelected.Enabled = $listToThaw.SelectedItems.Count -gt 0
+  $btnRemoveAll.Enabled = $listToThaw.Items.Count -gt 0
+}
+
+function Refresh-LayerLists {
   param([string]$filterText)
 
   if ($null -eq $filterText) { $filterText = "" }
   $filterText = $filterText.Trim()
 
-  $selected = @()
-  foreach ($item in $listBox.SelectedItems) { $selected += $item.ToString() }
+  $selectedAvailable = @()
+  foreach ($item in $listAvailable.SelectedItems) { $selectedAvailable += $item.ToString() }
+  $selectedToThaw = @()
+  foreach ($item in $listToThaw.SelectedItems) { $selectedToThaw += $item.ToString() }
 
-  if ([string]::IsNullOrWhiteSpace($filterText)) {
-    $filtered = $allSorted
-  }
-  else {
-    $filtered = @($allSorted | Where-Object { $_.IndexOf($filterText, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 })
-  }
-
-  $listBox.BeginUpdate()
-  $listBox.Items.Clear()
-  if ($filtered.Count -gt 0) {
-    $listBox.Items.AddRange([object[]]$filtered)
-  }
-  $listBox.EndUpdate()
-
-  foreach ($s in $selected) {
-    $idx = $listBox.Items.IndexOf($s)
-    if ($idx -ge 0) { $listBox.SetSelected($idx, $true) }
+  $availableLayers = @($allSorted | Where-Object { -not $layersToThawSet.Contains($_) })
+  if (-not [string]::IsNullOrWhiteSpace($filterText)) {
+    $availableLayers = @($availableLayers | Where-Object { $_.IndexOf($filterText, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 })
   }
 
-  $lbl.Text = "Layers shown: $($filtered.Count) / $($allSorted.Count)   (type to filter)"
+  $layersToThawSorted = @($layersToThawSet | Sort-Object)
+
+  $listAvailable.BeginUpdate()
+  $listAvailable.Items.Clear()
+  if ($availableLayers.Count -gt 0) {
+    $listAvailable.Items.AddRange([object[]]$availableLayers)
+  }
+  $listAvailable.EndUpdate()
+
+  $listToThaw.BeginUpdate()
+  $listToThaw.Items.Clear()
+  if ($layersToThawSorted.Count -gt 0) {
+    $listToThaw.Items.AddRange([object[]]$layersToThawSorted)
+  }
+  $listToThaw.EndUpdate()
+
+  foreach ($item in $selectedAvailable) {
+    $idx = $listAvailable.Items.IndexOf($item)
+    if ($idx -ge 0) { $listAvailable.SetSelected($idx, $true) }
+  }
+  foreach ($item in $selectedToThaw) {
+    $idx = $listToThaw.Items.IndexOf($item)
+    if ($idx -ge 0) { $listToThaw.SetSelected($idx, $true) }
+  }
+
+  $lbl.Text = "Move layers to the right list to thaw them."
+  $lblAvailable.Text = "Available layers: $($availableLayers.Count)"
+  $lblThaw.Text = "Layers to thaw: $($layersToThawSorted.Count)"
+  $btnOk.Enabled = $layersToThawSorted.Count -gt 0
+  Update-MoveButtons
 }
 
-Update-LayerList ""
-$txtFilter.add_TextChanged({ Update-LayerList $txtFilter.Text })
+function Add-SelectedAvailableLayers {
+  $selected = @()
+  foreach ($item in $listAvailable.SelectedItems) { $selected += $item.ToString() }
+  foreach ($layerName in $selected) { [void]$layersToThawSet.Add($layerName) }
+  Refresh-LayerLists $txtFilter.Text
+  $listAvailable.Focus()
+}
+
+function Add-AllVisibleAvailableLayers {
+  $visible = @()
+  foreach ($item in $listAvailable.Items) { $visible += $item.ToString() }
+  foreach ($layerName in $visible) { [void]$layersToThawSet.Add($layerName) }
+  Refresh-LayerLists $txtFilter.Text
+  $listAvailable.Focus()
+}
+
+function Remove-SelectedThawLayers {
+  $selected = @()
+  foreach ($item in $listToThaw.SelectedItems) { $selected += $item.ToString() }
+  foreach ($layerName in $selected) { [void]$layersToThawSet.Remove($layerName) }
+  Refresh-LayerLists $txtFilter.Text
+  $listToThaw.Focus()
+}
+
+function Remove-AllThawLayers {
+  $layersToThawSet.Clear()
+  Refresh-LayerLists $txtFilter.Text
+  $listAvailable.Focus()
+}
+
+$txtFilter.add_TextChanged({ Refresh-LayerLists $txtFilter.Text })
 
 $btnClear.add_Click({
     $txtFilter.Text = ""
     $txtFilter.Focus()
   })
 
+$listAvailable.add_SelectedIndexChanged({ Update-MoveButtons })
+$listToThaw.add_SelectedIndexChanged({ Update-MoveButtons })
+
+$btnAddSelected.add_Click({ Add-SelectedAvailableLayers })
+$btnAddAll.add_Click({ Add-AllVisibleAvailableLayers })
+$btnRemoveSelected.add_Click({ Remove-SelectedThawLayers })
+$btnRemoveAll.add_Click({ Remove-AllThawLayers })
+
+$listAvailable.add_DoubleClick({ Add-SelectedAvailableLayers })
+$listToThaw.add_DoubleClick({ Remove-SelectedThawLayers })
+
+$listAvailable.add_KeyDown({
+    param($sender, $e)
+    if ($e.KeyCode -eq [System.Windows.Forms.Keys]::Enter) {
+      Add-SelectedAvailableLayers
+      $e.Handled = $true
+    }
+  })
+
+$listToThaw.add_KeyDown({
+    param($sender, $e)
+    if ($e.KeyCode -eq [System.Windows.Forms.Keys]::Delete -or $e.KeyCode -eq [System.Windows.Forms.Keys]::Back) {
+      Remove-SelectedThawLayers
+      $e.Handled = $true
+    }
+  })
+
+Refresh-LayerLists ""
+
 if ($form.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { exit }
 
-$layersToThaw = @($listBox.SelectedItems)
-if ($layersToThaw.Count -eq 0) { Write-Host "No layers selected. Exiting."; exit }
+$layersToThaw = @($layersToThawSet | Sort-Object)
+if ($layersToThaw.Count -eq 0) { Write-Host "No layers added to the right list. Exiting."; exit }
 
 # ---------------- 6) UPDATE PHASE (STATE-AWARE, NO COM) ----------------
 $thawReport = Join-Path $ToolDir "ThawReport.tsv"

@@ -5184,8 +5184,10 @@ input.input-warning {
   padding: 0.75rem;
   color: var(--text);
   font-size: 13px;
-  resize: vertical;
-  min-height: 100px;
+  resize: none;
+  min-height: 60px;
+  max-height: 300px;
+  overflow: hidden;
   outline: none;
   font-family: inherit;
   line-height: 1.5;

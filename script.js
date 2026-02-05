@@ -6656,18 +6656,74 @@ function renderChecklistTasks(project, deliverableIndex) {
   const deliverable = deliverables[deliverableIndex];
 
   if (!deliverable || !deliverable.tasks || deliverable.tasks.length === 0) {
-    container.innerHTML = '<p class="muted tiny">No tasks for this deliverable. Add tasks using the + Add Task button or press Enter in an empty field.</p>';
+    container.innerHTML = `
+      <div class="checklist-empty-state">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M9 11l3 3L22 4"></path>
+          <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"></path>
+        </svg>
+        <p>No tasks yet</p>
+        <p class="empty-hint">Click "+ Add Task" or press Enter to create one</p>
+      </div>`;
+    updateTaskProgress(0, 0);
     return;
   }
 
+  const hideCompletedTasks = document.getElementById("hideCompletedTasks")?.checked || false;
+
   deliverable.tasks.forEach((task, taskIndex) => {
+    if (hideCompletedTasks && task.done) return;
+
     const row = el("div", {
       className: `checklist-task-row ${task.done ? "checklist-task-done" : ""}`,
     });
 
+    // Drag handle
+    const dragHandle = el("span", { className: "checklist-task-drag-handle" });
+    dragHandle.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+      <circle cx="9" cy="5" r="2"/><circle cx="15" cy="5" r="2"/>
+      <circle cx="9" cy="12" r="2"/><circle cx="15" cy="12" r="2"/>
+      <circle cx="9" cy="19" r="2"/><circle cx="15" cy="19" r="2"/>
+    </svg>`;
+    row.draggable = true;
+    row.dataset.taskIndex = taskIndex;
+
+    // Drag events
+    row.addEventListener("dragstart", (e) => {
+      row.classList.add("dragging");
+      e.dataTransfer.setData("text/plain", String(taskIndex));
+      e.dataTransfer.effectAllowed = "move";
+    });
+    row.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      // Remove drag-over from siblings
+      container.querySelectorAll(".drag-over").forEach(r => r.classList.remove("drag-over"));
+      row.classList.add("drag-over");
+    });
+    row.addEventListener("dragleave", () => row.classList.remove("drag-over"));
+    row.addEventListener("drop", (e) => {
+      e.preventDefault();
+      container.querySelectorAll(".drag-over").forEach(r => r.classList.remove("drag-over"));
+      const fromIndex = parseInt(e.dataTransfer.getData("text/plain"));
+      const toIndex = taskIndex;
+      if (fromIndex !== toIndex) {
+        const [moved] = deliverable.tasks.splice(fromIndex, 1);
+        deliverable.tasks.splice(toIndex, 0, moved);
+        save();
+        renderChecklistTasks(project, deliverableIndex);
+      }
+    });
+    row.addEventListener("dragend", () => {
+      row.classList.remove("dragging");
+      container.querySelectorAll(".drag-over").forEach(r => r.classList.remove("drag-over"));
+    });
+
+    // Custom checkbox
+    const checkLabel = el("label", { className: "custom-check" });
     const checkbox = el("input", {
       type: "checkbox",
-      className: "checklist-task-checkbox",
       checked: task.done || false,
       onchange: () => {
         task.done = checkbox.checked;
@@ -6675,8 +6731,10 @@ function renderChecklistTasks(project, deliverableIndex) {
         renderChecklistTasks(project, deliverableIndex);
       },
     });
+    const checkmark = el("span", { className: "checkmark" });
+    checkLabel.append(checkbox, checkmark);
 
-    // Editable task text input with Enter key support
+    // Editable task text input with keyboard shortcuts
     const textInput = el("input", {
       type: "text",
       className: "checklist-task-text-input",
@@ -6689,18 +6747,34 @@ function renderChecklistTasks(project, deliverableIndex) {
       onkeydown: (e) => {
         if (e.key === "Enter") {
           e.preventDefault();
-          // If this is the last task and has text, add a new task below
-          if (taskIndex === deliverable.tasks.length - 1 && task.text.trim()) {
-            if (!deliverable.tasks) deliverable.tasks = [];
-            deliverable.tasks.push({ text: "", done: false });
+          // Add a new task below current one (works from any task)
+          if (task.text.trim()) {
+            deliverable.tasks.splice(taskIndex + 1, 0, { text: "", done: false });
             save();
             renderChecklistTasks(project, deliverableIndex);
-            // Focus the new task input after render
             setTimeout(() => {
               const inputs = container.querySelectorAll(".checklist-task-text-input");
-              if (inputs.length > 0) inputs[inputs.length - 1].focus();
+              if (inputs[taskIndex + 1]) inputs[taskIndex + 1].focus();
             }, 0);
           }
+        } else if (e.key === "Backspace" && e.target.value === "" && deliverable.tasks.length > 1) {
+          e.preventDefault();
+          deliverable.tasks.splice(taskIndex, 1);
+          save();
+          renderChecklistTasks(project, deliverableIndex);
+          setTimeout(() => {
+            const inputs = container.querySelectorAll(".checklist-task-text-input");
+            const focusIdx = Math.max(0, taskIndex - 1);
+            if (inputs[focusIdx]) inputs[focusIdx].focus();
+          }, 0);
+        } else if (e.key === "ArrowDown") {
+          e.preventDefault();
+          const inputs = container.querySelectorAll(".checklist-task-text-input");
+          if (inputs[taskIndex + 1]) inputs[taskIndex + 1].focus();
+        } else if (e.key === "ArrowUp") {
+          e.preventDefault();
+          const inputs = container.querySelectorAll(".checklist-task-text-input");
+          if (inputs[taskIndex - 1]) inputs[taskIndex - 1].focus();
         }
       },
     });
@@ -6708,20 +6782,33 @@ function renderChecklistTasks(project, deliverableIndex) {
     const removeBtn = el("button", {
       type: "button",
       className: "checklist-task-remove",
-      textContent: "×",
+      textContent: "\u00d7",
       title: "Remove task",
       onclick: () => {
-        if (confirm("Remove this task?")) {
+        row.classList.add("removing");
+        setTimeout(() => {
           deliverable.tasks.splice(taskIndex, 1);
           save();
           renderChecklistTasks(project, deliverableIndex);
-        }
+        }, 200);
       },
     });
 
-    row.append(checkbox, textInput, removeBtn);
+    row.append(dragHandle, checkLabel, textInput, removeBtn);
     container.appendChild(row);
   });
+
+  // Update progress bar
+  const doneCount = deliverable.tasks.filter(t => t.done).length;
+  const totalCount = deliverable.tasks.length;
+  updateTaskProgress(doneCount, totalCount);
+}
+
+function updateTaskProgress(done, total) {
+  const countEl = document.getElementById("taskProgressCount");
+  const fillEl = document.getElementById("taskProgressFill");
+  if (countEl) countEl.textContent = `${done}/${total}`;
+  if (fillEl) fillEl.style.width = total > 0 ? `${(done / total) * 100}%` : "0%";
 }
 
 function renderChecklistNotes(project, deliverableIndex) {
@@ -6733,19 +6820,22 @@ function renderChecklistNotes(project, deliverableIndex) {
 
   const notes = deliverable?.notes || "";
 
-  // Editable notes textarea
+  // Editable notes textarea with auto-resize
   const notesTextarea = el("textarea", {
     className: "checklist-notes-textarea",
     placeholder: "Add notes for this deliverable...",
-    rows: 4,
+    rows: 2,
     value: notes,
     oninput: (e) => {
       deliverable.notes = e.target.value;
       debouncedSave();
+      autoResizeTextarea(notesTextarea);
     },
   });
 
   container.appendChild(notesTextarea);
+  // Auto-resize on initial render
+  requestAnimationFrame(() => autoResizeTextarea(notesTextarea));
 }
 
 document.getElementById("checklistAddTaskBtn")?.addEventListener("click", () => {
@@ -6817,24 +6907,40 @@ function renderChecklistModalTabs() {
   const container = document.getElementById("checklistAppliedTabs");
   container.innerHTML = "";
 
+  const project = db[activeChecklistProject];
+  const deliverables = project ? getProjectDeliverables(project) : [];
+  const deliverable = deliverables[activeChecklistDeliverable];
+
   checklistModalState.appliedTabs.forEach((tab, index) => {
     const checklist = getChecklistById(tab.checklistId);
     if (!checklist) return;
 
+    // Calculate completion count for badge
+    const instance = deliverable?.appliedChecklists?.[tab.instanceIndex];
+    const completedCount = instance?.completedItems?.length || 0;
+    const totalCount = checklist.items?.length || 0;
+
     const btn = el("button", {
       className: `checklist-tab-btn inner-tab-btn ${index === checklistModalState.activeTabIndex ? "active" : ""}`,
-      textContent: checklist.name,
       onclick: () => {
         checklistModalState.activeTabIndex = index;
         renderChecklistModalTabs();
         renderChecklistModalItems();
       },
     });
+    btn.appendChild(document.createTextNode(checklist.name + " "));
+
+    // Counter badge
+    const badge = el("span", {
+      className: "checklist-tab-badge",
+      textContent: `${completedCount}/${totalCount}`,
+    });
+    btn.appendChild(badge);
 
     // Remove button
     const removeBtn = el("span", {
       className: "checklist-tab-remove",
-      textContent: "×",
+      textContent: "\u00d7",
       title: "Remove checklist",
       onclick: (e) => {
         e.stopPropagation();
@@ -6842,11 +6948,11 @@ function renderChecklistModalTabs() {
           checklistModalState.appliedTabs.splice(index, 1);
 
           // Remove from actual data
-          const project = db[activeChecklistProject];
-          const deliverables = getProjectDeliverables(project);
-          const deliverable = deliverables[activeChecklistDeliverable];
-          if (deliverable && deliverable.appliedChecklists) {
-            deliverable.appliedChecklists.splice(tab.instanceIndex, 1);
+          const proj = db[activeChecklistProject];
+          const dels = getProjectDeliverables(proj);
+          const del_ = dels[activeChecklistDeliverable];
+          if (del_ && del_.appliedChecklists) {
+            del_.appliedChecklists.splice(tab.instanceIndex, 1);
             save();
           }
 
@@ -6930,7 +7036,17 @@ function renderChecklistModalItems() {
   container.innerHTML = "";
 
   if (checklistModalState.appliedTabs.length === 0) {
-    container.innerHTML = '<p class="muted">Add a checklist to get started.</p>';
+    container.innerHTML = `
+      <div class="checklist-empty-state">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"></path>
+          <rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect>
+        </svg>
+        <p>No checklists applied</p>
+        <p class="empty-hint">Use the dropdown above to add a checklist</p>
+      </div>`;
+    updateChecklistProgress(0, 0);
     return;
   }
 
@@ -6950,12 +7066,28 @@ function renderChecklistModalItems() {
 
   const hideCompleted = document.getElementById("hideCompletedChecks")?.checked || false;
 
+  // Search filter
+  const searchRow = document.getElementById("checklistSearchRow");
+  const searchInput = document.getElementById("checklistSearchInput");
+  const query = (searchInput?.value || "").toLowerCase();
+
+  if (searchRow) {
+    searchRow.style.display = checklist.items.length >= 6 ? "" : "none";
+  }
+
+  let renderedCount = 0;
   checklist.items.forEach((item) => {
     const isCompleted = instance.completedItems?.includes(item.id);
 
     if (hideCompleted && isCompleted) {
       return; // Skip completed items if toggle is on
     }
+
+    if (query && !item.text.toLowerCase().includes(query)) {
+      return; // Skip items not matching search
+    }
+
+    renderedCount++;
 
     const row = el("div", {
       className: `checklist-modal-item ${isCompleted ? "checked" : ""}`,
@@ -6964,21 +7096,44 @@ function renderChecklistModalItems() {
       },
     });
 
+    // Custom checkbox
+    const checkLabel = el("label", { className: "custom-check" });
+    checkLabel.addEventListener("click", (e) => e.stopPropagation());
     const checkbox = el("input", {
       type: "checkbox",
-      className: "checklist-modal-checkbox",
       checked: isCompleted,
-      readonly: true,
+      onchange: () => {
+        toggleChecklistItem(currentTab.instanceIndex, item.id);
+      },
     });
+    const checkmarkSpan = el("span", { className: "checkmark" });
+    checkLabel.append(checkbox, checkmarkSpan);
 
     const text = el("span", {
       className: "checklist-modal-item-text",
       textContent: item.text,
     });
 
-    row.append(checkbox, text);
+    row.append(checkLabel, text);
     container.appendChild(row);
   });
+
+  // Show empty search result
+  if (renderedCount === 0 && query) {
+    container.innerHTML = `<p class="muted tiny" style="text-align:center;padding:1rem">No items match "${query}"</p>`;
+  }
+
+  // Update checklist progress bar
+  const completedCount = instance.completedItems?.length || 0;
+  const totalCount = checklist.items?.length || 0;
+  updateChecklistProgress(completedCount, totalCount);
+}
+
+function updateChecklistProgress(done, total) {
+  const countEl = document.getElementById("checklistProgressCount");
+  const fillEl = document.getElementById("checklistProgressFill");
+  if (countEl) countEl.textContent = `${done}/${total}`;
+  if (fillEl) fillEl.style.width = total > 0 ? `${(done / total) * 100}%` : "0%";
 }
 
 function toggleChecklistItem(instanceIndex, itemId) {
@@ -7002,6 +7157,7 @@ function toggleChecklistItem(instanceIndex, itemId) {
 
   save();
   renderChecklistModalItems();
+  renderChecklistModalTabs(); // Update badge counts
 }
 
 document.getElementById("hideCompletedChecks")?.addEventListener("change", () => {
@@ -7020,8 +7176,31 @@ document.getElementById("resetChecklistProgressBtn")?.addEventListener("click", 
       });
       save();
       renderChecklistModalItems();
+      renderChecklistModalTabs(); // Update badge counts
     }
   }
+});
+
+// Checklist search filter
+document.getElementById("checklistSearchInput")?.addEventListener("input", () => {
+  renderChecklistModalItems();
+});
+
+// Hide completed tasks toggle
+document.getElementById("hideCompletedTasks")?.addEventListener("change", () => {
+  const project = db[activeChecklistProject];
+  if (project) renderChecklistTasks(project, activeChecklistDeliverable);
+});
+
+// Collapsible section headers
+document.querySelectorAll(".checklist-section-header").forEach(header => {
+  header.addEventListener("click", (e) => {
+    // Don't collapse when clicking buttons, inputs, or selects
+    if (e.target.closest("button, input, select")) return;
+    header.classList.toggle("collapsed");
+    const body = document.getElementById(header.dataset.collapseTarget);
+    if (body) body.classList.toggle("collapsed");
+  });
 });
 
 // Close modal handler
@@ -7031,6 +7210,9 @@ document.getElementById("checklistModal")?.addEventListener("close", () => {
   activeChecklistDeliverable = null;
   checklistModalState.appliedTabs = [];
   checklistModalState.activeTabIndex = 0;
+  // Reset search input
+  const searchInput = document.getElementById("checklistSearchInput");
+  if (searchInput) searchInput.value = "";
 });
 
 // Make functions globally available

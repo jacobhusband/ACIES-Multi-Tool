@@ -205,6 +205,8 @@
             background: var(--modal-bg);
             border: 1px solid var(--glass-border);
             overflow: hidden;
+            display: flex;
+            flex-direction: column;
         }
 
         .checklist-modal::backdrop {
@@ -229,7 +231,8 @@
         .checklist-modal-body {
             padding: 1.5rem;
             overflow-y: auto;
-            height: calc(90vh - 70px);
+            flex: 1;
+            min-height: 0;
         }
 
         .checklist-deliverable-selector {
@@ -443,6 +446,239 @@
             border-radius: 10px;
             cursor: pointer;
             transition: all 0.2s;
+        }
+
+        /* ===== Progress Bars ===== */
+        .checklist-progress {
+            margin: 0.75rem 0;
+        }
+        .checklist-progress-info {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 0.375rem;
+            font-size: 12px;
+            color: var(--muted);
+        }
+        .checklist-progress-count {
+            font-weight: 600;
+            color: var(--accent);
+        }
+        .checklist-progress-bar {
+            width: 100%;
+            height: 6px;
+            background: var(--bg-tertiary);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+        .checklist-progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--accent) 0%, var(--accent-hover, var(--accent)) 100%);
+            transition: width 0.4s ease;
+            border-radius: 3px;
+            width: 0%;
+        }
+        .checklist-tab-badge {
+            font-size: 10px;
+            font-weight: 600;
+            background: var(--bg-tertiary);
+            color: var(--muted);
+            padding: 1px 6px;
+            border-radius: 8px;
+            margin-left: 2px;
+        }
+        .checklist-tab-btn.active .checklist-tab-badge {
+            background: var(--accent-dim);
+            color: var(--accent);
+        }
+
+        /* ===== Custom Checkboxes ===== */
+        .custom-check {
+            position: relative;
+            width: 20px;
+            height: 20px;
+            flex-shrink: 0;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .custom-check input {
+            position: absolute;
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        .custom-check .checkmark {
+            position: absolute;
+            inset: 0;
+            border: 2px solid var(--glass-border);
+            border-radius: 5px;
+            background: var(--input-bg);
+            transition: all 0.2s ease;
+        }
+        .custom-check input:checked + .checkmark {
+            background: var(--accent);
+            border-color: var(--accent);
+        }
+        .custom-check .checkmark::after {
+            content: "";
+            position: absolute;
+            left: 6px;
+            top: 2px;
+            width: 5px;
+            height: 10px;
+            border: solid #fff;
+            border-width: 0 2px 2px 0;
+            transform: rotate(45deg) scale(0);
+            transition: transform 0.15s ease;
+        }
+        .custom-check input:checked + .checkmark::after {
+            transform: rotate(45deg) scale(1);
+        }
+        .custom-check:hover .checkmark {
+            border-color: var(--accent);
+        }
+
+        /* ===== Empty States ===== */
+        .checklist-empty-state {
+            text-align: center;
+            padding: 2rem 1rem;
+            color: var(--muted);
+            border-radius: var(--radius-sm);
+            border: 1px dashed var(--glass-border);
+        }
+        .checklist-empty-state svg {
+            margin-bottom: 0.5rem;
+            opacity: 0.4;
+            color: var(--accent);
+        }
+        .checklist-empty-state p {
+            margin: 0;
+            font-size: 13px;
+        }
+        .checklist-empty-state .empty-hint {
+            font-size: 11px;
+            margin-top: 0.25rem;
+            opacity: 0.7;
+        }
+
+        /* ===== Row Animations ===== */
+        @keyframes slideInRow {
+            from { opacity: 0; transform: translateY(-8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes slideOutRow {
+            from { opacity: 1; transform: translateX(0); max-height: 80px; }
+            to { opacity: 0; transform: translateX(20px); max-height: 0; padding-top: 0; padding-bottom: 0; margin: 0; }
+        }
+        .checklist-task-row {
+            animation: slideInRow 0.25s ease-out forwards;
+        }
+        .checklist-task-row.removing {
+            animation: slideOutRow 0.2s ease-in forwards;
+            overflow: hidden;
+        }
+
+        /* ===== Collapsible Sections ===== */
+        .checklist-section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            padding: 0.5rem 0;
+            user-select: none;
+        }
+        .checklist-section-title {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: var(--text);
+        }
+        .checklist-section-title svg {
+            color: var(--accent);
+            flex-shrink: 0;
+        }
+        .collapse-chevron {
+            color: var(--muted);
+            transition: transform 0.25s ease;
+            flex-shrink: 0;
+        }
+        .checklist-section-header.collapsed .collapse-chevron {
+            transform: rotate(-90deg);
+        }
+        .checklist-section-body {
+            overflow: hidden;
+            transition: max-height 0.3s ease, opacity 0.3s ease;
+            max-height: 2000px;
+            opacity: 1;
+        }
+        .checklist-section-body.collapsed {
+            max-height: 0;
+            opacity: 0;
+        }
+
+        /* ===== Drag & Drop ===== */
+        .checklist-task-drag-handle {
+            width: 18px;
+            height: 18px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: grab;
+            color: var(--muted);
+            opacity: 0;
+            flex-shrink: 0;
+            transition: opacity 0.2s;
+        }
+        .checklist-task-drag-handle:active {
+            cursor: grabbing;
+        }
+        .checklist-task-row:hover .checklist-task-drag-handle {
+            opacity: 0.6;
+        }
+        .checklist-task-row.dragging {
+            opacity: 0.4;
+            background: var(--accent-dim);
+            border-color: var(--accent);
+        }
+        .checklist-task-row.drag-over {
+            border-top: 2px solid var(--accent);
+        }
+
+        /* ===== Checklist Search ===== */
+        .checklist-search-row {
+            margin-bottom: 0.75rem;
+        }
+        .checklist-search-row .checklist-search-wrap {
+            position: relative;
+            width: 100%;
+        }
+        .checklist-search-row .checklist-search-icon {
+            position: absolute;
+            left: 10px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--muted);
+            pointer-events: none;
+        }
+        .checklist-search-row input {
+            width: 100%;
+            padding: 0.5rem 0.75rem 0.5rem 2rem;
+            background: var(--input-bg);
+            border: 1px solid var(--glass-border);
+            border-radius: var(--radius-sm);
+            color: var(--text);
+            font-size: 12px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        .checklist-search-row input:focus {
+            border-color: var(--accent);
+        }
+        .checklist-search-row input::placeholder {
+            color: var(--muted);
+            opacity: 0.6;
         }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -2144,51 +2380,130 @@
             <!-- Tasks Section -->
             <div class="checklist-tasks-section">
                 <div class="section-divider"></div>
-                <div class="inline" style="justify-content:space-between">
-                    <div class="title section-header">Tasks</div>
-                    <button class="btn-accent tiny" id="checklistAddTaskBtn">+ Add Task</button>
+                <div class="checklist-section-header" data-collapse-target="checklistTasksBody">
+                    <div class="checklist-section-title">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M9 11l3 3L22 4"></path>
+                            <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"></path>
+                        </svg>
+                        <span class="title section-header">Tasks</span>
+                    </div>
+                    <div class="inline" style="gap:0.5rem">
+                        <label class="toggle-label">
+                            <input type="checkbox" id="hideCompletedTasks" />
+                            <span>Hide done</span>
+                        </label>
+                        <button class="btn-accent tiny" id="checklistAddTaskBtn">+ Add Task</button>
+                        <svg class="collapse-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                    </div>
                 </div>
-                <div id="checklistTasksContainer" class="checklist-tasks-container">
-                    <!-- Tasks from selected deliverable -->
+                <div class="checklist-section-body" id="checklistTasksBody">
+                    <div class="checklist-progress" id="checklistTasksProgress">
+                        <div class="checklist-progress-info">
+                            <span class="checklist-progress-count" id="taskProgressCount">0/0</span>
+                            <span>completed</span>
+                        </div>
+                        <div class="checklist-progress-bar">
+                            <div class="checklist-progress-fill" id="taskProgressFill"></div>
+                        </div>
+                    </div>
+                    <div id="checklistTasksContainer" class="checklist-tasks-container">
+                        <!-- Tasks from selected deliverable -->
+                    </div>
                 </div>
             </div>
 
             <!-- Notes Section -->
             <div class="checklist-notes-section">
                 <div class="section-divider"></div>
-                <div class="inline" style="justify-content:space-between">
-                    <div class="title section-header">Notes</div>
+                <div class="checklist-section-header" data-collapse-target="checklistNotesBody">
+                    <div class="checklist-section-title">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"></path>
+                            <polyline points="14 2 14 8 20 8"></polyline>
+                            <line x1="16" y1="13" x2="8" y2="13"></line>
+                            <line x1="16" y1="17" x2="8" y2="17"></line>
+                        </svg>
+                        <span class="title section-header">Notes</span>
+                    </div>
+                    <div class="inline">
+                        <svg class="collapse-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                    </div>
                 </div>
-                <div id="checklistNotesContainer" class="checklist-notes-container">
-                    <!-- Notes from deliverable -->
+                <div class="checklist-section-body" id="checklistNotesBody">
+                    <div id="checklistNotesContainer" class="checklist-notes-container">
+                        <!-- Notes from deliverable -->
+                    </div>
                 </div>
             </div>
 
             <!-- Checklist Tabs -->
             <div class="checklist-tabs-section">
-                <div class="checklist-tabs-header">
-                    <nav class="inner-tabs" id="checklistAppliedTabs">
-                        <!-- Applied checklist tabs -->
-                    </nav>
-                    <div class="checklist-dropdown-selector">
-                        <select id="checklistAddSelect">
-                            <option value="">+ Add Checklist...</option>
-                            <!-- All available checklists -->
-                        </select>
+                <div class="section-divider"></div>
+                <div class="checklist-section-header" data-collapse-target="checklistChecklistsBody">
+                    <div class="checklist-section-title">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"></path>
+                            <rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect>
+                        </svg>
+                        <span class="title section-header">Checklists</span>
+                    </div>
+                    <div class="inline">
+                        <svg class="collapse-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
                     </div>
                 </div>
-
-                <div class="checklist-tab-content" id="checklistTabContent">
-                    <div class="checklist-toggle-row">
-                        <label class="toggle-label">
-                            <input type="checkbox" id="hideCompletedChecks" />
-                            <span>Hide completed items</span>
-                        </label>
-                        <button class="btn ghost tiny" id="resetChecklistProgressBtn">Reset Progress</button>
+                <div class="checklist-section-body" id="checklistChecklistsBody">
+                    <div class="checklist-tabs-header">
+                        <nav class="inner-tabs" id="checklistAppliedTabs">
+                            <!-- Applied checklist tabs -->
+                        </nav>
+                        <div class="checklist-dropdown-selector">
+                            <select id="checklistAddSelect">
+                                <option value="">+ Add Checklist...</option>
+                                <!-- All available checklists -->
+                            </select>
+                        </div>
                     </div>
 
-                    <div class="checklist-item-list" id="checklistItemList">
-                        <!-- Checklist items with checkboxes -->
+                    <div class="checklist-tab-content" id="checklistTabContent">
+                        <div class="checklist-toggle-row">
+                            <label class="toggle-label">
+                                <input type="checkbox" id="hideCompletedChecks" />
+                                <span>Hide completed items</span>
+                            </label>
+                            <button class="btn ghost tiny" id="resetChecklistProgressBtn">Reset Progress</button>
+                        </div>
+
+                        <div class="checklist-progress" id="checklistChecklistProgress">
+                            <div class="checklist-progress-info">
+                                <span class="checklist-progress-count" id="checklistProgressCount">0/0</span>
+                                <span>completed</span>
+                            </div>
+                            <div class="checklist-progress-bar">
+                                <div class="checklist-progress-fill" id="checklistProgressFill"></div>
+                            </div>
+                        </div>
+
+                        <div class="checklist-search-row" id="checklistSearchRow" style="display:none">
+                            <div class="checklist-search-wrap">
+                                <svg class="checklist-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none"
+                                    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <circle cx="11" cy="11" r="8"></circle>
+                                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                                </svg>
+                                <input id="checklistSearchInput" type="search" placeholder="Filter checklist items..." />
+                            </div>
+                        </div>
+
+                        <div class="checklist-item-list" id="checklistItemList">
+                            <!-- Checklist items with checkboxes -->
+                        </div>
                     </div>
                 </div>
             </div>

@@ -1720,8 +1720,8 @@ function addProjectToTimesheet(project, deliverable) {
   const referenceEntry = existingEntries[0];
   const baseDescription = referenceEntry
     ? stripWfhSuffix(
-        getTimesheetEntryDescription(referenceEntry, deliverable?.name || "")
-      )
+      getTimesheetEntryDescription(referenceEntry, deliverable?.name || "")
+    )
     : deliverable?.name || "";
   const serviceDescription = baseDescription;
   const projectName =
@@ -1810,12 +1810,10 @@ function openAddTimesheetProjectDialog() {
       deliverables.forEach((deliverable) => {
         const option = el("div", { className: "ts-project-option" });
         option.innerHTML = `
-          <div><strong>${project.id || "--"}</strong> - ${
-          project.nick || project.name || "Unnamed"
-        }</div>
-          <div class="muted tiny">${deliverable.name || "Deliverable"} - Due: ${
-          humanDate(deliverable.due) || "No date"
-        }</div>
+          <div><strong>${project.id || "--"}</strong> - ${project.nick || project.name || "Unnamed"
+          }</div>
+          <div class="muted tiny">${deliverable.name || "Deliverable"} - Due: ${humanDate(deliverable.due) || "No date"
+          }</div>
         `;
         option.onclick = () => {
           addProjectToTimesheet(project, deliverable);
@@ -2747,8 +2745,8 @@ function getFirstDayOfMonth(year, month) {
 
 function isSameDay(date1, date2) {
   return date1.getFullYear() === date2.getFullYear() &&
-         date1.getMonth() === date2.getMonth() &&
-         date1.getDate() === date2.getDate();
+    date1.getMonth() === date2.getMonth() &&
+    date1.getDate() === date2.getDate();
 }
 
 function createCalendarGrid(year, month, onDateSelect) {
@@ -2953,7 +2951,7 @@ function showCalendarForDeliverableBadge(anchorElement, deliverable, project) {
 
 function renderInlineCalendar(year, month, onDateSelect, onCancel) {
   const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',
-                      'July', 'August', 'September', 'October', 'November', 'December'];
+    'July', 'August', 'September', 'October', 'November', 'December'];
 
   const container = el('div', { className: 'inline-calendar' });
 
@@ -4871,7 +4869,6 @@ function createTasksPreview(deliverable, card) {
 
         const newTask = { text: taskInput.value.trim(), done: false };
         deliverable.tasks.push(newTask);
-        taskInput.value = "";
 
         await save();
         updateStatsDisplay();
@@ -4879,6 +4876,16 @@ function createTasksPreview(deliverable, card) {
         // Re-render showing all if we were showing all, otherwise show limited
         const shouldShowAll = showAll || deliverable.tasks.length <= maxVisible;
         renderTaskList(shouldShowAll);
+
+        // Focus the input after re-render for rapid task entry
+        setTimeout(() => {
+          const newTaskInput = list.querySelector(".task-add-input");
+          if (newTaskInput) {
+            newTaskInput.focus();
+            // Select all text for easy replacement
+            newTaskInput.select();
+          }
+        }, 0);
       }
     });
 
@@ -5823,11 +5830,29 @@ function readForm() {
 function addTaskRowFrom(container, t = {}) {
   const template = document.getElementById("task-row-template");
   const row = template.content.cloneNode(true).querySelector(".task-row");
-  row.querySelector(".t-text").value = t.text || "";
+  const textInput = row.querySelector(".t-text");
+
+  textInput.value = t.text || "";
   row.querySelector(".t-done").checked = !!t.done;
   row.querySelector(".t-link").value = t.links?.[0]?.raw || "";
   row.querySelector(".t-link2").value = t.links?.[1]?.raw || "";
   row.querySelector(".btn-remove").onclick = () => row.remove();
+
+  // Add Enter key handler for rapid task entry
+  textInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && textInput.value.trim()) {
+      e.preventDefault();
+      // Add new task row below and focus it
+      addTaskRowFrom(container, {});
+      // Focus the new row's text input
+      setTimeout(() => {
+        const newRow = row.nextElementSibling;
+        const newInput = newRow?.querySelector(".t-text");
+        if (newInput) newInput.focus();
+      }, 0);
+    }
+  });
+
   if (container) container.append(row);
 }
 
@@ -8146,7 +8171,7 @@ function initEventListeners() {
         if (res && res.status !== "success") {
           throw new Error(
             res.message ||
-              `Failed to write test file: ${res.path || "unknown path"}`
+            `Failed to write test file: ${res.path || "unknown path"}`
           );
         }
         await refreshTimesheetsInfo();

@@ -33,6 +33,8 @@ const HELP_LINKS = {
     "https://brainy-seahorse-3c5.notion.site/Projects-2b13fdbb662c803b9898d86ec9389e41",
   notes:
     "https://brainy-seahorse-3c5.notion.site/Notes-2b13fdbb662c80dd86c8e9d3f0d65081",
+  checklists:
+    "https://brainy-seahorse-3c5.notion.site/Checklists-2b13fdbb662c80dd86c8e9d3f0d65123",
   tools:
     "https://brainy-seahorse-3c5.notion.site/Tools-2b13fdbb662c80afbab9d68204f9cd23",
   plugins:
@@ -74,6 +76,190 @@ const COPY_ICON_PATH =
   "M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z";
 const TRASH_ICON_PATH =
   "M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zm13-15h-3.5l-1-1h-5l-1 1H5v2h14V4z";
+
+// Checklist Icons
+const CHECKLIST_ICON_PATH =
+  "M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM7 10h2v7H7zm4-3h2v10h-2zm4 6h2v4h-2z";
+
+const CHECK_ICON_PATH =
+  "M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z";
+
+// Checklists Data
+let checklistsDb = {
+  checklists: [],
+  lastModified: null,
+};
+
+// Active checklist state for modal
+let activeChecklistProject = null;
+let activeChecklistDeliverable = null;
+let activeChecklistTab = null;
+
+// ===================== CHECKLISTS SYSTEM =====================
+
+function generateChecklistId() {
+  return "checklist_" + Math.random().toString(36).substr(2, 9);
+}
+
+function generateChecklistItemId() {
+  return "item_" + Math.random().toString(36).substr(2, 9);
+}
+
+function generateChecklistInstanceId() {
+  return "instance_" + Math.random().toString(36).substr(2, 9);
+}
+
+// Default checklist factory - Electrical Plan Check Checklist
+function getDefaultChecklist() {
+  return {
+    id: "checklist_default",
+    name: "Default",
+    isDefault: true,
+    isLocked: true,
+    items: [
+      { id: generateChecklistItemId(), text: "Check relevant codes that apply to the project based on local city, state, and national codes. (CEC 90.2, 90.4)", order: 0, isDefault: true },
+      { id: generateChecklistItemId(), text: "Check if the tenant space has existing mechanical units on the roof that are not powered from tenant electrical panels. (CEC 430.102, 440.14)", order: 1, isDefault: true },
+      { id: generateChecklistItemId(), text: "Check for unmentioned items that could need power (interior signage). (CEC 600.6)", order: 2, isDefault: true },
+      { id: generateChecklistItemId(), text: "Check for occ sensor on ceiling instead of wall in storage room. (Title 24, Part 6 Section 130.1(c)1)", order: 3, isDefault: true },
+      { id: generateChecklistItemId(), text: "Check for dedicated service receptacle within 25ft of electrical panels. (CEC 210.63(B)(2), 110.26(E))", order: 4, isDefault: true },
+      { id: generateChecklistItemId(), text: "Check for junction box indicated as wall mount for hand dryers. (CEC 314.23, 314.29)", order: 5, isDefault: true },
+      { id: generateChecklistItemId(), text: "Check for adequate space for electrical panels, relocate to BOH corridors as necessary, avoid storage rooms, IT server racks. (CEC 110.26(A), 110.26(E))", order: 6, isDefault: true },
+      { id: generateChecklistItemId(), text: "Check for food waste disposer for all sinks with outlet under counter and switch above (confirm with plumbing as it is not a requirement). (CEC 422.16(B)(1), 422.31(B))", order: 7, isDefault: true },
+      { id: generateChecklistItemId(), text: "Check for furniture systems and include note to verify point of connection for furniture systems. (CEC 605)", order: 8, isDefault: true },
+      { id: generateChecklistItemId(), text: "Check for controlled receptacles in office, lobby, kitchen, printer/copy room, conference room, meeting room. Modular furniture workstations need at least one controlled receptacle per workstation. (Title 24, Part 6 Section 130.5(d))", order: 9, isDefault: true },
+      { id: generateChecklistItemId(), text: "Check for tamper proof receptacles in areas where children may be present: business offices, lobbies, waiting areas, theaters, auditoriums, gyms, bowling alleys, bus stations, airports, train stations. (CEC 406.12)", order: 10, isDefault: true },
+      { id: generateChecklistItemId(), text: "Check for rooftop mechanical units shown on RCP, ensure they are dashed in appearance and noted to go on the roof along with rooftop receptacle. (CEC 210.63(A), 440.14)", order: 11, isDefault: true },
+      { id: generateChecklistItemId(), text: "Check for return or supply air system over 2000CFM for duct smoke requirement. Any mechanical units 2000CFM or over should get duct smoke. (Title 24, Part 2 CBC Section 907.2.12.1.2)", order: 12, isDefault: true },
+      { id: generateChecklistItemId(), text: "Check for hand dryer specification, if not add note to confirm exact breaker size with manufacturer. (CEC 110.3(B))", order: 13, isDefault: true },
+      { id: generateChecklistItemId(), text: "Check for kAIC rating shown on single line main switchboard. (CEC 110.9, 110.10)", order: 14, isDefault: true },
+      { id: generateChecklistItemId(), text: "Check for >4000W in space needing demand response. Provide necessary software and device(s) to automatically reducing the lighting power by at least 15% upon receiving a demand response signal. (Title 24, Part 6 Section 110.12)", order: 15, isDefault: true },
+      { id: generateChecklistItemId(), text: "Check for GFCI protection at required nonresidential receptacle locations (kitchens, outdoor, rooftops, within 6 ft of sinks, etc.). (CEC 210.8(B))", order: 16, isDefault: true },
+      { id: generateChecklistItemId(), text: "Check meeting rooms for required receptacle outlets, including floor outlets when room size thresholds are met. (CEC 210.65)", order: 17, isDefault: true },
+      { id: generateChecklistItemId(), text: "Check voltage drop requirements and calculations for feeders and branch circuits (<=5% combined). (Title 24, Part 6 Section 130.5(c))", order: 18, isDefault: true },
+      { id: generateChecklistItemId(), text: "Check AIC ratings for panels and transformers on single line. (CEC 110.9, 110.10)", order: 19, isDefault: true },
+      { id: generateChecklistItemId(), text: "Check for daylight harvesting in daylit zones. Provide daylight sensor & room controller for automatic dimming of light fixtures. (Title 24, Part 6 Section 130.1(d))", order: 20, isDefault: true },
+      { id: generateChecklistItemId(), text: "Check for dimming in all rooms that are BOTH >100sqft AND >0.5W/sqft.", order: 21, isDefault: true },
+      { id: generateChecklistItemId(), text: "Check for occupancy sensors which are required in offices, conference & meeting rooms, classrooms, restrooms, multipurpose rooms, warehouses, library aisles, corridors & stairwells.", order: 22, isDefault: true },
+      { id: generateChecklistItemId(), text: "Check for time-switch controls which are allowed in lobbies, retail sales floors, commercial kitchens, auditoriums & theaters, and large multipurpose rooms.", order: 23, isDefault: true },
+      { id: generateChecklistItemId(), text: "Check for 2-hour bypass switch in each room controlled by automatic time controlled on/off. Provide 1 bypass switch per 5000sqft of room size.", order: 24, isDefault: true },
+      { id: generateChecklistItemId(), text: "Check for timeclock to indoor light fixtures that has manual override up to 2-hours, battery or internal memory capable of storing schedule for at least 7 days if power goes out.", order: 25, isDefault: true },
+      { id: generateChecklistItemId(), text: "Check for astronomical timeclock, photosensor located on the roof, and contactors with signage, exterior / outdoor lights, pole lights, etc. (Section 130.2(c)2.B)", order: 26, isDefault: true },
+      { id: generateChecklistItemId(), text: "Check for spaces that don't require multilevel controls such as: rooms under 100sqft, restrooms, rooms with only one luminaire.", order: 27, isDefault: true }
+    ]
+  };
+}
+
+async function loadChecklists() {
+  try {
+    const data = await window.pywebview.api.get_checklists();
+    checklistsDb = data || { checklists: [], lastModified: null };
+
+    // Ensure default checklist exists
+    if (!checklistsDb.checklists.find(c => c.isDefault)) {
+      checklistsDb.checklists.unshift(getDefaultChecklist());
+    }
+
+    return checklistsDb;
+  } catch (e) {
+    console.warn("Failed to load checklists:", e);
+    // Initialize with default if load fails
+    checklistsDb = { checklists: [getDefaultChecklist()], lastModified: null };
+    return checklistsDb;
+  }
+}
+
+async function saveChecklists() {
+  try {
+    checklistsDb.lastModified = new Date().toISOString();
+    const response = await window.pywebview.api.save_checklists(checklistsDb);
+    if (response.status !== "success") throw new Error(response.message);
+  } catch (e) {
+    console.warn("Failed to save checklists:", e);
+    toast("Failed to save checklists.");
+  }
+}
+
+function getChecklistById(id) {
+  return checklistsDb.checklists.find(c => c.id === id);
+}
+
+function createChecklist(name) {
+  const newChecklist = {
+    id: generateChecklistId(),
+    name: name,
+    isDefault: false,
+    isLocked: false,
+    items: []
+  };
+  checklistsDb.checklists.push(newChecklist);
+  saveChecklists();
+  return newChecklist;
+}
+
+function deleteChecklist(id) {
+  const idx = checklistsDb.checklists.findIndex(c => c.id === id);
+  if (idx > -1 && !checklistsDb.checklists[idx].isLocked) {
+    checklistsDb.checklists.splice(idx, 1);
+    saveChecklists();
+    return true;
+  }
+  return false;
+}
+
+function addChecklistItem(checklistId, text) {
+  const checklist = getChecklistById(checklistId);
+  if (checklist) {
+    const newItem = {
+      id: generateChecklistItemId(),
+      text: text,
+      order: checklist.items.length,
+      isDefault: false
+    };
+    checklist.items.push(newItem);
+    saveChecklists();
+    return newItem;
+  }
+  return null;
+}
+
+function removeChecklistItem(checklistId, itemId) {
+  const checklist = getChecklistById(checklistId);
+  if (checklist) {
+    const idx = checklist.items.findIndex(i => i.id === itemId);
+    if (idx > -1) {
+      checklist.items.splice(idx, 1);
+      // Reorder remaining items
+      checklist.items.forEach((item, i) => item.order = i);
+      saveChecklists();
+      return true;
+    }
+  }
+  return false;
+}
+
+function updateChecklistItem(checklistId, itemId, text) {
+  const checklist = getChecklistById(checklistId);
+  if (checklist) {
+    const item = checklist.items.find(i => i.id === itemId);
+    if (item) {
+      item.text = text;
+      saveChecklists();
+      return true;
+    }
+  }
+  return false;
+}
+
+function resetChecklistToDefault(checklistId) {
+  const checklist = getChecklistById(checklistId);
+  if (checklist && checklist.isDefault) {
+    const defaultChecklist = getDefaultChecklist();
+    checklist.items = defaultChecklist.items.map(item => ({ ...item }));
+    saveChecklists();
+    return true;
+  }
+  return false;
+}
 
 // Timesheet Constants
 const DISCIPLINE_TO_FUNCTION = {
@@ -5402,6 +5588,13 @@ function render() {
       }),
       createIconButton({
         className: "btn icon-only",
+        title: "Checklist",
+        ariaLabel: "Apply checklist",
+        path: CHECKLIST_ICON_PATH,
+        onClick: () => openChecklistModal(idx),
+      }),
+      createIconButton({
+        className: "btn icon-only",
         title: "Duplicate",
         ariaLabel: "Duplicate project",
         path: COPY_ICON_PATH,
@@ -6207,6 +6400,567 @@ function renderNoteSearchResults() {
     }
   });
 }
+
+// ===================== CHECKLISTS RENDERING =====================
+
+let activeChecklistTabId = null;
+const debouncedSaveChecklists = debounce(saveChecklists, 500);
+
+function renderChecklistTabs() {
+  const container = document.getElementById("checklistsTabsContainer");
+  container.innerHTML = "";
+
+  checklistsDb.checklists.forEach((checklist) => {
+    const btn = el("button", {
+      className: `inner-tab-btn ${checklist.id === activeChecklistTabId ? "active" : ""}`,
+      textContent: checklist.name,
+      onclick: () => {
+        activeChecklistTabId = checklist.id;
+        renderChecklistTabs();
+        renderChecklistItems();
+      },
+    });
+
+    // Add remove icon for non-locked checklists
+    if (!checklist.isLocked) {
+      const delIcon = el("span", {
+        className: "tab-delete-icon",
+        textContent: "×",
+        title: "Delete Checklist",
+        onclick: (e) => {
+          e.stopPropagation();
+          if (confirm(`Permanently delete checklist "${checklist.name}"?`)) {
+            deleteChecklist(checklist.id);
+            if (activeChecklistTabId === checklist.id) {
+              activeChecklistTabId = checklistsDb.checklists[0]?.id || null;
+            }
+            renderChecklistTabs();
+            renderChecklistItems();
+          }
+        },
+      });
+      btn.appendChild(delIcon);
+    }
+
+    container.appendChild(btn);
+  });
+
+  // Add new checklist button
+  const addBtn = el("button", {
+    className: "add-tab-btn",
+    textContent: "+",
+    title: "Create New Checklist",
+    onclick: () => {
+      const name = prompt("Enter name for new checklist:");
+      if (name && name.trim()) {
+        const newChecklist = createChecklist(name.trim());
+        activeChecklistTabId = newChecklist.id;
+        renderChecklistTabs();
+        renderChecklistItems();
+      }
+    },
+  });
+  container.appendChild(addBtn);
+
+  renderChecklistItems();
+}
+
+function renderChecklistItems() {
+  const container = document.getElementById("checklistItemsContainer");
+  const nameInput = document.getElementById("checklistName");
+  const resetBtn = document.getElementById("resetChecklistBtn");
+  const deleteBtn = document.getElementById("deleteChecklistBtn");
+  const addItemBtn = document.getElementById("addChecklistItemBtn");
+
+  container.innerHTML = "";
+
+  const checklist = getChecklistById(activeChecklistTabId);
+
+  if (!checklist) {
+    nameInput.value = "";
+    nameInput.disabled = true;
+    resetBtn.style.display = "none";
+    deleteBtn.style.display = "none";
+    addItemBtn.disabled = true;
+    container.innerHTML = '<p class="muted">Select or create a checklist to get started.</p>';
+    return;
+  }
+
+  nameInput.value = checklist.name;
+  nameInput.disabled = checklist.isLocked;
+  resetBtn.style.display = checklist.isDefault ? "inline-flex" : "none";
+  deleteBtn.style.display = checklist.isLocked ? "none" : "inline-flex";
+  addItemBtn.disabled = false;
+
+  // Render items
+  checklist.items.forEach((item, index) => {
+    const row = el("div", { className: "checklist-item-row" });
+
+    const order = el("div", {
+      className: "checklist-item-order",
+      textContent: String(index + 1),
+    });
+
+    const input = el("input", {
+      type: "text",
+      className: "checklist-item-input",
+      value: item.text,
+      placeholder: "Enter checklist item...",
+      oninput: (e) => {
+        updateChecklistItem(checklist.id, item.id, e.target.value);
+      },
+    });
+
+    const removeBtn = el("button", {
+      className: "checklist-item-remove",
+      type: "button",
+      textContent: "×",
+      title: "Remove item",
+      onclick: () => {
+        if (confirm('Remove this item?')) {
+          removeChecklistItem(checklist.id, item.id);
+          renderChecklistItems();
+        }
+      },
+    });
+
+    row.append(order, input, removeBtn);
+    container.appendChild(row);
+  });
+}
+
+// Event listeners for checklist tab
+document.getElementById("checklistName")?.addEventListener("input", (e) => {
+  const checklist = getChecklistById(activeChecklistTabId);
+  if (checklist && !checklist.isLocked) {
+    checklist.name = e.target.value;
+    debouncedSaveChecklists();
+    renderChecklistTabs();
+  }
+});
+
+document.getElementById("resetChecklistBtn")?.addEventListener("click", () => {
+  if (confirm("Reset this checklist to default items? This will remove any custom items.")) {
+    resetChecklistToDefault(activeChecklistTabId);
+    renderChecklistItems();
+  }
+});
+
+document.getElementById("deleteChecklistBtn")?.addEventListener("click", () => {
+  const checklist = getChecklistById(activeChecklistTabId);
+  if (checklist && confirm(`Delete checklist "${checklist.name}"?`)) {
+    deleteChecklist(checklist.id);
+    activeChecklistTabId = checklistsDb.checklists[0]?.id || null;
+    renderChecklistTabs();
+  }
+});
+
+document.getElementById("addChecklistItemBtn")?.addEventListener("click", () => {
+  const checklist = getChecklistById(activeChecklistTabId);
+  if (checklist) {
+    addChecklistItem(checklist.id, "New checklist item");
+    renderChecklistItems();
+    // Focus the new item
+    setTimeout(() => {
+      const inputs = document.querySelectorAll(".checklist-item-input");
+      if (inputs.length > 0) {
+        inputs[inputs.length - 1].focus();
+        inputs[inputs.length - 1].select();
+      }
+    }, 50);
+  }
+});
+
+// ===================== CHECKLIST MODAL FUNCTIONS =====================
+
+function openChecklistModal(projectIndex) {
+  const project = db[projectIndex];
+  if (!project) return;
+
+  activeChecklistProject = projectIndex;
+  activeChecklistDeliverable = null;
+
+  // Set project name in modal
+  document.getElementById("checklistProjectName").textContent =
+    project.nick || project.name || project.id || "Untitled Project";
+
+  // Populate deliverables dropdown
+  populateChecklistDeliverableSelect(project);
+
+  // Show modal
+  document.getElementById("checklistModal").showModal();
+}
+
+function populateChecklistDeliverableSelect(project) {
+  const select = document.getElementById("checklistDeliverableSelect");
+  select.innerHTML = "";
+
+  const deliverables = getProjectDeliverables(project);
+
+  if (deliverables.length === 0) {
+    select.innerHTML = '<option value="">No deliverables found</option>';
+    return;
+  }
+
+  deliverables.forEach((deliverable, index) => {
+    const option = el("option", {
+      value: index,
+      textContent: `${deliverable.name || "Untitled"}${deliverable.due ? " (Due: " + humanDate(deliverable.due) + ")" : ""}`,
+    });
+    select.appendChild(option);
+  });
+
+  // Select primary deliverable by default
+  const primaryIndex = deliverables.findIndex(d => d.id === project.overviewDeliverableId);
+  if (primaryIndex >= 0) {
+    select.value = primaryIndex;
+    activeChecklistDeliverable = primaryIndex;
+  } else if (deliverables.length > 0) {
+    select.value = 0;
+    activeChecklistDeliverable = 0;
+  }
+
+  // Render tasks for selected deliverable
+  renderChecklistTasks(project, activeChecklistDeliverable);
+
+  // Initialize checklist tabs for this deliverable
+  initChecklistModalTabs(project, activeChecklistDeliverable);
+}
+
+document.getElementById("checklistDeliverableSelect")?.addEventListener("change", (e) => {
+  const project = db[activeChecklistProject];
+  if (!project) return;
+
+  activeChecklistDeliverable = e.target.value;
+  renderChecklistTasks(project, activeChecklistDeliverable);
+  initChecklistModalTabs(project, activeChecklistDeliverable);
+});
+
+function renderChecklistTasks(project, deliverableIndex) {
+  const container = document.getElementById("checklistTasksContainer");
+  container.innerHTML = "";
+
+  const deliverables = getProjectDeliverables(project);
+  const deliverable = deliverables[deliverableIndex];
+
+  if (!deliverable || !deliverable.tasks || deliverable.tasks.length === 0) {
+    container.innerHTML = '<p class="muted tiny">No tasks for this deliverable. Add tasks below.</p>';
+    return;
+  }
+
+  deliverable.tasks.forEach((task) => {
+    const row = el("div", {
+      className: `checklist-task-row ${task.done ? "checklist-task-done" : ""}`,
+    });
+
+    const checkbox = el("input", {
+      type: "checkbox",
+      className: "checklist-task-checkbox",
+      checked: task.done || false,
+      onchange: () => {
+        task.done = checkbox.checked;
+        save();
+        renderChecklistTasks(project, activeChecklistDeliverable);
+      },
+    });
+
+    const text = el("span", {
+      className: "checklist-task-text",
+      textContent: task.text || "",
+    });
+
+    row.append(checkbox, text);
+    container.appendChild(row);
+  });
+}
+
+document.getElementById("checklistAddTaskBtn")?.addEventListener("click", () => {
+  const project = db[activeChecklistProject];
+  if (!project) return;
+
+  const deliverables = getProjectDeliverables(project);
+  const deliverable = deliverables[activeChecklistDeliverable];
+
+  if (!deliverable) return;
+
+  if (!deliverable.tasks) deliverable.tasks = [];
+  deliverable.tasks.push({ text: "New task", done: false, link: "", link2: "" });
+
+  save();
+  renderChecklistTasks(project, activeChecklistDeliverable);
+});
+
+// Checklist modal state
+let checklistModalState = {
+  appliedTabs: [], // { instanceId, checklistId }
+  activeTabIndex: 0,
+};
+
+function initChecklistModalTabs(project, deliverableIndex) {
+  // Get or create applied checklists for this deliverable
+  const deliverables = getProjectDeliverables(project);
+  const deliverable = deliverables[deliverableIndex];
+
+  if (!deliverable) return;
+
+  if (!deliverable.appliedChecklists) {
+    deliverable.appliedChecklists = [];
+  }
+
+  checklistModalState.appliedTabs = deliverable.appliedChecklists.map((instance, index) => ({
+    instanceId: instance.instanceId,
+    checklistId: instance.checklistId,
+    instanceIndex: index,
+  }));
+
+  if (checklistModalState.appliedTabs.length === 0) {
+    // Auto-add default checklist
+    const defaultChecklist = checklistsDb.checklists.find(c => c.isDefault);
+    if (defaultChecklist) {
+      const instance = {
+        instanceId: generateChecklistInstanceId(),
+        checklistId: defaultChecklist.id,
+        completedItems: [],
+        itemNotes: {},
+      };
+      deliverable.appliedChecklists.push(instance);
+      checklistModalState.appliedTabs = [{
+        instanceId: instance.instanceId,
+        checklistId: instance.checklistId,
+        instanceIndex: 0,
+      }];
+    }
+  }
+
+  checklistModalState.activeTabIndex = 0;
+
+  renderChecklistModalTabs();
+  renderChecklistModalItems();
+  populateChecklistAddSelect();
+}
+
+function renderChecklistModalTabs() {
+  const container = document.getElementById("checklistAppliedTabs");
+  container.innerHTML = "";
+
+  checklistModalState.appliedTabs.forEach((tab, index) => {
+    const checklist = getChecklistById(tab.checklistId);
+    if (!checklist) return;
+
+    const btn = el("button", {
+      className: `checklist-tab-btn inner-tab-btn ${index === checklistModalState.activeTabIndex ? "active" : ""}`,
+      textContent: checklist.name,
+      onclick: () => {
+        checklistModalState.activeTabIndex = index;
+        renderChecklistModalTabs();
+        renderChecklistModalItems();
+      },
+    });
+
+    // Remove button
+    const removeBtn = el("span", {
+      className: "checklist-tab-remove",
+      textContent: "×",
+      title: "Remove checklist",
+      onclick: (e) => {
+        e.stopPropagation();
+        if (confirm(`Remove "${checklist.name}" from this deliverable?`)) {
+          checklistModalState.appliedTabs.splice(index, 1);
+
+          // Remove from actual data
+          const project = db[activeChecklistProject];
+          const deliverables = getProjectDeliverables(project);
+          const deliverable = deliverables[activeChecklistDeliverable];
+          if (deliverable && deliverable.appliedChecklists) {
+            deliverable.appliedChecklists.splice(tab.instanceIndex, 1);
+            save();
+          }
+
+          if (checklistModalState.activeTabIndex >= checklistModalState.appliedTabs.length) {
+            checklistModalState.activeTabIndex = Math.max(0, checklistModalState.appliedTabs.length - 1);
+          }
+
+          renderChecklistModalTabs();
+          renderChecklistModalItems();
+          populateChecklistAddSelect();
+        }
+      },
+    });
+    btn.appendChild(removeBtn);
+    container.appendChild(btn);
+  });
+}
+
+function populateChecklistAddSelect() {
+  const select = document.getElementById("checklistAddSelect");
+  const currentIds = checklistModalState.appliedTabs.map(t => t.checklistId);
+
+  // Store current value
+  const currentValue = select.value;
+
+  select.innerHTML = '<option value="">+ Add Checklist...</option>';
+
+  checklistsDb.checklists.forEach((checklist) => {
+    // Only show checklists not already added
+    if (!currentIds.includes(checklist.id)) {
+      const option = el("option", {
+        value: checklist.id,
+        textContent: checklist.name,
+      });
+      select.appendChild(option);
+    }
+  });
+
+  // Restore value if still valid
+  if (currentValue && [...select.options].some(o => o.value === currentValue)) {
+    select.value = currentValue;
+  }
+}
+
+document.getElementById("checklistAddSelect")?.addEventListener("change", (e) => {
+  const checklistId = e.target.value;
+  if (!checklistId) return;
+
+  const project = db[activeChecklistProject];
+  const deliverables = getProjectDeliverables(project);
+  const deliverable = deliverables[activeChecklistDeliverable];
+
+  if (!deliverable) return;
+
+  if (!deliverable.appliedChecklists) {
+    deliverable.appliedChecklists = [];
+  }
+
+  // Add new checklist instance
+  const instance = {
+    instanceId: generateChecklistInstanceId(),
+    checklistId: checklistId,
+    completedItems: [],
+    itemNotes: {},
+  };
+
+  deliverable.appliedChecklists.push(instance);
+  save();
+
+  // Refresh tabs
+  initChecklistModalTabs(project, activeChecklistDeliverable);
+
+  // Select the new tab
+  checklistModalState.activeTabIndex = checklistModalState.appliedTabs.length - 1;
+  renderChecklistModalTabs();
+  renderChecklistModalItems();
+});
+
+function renderChecklistModalItems() {
+  const container = document.getElementById("checklistItemList");
+  container.innerHTML = "";
+
+  if (checklistModalState.appliedTabs.length === 0) {
+    container.innerHTML = '<p class="muted">Add a checklist to get started.</p>';
+    return;
+  }
+
+  const currentTab = checklistModalState.appliedTabs[checklistModalState.activeTabIndex];
+  if (!currentTab) return;
+
+  const checklist = getChecklistById(currentTab.checklistId);
+  if (!checklist) return;
+
+  // Get instance data
+  const project = db[activeChecklistProject];
+  const deliverables = getProjectDeliverables(project);
+  const deliverable = deliverables[activeChecklistDeliverable];
+  const instance = deliverable.appliedChecklists?.[currentTab.instanceIndex];
+
+  if (!instance) return;
+
+  const hideCompleted = document.getElementById("hideCompletedChecks")?.checked || false;
+
+  checklist.items.forEach((item) => {
+    const isCompleted = instance.completedItems?.includes(item.id);
+
+    if (hideCompleted && isCompleted) {
+      return; // Skip completed items if toggle is on
+    }
+
+    const row = el("div", {
+      className: `checklist-modal-item ${isCompleted ? "checked" : ""}`,
+      onclick: () => {
+        toggleChecklistItem(currentTab.instanceIndex, item.id);
+      },
+    });
+
+    const checkbox = el("input", {
+      type: "checkbox",
+      className: "checklist-modal-checkbox",
+      checked: isCompleted,
+      readonly: true,
+    });
+
+    const text = el("span", {
+      className: "checklist-modal-item-text",
+      textContent: item.text,
+    });
+
+    row.append(checkbox, text);
+    container.appendChild(row);
+  });
+}
+
+function toggleChecklistItem(instanceIndex, itemId) {
+  const project = db[activeChecklistProject];
+  const deliverables = getProjectDeliverables(project);
+  const deliverable = deliverables[activeChecklistDeliverable];
+  const instance = deliverable.appliedChecklists?.[instanceIndex];
+
+  if (!instance) return;
+
+  if (!instance.completedItems) {
+    instance.completedItems = [];
+  }
+
+  const idx = instance.completedItems.indexOf(itemId);
+  if (idx >= 0) {
+    instance.completedItems.splice(idx, 1);
+  } else {
+    instance.completedItems.push(itemId);
+  }
+
+  save();
+  renderChecklistModalItems();
+}
+
+document.getElementById("hideCompletedChecks")?.addEventListener("change", () => {
+  renderChecklistModalItems();
+});
+
+document.getElementById("resetChecklistProgressBtn")?.addEventListener("click", () => {
+  if (confirm("Reset all checklist progress? This will uncheck all items.")) {
+    const project = db[activeChecklistProject];
+    const deliverables = getProjectDeliverables(project);
+    const deliverable = deliverables[activeChecklistDeliverable];
+
+    if (deliverable && deliverable.appliedChecklists) {
+      deliverable.appliedChecklists.forEach(instance => {
+        instance.completedItems = [];
+      });
+      save();
+      renderChecklistModalItems();
+    }
+  }
+});
+
+// Close modal handler
+document.getElementById("checklistModal")?.addEventListener("close", () => {
+  // Clean up state
+  activeChecklistProject = null;
+  activeChecklistDeliverable = null;
+  checklistModalState.appliedTabs = [];
+  checklistModalState.activeTabIndex = 0;
+});
+
+// Make functions globally available
+window.openChecklistModal = openChecklistModal;
 
 // ===================== BUNDLE / PLUGIN MANAGER =====================
 
@@ -8052,6 +8806,8 @@ function initEventListeners() {
   }
   document.getElementById("notesHelpBtn").onclick = () =>
     openExternalUrl(HELP_LINKS.notes);
+  document.getElementById("checklistsHelpBtn").onclick = () =>
+    openExternalUrl(HELP_LINKS.checklists);
   document.getElementById("toolsHelpBtn").onclick = () =>
     openExternalUrl(HELP_LINKS.tools);
   document.getElementById("pluginsHelpBtn").onclick = () =>
@@ -8960,17 +9716,25 @@ async function init() {
       showOnboardingModal();
     } else {
       showMainApp();
-      const [loadedDb, loadedNotes, loadedTimesheets, loadedTemplates] = await Promise.all([
+      const [loadedDb, loadedNotes, loadedTimesheets, loadedTemplates, loadedChecklists] = await Promise.all([
         load(),
         loadNotes(),
         loadTimesheets(),
         loadTemplates(),
+        loadChecklists(),
       ]);
       db = loadedDb;
       notesDb = loadedNotes || {};
       timesheetDb = loadedTimesheets || { weeks: {}, lastModified: null };
       templatesDb = loadedTemplates || { templates: [], defaultTemplatesInstalled: false, lastModified: null };
+      checklistsDb = loadedChecklists || { checklists: [], lastModified: null };
+
+      // Initialize checklist tab
+      if (checklistsDb.checklists.length > 0) {
+        activeChecklistTabId = checklistsDb.checklists[0].id;
+      }
       renderNoteTabs();
+      renderChecklistTabs();
       render();
 
       // Show setup help banner for returning users who haven't disabled it

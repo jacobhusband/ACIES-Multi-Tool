@@ -70,6 +70,340 @@
             transform: translateX(16px);
             background-color: var(--accent);
         }
+
+        /* ===== Checklists Tab Styles ===== */
+        .toolbar-title {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        .checklists-controls {
+            margin-bottom: 1rem;
+        }
+
+        .checklist-editor {
+            background: var(--surface);
+            border: 1px solid var(--glass-border);
+            border-radius: var(--radius);
+            padding: 1.5rem;
+        }
+
+        .checklist-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+            gap: 1rem;
+        }
+
+        .checklist-name-input {
+            font-size: 1.25rem;
+            font-weight: 600;
+            background: transparent;
+            border: none;
+            border-bottom: 2px solid var(--glass-border);
+            padding: 0.5rem 0;
+            color: var(--text);
+            flex: 1;
+            max-width: 400px;
+        }
+
+        .checklist-name-input:focus {
+            outline: none;
+            border-bottom-color: var(--accent);
+        }
+
+        .checklist-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .checklist-items {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+            margin-bottom: 1.5rem;
+            max-height: 60vh;
+            overflow-y: auto;
+        }
+
+        .checklist-item-row {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.75rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--glass-border);
+            border-radius: var(--radius-sm);
+            transition: all 0.2s;
+        }
+
+        .checklist-item-row:hover {
+            border-color: var(--accent);
+        }
+
+        .checklist-item-order {
+            width: 24px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--bg-tertiary);
+            border-radius: 50%;
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: var(--muted);
+            flex-shrink: 0;
+        }
+
+        .checklist-item-input {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: var(--text);
+            font-size: 0.875rem;
+            padding: 0.25rem;
+        }
+
+        .checklist-item-input:focus {
+            outline: none;
+        }
+
+        .checklist-item-remove {
+            width: 28px;
+            height: 28px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: transparent;
+            border: none;
+            color: var(--muted);
+            cursor: pointer;
+            border-radius: var(--radius-sm);
+            transition: all 0.2s;
+        }
+
+        .checklist-item-remove:hover {
+            background: var(--danger-bg);
+            color: var(--danger);
+        }
+
+        .checklist-add-item {
+            text-align: center;
+        }
+
+        /* ===== Checklist Modal Styles ===== */
+        .checklist-modal {
+            width: 90vw;
+            max-width: 1000px;
+            height: 90vh;
+            max-height: 900px;
+            margin: auto;
+            padding: 0;
+            border-radius: var(--radius-lg);
+            background: var(--modal-bg);
+            border: 1px solid var(--glass-border);
+            overflow: hidden;
+        }
+
+        .checklist-modal::backdrop {
+            background: var(--backdrop-bg);
+        }
+
+        .checklist-modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid var(--glass-border);
+            background: var(--bg-secondary);
+        }
+
+        .checklist-modal-title {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        .checklist-modal-body {
+            padding: 1.5rem;
+            overflow-y: auto;
+            height: calc(90vh - 70px);
+        }
+
+        .checklist-deliverable-selector {
+            margin-bottom: 1.5rem;
+        }
+
+        .checklist-deliverable-selector select {
+            width: 100%;
+            max-width: 400px;
+        }
+
+        .checklist-tasks-notes-section {
+            margin-bottom: 1.5rem;
+        }
+
+        .checklist-tasks-container {
+            margin-top: 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .checklist-task-row {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.75rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--glass-border);
+            border-radius: var(--radius-sm);
+        }
+
+        .checklist-task-checkbox {
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+        }
+
+        .checklist-task-text {
+            flex: 1;
+            color: var(--text);
+        }
+
+        .checklist-task-done .checklist-task-text {
+            text-decoration: line-through;
+            opacity: 0.6;
+        }
+
+        .checklist-tabs-section {
+            margin-top: 1.5rem;
+        }
+
+        .checklist-tabs-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+            gap: 1rem;
+        }
+
+        .checklist-dropdown-selector select {
+            min-width: 180px;
+        }
+
+        .checklist-tab-content {
+            background: var(--bg-secondary);
+            border: 1px solid var(--glass-border);
+            border-radius: var(--radius);
+            padding: 1rem;
+        }
+
+        .checklist-toggle-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--glass-border);
+        }
+
+        .toggle-label {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            cursor: pointer;
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+        }
+
+        .toggle-label input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            cursor: pointer;
+        }
+
+        .checklist-item-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .checklist-modal-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.75rem;
+            padding: 0.75rem;
+            background: var(--surface);
+            border: 1px solid var(--glass-border);
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .checklist-modal-item:hover {
+            border-color: var(--accent);
+        }
+
+        .checklist-modal-item.checked {
+            background: var(--accent-dim);
+            border-color: var(--accent);
+        }
+
+        .checklist-modal-checkbox {
+            width: 20px;
+            height: 20px;
+            margin-top: 2px;
+            flex-shrink: 0;
+            cursor: pointer;
+            accent-color: var(--accent);
+        }
+
+        .checklist-modal-item-text {
+            flex: 1;
+            color: var(--text);
+            line-height: 1.5;
+        }
+
+        .checklist-modal-item.checked .checklist-modal-item-text {
+            text-decoration: line-through;
+            opacity: 0.6;
+        }
+
+        .checklist-modal-item-hidden {
+            display: none;
+        }
+
+        .checklist-tab-remove {
+            opacity: 0;
+            margin-left: 0.5rem;
+            cursor: pointer;
+            color: var(--danger);
+            font-size: 1rem;
+            padding: 0.25rem;
+            border-radius: var(--radius-sm);
+            transition: all 0.2s;
+        }
+
+        .checklist-tab-btn:hover .checklist-tab-remove {
+            opacity: 1;
+        }
+
+        .checklist-tab-remove:hover {
+            background: var(--danger-bg);
+        }
+
+        .checklist-tab-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 0.35rem 0.7rem;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
@@ -94,6 +428,7 @@
             <nav class="main-nav">
                 <button class="main-tab-btn active" data-tab="projects">Projects</button>
                 <button class="main-tab-btn" data-tab="notes">Notes</button>
+                <button class="main-tab-btn" data-tab="checklists">Checklists</button>
                 <button class="main-tab-btn" data-tab="tools">Tools</button>
                 <button class="main-tab-btn" data-tab="plugins">Plugins</button>
                 <button class="main-tab-btn" data-tab="timesheets">Timesheets</button>
@@ -184,9 +519,8 @@
                         <tr>
                             <th class="cell-select">
                                 <span class="pin-header" aria-hidden="true">
-                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
-                                        stroke="currentColor" stroke-width="2" stroke-linecap="round"
-                                        stroke-linejoin="round">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                        stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                         <path
                                             d="M12 2c-3.31 0-6 2.69-6 6 0 2.76 1.87 5.08 4.42 5.76L10 22l2-3 2 3-.42-8.24C16.13 13.08 18 10.76 18 8c0-3.31-2.69-6-6-6z">
                                         </path>
@@ -239,6 +573,42 @@
                 <!-- Search Results Container -->
                 <div id="notesSearchResults" class="notes-search-results"></div>
             </div>
+        </div>
+        <!-- Tab Panel for Checklists -->
+        <div id="checklists-panel" class="tab-panel" hidden>
+            <section class="panel stack">
+                <div class="panel-toolbar">
+                    <div class="toolbar-title">
+                        <h2 class="section-title">Checklists</h2>
+                        <p class="tiny muted">Create and manage reusable checklists</p>
+                    </div>
+                    <div class="toolbar-actions">
+                        <button class="icon-btn" id="checklistsHelpBtn" aria-label="Checklists help"
+                            title="Checklists help">?</button>
+                    </div>
+                </div>
+                <div class="checklists-controls">
+                    <nav class="inner-tabs" id="checklistsTabsContainer"></nav>
+                </div>
+                <div class="checklist-editor">
+                    <div class="checklist-header">
+                        <input type="text" id="checklistName" class="checklist-name-input"
+                            placeholder="Checklist Name" />
+                        <div class="checklist-actions">
+                            <button class="btn ghost tiny" id="resetChecklistBtn"
+                                title="Reset to default items">Reset</button>
+                            <button class="btn btn-danger ghost tiny" id="deleteChecklistBtn"
+                                title="Delete this checklist">Delete</button>
+                        </div>
+                    </div>
+                    <div class="checklist-items" id="checklistItemsContainer">
+                        <!-- Checklist items rendered here -->
+                    </div>
+                    <div class="checklist-add-item">
+                        <button class="btn btn-accent tiny" id="addChecklistItemBtn">+ Add Item</button>
+                    </div>
+                </div>
+            </section>
         </div>
         <!-- Tab Panel for Tools -->
         <div id="tools-panel" class="tab-panel" hidden>
@@ -374,8 +744,8 @@
                                 </div>
                             </div>
                             <div class="tool-card-status"></div>
+                        </div>
                     </div>
-                </div>
             </section>
         </div>
         <!-- Tab Panel for Plugins -->
@@ -406,13 +776,15 @@
                 <div class="panel-toolbar">
                     <div class="timesheets-week-selector">
                         <button class="btn tiny" id="prevWeekBtn" aria-label="Previous week">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
                                 <polyline points="15 18 9 12 15 6"></polyline>
                             </svg>
                         </button>
                         <span class="week-display" id="weekDisplay">Week of Jan 12, 2026</span>
                         <button class="btn tiny" id="nextWeekBtn" aria-label="Next week">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
                                 <polyline points="9 18 15 12 9 6"></polyline>
                             </svg>
                         </button>
@@ -424,15 +796,18 @@
                             <span class="weekly-total-hours" id="weeklyTotalHours">0.0</span>
                             <span class="weekly-total-unit">hrs</span>
                         </div>
-                        <button class="btn btn-export" id="exportTimesheetBtn" title="Export timesheet and project expense sheet to Excel">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px;">
+                        <button class="btn btn-export" id="exportTimesheetBtn"
+                            title="Export timesheet and project expense sheet to Excel">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2" style="margin-right: 4px;">
                                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                                 <polyline points="7 10 12 15 17 10"></polyline>
                                 <line x1="12" y1="15" x2="12" y2="3"></line>
                             </svg>
                             Export Excel
                         </button>
-                        <button class="icon-btn" id="timesheetsHelpBtn" aria-label="Timesheets help" title="Timesheets help">?</button>
+                        <button class="icon-btn" id="timesheetsHelpBtn" aria-label="Timesheets help"
+                            title="Timesheets help">?</button>
                     </div>
                 </div>
 
@@ -555,8 +930,8 @@
         </div>
         <div class="modal-body stack">
             <div class="nav-search expanded-search">
-                <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none"
-                    stroke="currentColor" stroke-width="2">
+                <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2">
                     <circle cx="11" cy="11" r="8"></circle>
                     <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
                 </svg>
@@ -573,8 +948,8 @@
         </div>
         <div class="modal-body stack">
             <div class="nav-search expanded-search">
-                <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none"
-                    stroke="currentColor" stroke-width="2">
+                <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2">
                     <circle cx="11" cy="11" r="8"></circle>
                     <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
                 </svg>
@@ -747,7 +1122,7 @@
             </div>
         </div>
     </dialog>
-        <!-- Delete All Notes Confirmation Modal -->
+    <!-- Delete All Notes Confirmation Modal -->
     <dialog id="deleteNotesDlg" class="danger-modal">
         <div class="modal-body stack centered-content">
             <div class="danger-icon-large">⚠️</div>
@@ -834,7 +1209,8 @@
                 </div>
                 <div class="col-6">
                     <label class="label">Timesheet data</label>
-                    <button type="button" class="btn tiny" id="settings_openTimesheetsFolder">Open timesheets folder</button>
+                    <button type="button" class="btn tiny" id="settings_openTimesheetsFolder">Open timesheets
+                        folder</button>
                     <div class="tiny muted" style="margin-top: 0.35rem;">Opens the folder with timesheets.json.</div>
                 </div>
                 <div class="col-12">
@@ -843,7 +1219,8 @@
                         <input id="settings_timesheetsPath" readonly />
                         <button type="button" class="btn tiny" id="settings_refreshTimesheetsInfo">Refresh</button>
                         <button type="button" class="btn tiny" id="settings_forceSaveTimesheets">Force save</button>
-                        <button type="button" class="btn tiny" id="settings_writeTimesheetsTest">Write test file</button>
+                        <button type="button" class="btn tiny" id="settings_writeTimesheetsTest">Write test
+                            file</button>
                     </div>
                     <div id="settings_timesheetsInfo" class="tiny muted" style="margin-top: 0.35rem;"></div>
                 </div>
@@ -890,8 +1267,8 @@
                 <div class="col-12">
                     <label class="label">Publish CAD DWGs in Headless Mode</label>
                     <div class="stack" style="gap: 0.35rem;">
-                        <label class="radio-label"><input type="checkbox"
-                                id="settings_publish_autoDetectPaperSize"> Auto-detect page size</label>
+                        <label class="radio-label"><input type="checkbox" id="settings_publish_autoDetectPaperSize">
+                            Auto-detect page size</label>
                         <div class="inline" style="gap: 0.5rem; align-items: center;">
                             <label class="tiny muted" style="min-width: 160px;">Reduce combined PDF quality to</label>
                             <input type="range" id="settings_publish_shrinkPercent" min="5" max="100" step="5" />
@@ -949,7 +1326,8 @@
                 <div class="setting-row">
                     <div class="setting-info">
                         <div class="setting-label">Scan and merge similar projects together</div>
-                        <div class="setting-desc">Thoroughly compares project IDs and names, then merges any matches.</div>
+                        <div class="setting-desc">Thoroughly compares project IDs and names, then merges any matches.
+                        </div>
                     </div>
                     <button class="btn" id="btnMergeSimilarProjects">Run Action</button>
                 </div>
@@ -1011,7 +1389,8 @@
         <div class="modal-body stack tool-settings-body">
             <div class="tool-settings-intro">
                 <div class="tool-settings-title">How these toggles work</div>
-                <p class="tiny muted">On means the tool performs the action when you run it. Off skips that step. Changes
+                <p class="tiny muted">On means the tool performs the action when you run it. Off skips that step.
+                    Changes
                     save automatically and apply next time the tool runs.</p>
             </div>
             <div class="tool-settings-list">
@@ -1053,7 +1432,8 @@
         <div class="modal-body stack tool-settings-body">
             <div class="tool-settings-intro">
                 <div class="tool-settings-title">How these toggles work</div>
-                <p class="tiny muted">On means the tool performs the action when you run it. Off skips that step. Changes
+                <p class="tiny muted">On means the tool performs the action when you run it. Off skips that step.
+                    Changes
                     save automatically and apply next time the tool runs.</p>
             </div>
             <div class="tool-settings-list">
@@ -1084,7 +1464,8 @@
         <div class="modal-body stack tool-settings-body">
             <div class="tool-settings-intro">
                 <div class="tool-settings-title">How these toggles work</div>
-                <p class="tiny muted">On means the tool performs the action when you run it. Off skips that step. Changes
+                <p class="tiny muted">On means the tool performs the action when you run it. Off skips that step.
+                    Changes
                     save automatically and apply next time the tool runs.</p>
             </div>
             <div class="tool-settings-list">
@@ -1115,7 +1496,8 @@
         <div class="modal-body stack tool-settings-body">
             <div class="tool-settings-intro">
                 <div class="tool-settings-title">How these toggles work</div>
-                <p class="tiny muted">On means the tool performs the action when you run it. Off skips that step. Changes
+                <p class="tiny muted">On means the tool performs the action when you run it. Off skips that step.
+                    Changes
                     save automatically and apply next time the tool runs.</p>
             </div>
             <div class="tool-settings-list">
@@ -1229,64 +1611,66 @@
                         <div class="feature-item">
                             <span class="feature-icon">🔧</span>
                             <span>AutoCAD automation tools</span>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Step 2: Full Name -->
-            <div id="onboardingStep2" class="onboarding-step">
-                <div class="onboarding-content">
-                    <div class="onboarding-icon">👤</div>
-                    <h2>What's your full name?</h2>
-                    <p>This helps personalize your experience and is used in AI processing.</p>
-                    <div class="onboarding-input-group">
-                        <label class="label">Full Name</label>
-                        <input id="onboarding_userName" type="text" placeholder="e.g. Jacob Husband" />
-                    </div>
-                </div>
-            </div>
-
-            <!-- Step 3: Discipline -->
-            <div id="onboardingStep3" class="onboarding-step">
-                <div class="onboarding-content">
-                    <div class="onboarding-icon">⚡</div>
-                    <h2>What's your engineering discipline?</h2>
-                    <p>This helps tailor AI responses to your specific field of work.</p>
-                    <div class="onboarding-input-group">
-                        <label class="label">Discipline</label>
-                        <div id="onboarding_discipline" class="radio-group">
-                            <label class="radio-label"><input type="checkbox" name="onboarding_discipline_checkbox"
-                                    value="Electrical"> Electrical</label>
-                            <label class="radio-label"><input type="checkbox" name="onboarding_discipline_checkbox"
-                                    value="Mechanical"> Mechanical</label>
-                            <label class="radio-label"><input type="checkbox" name="onboarding_discipline_checkbox"
-                                    value="Plumbing"> Plumbing</label>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Step 4: API Key -->
-            <div id="onboardingStep4" class="onboarding-step">
-                <div class="onboarding-content">
-                    <div class="onboarding-icon">🔑</div>
-                    <h2>Set up your AI assistant</h2>
-                    <p>Add your Google Gemini API key to enable AI features like email processing and project creation.
-                    </p>
-                    <div class="onboarding-input-group">
-                        <label class="label">Google Gemini API Key</label>
-                        <div class="input-with-button">
-                            <input id="onboarding_apiKey" type="password" placeholder="Enter your API key" />
-                            <button type="button" class="btn tiny" onclick="showApiKeyHelp()">Help</button>
                         </div>
-                        <p class="tiny muted">Your API key is stored locally and never sent to our servers.</p>
                     </div>
                 </div>
-            </div>
-        </div>
-        <div class="modal-footer">
-            <button class="btn ghost" id="onboardingPrevBtn" onclick="prevOnboardingStep()" disabled>Previous</button>
-            <button class="btn-primary" id="onboardingNextBtn" onclick="nextOnboardingStep()">Next</button>
-        </div>
+
+                <!-- Step 2: Full Name -->
+                <div id="onboardingStep2" class="onboarding-step">
+                    <div class="onboarding-content">
+                        <div class="onboarding-icon">👤</div>
+                        <h2>What's your full name?</h2>
+                        <p>This helps personalize your experience and is used in AI processing.</p>
+                        <div class="onboarding-input-group">
+                            <label class="label">Full Name</label>
+                            <input id="onboarding_userName" type="text" placeholder="e.g. Jacob Husband" />
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 3: Discipline -->
+                <div id="onboardingStep3" class="onboarding-step">
+                    <div class="onboarding-content">
+                        <div class="onboarding-icon">⚡</div>
+                        <h2>What's your engineering discipline?</h2>
+                        <p>This helps tailor AI responses to your specific field of work.</p>
+                        <div class="onboarding-input-group">
+                            <label class="label">Discipline</label>
+                            <div id="onboarding_discipline" class="radio-group">
+                                <label class="radio-label"><input type="checkbox" name="onboarding_discipline_checkbox"
+                                        value="Electrical"> Electrical</label>
+                                <label class="radio-label"><input type="checkbox" name="onboarding_discipline_checkbox"
+                                        value="Mechanical"> Mechanical</label>
+                                <label class="radio-label"><input type="checkbox" name="onboarding_discipline_checkbox"
+                                        value="Plumbing"> Plumbing</label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Step 4: API Key -->
+                    <div id="onboardingStep4" class="onboarding-step">
+                        <div class="onboarding-content">
+                            <div class="onboarding-icon">🔑</div>
+                            <h2>Set up your AI assistant</h2>
+                            <p>Add your Google Gemini API key to enable AI features like email processing and project
+                                creation.
+                            </p>
+                            <div class="onboarding-input-group">
+                                <label class="label">Google Gemini API Key</label>
+                                <div class="input-with-button">
+                                    <input id="onboarding_apiKey" type="password" placeholder="Enter your API key" />
+                                    <button type="button" class="btn tiny" onclick="showApiKeyHelp()">Help</button>
+                                </div>
+                                <p class="tiny muted">Your API key is stored locally and never sent to our servers.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn ghost" id="onboardingPrevBtn" onclick="prevOnboardingStep()"
+                        disabled>Previous</button>
+                    <button class="btn-primary" id="onboardingNextBtn" onclick="nextOnboardingStep()">Next</button>
+                </div>
     </dialog>
     <!-- AutoCAD Selection Modal -->
     <dialog id="autocadSelectDlg">
@@ -1335,63 +1719,63 @@
                             <button class="filter-chip" data-range="1M">1 Month</button>
                             <button class="filter-chip active" data-range="1Y">1 Year</button>
                             <button class="filter-chip" data-range="3Y">3 Years</button>
+                        </div>
+                        <div class="col-6">
+                            <div class="filter-label">Aggregation</div>
+                            <div class="status-filter-group" id="statsAggGroup">
+                                <button class="filter-chip" data-agg="day">Days</button>
+                                <button class="filter-chip" data-agg="week">Weeks</button>
+                                <button class="filter-chip active" data-agg="month">Months</button>
+                                <button class="filter-chip" data-agg="quarter">Quarters</button>
+                            </div>
+                        </div>
                     </div>
-                    <div class="col-6">
-                        <div class="filter-label">Aggregation</div>
-                        <div class="status-filter-group" id="statsAggGroup">
-                            <button class="filter-chip" data-agg="day">Days</button>
-                            <button class="filter-chip" data-agg="week">Weeks</button>
-                            <button class="filter-chip active" data-agg="month">Months</button>
-                            <button class="filter-chip" data-agg="quarter">Quarters</button>
-                    </div>
-                </div>
-            </div>
 
-            <!-- Numbers Grid (Always Visible) -->
-            <div class="stats-grid">
-                <div class="stats-section-title">Overview & History</div>
-                <div class="stat-card">
-                    <div class="stat-icon">📊</div>
-                    <div class="stat-value" id="statTotal">0</div>
-                    <div class="stat-label">Total Deliverables</div>
+                    <!-- Numbers Grid (Always Visible) -->
+                    <div class="stats-grid">
+                        <div class="stats-section-title">Overview & History</div>
+                        <div class="stat-card">
+                            <div class="stat-icon">📊</div>
+                            <div class="stat-value" id="statTotal">0</div>
+                            <div class="stat-label">Total Deliverables</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-icon">✅</div>
+                            <div class="stat-value" id="statCompleted">0</div>
+                            <div class="stat-label">Completed</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-icon">📈</div>
+                            <div class="stat-value" id="statAvg">0</div>
+                            <div class="stat-label">Avg Completions / Week</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-icon">📅</div>
+                            <div class="stat-value" id="statAvgMonth">0</div>
+                            <div class="stat-label">Avg Completions / Month</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-icon">⚠️</div>
+                            <div class="stat-value" id="statLastWeek">0</div>
+                            <div class="stat-label">Due Last Week</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-icon">📅</div>
+                            <div class="stat-value" id="statThisWeek">0</div>
+                            <div class="stat-label">Due This Week</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-icon">🔮</div>
+                            <div class="stat-value" id="statUpcoming">0</div>
+                            <div class="stat-label">Upcoming</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-icon">🏆</div>
+                            <div class="stat-value" id="statCompletedThisYear">0</div>
+                            <div class="stat-label">Done This Year</div>
+                        </div>
+                    </div>
                 </div>
-                <div class="stat-card">
-                    <div class="stat-icon">✅</div>
-                    <div class="stat-value" id="statCompleted">0</div>
-                    <div class="stat-label">Completed</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-icon">📈</div>
-                    <div class="stat-value" id="statAvg">0</div>
-                    <div class="stat-label">Avg Completions / Week</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-icon">📅</div>
-                    <div class="stat-value" id="statAvgMonth">0</div>
-                    <div class="stat-label">Avg Completions / Month</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-icon">⚠️</div>
-                    <div class="stat-value" id="statLastWeek">0</div>
-                    <div class="stat-label">Due Last Week</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-icon">📅</div>
-                    <div class="stat-value" id="statThisWeek">0</div>
-                    <div class="stat-label">Due This Week</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-icon">🔮</div>
-                    <div class="stat-value" id="statUpcoming">0</div>
-                    <div class="stat-label">Upcoming</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-icon">🏆</div>
-                    <div class="stat-value" id="statCompletedThisYear">0</div>
-                    <div class="stat-label">Done This Year</div>
-                </div>
-            </div>
-        </div>
     </dialog>
     <!-- API Key Help Modal -->
     <dialog id="apiKeyHelpDlg">
@@ -1452,7 +1836,8 @@
                 </div>
                 <div class="col-12">
                     <label class="label">Description (optional)</label>
-                    <textarea id="tpl_description" rows="2" placeholder="Brief description of this template..."></textarea>
+                    <textarea id="tpl_description" rows="2"
+                        placeholder="Brief description of this template..."></textarea>
                 </div>
             </div>
             <p class="tiny muted">Supported file types: .doc, .docx, .dwg, .xlsx, .xls</p>
@@ -1538,40 +1923,44 @@
                     <div class="title">Panel Schedule AI</div>
                     <p class="tiny muted">AI-powered electrical panel analysis and schedule generation.</p>
                 </div>
-                <button class="icon-btn" id="circuitBreakerCloseBtn" aria-label="Close Panel Schedule AI" title="Close">X</button>
+                <button class="icon-btn" id="circuitBreakerCloseBtn" aria-label="Close Panel Schedule AI"
+                    title="Close">X</button>
             </div>
             <div class="circuit-breaker-body">
                 <div class="circuit-breaker-form">
                     <section class="cb-section">
                         <div class="cb-section-title">1. Upload panel photos</div>
-                        <p class="tiny muted">Upload one photo of the circuit breakers and one photo of the circuit directory.</p>
+                        <p class="tiny muted">Upload one photo of the circuit breakers and one photo of the circuit
+                            directory.</p>
                         <div class="cb-upload-grid">
-                        <div class="cb-upload-card">
-                            <div class="cb-upload-title">Circuit breakers photo</div>
-                            <p class="tiny muted">Clear photo of the breaker labels and handles.</p>
-                            <div id="cbBreakerDrop" class="cb-drop-zone" role="button" tabindex="0">
-                                <div class="cb-drop-icon">📷</div>
-                                <div class="cb-drop-text">Drag &amp; drop a photo or click to select</div>
-                                <div class="tiny muted">JPG, PNG, HEIC supported</div>
+                            <div class="cb-upload-card">
+                                <div class="cb-upload-title">Circuit breakers photo</div>
+                                <p class="tiny muted">Clear photo of the breaker labels and handles.</p>
+                                <div id="cbBreakerDrop" class="cb-drop-zone" role="button" tabindex="0">
+                                    <div class="cb-drop-icon">📷</div>
+                                    <div class="cb-drop-text">Drag &amp; drop a photo or click to select</div>
+                                    <div class="tiny muted">JPG, PNG, HEIC supported</div>
+                                </div>
+                                <div class="cb-upload-actions">
+                                    <span id="cbBreakerFile" class="cb-file-pill" data-empty="true">No file
+                                        selected</span>
+                                </div>
                             </div>
-                            <div class="cb-upload-actions">
-                                <span id="cbBreakerFile" class="cb-file-pill" data-empty="true">No file selected</span>
+                            <div class="cb-upload-card">
+                                <div class="cb-upload-title">Circuit directory photo</div>
+                                <p class="tiny muted">Photo of the directory or schedule labels.</p>
+                                <div id="cbDirectoryDrop" class="cb-drop-zone" role="button" tabindex="0">
+                                    <div class="cb-drop-icon">🗂️</div>
+                                    <div class="cb-drop-text">Drag &amp; drop a photo or click to select</div>
+                                    <div class="tiny muted">JPG, PNG, HEIC supported</div>
+                                </div>
+                                <div class="cb-upload-actions">
+                                    <span id="cbDirectoryFile" class="cb-file-pill" data-empty="true">No file
+                                        selected</span>
+                                </div>
                             </div>
                         </div>
-                        <div class="cb-upload-card">
-                            <div class="cb-upload-title">Circuit directory photo</div>
-                            <p class="tiny muted">Photo of the directory or schedule labels.</p>
-                            <div id="cbDirectoryDrop" class="cb-drop-zone" role="button" tabindex="0">
-                                <div class="cb-drop-icon">🗂️</div>
-                                <div class="cb-drop-text">Drag &amp; drop a photo or click to select</div>
-                                <div class="tiny muted">JPG, PNG, HEIC supported</div>
-                            </div>
-                            <div class="cb-upload-actions">
-                                <span id="cbDirectoryFile" class="cb-file-pill" data-empty="true">No file selected</span>
-                            </div>
-                        </div>
-                    </div>
-                </section>
+                    </section>
 
                     <section class="cb-section">
                         <div class="cb-section-title">2. Panel schedule file</div>
@@ -1587,7 +1976,8 @@
                             <span id="cbNewSchedulePath" class="cb-file-pill" data-empty="true">No file selected</span>
                         </div>
                         <div id="cbExistingScheduleRow" class="cb-file-row" hidden>
-                            <span id="cbExistingSchedulePath" class="cb-file-pill" data-empty="true">No file selected</span>
+                            <span id="cbExistingSchedulePath" class="cb-file-pill" data-empty="true">No file
+                                selected</span>
                         </div>
                     </section>
 
@@ -1691,6 +2081,70 @@
         </div>
     </dialog>
 
+    <!-- Checklist Modal -->
+    <dialog id="checklistModal" class="checklist-modal">
+        <div class="checklist-modal-header">
+            <div class="checklist-modal-title">
+                <h2 class="title">Project Checklist</h2>
+                <p class="tiny muted" id="checklistProjectName">Project Name</p>
+            </div>
+            <div class="inline">
+                <button class="btn ghost" onclick="closeDlg('checklistModal')">Close</button>
+            </div>
+        </div>
+        <div class="checklist-modal-body">
+            <!-- Deliverable Selector -->
+            <div class="checklist-deliverable-selector">
+                <label class="label">Deliverable</label>
+                <select id="checklistDeliverableSelect">
+                    <!-- Options populated from project deliverables -->
+                </select>
+            </div>
+
+            <!-- Tasks & Notes Section (Above Checklist) -->
+            <div class="checklist-tasks-notes-section">
+                <div class="section-divider"></div>
+                <div class="inline" style="justify-content:space-between">
+                    <div class="title section-header">Tasks & Notes</div>
+                    <button class="btn-accent tiny" id="checklistAddTaskBtn">+ Add Task</button>
+                </div>
+                <div id="checklistTasksContainer" class="checklist-tasks-container">
+                    <!-- Tasks from selected deliverable -->
+                </div>
+                <div class="section-divider"></div>
+            </div>
+
+            <!-- Checklist Tabs -->
+            <div class="checklist-tabs-section">
+                <div class="checklist-tabs-header">
+                    <nav class="inner-tabs" id="checklistAppliedTabs">
+                        <!-- Applied checklist tabs -->
+                    </nav>
+                    <div class="checklist-dropdown-selector">
+                        <select id="checklistAddSelect">
+                            <option value="">+ Add Checklist...</option>
+                            <!-- All available checklists -->
+                        </select>
+                    </div>
+                </div>
+
+                <div class="checklist-tab-content" id="checklistTabContent">
+                    <div class="checklist-toggle-row">
+                        <label class="toggle-label">
+                            <input type="checkbox" id="hideCompletedChecks" />
+                            <span>Hide completed items</span>
+                        </label>
+                        <button class="btn ghost tiny" id="resetChecklistProgressBtn">Reset Progress</button>
+                    </div>
+
+                    <div class="checklist-item-list" id="checklistItemList">
+                        <!-- Checklist items with checkboxes -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </dialog>
+
     <!-- HTML Templates for JS rendering -->
     <template id="project-row-template">
         <tr class="row">
@@ -1764,4 +2218,3 @@
 </body>
 
 </html>
-

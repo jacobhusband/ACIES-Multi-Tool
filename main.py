@@ -474,6 +474,7 @@ NOTES_FILE = get_app_data_path("notes.json")
 SETTINGS_FILE = get_app_data_path("settings.json")
 TIMESHEETS_FILE = get_app_data_path("timesheets.json")
 TEMPLATES_FILE = get_app_data_path("templates.json")
+CHECKLISTS_FILE = get_app_data_path("checklists.json")
 
 DEFAULT_TEMPLATES = [
     {
@@ -1885,6 +1886,29 @@ Return ONLY the JSON object.
             exists = os.path.exists(template['sourcePath'])
             return {'status': 'success', 'exists': exists, 'path': template['sourcePath']}
         except Exception as e:
+            return {'status': 'error', 'message': str(e)}
+
+    # ===================== CHECKLISTS API =====================
+
+    def get_checklists(self):
+        """Reads and returns checklists data."""
+        try:
+            with open(CHECKLISTS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            # First run - return empty structure
+            return {'checklists': [], 'lastModified': None}
+
+    def save_checklists(self, data):
+        """Saves checklists data with backup."""
+        try:
+            if os.path.exists(CHECKLISTS_FILE):
+                shutil.copy2(CHECKLISTS_FILE, CHECKLISTS_FILE + '.bak')
+            with open(CHECKLISTS_FILE, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            return {'status': 'success'}
+        except Exception as e:
+            logging.error(f"Error saving checklists: {e}")
             return {'status': 'error', 'message': str(e)}
 
     def export_timesheet_excel(self, data):

@@ -625,7 +625,7 @@
                             <th style="width:90px" data-sort="id">ID</th>
                             <th data-sort="name">Project Details</th>
                             <th class="deliverables-header" data-sort="due" colspan="3">Deliverables</th>
-                            <th class="nowrap" style="width:120px;text-align:center">Actions</th>
+                            <th class="nowrap" style="width:150px;text-align:center">Actions</th>
                         </tr>
                     </thead>
                     <tbody id="tbody"></tbody>
@@ -2175,15 +2175,14 @@
         </div>
     </dialog>
 
-    <!-- Checklist Modal -->
-    <dialog id="checklistModal" class="checklist-modal">
-        <header class="checklist-header">
-            <div class="chk-title-group">
-                <div class="checklist-modal-title">
-                    <h2 class="title">Project Checklist</h2>
+    <!-- Project Workroom Modal -->
+    <dialog id="checklistModal" class="checklist-modal workroom-modal">
+        <header class="workroom-header">
+            <div class="workroom-title-group">
+                <div class="workroom-modal-title">
+                    <h2 class="title">Project Workroom</h2>
                 </div>
-                <!-- Integrated Deliverable Selector -->
-                <div class="chk-select-wrapper">
+                <div class="workroom-select-wrapper">
                     <select id="checklistDeliverableSelect"></select>
                 </div>
             </div>
@@ -2196,50 +2195,72 @@
             </button>
         </header>
 
-        <div class="checklist-body">
-            <!-- Sidebar Navigation -->
-            <aside class="checklist-sidebar">
-                <nav class="chk-nav" id="checklistSidebarNav">
-                    <!-- Static Links -->
-                    <button class="chk-nav-item active" data-view="tasks" onclick="switchChecklistView('tasks')">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                            stroke-width="2">
-                            <path d="M12 20h9" />
-                            <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
-                        </svg>
-                        General Tasks
-                    </button>
-                    <button class="chk-nav-item" data-view="notes" onclick="switchChecklistView('notes')">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                            stroke-width="2">
-                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                            <polyline points="14 2 14 8 20 8"></polyline>
-                            <line x1="16" y1="13" x2="8" y2="13"></line>
-                            <line x1="16" y1="17" x2="8" y2="17"></line>
-                        </svg>
-                        Notes
-                    </button>
-
-                    <div class="chk-nav-divider"></div>
-                    <div class="chk-nav-header">Checklists</div>
-
-                    <!-- Dynamic Checklists List -->
-                    <div id="checklistAppliedTabsContainer"></div>
-
-                    <!-- Add Checklist Button -->
-                    <div class="chk-select-wrapper" style="margin-top: 0.5rem; min-width: 0;">
-                        <select id="checklistAddSelect"
-                            style="padding: 0.4rem; font-size: 0.85rem; border-style: dashed;">
-                            <option value="">+ Add Checklist...</option>
-                        </select>
+        <div class="workroom-body">
+            <div class="workroom-left-column">
+                <section class="workroom-panel workroom-checklist-panel">
+                    <div class="workroom-panel-header">
+                        <h3>Deliverable Checklist</h3>
                     </div>
-                </nav>
-            </aside>
+                    <div class="workroom-checklist-controls">
+                        <div id="workroomChecklistTabs" class="workroom-checklist-tabs"></div>
+                        <div class="workroom-checklist-add">
+                            <select id="workroomChecklistAddSelect">
+                                <option value="">+ Add Checklist...</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="checklist-progress workroom-progress">
+                        <div class="checklist-progress-info">
+                            <span class="checklist-progress-count" id="workroomChecklistProgressCount">0/0</span>
+                            <span>completed</span>
+                        </div>
+                        <div class="checklist-progress-bar">
+                            <div class="checklist-progress-fill" id="workroomChecklistProgressFill"></div>
+                        </div>
+                    </div>
+                    <div id="workroomChecklistItems" class="workroom-checklist-items"></div>
+                </section>
 
-            <!-- Main Content Area -->
-            <main class="checklist-content" id="checklistMainContent">
-                <!-- Content Injected via JS -->
-            </main>
+                <section class="workroom-panel workroom-tasks-panel">
+                    <div class="workroom-panel-header">
+                        <h3>Deliverable Tasks</h3>
+                        <button class="btn-accent tiny" id="workroomAddTaskBtn">+ Add Task</button>
+                    </div>
+                    <div class="checklist-progress workroom-progress">
+                        <div class="checklist-progress-info">
+                            <span class="checklist-progress-count" id="workroomTaskProgressCount">0/0</span>
+                            <span>completed</span>
+                        </div>
+                        <div class="checklist-progress-bar">
+                            <div class="checklist-progress-fill" id="workroomTaskProgressFill"></div>
+                        </div>
+                    </div>
+                    <div id="workroomTasksContainer" class="workroom-tasks-container"></div>
+                </section>
+
+                <section class="workroom-panel workroom-deliverable-notes-panel">
+                    <div class="workroom-panel-header">
+                        <h3>Deliverable Notes</h3>
+                    </div>
+                    <textarea id="workroomDeliverableNotesTextarea" class="workroom-deliverable-notes-textarea"
+                        placeholder="Add notes for this deliverable..."></textarea>
+                </section>
+            </div>
+
+            <div class="workroom-right-column">
+                <section class="workroom-panel workroom-general-notes-panel">
+                    <div class="workroom-panel-header">
+                        <h3>General Notes</h3>
+                    </div>
+                    <div class="workroom-notes-controls">
+                        <div id="workroomNotesTabs" class="workroom-notes-tabs"></div>
+                        <button class="icon-btn mini" id="workroomAddNotePageBtn" aria-label="Add notes page"
+                            title="Add notes page">+</button>
+                    </div>
+                    <textarea id="workroomGeneralNotesTextarea" class="workroom-general-notes-textarea"
+                        placeholder="Add notes for the selected notes page..."></textarea>
+                </section>
+            </div>
         </div>
     </dialog>
 

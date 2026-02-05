@@ -746,15 +746,14 @@ main {
 }
 
 .actions-stack {
-  display: flex;
-  flex-direction: row;
+  display: grid;
+  grid-template-columns: repeat(3, 32px);
+  grid-auto-rows: 32px;
   gap: 0.5rem;
-  align-items: center;
+  align-content: flex-start;
   justify-content: flex-start;
-  height: 100%;
-  width: 100%;
-  margin-top: 0;
-  margin-bottom: 0;
+  width: max-content;
+  margin: 0;
 }
 
 /* Remove any potential shadows on action buttons to prevent "group glow" */
@@ -780,6 +779,7 @@ main {
 
 .row .actions .btn.icon-only {
   width: 32px;
+  height: 32px;
   padding: 0;
   align-self: center;
 }
@@ -5520,4 +5520,318 @@ input.input-warning {
   gap: 1rem;
   min-height: 300px;
   text-align: center;
+}
+
+/* ===== Project Workroom Modal ===== */
+.workroom-modal[open] {
+  display: flex;
+  flex-direction: column;
+  width: min(96vw, 1320px);
+  height: 90vh;
+  border-radius: var(--radius-lg);
+  background: var(--modal-bg);
+  border: 1px solid var(--glass-border);
+  padding: 0;
+  overflow: hidden;
+  box-shadow: var(--shadow-md);
+}
+
+.workroom-modal::backdrop {
+  background: var(--backdrop-bg);
+  backdrop-filter: blur(4px);
+}
+
+.workroom-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  background: var(--header-bg);
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.workroom-title-group {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.workroom-modal-title h2 {
+  margin: 0;
+  font-size: 1.2rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.workroom-select-wrapper {
+  min-width: 340px;
+  max-width: 620px;
+}
+
+.workroom-select-wrapper select {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text);
+}
+
+.workroom-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 0.95fr);
+  gap: 1rem;
+  flex: 1;
+  min-height: 0;
+  padding: 1rem;
+  overflow: hidden;
+}
+
+.workroom-left-column {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-width: 0;
+  overflow-y: auto;
+  padding-right: 0.15rem;
+}
+
+.workroom-right-column {
+  min-width: 0;
+  display: flex;
+}
+
+.workroom-panel {
+  background: var(--bg-secondary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  padding: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  min-height: 0;
+}
+
+.workroom-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.workroom-panel-header h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.workroom-checklist-panel {
+  min-height: 260px;
+}
+
+.workroom-tasks-panel {
+  min-height: 200px;
+}
+
+.workroom-deliverable-notes-panel {
+  min-height: 170px;
+}
+
+.workroom-general-notes-panel {
+  flex: 1;
+}
+
+.workroom-checklist-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.workroom-checklist-tabs {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex: 1;
+  flex-wrap: wrap;
+  min-height: 34px;
+}
+
+.workroom-checklist-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  padding: 0.3rem 0.45rem;
+  cursor: pointer;
+  max-width: 260px;
+}
+
+.workroom-checklist-tab:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.workroom-checklist-tab.active {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+.workroom-checklist-tab-label {
+  font-size: 0.78rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workroom-checklist-tab-badge {
+  font-size: 0.7rem;
+  opacity: 0.75;
+}
+
+.workroom-checklist-remove {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+}
+
+.workroom-checklist-add select {
+  min-width: 150px;
+  max-width: 220px;
+  width: 100%;
+  padding: 0.36rem 0.5rem;
+  font-size: 0.82rem;
+  border: 1px dashed var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: var(--input-bg);
+  color: var(--text);
+}
+
+.workroom-progress {
+  margin: 0;
+}
+
+.workroom-checklist-items,
+.workroom-tasks-container {
+  max-height: 240px;
+  overflow-y: auto;
+  padding-right: 0.2rem;
+}
+
+.workroom-deliverable-notes-textarea,
+.workroom-general-notes-textarea {
+  width: 100%;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: var(--input-bg);
+  color: var(--text);
+  padding: 0.75rem;
+  line-height: 1.45;
+}
+
+.workroom-deliverable-notes-textarea {
+  min-height: 120px;
+  resize: vertical;
+}
+
+.workroom-notes-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.workroom-notes-tabs {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  flex: 1;
+  min-height: 34px;
+}
+
+.workroom-note-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  padding: 0.3rem 0.45rem;
+  cursor: pointer;
+  max-width: 230px;
+}
+
+.workroom-note-tab:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.workroom-note-tab.active {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+.workroom-note-tab-label {
+  font-size: 0.78rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workroom-note-tab-remove {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+}
+
+.workroom-general-notes-textarea {
+  flex: 1;
+  min-height: 420px;
+  resize: none;
+}
+
+@media (max-width: 1200px) {
+  .workroom-modal[open] {
+    width: min(98vw, 1320px);
+    height: 92vh;
+  }
+
+  .workroom-body {
+    grid-template-columns: 1fr;
+    overflow-y: auto;
+  }
+
+  .workroom-left-column {
+    overflow: visible;
+    padding-right: 0;
+  }
+
+  .workroom-right-column {
+    min-height: 320px;
+  }
+
+  .workroom-general-notes-textarea {
+    min-height: 260px;
+  }
+
+  .workroom-select-wrapper {
+    min-width: 220px;
+    max-width: 100%;
+  }
 }

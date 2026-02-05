@@ -80,6 +80,8 @@ const TRASH_ICON_PATH =
 // Checklist Icons
 const CHECKLIST_ICON_PATH =
   "M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM7 10h2v7H7zm4-3h2v10h-2zm4 6h2v4h-2z";
+const WORKROOM_ICON_PATH =
+  "M3 5c0-1.1.9-2 2-2h6v4h2V3h6c1.1 0 2 .9 2 2v4H3V5zm0 6h18v8c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2v-8zm7 2v2h4v-2h-4z";
 
 const CHECK_ICON_PATH =
   "M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z";
@@ -5598,9 +5600,9 @@ function render() {
       }),
       createIconButton({
         className: "btn icon-only",
-        title: "Checklist",
-        ariaLabel: "Apply checklist",
-        path: CHECKLIST_ICON_PATH,
+        title: "Project Workroom",
+        ariaLabel: "Open project workroom",
+        path: WORKROOM_ICON_PATH,
         onClick: () => openChecklistModal(idx),
       }),
       createIconButton({
@@ -6583,53 +6585,73 @@ document.getElementById("addChecklistItemBtn")?.addEventListener("click", () => 
 
 // ===================== CHECKLIST MODAL FUNCTIONS =====================
 
-// ===================== CHECKLIST MODAL FUNCTIONS =====================
-
-let activeChecklistView = 'tasks'; // 'tasks', 'notes', or instanceId
+let activeChecklistView = null;
 
 // Checklist modal state
 let checklistModalState = {
   appliedTabs: [], // { instanceId, checklistId, instanceIndex }
-  activeTabIndex: 0,
+  activeInstanceId: null,
 };
 
-function initChecklistModalTabs(project, deliverableIndex) {
-  // Get or create applied checklists for this deliverable
+function getActiveWorkroomContext() {
+  const project = db[activeChecklistProject];
+  if (!project) return { project: null, deliverables: [], deliverable: null };
   const deliverables = getProjectDeliverables(project);
-  const deliverable = deliverables[deliverableIndex];
+  const deliverableIndex = Number(activeChecklistDeliverable);
+  const deliverable =
+    Number.isInteger(deliverableIndex) && deliverableIndex >= 0
+      ? deliverables[deliverableIndex] || null
+      : null;
+  return { project, deliverables, deliverable };
+}
 
-  if (!deliverable) return;
+function initChecklistModalTabs(project, deliverableIndex) {
+  const deliverables = getProjectDeliverables(project);
+  const resolvedIndex = Number(deliverableIndex);
+  const deliverable =
+    Number.isInteger(resolvedIndex) && resolvedIndex >= 0
+      ? deliverables[resolvedIndex] || null
+      : null;
 
-  if (!deliverable.appliedChecklists) {
+  checklistModalState.appliedTabs = [];
+  if (!deliverable) {
+    checklistModalState.activeInstanceId = null;
+    return;
+  }
+
+  if (!Array.isArray(deliverable.appliedChecklists)) {
     deliverable.appliedChecklists = [];
   }
 
-  checklistModalState.appliedTabs = deliverable.appliedChecklists.map((instance, index) => ({
-    instanceId: instance.instanceId,
-    checklistId: instance.checklistId,
-    instanceIndex: index,
-  }));
-
-  if (checklistModalState.appliedTabs.length === 0) {
-    // Auto-add default checklist
-    const defaultChecklist = checklistsDb.checklists.find(c => c.isDefault);
+  if (deliverable.appliedChecklists.length === 0) {
+    const defaultChecklist =
+      checklistsDb.checklists.find((c) => c.isDefault) || checklistsDb.checklists[0];
     if (defaultChecklist) {
-      const instance = {
+      deliverable.appliedChecklists.push({
         instanceId: generateChecklistInstanceId(),
         checklistId: defaultChecklist.id,
         completedItems: [],
         itemNotes: {},
-      };
-      deliverable.appliedChecklists.push(instance);
-      save(); // Save the new instance
-
-      checklistModalState.appliedTabs = [{
-        instanceId: instance.instanceId,
-        checklistId: instance.checklistId,
-        instanceIndex: 0,
-      }];
+      });
+      save();
     }
   }
+
+  checklistModalState.appliedTabs = deliverable.appliedChecklists.map(
+    (instance, instanceIndex) => ({
+      instanceId: instance.instanceId,
+      checklistId: instance.checklistId,
+      instanceIndex,
+    })
+  );
+
+  const hasActive = checklistModalState.appliedTabs.some(
+    (tab) => tab.instanceId === checklistModalState.activeInstanceId
+  );
+  if (!hasActive) {
+    checklistModalState.activeInstanceId = checklistModalState.appliedTabs[0]?.instanceId || null;
+  }
+  activeChecklistView = checklistModalState.activeInstanceId;
 }
 
 function openChecklistModal(projectIndex) {
@@ -6638,722 +6660,273 @@ function openChecklistModal(projectIndex) {
 
   activeChecklistProject = projectIndex;
   activeChecklistDeliverable = null;
-  activeChecklistView = 'tasks';
+  checklistModalState.activeInstanceId = null;
+  activeChecklistView = null;
 
-  // Set project name in modal (though mostly handled by header now)
-  // document.getElementById("checklistProjectName").textContent = project.name || "Untitled Project";
-
-  // Populate deliverables dropdown
   populateChecklistDeliverableSelect(project);
-
-  // Show modal
   document.getElementById("checklistModal").showModal();
 }
 
 function populateChecklistDeliverableSelect(project) {
   const select = document.getElementById("checklistDeliverableSelect");
-  select.innerHTML = "";
+  if (!select) return;
 
+  select.innerHTML = "";
   const deliverables = getProjectDeliverables(project);
 
   if (deliverables.length === 0) {
     select.innerHTML = '<option value="">No deliverables found</option>';
+    select.disabled = true;
+    activeChecklistDeliverable = -1;
+    checklistModalState.appliedTabs = [];
+    checklistModalState.activeInstanceId = null;
+    renderProjectWorkroom();
     return;
   }
 
+  select.disabled = false;
   deliverables.forEach((deliverable, index) => {
-    const option = el("option", {
-      value: index,
-      textContent: `${deliverable.name || "Untitled"}${deliverable.due ? " (Due: " + humanDate(deliverable.due) + ")" : ""}`,
-    });
-    select.appendChild(option);
+    select.appendChild(
+      el("option", {
+        value: String(index),
+        textContent: `${deliverable.name || "Untitled"}${
+          deliverable.due ? " (Due: " + humanDate(deliverable.due) + ")" : ""
+        }`,
+      })
+    );
   });
 
-  // Select primary deliverable by default
-  const primaryIndex = deliverables.findIndex(d => d.id === project.overviewDeliverableId);
-  if (primaryIndex >= 0) {
-    select.value = primaryIndex;
-    activeChecklistDeliverable = primaryIndex;
-  } else if (deliverables.length > 0) {
-    select.value = 0;
-    activeChecklistDeliverable = 0;
-  }
+  const primaryIndex = deliverables.findIndex((d) => d.id === project.overviewDeliverableId);
+  activeChecklistDeliverable = primaryIndex >= 0 ? primaryIndex : 0;
+  select.value = String(activeChecklistDeliverable);
 
-  // Initialize Data
   initChecklistModalTabs(project, activeChecklistDeliverable);
-
-  // Render Layout
-  renderChecklistSidebar();
-  renderChecklistContent();
+  renderProjectWorkroom();
 }
 
-document.getElementById("checklistDeliverableSelect")?.addEventListener("change", (e) => {
-  const project = db[activeChecklistProject];
-  if (!project) return;
+function renderProjectWorkroom() {
+  renderWorkroomChecklistPanel();
+  renderWorkroomTasksPanel();
+  renderWorkroomDeliverableNotesPanel();
+  renderWorkroomGeneralNotesPanel();
+}
 
-  activeChecklistDeliverable = e.target.value;
+function renderWorkroomChecklistPanel() {
+  const itemsContainer = document.getElementById("workroomChecklistItems");
+  if (!itemsContainer) return;
 
-  // Re-init tabs for new deliverable
-  initChecklistModalTabs(project, activeChecklistDeliverable);
+  renderWorkroomChecklistTabs();
 
-  // Refresh view
-  renderChecklistSidebar();
-  renderChecklistContent();
-});
+  const { deliverable } = getActiveWorkroomContext();
+  if (!deliverable) {
+    itemsContainer.innerHTML = "<div class='chk-empty-state'>Select a deliverable to view checklists.</div>";
+    setWorkroomChecklistProgress(0, 0);
+    return;
+  }
 
-// --- View Switching ---
+  if (!checklistModalState.appliedTabs.length) {
+    itemsContainer.innerHTML =
+      "<div class='chk-empty-state'>No checklists applied. Use the add checklist dropdown.</div>";
+    setWorkroomChecklistProgress(0, 0);
+    return;
+  }
 
-window.switchChecklistView = function (viewName) {
-  activeChecklistView = viewName;
-  renderChecklistSidebar();
-  renderChecklistContent();
-};
+  const activeTab =
+    checklistModalState.appliedTabs.find(
+      (tab) => tab.instanceId === checklistModalState.activeInstanceId
+    ) || checklistModalState.appliedTabs[0];
 
-function renderChecklistSidebar() {
-  // Update Static Links
-  const tasksBtn = document.querySelector('.chk-nav-item[data-view="tasks"]');
-  const notesBtn = document.querySelector('.chk-nav-item[data-view="notes"]');
+  checklistModalState.activeInstanceId = activeTab.instanceId;
+  activeChecklistView = activeTab.instanceId;
 
-  if (tasksBtn) tasksBtn.classList.toggle('active', activeChecklistView === 'tasks');
-  if (notesBtn) notesBtn.classList.toggle('active', activeChecklistView === 'notes');
+  const instance = deliverable.appliedChecklists?.[activeTab.instanceIndex];
+  const checklist = getChecklistById(activeTab.checklistId);
+  if (!instance || !checklist) {
+    itemsContainer.innerHTML = "<div class='chk-empty-state'>Checklist instance not found.</div>";
+    setWorkroomChecklistProgress(0, 0);
+    return;
+  }
 
-  // Render Applied Checklists
-  const container = document.getElementById("checklistAppliedTabsContainer");
-  container.innerHTML = "";
+  renderWorkroomChecklistItems(itemsContainer, instance, checklist, activeTab.instanceIndex);
+}
 
-  checklistModalState.appliedTabs.forEach((tab, index) => {
+function renderWorkroomChecklistTabs() {
+  const tabsContainer = document.getElementById("workroomChecklistTabs");
+  const addSelect = document.getElementById("workroomChecklistAddSelect");
+  if (!tabsContainer || !addSelect) return;
+
+  tabsContainer.innerHTML = "";
+
+  const { deliverable } = getActiveWorkroomContext();
+  if (!deliverable) {
+    addSelect.disabled = true;
+    addSelect.innerHTML = '<option value="">+ Add Checklist...</option>';
+    return;
+  }
+
+  checklistModalState.appliedTabs.forEach((tab, tabIndex) => {
     const checklist = getChecklistById(tab.checklistId);
-    if (!checklist) return;
-
-    const isActive = activeChecklistView === tab.instanceId;
-
-    // Count items
-    const project = db[activeChecklistProject];
-    const deliverables = getProjectDeliverables(project);
-    const deliverable = deliverables[activeChecklistDeliverable];
-    const instance = deliverable?.appliedChecklists?.[tab.instanceIndex];
+    const instance = deliverable.appliedChecklists?.[tab.instanceIndex];
     const completedCount = instance?.completedItems?.length || 0;
-    const totalCount = checklist.items?.length || 0;
+    const totalCount = checklist?.items?.length || 0;
+    const isActive = tab.instanceId === checklistModalState.activeInstanceId;
 
-    const row = el("div", { className: "chk-nav-tab-row" });
-
-    const btn = el("button", {
-      className: `chk-nav-item ${isActive ? "active" : ""}`,
-      style: "width: 100%;", // take mostly all space
-      onclick: () => switchChecklistView(tab.instanceId)
+    const tabBtn = el("button", {
+      className: `workroom-checklist-tab ${isActive ? "active" : ""}`,
+      type: "button",
+      onclick: () => {
+        checklistModalState.activeInstanceId = tab.instanceId;
+        activeChecklistView = tab.instanceId;
+        renderWorkroomChecklistPanel();
+      },
     });
+    tabBtn.appendChild(
+      el("span", {
+        className: "workroom-checklist-tab-label",
+        textContent: checklist?.name || "Checklist",
+      })
+    );
+    tabBtn.appendChild(
+      el("span", {
+        className: "workroom-checklist-tab-badge",
+        textContent: `${completedCount}/${totalCount}`,
+      })
+    );
 
-    // Icon + Text
-    btn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg> ${checklist.name}`;
-
-    // Badge inside button
-    const badge = el("span", {
-      style: "margin-left: auto; font-size: 0.75em; opacity: 0.7;",
-      textContent: `${completedCount}/${totalCount}`
-    });
-    btn.appendChild(badge);
-
-    // Remove Button (outside main click area but inside row)
     const removeBtn = el("button", {
-      className: "chk-nav-remove icon-btn mini",
-      title: "Remove Checklist",
-      style: "border:none; background:transparent; margin-left: -32px; z-index: 2;",
+      className: "workroom-checklist-remove icon-btn mini",
+      type: "button",
+      title: "Remove checklist",
+      "aria-label": "Remove checklist",
       onclick: (e) => {
-        e.preventDefault();
         e.stopPropagation();
-        if (confirm(`Remove "${checklist.name}"?`)) {
-          removeChecklistInstance(index);
+        if (confirm(`Remove "${checklist?.name || "checklist"}" from this deliverable?`)) {
+          removeChecklistInstance(tabIndex);
         }
-      }
+      },
     });
-    // Override style for icon button in sidebar
-    removeBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`;
-
-    // Structure: [ Button (fills space) ] [Remove (overlay)]
-    // To make remove button work nicely without layout shift, maybe put it absolute?
-    // Let's simplified: Button and Remove Button side by side.
-
-    btn.style.flex = "1";
-    removeBtn.style.marginLeft = "0"; // reset
-    removeBtn.style.width = "24px";
-    removeBtn.style.height = "24px";
-
-    // If we want the hover effect, keep them in same container
-    const wrapper = el("div", {
-      className: `chk-nav-item ${isActive ? "active" : ""}`,
-      style: "padding: 0; gap:0; overflow: hidden;"
-    });
-
-    // Start over on button styling to nest properly
-    btn.className = ""; // clear default class
-    btn.style.cssText = "flex: 1; text-align: left; background: transparent; border: none; padding: 0.75rem 1rem; color: inherit; cursor: pointer; display: flex; align-items: center; gap: 0.75rem;";
-
-    wrapper.appendChild(btn);
-
-    // Wrapper click triggers btn click logic
-    // But we need to separate the remove button
-    const removeContainer = el("div", {
-      className: "chk-nav-remove",
-      style: "padding-right: 0.5rem; display: flex;"
-    });
-
-    removeBtn.className = "icon-btn mini";
-    removeBtn.style.border = "none";
-    removeContainer.appendChild(removeBtn);
-
-    wrapper.appendChild(removeContainer);
-
-    container.appendChild(wrapper);
+    removeBtn.textContent = "x";
+    tabBtn.appendChild(removeBtn);
+    tabsContainer.appendChild(tabBtn);
   });
 
-  populateChecklistAddSelect();
+  populateWorkroomChecklistAddSelect();
+  addSelect.disabled = false;
+  addSelect.onchange = (e) => {
+    const checklistId = e.target.value;
+    if (!checklistId) return;
+    addWorkroomChecklistInstance(checklistId);
+    e.target.value = "";
+  };
+}
+
+function populateWorkroomChecklistAddSelect() {
+  const select = document.getElementById("workroomChecklistAddSelect");
+  if (!select) return;
+
+  const currentIds = checklistModalState.appliedTabs.map((tab) => tab.checklistId);
+  select.innerHTML = '<option value="">+ Add Checklist...</option>';
+
+  checklistsDb.checklists.forEach((checklist) => {
+    if (currentIds.includes(checklist.id)) return;
+    select.appendChild(
+      el("option", {
+        value: checklist.id,
+        textContent: checklist.name,
+      })
+    );
+  });
+}
+
+function addWorkroomChecklistInstance(checklistId) {
+  const { project, deliverable } = getActiveWorkroomContext();
+  if (!project || !deliverable) return;
+
+  if (!Array.isArray(deliverable.appliedChecklists)) {
+    deliverable.appliedChecklists = [];
+  }
+  if (deliverable.appliedChecklists.some((instance) => instance.checklistId === checklistId)) {
+    toast("Checklist already added to this deliverable.");
+    return;
+  }
+
+  const instance = {
+    instanceId: generateChecklistInstanceId(),
+    checklistId,
+    completedItems: [],
+    itemNotes: {},
+  };
+  deliverable.appliedChecklists.push(instance);
+  save();
+
+  initChecklistModalTabs(project, activeChecklistDeliverable);
+  checklistModalState.activeInstanceId = instance.instanceId;
+  activeChecklistView = instance.instanceId;
+  renderWorkroomChecklistPanel();
 }
 
 function removeChecklistInstance(tabIndex) {
   const tab = checklistModalState.appliedTabs[tabIndex];
   if (!tab) return;
 
-  const project = db[activeChecklistProject];
-  const deliverables = getProjectDeliverables(project);
-  const deliverable = deliverables[activeChecklistDeliverable];
+  const { project, deliverable } = getActiveWorkroomContext();
+  if (!project || !deliverable || !Array.isArray(deliverable.appliedChecklists)) return;
 
-  if (deliverable && deliverable.appliedChecklists) {
-    deliverable.appliedChecklists.splice(tab.instanceIndex, 1);
-    save();
-  }
-
-  // Switch view if we were on this tab
-  if (activeChecklistView === tab.instanceId) {
-    activeChecklistView = 'tasks';
-  }
-
-  initChecklistModalTabs(project, activeChecklistDeliverable);
-  renderChecklistSidebar();
-  renderChecklistContent();
-}
-
-
-function renderChecklistContent() {
-  const main = document.getElementById("checklistMainContent");
-  main.innerHTML = "";
-
-  if (activeChecklistView === 'tasks') {
-    renderGeneralTasksView(main);
-  } else if (activeChecklistView === 'notes') {
-    renderNotesView(main);
-  } else {
-    // It's a checklist instance
-    renderChecklistInstanceView(main, activeChecklistView);
-  }
-}
-
-// --- Specific Views ---
-
-function renderGeneralTasksView(container) {
-  // Header
-  const header = el("div", { className: "chk-content-header" });
-  header.innerHTML = `
-        <div class="chk-content-title">
-            <h3>General Tasks</h3>
-            <div class="chk-content-subtitle">Ad-hoc tasks for this deliverable</div>
-        </div>
-        <div class="inline" style="gap: 0.5rem">
-            <button class="btn-accent tiny" id="chkAddTaskBtn">+ Add Task</button>
-        </div>
-    `;
-
-  // Body
-  const body = el("div", { className: "chk-content-body" });
-
-  // Progress
-  const progress = el("div", { className: "checklist-progress" });
-  progress.innerHTML = `
-        <div class="checklist-progress-info">
-            <span class="checklist-progress-count" id="taskProgressCount">0/0</span>
-            <span>completed</span>
-        </div>
-        <div class="checklist-progress-bar">
-            <div class="checklist-progress-fill" id="taskProgressFill"></div>
-        </div>
-    `;
-
-  const list = el("div", {
-    id: "checklistTasksContainer",
-    className: "checklist-tasks-container"
-  });
-
-  body.append(progress, list);
-  container.append(header, body);
-
-  // Logic
-  // Re-attach listener for Add Button
-  header.querySelector('#chkAddTaskBtn').addEventListener('click', () => {
-    const project = db[activeChecklistProject];
-    const deliverables = getProjectDeliverables(project);
-    const deliverable = deliverables[activeChecklistDeliverable];
-    if (!deliverable) return;
-    if (!deliverable.tasks) deliverable.tasks = [];
-
-    deliverable.tasks.push({ text: "New task", done: false, link: "", link2: "" });
-    save();
-    // Re-render ONLY the tasks list to avoid full layout flash? 
-    // For now full re-render is fine or just re-call renderInternal
-    renderGeneralTasksInternal(project, activeChecklistDeliverable);
-
-    // Focus new item
-    setTimeout(() => {
-      const inputs = list.querySelectorAll(".checklist-task-text-input");
-      if (inputs.length > 0) {
-        inputs[inputs.length - 1].focus();
-        inputs[inputs.length - 1].select();
-      }
-    }, 50);
-  });
-
-  renderGeneralTasksInternal(db[activeChecklistProject], activeChecklistDeliverable);
-}
-
-function renderGeneralTasksInternal(project, deliverableIndex) {
-  // Reuse existing logic but targeting the new container ID
-  // We can call the old function if we monkey-patch elements, 
-  // OR allow the old function to take a container arg.
-  // Let's assume we modify the old function 'renderChecklistTasks' or just inline it here for cleanliness.
-
-  // INLINED renderChecklistTasks logic
-  const container = document.getElementById("checklistTasksContainer");
-  if (!container) return;
-  container.innerHTML = "";
-
-  const deliverables = getProjectDeliverables(project);
-  const deliverable = deliverables[deliverableIndex];
-
-  if (!deliverable || !deliverable.tasks || deliverable.tasks.length === 0) {
-    container.innerHTML = `
-          <div class="chk-empty-state">
-            <p>No tasks yet</p>
-            <button class="btn ghost tiny" onclick="document.getElementById('chkAddTaskBtn').click()">Create your first task</button>
-          </div>`;
-    updateTaskProgress(0, 0);
-    return;
-  }
-
-  deliverable.tasks.forEach((task, taskIndex) => {
-    const row = el("div", {
-      className: `checklist-task-row ${task.done ? "checklist-task-done" : ""}`,
-    });
-
-    // ... (Keep existing drag/check/input logic) ...
-    // Simplification for brevity in this response, ideally we keep the rich features
-
-    // Checkbox
-    const checkLabel = el("label", { className: "custom-check" });
-    const checkbox = el("input", {
-      type: "checkbox",
-      checked: task.done || false,
-      onchange: () => {
-        task.done = checkbox.checked;
-        save();
-        renderGeneralTasksInternal(project, deliverableIndex);
-      },
-    });
-    checkLabel.append(checkbox, el("span", { className: "checkmark" }));
-
-    // Input
-    const textInput = el("input", {
-      type: "text",
-      className: "checklist-task-text-input",
-      value: task.text || "",
-      placeholder: "Task description...",
-      oninput: (e) => {
-        task.text = e.target.value;
-        debouncedSave();
-      },
-      onkeydown: (e) => {
-        if (e.key === "Enter") {
-          // Add new task
-          deliverable.tasks.splice(taskIndex + 1, 0, { text: "", done: false });
-          save();
-          renderGeneralTasksInternal(project, deliverableIndex);
-          setTimeout(() => {
-            const inputs = container.querySelectorAll(".checklist-task-text-input");
-            if (inputs[taskIndex + 1]) inputs[taskIndex + 1].focus();
-          }, 10);
-        } else if (e.key === "Backspace" && !e.target.value) {
-          // Remove task
-          deliverable.tasks.splice(taskIndex, 1);
-          save();
-          renderGeneralTasksInternal(project, deliverableIndex);
-        }
-      }
-    });
-
-    // Remove
-    const removeBtn = el("button", {
-      className: "checklist-task-remove",
-      textContent: "×",
-      onclick: () => {
-        deliverable.tasks.splice(taskIndex, 1);
-        save();
-        renderGeneralTasksInternal(project, deliverableIndex);
-      }
-    });
-
-    row.append(checkLabel, textInput, removeBtn);
-    container.appendChild(row);
-  });
-
-  const doneCount = deliverable.tasks.filter(t => t.done).length;
-  updateTaskProgress(doneCount, deliverable.tasks.length);
-}
-
-function updateTaskProgress(done, total) {
-  const countEl = document.getElementById("taskProgressCount");
-  const fillEl = document.getElementById("taskProgressFill");
-  if (countEl) countEl.textContent = `${done}/${total}`;
-  if (fillEl) fillEl.style.width = total > 0 ? `${(done / total) * 100}%` : "0%";
-}
-
-function renderNotesView(container) {
-  const header = el("div", { className: "chk-content-header" });
-  header.innerHTML = `
-        <div class="chk-content-title">
-            <h3>Notes</h3>
-            <div class="chk-content-subtitle">Freeform notes for this deliverable</div>
-        </div>
-    `;
-
-  const body = el("div", { className: "chk-content-body" });
-  const notesContainer = el("div", { id: "checklistNotesContainer", className: "checklist-notes-container", style: "border:none; background: transparent; padding:0;" });
-
-  body.appendChild(notesContainer);
-  container.append(header, body);
-
-  // Logic
-  renderChecklistNotes(db[activeChecklistProject], activeChecklistDeliverable);
-}
-
-function renderChecklistNotes(project, deliverableIndex) {
-  const container = document.getElementById("checklistNotesContainer");
-  if (!container) return;
-  container.innerHTML = "";
-
-  if (!project) return;
-  const deliverables = getProjectDeliverables(project);
-  const deliverable = deliverables[deliverableIndex];
-  if (!deliverable) return;
-
-  const notesTextarea = el("textarea", {
-    className: "checklist-notes-textarea",
-    placeholder: "Add notes for this deliverable...",
-    rows: 4,
-    value: deliverable.notes || "",
-  });
-
-  notesTextarea.addEventListener("input", () => {
-    deliverable.notes = notesTextarea.value;
-    debouncedSave();
-    autoResizeTextarea(notesTextarea);
-  });
-
-  notesTextarea.addEventListener("blur", () => {
-    deliverable.notes = notesTextarea.value;
-    save();
-  });
-
-  container.appendChild(notesTextarea);
-  requestAnimationFrame(() => autoResizeTextarea(notesTextarea));
-}
-
-function renderChecklistInstanceView(container, instanceId) {
-  // Find the tab data
-  const tabEntry = checklistModalState.appliedTabs.find(t => t.instanceId === instanceId);
-  if (!tabEntry) {
-    container.innerHTML = "<div class='chk-empty-state'>Checklist not found</div>";
-    return;
-  }
-
-  const checklist = getChecklistById(tabEntry.checklistId);
-
-  // Header
-  const header = el("div", { className: "chk-content-header" });
-  header.innerHTML = `
-        <div class="chk-content-title">
-            <h3>${checklist.name}</h3>
-            <div class="chk-content-subtitle">Applied checklist</div>
-        </div>
-        <div class="inline">
-             <button class="btn ghost tiny" id="chkResetBtn">Reset</button>
-        </div>
-    `;
-
-  // Body
-  const body = el("div", { className: "chk-content-body" });
-  // Progress
-  const progress = el("div", { className: "checklist-progress" });
-  progress.innerHTML = `
-        <div class="checklist-progress-info">
-            <span class="checklist-progress-count" id="checklistProgressCount">0/0</span>
-            <span>completed</span>
-        </div>
-        <div class="checklist-progress-bar">
-            <div class="checklist-progress-fill" id="checklistProgressFill"></div>
-        </div>
-    `;
-
-  const list = el("div", { id: "checklistItemList", className: "checklist-item-list" });
-
-  body.append(progress, list);
-  container.append(header, body);
-
-  // Wire up Reset
-  header.querySelector("#chkResetBtn").onclick = () => {
-    if (confirm("Reset progress on this checklist?")) {
-      const proj = db[activeChecklistProject];
-      const dels = getProjectDeliverables(proj);
-      const del = dels[activeChecklistDeliverable];
-      const instance = del.appliedChecklists[tabEntry.instanceIndex];
-      instance.completedItems = [];
-      save();
-      renderChecklistInstanceInternal(instance, checklist);
-    }
-  };
-
-  // Internal Render
-  const proj = db[activeChecklistProject];
-  const dels = getProjectDeliverables(proj);
-  const del = dels[activeChecklistDeliverable];
-  const instance = del.appliedChecklists[tabEntry.instanceIndex];
-
-  renderChecklistInstanceInternal(instance, checklist);
-}
-
-function renderChecklistInstanceInternal(instance, checklist) {
-  const container = document.getElementById("checklistItemList");
-  if (!container) return;
-  container.innerHTML = "";
-
-  const completedItems = instance.completedItems || [];
-
-  checklist.items.forEach((item, index) => {
-    const isChecked = completedItems.includes(item.id);
-
-    const row = el("div", {
-      className: `checklist-modal-item ${isChecked ? "checked" : ""}`,
-      onclick: (e) => {
-        // Toggle check
-        if (e.target.tagName === 'TEXTAREA') return; // ignore clicks on notes
-
-        const idx = instance.completedItems.indexOf(item.id);
-        if (idx > -1) {
-          instance.completedItems.splice(idx, 1);
-        } else {
-          instance.completedItems.push(item.id);
-        }
-        save();
-        renderChecklistInstanceInternal(instance, checklist);
-        renderChecklistSidebar(); // update badge
-      }
-    });
-
-    const checkbox = el("input", {
-      type: "checkbox",
-      className: "checklist-modal-checkbox",
-      checked: isChecked,
-      onclick: (e) => e.stopPropagation(), // allow bubbling or handle here? Handle in row click
-      onchange: () => { } // handled by row click
-    });
-
-    const text = el("div", {
-      className: "checklist-modal-item-text",
-      textContent: item.text
-    });
-
-    row.append(checkbox, text);
-    container.appendChild(row);
-  });
-
-  // Update Progress
-  const countEl = document.getElementById("checklistProgressCount");
-  const fillEl = document.getElementById("checklistProgressFill");
-  const done = completedItems.length;
-  const total = checklist.items.length;
-  if (countEl) countEl.textContent = `${done}/${total}`;
-  if (fillEl) fillEl.style.width = total > 0 ? `${(done / total) * 100}%` : "0%";
-}
-
-function populateChecklistAddSelect() {
-  const select = document.getElementById("checklistAddSelect");
-  const currentIds = checklistModalState.appliedTabs.map(t => t.checklistId);
-
-  // Store current value
-  const currentValue = select.value;
-
-  select.innerHTML = '<option value="">+ Add Checklist...</option>';
-
-  checklistsDb.checklists.forEach((checklist) => {
-    // Only show checklists not already added
-    if (!currentIds.includes(checklist.id)) {
-      const option = el("option", {
-        value: checklist.id,
-        textContent: checklist.name,
-      });
-      select.appendChild(option);
-    }
-  });
-
-  // Restore value if still valid
-  if (currentValue && [...select.options].some(o => o.value === currentValue)) {
-    select.value = currentValue;
-  }
-}
-
-document.getElementById("checklistAddSelect")?.addEventListener("change", (e) => {
-  const checklistId = e.target.value;
-  if (!checklistId) return;
-
-  const project = db[activeChecklistProject];
-  const deliverables = getProjectDeliverables(project);
-  const deliverable = deliverables[activeChecklistDeliverable];
-
-  if (!deliverable) return;
-
-  if (!deliverable.appliedChecklists) {
-    deliverable.appliedChecklists = [];
-  }
-
-  // Add new checklist instance
-  const instance = {
-    instanceId: generateChecklistInstanceId(),
-    checklistId: checklistId,
-    completedItems: [],
-    itemNotes: {},
-  };
-
-  deliverable.appliedChecklists.push(instance);
+  deliverable.appliedChecklists.splice(tab.instanceIndex, 1);
   save();
 
-  // Reset select
-  e.target.value = "";
-
-  // Refresh tabs and switch to new one
   initChecklistModalTabs(project, activeChecklistDeliverable);
-  switchChecklistView(instance.instanceId);
-});
+  renderWorkroomChecklistPanel();
+}
 
-function renderChecklistModalItems() {
-  const container = document.getElementById("checklistItemList");
+function renderWorkroomChecklistItems(container, instance, checklist, instanceIndex) {
   container.innerHTML = "";
 
-  if (checklistModalState.appliedTabs.length === 0) {
-    container.innerHTML = `
-      <div class="checklist-empty-state">
-        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-          stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"></path>
-          <rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect>
-        </svg>
-        <p>No checklists applied</p>
-        <p class="empty-hint">Use the dropdown above to add a checklist</p>
-      </div>`;
-    updateChecklistProgress(0, 0);
+  const completedItems = Array.isArray(instance.completedItems) ? instance.completedItems : [];
+  const checklistItems = Array.isArray(checklist.items) ? checklist.items : [];
+
+  if (!checklistItems.length) {
+    container.innerHTML = "<div class='chk-empty-state'>This checklist has no items.</div>";
+    setWorkroomChecklistProgress(0, 0);
     return;
   }
 
-  const currentTab = checklistModalState.appliedTabs[checklistModalState.activeTabIndex];
-  if (!currentTab) return;
-
-  const checklist = getChecklistById(currentTab.checklistId);
-  if (!checklist) return;
-
-  // Get instance data
-  const project = db[activeChecklistProject];
-  const deliverables = getProjectDeliverables(project);
-  const deliverable = deliverables[activeChecklistDeliverable];
-  const instance = deliverable.appliedChecklists?.[currentTab.instanceIndex];
-
-  if (!instance) return;
-
-  const hideCompleted = document.getElementById("hideCompletedChecks")?.checked || false;
-
-  // Search filter
-  const searchRow = document.getElementById("checklistSearchRow");
-  const searchInput = document.getElementById("checklistSearchInput");
-  const query = (searchInput?.value || "").toLowerCase();
-
-  if (searchRow) {
-    searchRow.style.display = checklist.items.length >= 6 ? "" : "none";
-  }
-
-  let renderedCount = 0;
-  checklist.items.forEach((item) => {
-    const isCompleted = instance.completedItems?.includes(item.id);
-
-    if (hideCompleted && isCompleted) {
-      return; // Skip completed items if toggle is on
-    }
-
-    if (query && !item.text.toLowerCase().includes(query)) {
-      return; // Skip items not matching search
-    }
-
-    renderedCount++;
-
+  checklistItems.forEach((item) => {
+    const isCompleted = completedItems.includes(item.id);
     const row = el("div", {
       className: `checklist-modal-item ${isCompleted ? "checked" : ""}`,
-      onclick: () => {
-        toggleChecklistItem(currentTab.instanceIndex, item.id);
-      },
+      onclick: () => toggleWorkroomChecklistItem(instanceIndex, item.id),
     });
 
-    // Custom checkbox
     const checkLabel = el("label", { className: "custom-check" });
     checkLabel.addEventListener("click", (e) => e.stopPropagation());
     const checkbox = el("input", {
       type: "checkbox",
       checked: isCompleted,
-      onchange: () => {
-        toggleChecklistItem(currentTab.instanceIndex, item.id);
-      },
+      onchange: () => toggleWorkroomChecklistItem(instanceIndex, item.id),
     });
     const checkmarkSpan = el("span", { className: "checkmark" });
     checkLabel.append(checkbox, checkmarkSpan);
 
-    const text = el("span", {
-      className: "checklist-modal-item-text",
-      textContent: item.text,
-    });
-
-    row.append(checkLabel, text);
+    row.append(
+      checkLabel,
+      el("span", {
+        className: "checklist-modal-item-text",
+        textContent: item.text,
+      })
+    );
     container.appendChild(row);
   });
 
-  // Show empty search result
-  if (renderedCount === 0 && query) {
-    container.innerHTML = `<p class="muted tiny" style="text-align:center;padding:1rem">No items match "${query}"</p>`;
-  }
-
-  // Update checklist progress bar
-  const completedCount = instance.completedItems?.length || 0;
-  const totalCount = checklist.items?.length || 0;
-  updateChecklistProgress(completedCount, totalCount);
+  setWorkroomChecklistProgress(completedItems.length, checklistItems.length);
 }
 
-function updateChecklistProgress(done, total) {
-  const countEl = document.getElementById("checklistProgressCount");
-  const fillEl = document.getElementById("checklistProgressFill");
-  if (countEl) countEl.textContent = `${done}/${total}`;
-  if (fillEl) fillEl.style.width = total > 0 ? `${(done / total) * 100}%` : "0%";
-}
-
-function toggleChecklistItem(instanceIndex, itemId) {
-  const project = db[activeChecklistProject];
-  const deliverables = getProjectDeliverables(project);
-  const deliverable = deliverables[activeChecklistDeliverable];
-  const instance = deliverable.appliedChecklists?.[instanceIndex];
-
+function toggleWorkroomChecklistItem(instanceIndex, itemId) {
+  const { deliverable } = getActiveWorkroomContext();
+  const instance = deliverable?.appliedChecklists?.[instanceIndex];
   if (!instance) return;
 
-  if (!instance.completedItems) {
+  if (!Array.isArray(instance.completedItems)) {
     instance.completedItems = [];
   }
 
@@ -7365,63 +6938,285 @@ function toggleChecklistItem(instanceIndex, itemId) {
   }
 
   save();
-  renderChecklistModalItems();
-  renderChecklistModalTabs(); // Update badge counts
+  renderWorkroomChecklistPanel();
 }
 
-document.getElementById("hideCompletedChecks")?.addEventListener("change", () => {
-  renderChecklistModalItems();
-});
+function setWorkroomChecklistProgress(done, total) {
+  const countEl = document.getElementById("workroomChecklistProgressCount");
+  const fillEl = document.getElementById("workroomChecklistProgressFill");
+  if (countEl) countEl.textContent = `${done}/${total}`;
+  if (fillEl) fillEl.style.width = total > 0 ? `${(done / total) * 100}%` : "0%";
+}
 
-document.getElementById("resetChecklistProgressBtn")?.addEventListener("click", () => {
-  if (confirm("Reset all checklist progress? This will uncheck all items.")) {
-    const project = db[activeChecklistProject];
-    const deliverables = getProjectDeliverables(project);
-    const deliverable = deliverables[activeChecklistDeliverable];
+function renderWorkroomTasksPanel() {
+  const addTaskBtn = document.getElementById("workroomAddTaskBtn");
+  const container = document.getElementById("workroomTasksContainer");
+  if (!addTaskBtn || !container) return;
 
-    if (deliverable && deliverable.appliedChecklists) {
-      deliverable.appliedChecklists.forEach(instance => {
-        instance.completedItems = [];
-      });
-      save();
-      renderChecklistModalItems();
-      renderChecklistModalTabs(); // Update badge counts
-    }
+  const { deliverable } = getActiveWorkroomContext();
+  if (!deliverable) {
+    addTaskBtn.disabled = true;
+    addTaskBtn.onclick = null;
+    container.innerHTML = "<div class='chk-empty-state'>Select a deliverable to manage tasks.</div>";
+    setWorkroomTaskProgress(0, 0);
+    return;
   }
-});
 
-// Checklist search filter
-document.getElementById("checklistSearchInput")?.addEventListener("input", () => {
-  renderChecklistModalItems();
-});
+  addTaskBtn.disabled = false;
+  addTaskBtn.onclick = () => {
+    if (!Array.isArray(deliverable.tasks)) {
+      deliverable.tasks = [];
+    }
+    deliverable.tasks.push({ text: "New task", done: false, link: "", link2: "" });
+    save();
+    renderWorkroomTasksPanel();
+    setTimeout(() => {
+      const inputs = container.querySelectorAll(".checklist-task-text-input");
+      const last = inputs[inputs.length - 1];
+      if (last) {
+        last.focus();
+        last.select();
+      }
+    }, 20);
+  };
 
-// Hide completed tasks toggle
-document.getElementById("hideCompletedTasks")?.addEventListener("change", () => {
-  const project = db[activeChecklistProject];
-  if (project) renderChecklistTasks(project, activeChecklistDeliverable);
-});
+  if (!Array.isArray(deliverable.tasks) || deliverable.tasks.length === 0) {
+    container.innerHTML = "<div class='chk-empty-state'>No tasks yet.</div>";
+    setWorkroomTaskProgress(0, 0);
+    return;
+  }
 
-// Collapsible section headers
-document.querySelectorAll(".checklist-section-header").forEach(header => {
-  header.addEventListener("click", (e) => {
-    // Don't collapse when clicking buttons, inputs, or selects
-    if (e.target.closest("button, input, select")) return;
-    header.classList.toggle("collapsed");
-    const body = document.getElementById(header.dataset.collapseTarget);
-    if (body) body.classList.toggle("collapsed");
+  container.innerHTML = "";
+  deliverable.tasks.forEach((task, taskIndex) => {
+    const row = el("div", {
+      className: `checklist-task-row ${task.done ? "checklist-task-done" : ""}`,
+    });
+
+    const checkLabel = el("label", { className: "custom-check" });
+    const checkbox = el("input", {
+      type: "checkbox",
+      checked: !!task.done,
+      onchange: () => {
+        task.done = checkbox.checked;
+        save();
+        renderWorkroomTasksPanel();
+      },
+    });
+    checkLabel.append(checkbox, el("span", { className: "checkmark" }));
+
+    const textInput = el("input", {
+      type: "text",
+      className: "checklist-task-text-input",
+      value: task.text || "",
+      placeholder: "Task description...",
+      oninput: (e) => {
+        task.text = e.target.value;
+        debouncedSave();
+      },
+      onkeydown: (e) => {
+        if (e.key === "Enter") {
+          deliverable.tasks.splice(taskIndex + 1, 0, { text: "", done: false, link: "", link2: "" });
+          save();
+          renderWorkroomTasksPanel();
+          setTimeout(() => {
+            const inputs = container.querySelectorAll(".checklist-task-text-input");
+            if (inputs[taskIndex + 1]) inputs[taskIndex + 1].focus();
+          }, 20);
+        } else if (e.key === "Backspace" && !e.target.value) {
+          deliverable.tasks.splice(taskIndex, 1);
+          save();
+          renderWorkroomTasksPanel();
+        }
+      },
+    });
+
+    const removeBtn = el("button", {
+      className: "checklist-task-remove",
+      type: "button",
+      textContent: "x",
+      onclick: () => {
+        deliverable.tasks.splice(taskIndex, 1);
+        save();
+        renderWorkroomTasksPanel();
+      },
+    });
+
+    row.append(checkLabel, textInput, removeBtn);
+    container.appendChild(row);
   });
+
+  const completed = deliverable.tasks.filter((task) => task.done).length;
+  setWorkroomTaskProgress(completed, deliverable.tasks.length);
+}
+
+function setWorkroomTaskProgress(done, total) {
+  const countEl = document.getElementById("workroomTaskProgressCount");
+  const fillEl = document.getElementById("workroomTaskProgressFill");
+  if (countEl) countEl.textContent = `${done}/${total}`;
+  if (fillEl) fillEl.style.width = total > 0 ? `${(done / total) * 100}%` : "0%";
+}
+
+function renderWorkroomDeliverableNotesPanel() {
+  const notesTextarea = document.getElementById("workroomDeliverableNotesTextarea");
+  if (!notesTextarea) return;
+
+  const { deliverable } = getActiveWorkroomContext();
+  if (!deliverable) {
+    notesTextarea.value = "";
+    notesTextarea.disabled = true;
+    notesTextarea.placeholder = "Select a deliverable to view notes.";
+    notesTextarea.oninput = null;
+    notesTextarea.onblur = null;
+    return;
+  }
+
+  notesTextarea.disabled = false;
+  notesTextarea.placeholder = "Add notes for this deliverable...";
+  notesTextarea.value = deliverable.notes || "";
+  notesTextarea.oninput = () => {
+    deliverable.notes = notesTextarea.value;
+    debouncedSave();
+    autoResizeTextarea(notesTextarea);
+  };
+  notesTextarea.onblur = () => {
+    deliverable.notes = notesTextarea.value;
+    save();
+  };
+  requestAnimationFrame(() => autoResizeTextarea(notesTextarea));
+}
+
+function ensureActiveNoteTabSelection() {
+  if (!Array.isArray(noteTabs) || noteTabs.length === 0) {
+    noteTabs = ["General"];
+  }
+  if (!activeNoteTab || !noteTabs.includes(activeNoteTab)) {
+    activeNoteTab = noteTabs[0];
+  }
+  if (!notesDb || typeof notesDb !== "object") {
+    notesDb = {};
+  }
+  noteTabs.forEach((tab) => {
+    if (typeof notesDb[tab] !== "string") {
+      notesDb[tab] = notesDb[tab] || "";
+    }
+  });
+}
+
+function syncMainNotesFromWorkroom() {
+  updateActiveNoteTextarea();
+  const mainNotesTextarea = document.getElementById("notesTextarea");
+  if (mainNotesTextarea && activeNoteTab) {
+    mainNotesTextarea.value = notesDb[activeNoteTab] || "";
+  }
+}
+
+function renderWorkroomGeneralNotesPanel() {
+  const tabsContainer = document.getElementById("workroomNotesTabs");
+  const addBtn = document.getElementById("workroomAddNotePageBtn");
+  const notesTextarea = document.getElementById("workroomGeneralNotesTextarea");
+  if (!tabsContainer || !addBtn || !notesTextarea) return;
+
+  ensureActiveNoteTabSelection();
+  tabsContainer.innerHTML = "";
+
+  noteTabs.forEach((tabName) => {
+    const tabBtn = el("button", {
+      className: `workroom-note-tab ${tabName === activeNoteTab ? "active" : ""}`,
+      type: "button",
+      onclick: () => {
+        activeNoteTab = tabName;
+        renderWorkroomGeneralNotesPanel();
+        renderNoteTabs();
+        renderNoteSearchResults();
+      },
+    });
+    tabBtn.appendChild(
+      el("span", {
+        className: "workroom-note-tab-label",
+        textContent: tabName,
+      })
+    );
+
+    const removeBtn = el("button", {
+      className: "workroom-note-tab-remove icon-btn mini",
+      type: "button",
+      title: "Delete page",
+      "aria-label": "Delete page",
+      onclick: (e) => {
+        e.stopPropagation();
+        if (confirm(`Permanently delete page "${tabName}"?`)) {
+          const idx = noteTabs.indexOf(tabName);
+          if (idx > -1) {
+            noteTabs.splice(idx, 1);
+            delete notesDb[tabName];
+            activeNoteTab = noteTabs[Math.max(0, idx - 1)] || null;
+            ensureActiveNoteTabSelection();
+            saveNotes();
+            renderWorkroomGeneralNotesPanel();
+            renderNoteTabs();
+            renderNoteSearchResults();
+          }
+        }
+      },
+    });
+    removeBtn.textContent = "x";
+    tabBtn.appendChild(removeBtn);
+    tabsContainer.appendChild(tabBtn);
+  });
+
+  addBtn.onclick = () => {
+    const name = prompt("Enter name for new page:");
+    if (!name || !name.trim()) return;
+    const trimmed = name.trim();
+    if (noteTabs.includes(trimmed)) {
+      toast("Page name already exists.");
+      return;
+    }
+    noteTabs.push(trimmed);
+    notesDb[trimmed] = "";
+    activeNoteTab = trimmed;
+    saveNotes();
+    renderWorkroomGeneralNotesPanel();
+    renderNoteTabs();
+    renderNoteSearchResults();
+  };
+
+  notesTextarea.disabled = !activeNoteTab;
+  notesTextarea.placeholder = activeNoteTab
+    ? `Enter notes for ${activeNoteTab}...`
+    : "Create a page to begin.";
+  notesTextarea.value = activeNoteTab ? notesDb[activeNoteTab] || "" : "";
+
+  notesTextarea.oninput = () => {
+    if (!activeNoteTab) return;
+    notesDb[activeNoteTab] = notesTextarea.value;
+    debouncedSaveNotes();
+    syncMainNotesFromWorkroom();
+  };
+  notesTextarea.onblur = () => {
+    if (!activeNoteTab) return;
+    notesDb[activeNoteTab] = notesTextarea.value;
+    saveNotes();
+    syncMainNotesFromWorkroom();
+  };
+}
+
+document.getElementById("checklistDeliverableSelect")?.addEventListener("change", (e) => {
+  const project = db[activeChecklistProject];
+  if (!project) return;
+
+  activeChecklistDeliverable = Number(e.target.value);
+  initChecklistModalTabs(project, activeChecklistDeliverable);
+  renderProjectWorkroom();
 });
 
 // Close modal handler
 document.getElementById("checklistModal")?.addEventListener("close", () => {
-  // Clean up state
   activeChecklistProject = null;
   activeChecklistDeliverable = null;
+  activeChecklistView = null;
   checklistModalState.appliedTabs = [];
-  checklistModalState.activeTabIndex = 0;
-  // Reset search input
-  const searchInput = document.getElementById("checklistSearchInput");
-  if (searchInput) searchInput.value = "";
+  checklistModalState.activeInstanceId = null;
 });
 
 // Close button handler
@@ -7432,7 +7227,7 @@ document.getElementById("checklistModalCloseBtn")?.addEventListener("click", (e)
 
 // Make functions globally available
 window.openChecklistModal = openChecklistModal;
-
+window.switchChecklistView = () => {};
 // ===================== BUNDLE / PLUGIN MANAGER =====================
 
 // Fetch description from specific GitHub RAW url based on bundle name

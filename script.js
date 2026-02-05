@@ -7215,6 +7215,12 @@ document.getElementById("checklistModal")?.addEventListener("close", () => {
   if (searchInput) searchInput.value = "";
 });
 
+// Close button handler
+document.getElementById("checklistModalCloseBtn")?.addEventListener("click", (e) => {
+  e.stopPropagation();
+  document.getElementById("checklistModal").close();
+});
+
 // Make functions globally available
 window.openChecklistModal = openChecklistModal;
 

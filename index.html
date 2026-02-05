@@ -194,7 +194,7 @@
         }
 
         /* ===== Checklist Modal Styles ===== */
-        .checklist-modal {
+        .checklist-modal[open] {
             width: 90vw;
             max-width: 1000px;
             height: 90vh;
@@ -452,6 +452,7 @@
         .checklist-progress {
             margin: 0.75rem 0;
         }
+
         .checklist-progress-info {
             display: flex;
             align-items: center;
@@ -460,10 +461,12 @@
             font-size: 12px;
             color: var(--muted);
         }
+
         .checklist-progress-count {
             font-weight: 600;
             color: var(--accent);
         }
+
         .checklist-progress-bar {
             width: 100%;
             height: 6px;
@@ -471,6 +474,7 @@
             border-radius: 3px;
             overflow: hidden;
         }
+
         .checklist-progress-fill {
             height: 100%;
             background: linear-gradient(90deg, var(--accent) 0%, var(--accent-hover, var(--accent)) 100%);
@@ -478,6 +482,7 @@
             border-radius: 3px;
             width: 0%;
         }
+
         .checklist-tab-badge {
             font-size: 10px;
             font-weight: 600;
@@ -487,6 +492,7 @@
             border-radius: 8px;
             margin-left: 2px;
         }
+
         .checklist-tab-btn.active .checklist-tab-badge {
             background: var(--accent-dim);
             color: var(--accent);
@@ -503,12 +509,14 @@
             align-items: center;
             justify-content: center;
         }
+
         .custom-check input {
             position: absolute;
             opacity: 0;
             width: 0;
             height: 0;
         }
+
         .custom-check .checkmark {
             position: absolute;
             inset: 0;
@@ -517,10 +525,12 @@
             background: var(--input-bg);
             transition: all 0.2s ease;
         }
-        .custom-check input:checked + .checkmark {
+
+        .custom-check input:checked+.checkmark {
             background: var(--accent);
             border-color: var(--accent);
         }
+
         .custom-check .checkmark::after {
             content: "";
             position: absolute;
@@ -533,9 +543,11 @@
             transform: rotate(45deg) scale(0);
             transition: transform 0.15s ease;
         }
-        .custom-check input:checked + .checkmark::after {
+
+        .custom-check input:checked+.checkmark::after {
             transform: rotate(45deg) scale(1);
         }
+
         .custom-check:hover .checkmark {
             border-color: var(--accent);
         }
@@ -548,15 +560,18 @@
             border-radius: var(--radius-sm);
             border: 1px dashed var(--glass-border);
         }
+
         .checklist-empty-state svg {
             margin-bottom: 0.5rem;
             opacity: 0.4;
             color: var(--accent);
         }
+
         .checklist-empty-state p {
             margin: 0;
             font-size: 13px;
         }
+
         .checklist-empty-state .empty-hint {
             font-size: 11px;
             margin-top: 0.25rem;
@@ -565,16 +580,38 @@
 
         /* ===== Row Animations ===== */
         @keyframes slideInRow {
-            from { opacity: 0; transform: translateY(-8px); }
-            to { opacity: 1; transform: translateY(0); }
+            from {
+                opacity: 0;
+                transform: translateY(-8px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
+
         @keyframes slideOutRow {
-            from { opacity: 1; transform: translateX(0); max-height: 80px; }
-            to { opacity: 0; transform: translateX(20px); max-height: 0; padding-top: 0; padding-bottom: 0; margin: 0; }
+            from {
+                opacity: 1;
+                transform: translateX(0);
+                max-height: 80px;
+            }
+
+            to {
+                opacity: 0;
+                transform: translateX(20px);
+                max-height: 0;
+                padding-top: 0;
+                padding-bottom: 0;
+                margin: 0;
+            }
         }
+
         .checklist-task-row {
             animation: slideInRow 0.25s ease-out forwards;
         }
+
         .checklist-task-row.removing {
             animation: slideOutRow 0.2s ease-in forwards;
             overflow: hidden;
@@ -589,30 +626,36 @@
             padding: 0.5rem 0;
             user-select: none;
         }
+
         .checklist-section-title {
             display: flex;
             align-items: center;
             gap: 0.5rem;
             color: var(--text);
         }
+
         .checklist-section-title svg {
             color: var(--accent);
             flex-shrink: 0;
         }
+
         .collapse-chevron {
             color: var(--muted);
             transition: transform 0.25s ease;
             flex-shrink: 0;
         }
+
         .checklist-section-header.collapsed .collapse-chevron {
             transform: rotate(-90deg);
         }
+
         .checklist-section-body {
             overflow: hidden;
             transition: max-height 0.3s ease, opacity 0.3s ease;
             max-height: 2000px;
             opacity: 1;
         }
+
         .checklist-section-body.collapsed {
             max-height: 0;
             opacity: 0;
@@ -631,17 +674,21 @@
             flex-shrink: 0;
             transition: opacity 0.2s;
         }
+
         .checklist-task-drag-handle:active {
             cursor: grabbing;
         }
+
         .checklist-task-row:hover .checklist-task-drag-handle {
             opacity: 0.6;
         }
+
         .checklist-task-row.dragging {
             opacity: 0.4;
             background: var(--accent-dim);
             border-color: var(--accent);
         }
+
         .checklist-task-row.drag-over {
             border-top: 2px solid var(--accent);
         }
@@ -650,10 +697,12 @@
         .checklist-search-row {
             margin-bottom: 0.75rem;
         }
+
         .checklist-search-row .checklist-search-wrap {
             position: relative;
             width: 100%;
         }
+
         .checklist-search-row .checklist-search-icon {
             position: absolute;
             left: 10px;
@@ -662,6 +711,7 @@
             color: var(--muted);
             pointer-events: none;
         }
+
         .checklist-search-row input {
             width: 100%;
             padding: 0.5rem 0.75rem 0.5rem 2rem;
@@ -673,9 +723,11 @@
             outline: none;
             transition: border-color 0.2s;
         }
+
         .checklist-search-row input:focus {
             border-color: var(--accent);
         }
+
         .checklist-search-row input::placeholder {
             color: var(--muted);
             opacity: 0.6;
@@ -2365,7 +2417,7 @@
                 <p class="tiny muted" id="checklistProjectName">Project Name</p>
             </div>
             <div class="inline">
-                <button class="btn ghost" onclick="closeDlg('checklistModal')">Close</button>
+                <button class="btn ghost" id="checklistModalCloseBtn">Close</button>
             </div>
         </div>
         <div class="checklist-modal-body">
@@ -2396,7 +2448,9 @@
                         </label>
                         <button class="btn-accent tiny" id="checklistAddTaskBtn">+ Add Task</button>
                         <svg class="collapse-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none"
-                            stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                            stroke="currentColor" stroke-width="2">
+                            <polyline points="6 9 12 15 18 9"></polyline>
+                        </svg>
                     </div>
                 </div>
                 <div class="checklist-section-body" id="checklistTasksBody">
@@ -2431,7 +2485,9 @@
                     </div>
                     <div class="inline">
                         <svg class="collapse-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none"
-                            stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                            stroke="currentColor" stroke-width="2">
+                            <polyline points="6 9 12 15 18 9"></polyline>
+                        </svg>
                     </div>
                 </div>
                 <div class="checklist-section-body" id="checklistNotesBody">
@@ -2455,7 +2511,9 @@
                     </div>
                     <div class="inline">
                         <svg class="collapse-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none"
-                            stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                            stroke="currentColor" stroke-width="2">
+                            <polyline points="6 9 12 15 18 9"></polyline>
+                        </svg>
                     </div>
                 </div>
                 <div class="checklist-section-body" id="checklistChecklistsBody">
@@ -2492,12 +2550,14 @@
 
                         <div class="checklist-search-row" id="checklistSearchRow" style="display:none">
                             <div class="checklist-search-wrap">
-                                <svg class="checklist-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none"
-                                    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <svg class="checklist-search-icon" width="14" height="14" viewBox="0 0 24 24"
+                                    fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                    stroke-linejoin="round">
                                     <circle cx="11" cy="11" r="8"></circle>
                                     <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
                                 </svg>
-                                <input id="checklistSearchInput" type="search" placeholder="Filter checklist items..." />
+                                <input id="checklistSearchInput" type="search"
+                                    placeholder="Filter checklist items..." />
                             </div>
                         </div>
 

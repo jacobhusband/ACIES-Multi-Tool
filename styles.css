@@ -52,6 +52,7 @@
   /* Metrics */
   --header-height: 64px;
   --toolbar-height: 0px;
+  --projects-filters-height: 0px;
   --sticky-gap: 0px;
   --radius-sm: 6px;
   --radius: 12px;
@@ -622,6 +623,61 @@ main {
   border-color: var(--glass-border);
   color: var(--muted);
   background: var(--bg-secondary);
+}
+
+#projects-panel .panel.stack {
+  gap: 0.625rem;
+}
+
+#projects-panel .panel-toolbar {
+  margin-bottom: 0.5rem;
+  padding-top: 0.625rem;
+  padding-bottom: 0.625rem;
+}
+
+.projects-filter-controls {
+  position: sticky;
+  top: calc(var(--header-height) + var(--toolbar-height));
+  z-index: 40;
+  margin: 0 -1.5rem 0;
+  padding: 0.5rem 1.5rem 0.625rem;
+  background: var(--toolbar-bg);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.projects-filter-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem 1.5rem;
+  flex-wrap: wrap;
+}
+
+.projects-filter-group {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.projects-filter-group .filter-label {
+  margin: 0;
+  white-space: nowrap;
+}
+
+.projects-filter-controls .due-filter-group,
+.projects-filter-controls .status-filter-group {
+  gap: 0.4rem;
+}
+
+.projects-filter-controls .filter-chip {
+  padding: 3px 10px;
+}
+
+#projects-panel .projects-table th {
+  top: calc(var(--header-height) + var(--toolbar-height) + var(--projects-filters-height));
 }
 
 /* Table */
@@ -5665,6 +5721,52 @@ input.input-warning {
 
 .workroom-tools-panel {
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.workroom-cad-routing {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.1rem 0.05rem 0.3rem;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.workroom-cad-routing-label {
+  margin: 0;
+  font-size: 0.6rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.workroom-cad-routing-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem;
+}
+
+.workroom-cad-routing-btn {
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 0.62rem;
+  line-height: 1;
+  padding: 0.2rem 0.45rem;
+  cursor: pointer;
+}
+
+.workroom-cad-routing-btn:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.workroom-cad-routing-btn.active {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  color: var(--text);
 }
 
 .workroom-tools-list {
@@ -5672,9 +5774,11 @@ input.input-warning {
   flex-direction: column;
   gap: 0.3rem;
   overflow-y: auto;
+  overflow-x: hidden;
   min-height: 0;
   padding-right: 0.2rem;
   flex: 1;
+  min-width: 0;
 }
 
 .workroom-tool-item {
@@ -5687,6 +5791,9 @@ input.input-warning {
   background: var(--surface);
   padding: 0.24rem 0.28rem;
   min-height: 30px;
+  min-width: 0;
+  width: 100%;
+  overflow: hidden;
 }
 
 .workroom-tool-icon {
@@ -5710,6 +5817,8 @@ input.input-warning {
   min-height: 20px;
   padding: 0.08rem 0.38rem;
   font-size: 0.62rem;
+  flex-shrink: 0;
+  justify-self: end;
 }
 
 .workroom-tool-empty {
@@ -5724,10 +5833,15 @@ input.input-warning {
   color: var(--muted);
   font-size: 0.68rem;
   line-height: 1.25;
-  min-height: 1.05rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  min-height: calc(1.25em * 3);
+  max-height: calc(1.25em * 3);
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  overflow-x: hidden;
+  overflow-y: auto;
+  text-overflow: clip;
 }
 
 .workroom-tool-status.is-running {

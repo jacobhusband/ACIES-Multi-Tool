@@ -1246,7 +1246,8 @@ class Api:
                 },
                 'thawLayerOptions': {
                     'scanAllLayers': True
-                }
+                },
+                'workroomAutoSelectCadFiles': True
             }
 
     def save_user_settings(self, data):
@@ -2987,7 +2988,117 @@ TASK 3: LOAD TYPES
             'sheetName': sheet_name
         }
 
-    def run_publish_script(self):
+    def _normalize_launch_context(self, launch_context):
+        if isinstance(launch_context, dict):
+            return launch_context
+        return {}
+
+    def _primary_discipline_from_settings(self, settings):
+        discipline = settings.get('discipline', 'Electrical')
+        if isinstance(discipline, list):
+            discipline = next((d for d in discipline if d), 'Electrical')
+        discipline = str(discipline or 'Electrical').strip()
+        discipline_map = {
+            'electrical': 'Electrical',
+            'mechanical': 'Mechanical',
+            'plumbing': 'Plumbing',
+            'general': 'Electrical'
+        }
+        return discipline_map.get(discipline.lower(), 'Electrical')
+
+    def _resolve_workroom_context(self, settings, launch_context):
+        context = self._normalize_launch_context(launch_context)
+        source = str(context.get('source') or '').strip().lower()
+        project_path = str(context.get('projectPath') or '').strip()
+        requested_discipline = str(context.get('discipline') or '').strip()
+        discipline_map = {
+            'electrical': 'Electrical',
+            'mechanical': 'Mechanical',
+            'plumbing': 'Plumbing'
+        }
+        discipline = discipline_map.get(requested_discipline.lower())
+        if not discipline:
+            discipline = self._primary_discipline_from_settings(settings)
+        normalized_project_path = os.path.normpath(project_path) if project_path else ''
+        return {
+            'source': source,
+            'project_path': normalized_project_path,
+            'discipline': discipline
+        }
+
+    def _is_workroom_auto_select_enabled(self, settings, launch_context):
+        context = self._resolve_workroom_context(settings, launch_context)
+        if context.get('source') != 'workroom':
+            return False
+        return bool(settings.get('workroomAutoSelectCadFiles', True))
+
+    def _list_base_level_dwgs(self, folder_path):
+        if not folder_path or not os.path.isdir(folder_path):
+            return []
+        file_paths = []
+        try:
+            with os.scandir(folder_path) as entries:
+                for entry in entries:
+                    if entry.is_file() and entry.name.lower().endswith('.dwg'):
+                        file_paths.append(entry.path)
+        except Exception as e:
+            logging.warning(f"Failed to list DWGs in {folder_path}: {e}")
+            return []
+        file_paths.sort(key=lambda path: os.path.basename(path).lower())
+        return file_paths
+
+    def _write_files_list_temp(self, file_paths):
+        temp_file = tempfile.NamedTemporaryFile(
+            mode='w', suffix='.txt', delete=False, encoding='utf-8')
+        for path in file_paths:
+            temp_file.write(path + '\n')
+        temp_file.close()
+        return temp_file.name
+
+    def _resolve_workroom_auto_file_selection(self, settings, launch_context, tool_name):
+        if not self._is_workroom_auto_select_enabled(settings, launch_context):
+            return None
+        context = self._resolve_workroom_context(settings, launch_context)
+        project_path = context.get('project_path') or ''
+        discipline = context.get('discipline') or 'Electrical'
+        if not project_path:
+            logging.info(
+                f"{tool_name}: Workroom auto-select fallback to manual file picker (missing project path).")
+            return None
+        discipline_folder = os.path.join(project_path, discipline)
+        if not os.path.isdir(discipline_folder):
+            logging.info(
+                f"{tool_name}: Workroom auto-select fallback to manual file picker (missing folder: {discipline_folder}).")
+            return None
+        dwg_files = self._list_base_level_dwgs(discipline_folder)
+        if not dwg_files:
+            logging.info(
+                f"{tool_name}: Workroom auto-select fallback to manual file picker (no DWGs in {discipline_folder}).")
+            return None
+        files_list_path = self._write_files_list_temp(dwg_files)
+        logging.info(
+            f"{tool_name}: Auto-selected {len(dwg_files)} DWG(s) from {discipline_folder}.")
+        return {
+            'files_list_path': files_list_path,
+            'project_path': project_path,
+            'discipline': discipline,
+            'folder_path': discipline_folder,
+            'count': len(dwg_files)
+        }
+
+    def _resolve_workroom_arch_folder(self, settings, launch_context):
+        if not self._is_workroom_auto_select_enabled(settings, launch_context):
+            return ''
+        context = self._resolve_workroom_context(settings, launch_context)
+        project_path = context.get('project_path') or ''
+        if not project_path:
+            return ''
+        arch_folder = os.path.join(project_path, 'Arch')
+        if os.path.isdir(arch_folder):
+            return arch_folder
+        return ''
+
+    def run_publish_script(self, launch_context=None):
         """Runs the PlotDWGs.ps1 PowerShell script with progress updates."""
         script_path = os.path.join(BASE_DIR, "scripts", "PlotDWGs.ps1")
         if not os.path.exists(script_path):
@@ -3003,16 +3114,20 @@ TASK 3: LOAD TYPES
         def _ps_bool(value):
             return "1" if value else "0"
 
+        auto_selection = self._resolve_workroom_auto_file_selection(
+            settings, launch_context, 'run_publish_script')
         command = (
             f'powershell.exe -ExecutionPolicy Bypass -File "{script_path}" '
             f'-AcadCore "{acad_path}" '
             f'-AutoDetectPaperSize {_ps_bool(auto_detect)} '
             f'-ShrinkPercent {shrink_percent}'
         )
+        if auto_selection:
+            command += f' -FilesListPath "{auto_selection["files_list_path"]}"'
         self._run_script_with_progress(command, 'toolPublishDwgs')
         return {'status': 'success'}
 
-    def run_freeze_layers_script(self):
+    def run_freeze_layers_script(self, launch_context=None):
         """Runs the FreezeLayersDWGs.ps1 PowerShell script with progress updates."""
         script_path = os.path.join(BASE_DIR, "scripts", "FreezeLayersDWGs.ps1")
         if not os.path.exists(script_path):
@@ -3028,15 +3143,19 @@ TASK 3: LOAD TYPES
         def _ps_bool(value):
             return "1" if value else "0"
 
+        auto_selection = self._resolve_workroom_auto_file_selection(
+            settings, launch_context, 'run_freeze_layers_script')
         command = (
             f'powershell.exe -ExecutionPolicy Bypass -File "{script_path}" '
             f'-AcadCore "{acad_path}" '
             f'-ScanAllLayers {_ps_bool(scan_all)}'
         )
+        if auto_selection:
+            command += f' -FilesListPath "{auto_selection["files_list_path"]}"'
         self._run_script_with_progress(command, 'toolFreezeLayers')
         return {'status': 'success'}
 
-    def run_thaw_layers_script(self):
+    def run_thaw_layers_script(self, launch_context=None):
         """Runs the ThawLayersDWGs.ps1 PowerShell script with progress updates."""
         script_path = os.path.join(BASE_DIR, "scripts", "ThawLayersDWGs.ps1")
         if not os.path.exists(script_path):
@@ -3052,15 +3171,19 @@ TASK 3: LOAD TYPES
         def _ps_bool(value):
             return "1" if value else "0"
 
+        auto_selection = self._resolve_workroom_auto_file_selection(
+            settings, launch_context, 'run_thaw_layers_script')
         command = (
             f'powershell.exe -ExecutionPolicy Bypass -File "{script_path}" '
             f'-AcadCore "{acad_path}" '
             f'-ScanAllLayers {_ps_bool(scan_all)}'
         )
+        if auto_selection:
+            command += f' -FilesListPath "{auto_selection["files_list_path"]}"'
         self._run_script_with_progress(command, 'toolThawLayers')
         return {'status': 'success'}
 
-    def run_clean_xrefs_script(self):
+    def run_clean_xrefs_script(self, launch_context=None):
         """Runs the removeXREFPaths.ps1 PowerShell script with progress updates."""
         try:
             script_path = os.path.join(BASE_DIR, "scripts", "removeXREFPaths.ps1")
@@ -3075,10 +3198,22 @@ TASK 3: LOAD TYPES
             # Use pywebview file dialog to select DWG files
             window = webview.windows[0]
             print("DEBUG: Opening file dialog for DWG selection...")
+            dialog_kwargs = {
+                'allow_multiple': True,
+                'file_types': ('DWG Files (*.dwg)',)
+            }
+            arch_folder = self._resolve_workroom_arch_folder(
+                settings, launch_context)
+            if arch_folder:
+                dialog_kwargs['directory'] = arch_folder
+                logging.info(
+                    f"run_clean_xrefs_script: opening picker in Arch folder: {arch_folder}")
+            elif self._is_workroom_auto_select_enabled(settings, launch_context):
+                logging.info(
+                    "run_clean_xrefs_script: Arch folder not found, opening default file picker.")
             file_paths = window.create_file_dialog(
                 webview.FileDialog.OPEN,
-                allow_multiple=True,
-                file_types=('DWG Files (*.dwg)',)
+                **dialog_kwargs
             )
             print(f"DEBUG: File dialog returned: {file_paths}")
             if not file_paths:
@@ -3086,10 +3221,8 @@ TASK 3: LOAD TYPES
                 window.evaluate_js('window.updateToolStatus("toolCleanXrefs", "DONE")')
                 return {'status': 'cancelled'}
 
-            discipline = settings.get('discipline', 'Electrical')
-            if isinstance(discipline, list):
-                discipline = next((d for d in discipline if d), 'Electrical')
-            discipline = str(discipline or 'Electrical')
+            context = self._resolve_workroom_context(settings, launch_context)
+            discipline = context.get('discipline') or self._primary_discipline_from_settings(settings)
             discipline_short_map = {
                 'Electrical': 'E',
                 'Mechanical': 'M',

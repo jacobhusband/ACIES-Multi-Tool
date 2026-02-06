@@ -1,6 +1,7 @@
 param(
   [string]$AcadCore,
-  [string]$ScanAllLayers = "true"
+  [string]$ScanAllLayers = "true",
+  [string]$FilesListPath = ""
 )
 
 function Convert-ToBool {
@@ -55,6 +56,9 @@ if ([System.Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') {
   if ($AcadCore) { $argsList += @("-AcadCore", "`"$AcadCore`"") }
   if ($PSBoundParameters.ContainsKey('ScanAllLayers')) {
     $argsList += @("-ScanAllLayers", $ScanAllLayers)
+  }
+  if ($PSBoundParameters.ContainsKey('FilesListPath') -and $FilesListPath) {
+    $argsList += @("-FilesListPath", "`"$FilesListPath`"")
   }
   $child = Start-Process -FilePath $ps -ArgumentList $argsList -Wait -PassThru
   exit $child.ExitCode
@@ -154,8 +158,23 @@ function Show-DwgFileSelectionPrompt {
   return $null
 }
 
-$files = Show-DwgFileSelectionPrompt
-if (-not $files -or $files.Count -eq 0) { exit }
+$files = @()
+if (-not [string]::IsNullOrWhiteSpace($FilesListPath) -and (Test-Path $FilesListPath)) {
+  $files = Get-Content -Path $FilesListPath -Encoding UTF8 |
+    Where-Object { $_ -and $_.Trim() -and (Test-Path $_.Trim()) } |
+    ForEach-Object { $_.Trim() }
+  if ($files.Count -gt 0) {
+    Write-Host "PROGRESS: Using $($files.Count) DWG file(s) from auto-selected project folder."
+  }
+  else {
+    Write-Host "PROGRESS: Provided files list was empty. Opening file picker..."
+  }
+}
+
+if (-not $files -or $files.Count -eq 0) {
+  $files = Show-DwgFileSelectionPrompt
+  if (-not $files -or $files.Count -eq 0) { exit }
+}
 
 # ---------------- 3) PREP TOOL FOLDER ----------------
 if (-not (Test-Path $ToolDir)) { New-Item -ItemType Directory -Path $ToolDir | Out-Null }

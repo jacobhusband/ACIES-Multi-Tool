@@ -589,26 +589,32 @@
                             title="Projects help">?</button>
                     </div>
                 </div>
-                <div class="filter-controls">
-                    <div class="filter-label">Timeframe</div>
-                    <div class="due-filter-group" id="dueFilterGroup">
-                        <button class="filter-chip active" data-due-filter="all">All</button>
-                        <button class="filter-chip" data-due-filter="past">Past Weeks</button>
-                        <button class="filter-chip" data-due-filter="soon">This Week</button>
-                        <button class="filter-chip" data-due-filter="future">Upcoming Weeks</button>
-                    </div>
-                    <div class="filter-label" style="margin-top:0.5rem">Status</div>
-                    <div class="status-filter-group" id="statusFilterGroup">
-                        <button class="filter-chip active" data-filter="all">All</button>
-                        <button class="filter-chip" data-filter="incomplete">Incomplete</button>
-                        <button class="filter-chip" data-filter="Waiting">Waiting</button>
-                        <button class="filter-chip" data-filter="Working">Working</button>
-                        <button class="filter-chip" data-filter="Pending Review">Pending Review</button>
-                        <button class="filter-chip" data-filter="Complete">Complete</button>
-                        <button class="filter-chip" data-filter="Delivered">Delivered</button>
+                <div class="filter-controls projects-filter-controls" id="projectsFilterControls">
+                    <div class="projects-filter-row">
+                        <div class="projects-filter-group">
+                            <div class="filter-label">Timeframe</div>
+                            <div class="due-filter-group" id="dueFilterGroup">
+                                <button class="filter-chip active" data-due-filter="all">All</button>
+                                <button class="filter-chip" data-due-filter="past">Past Weeks</button>
+                                <button class="filter-chip" data-due-filter="soon">This Week</button>
+                                <button class="filter-chip" data-due-filter="future">Upcoming Weeks</button>
+                            </div>
+                        </div>
+                        <div class="projects-filter-group">
+                            <div class="filter-label">Status</div>
+                            <div class="status-filter-group" id="statusFilterGroup">
+                                <button class="filter-chip active" data-filter="all">All</button>
+                                <button class="filter-chip" data-filter="incomplete">Incomplete</button>
+                                <button class="filter-chip" data-filter="Waiting">Waiting</button>
+                                <button class="filter-chip" data-filter="Working">Working</button>
+                                <button class="filter-chip" data-filter="Pending Review">Pending Review</button>
+                                <button class="filter-chip" data-filter="Complete">Complete</button>
+                                <button class="filter-chip" data-filter="Delivered">Delivered</button>
+                            </div>
+                        </div>
                     </div>
                 </div>
-                <table class="table">
+                <table class="table projects-table">
                     <thead>
                         <tr>
                             <th class="cell-select">
@@ -1389,6 +1395,17 @@
                     </div>
                     <div class="tiny muted" style="margin-top: 0.35rem;">If unchecked, only the first selected DWG is
                         scanned for layers.</div>
+                </div>
+                <div class="col-12" style="margin-top: 0.6rem;">
+                    <label class="label">Project Workroom CAD Routing</label>
+                    <div class="stack" style="gap: 0.35rem;">
+                        <label class="radio-label"><input type="checkbox" id="settings_workroomAutoSelectCadFiles">
+                            Auto-select DWGs from project discipline folders when tools are launched in Project
+                            Workroom</label>
+                    </div>
+                    <div class="tiny muted" style="margin-top: 0.35rem;">On: Publish/Freeze/Thaw auto-select base-level
+                        DWGs from the active discipline folder. Prepare CAD DWG opens the picker at the Arch folder.
+                    </div>
                 </div>
             </div>
 
@@ -2273,6 +2290,7 @@
                     <div class="workroom-panel-header">
                         <h3>Tools</h3>
                     </div>
+                    <div id="workroomCadRouting" class="workroom-cad-routing" hidden></div>
                     <div id="workroomToolsList" class="workroom-tools-list"></div>
                     <div id="workroomToolStatus" class="workroom-tool-status" aria-live="polite">Ready.</div>
                 </section>

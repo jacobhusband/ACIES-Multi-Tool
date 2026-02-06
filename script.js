@@ -273,6 +273,50 @@ const DISCIPLINE_TO_FUNCTION = {
   Mechanical: "M",
   Plumbing: "P",
 };
+const WORKROOM_CAD_DISCIPLINES = ["Electrical", "Mechanical", "Plumbing"];
+const WORKROOM_CAD_TOOL_IDS = new Set([
+  "toolPublishDwgs",
+  "toolFreezeLayers",
+  "toolThawLayers",
+  "toolCleanXrefs",
+]);
+const WORKROOM_DISCIPLINE_KEYWORDS = {
+  Electrical: [
+    /\belectrical\b/gi,
+    /\bpanel\b/gi,
+    /\blighting\b/gi,
+    /\bcircuit\b/gi,
+    /\breceptacle\b/gi,
+    /\bswitchgear\b/gi,
+    /\btransformer\b/gi,
+    /\bbreaker\b/gi,
+  ],
+  Mechanical: [
+    /\bmechanical\b/gi,
+    /\bhvac\b/gi,
+    /\ba\/c\b/gi,
+    /\bac\b/gi,
+    /\brtu\b/gi,
+    /\bahu\b/gi,
+    /\bair handler\b/gi,
+    /\bduct\b/gi,
+    /\bsupply air\b/gi,
+    /\breturn air\b/gi,
+    /\bexhaust\b/gi,
+  ],
+  Plumbing: [
+    /\bplumbing\b/gi,
+    /\bplumb\b/gi,
+    /\bpipe\b/gi,
+    /\bpiping\b/gi,
+    /\bwater\b/gi,
+    /\bsanitary\b/gi,
+    /\bsewer\b/gi,
+    /\bwaste\b/gi,
+    /\bdrain\b/gi,
+    /\bvent\b/gi,
+  ],
+};
 const MAX_HOURS_PER_DAY = 8;
 const WFH_SUFFIX = " - WFH";
 const TIMESHEET_SUMMARY_DELIVERABLE_ID = "__summary__";
@@ -346,6 +390,13 @@ function normalizeDisciplineList(value) {
     return parts.length ? parts : ["Electrical"];
   }
   return ["Electrical"];
+}
+
+function getWorkroomAvailableDisciplines() {
+  const disciplines = normalizeDisciplineList(userSettings.discipline).filter((discipline) =>
+    WORKROOM_CAD_DISCIPLINES.includes(discipline)
+  );
+  return disciplines.length ? disciplines : ["Electrical"];
 }
 
 function getDisciplineFunction() {
@@ -3441,6 +3492,9 @@ function showDialog(dialogEl) {
 const updateStickyOffsets = () => {
   const header = document.querySelector(".app-header");
   const toolbar = document.querySelector("#projects-panel .panel-toolbar");
+  const projectsFilters = document.querySelector(
+    "#projects-panel .projects-filter-controls"
+  );
   if (header)
     document.documentElement.style.setProperty(
       "--header-height",
@@ -3450,6 +3504,11 @@ const updateStickyOffsets = () => {
     document.documentElement.style.setProperty(
       "--toolbar-height",
       `${toolbar.offsetHeight}px`
+    );
+  if (projectsFilters)
+    document.documentElement.style.setProperty(
+      "--projects-filters-height",
+      `${projectsFilters.offsetHeight}px`
     );
 };
 
@@ -3467,6 +3526,7 @@ let _aiMatchSnapshot = null;
 let currentSort = { key: "due", dir: "desc" };
 let statusFilter = "all";
 let dueFilter = "all";
+let pendingCadLaunchContext = null;
 
 const DEFAULT_CLEAN_DWG_OPTIONS = {
   stripXrefs: true,
@@ -3500,6 +3560,7 @@ let userSettings = {
   publishDwgOptions: { ...DEFAULT_PUBLISH_DWG_OPTIONS },
   freezeLayerOptions: { ...DEFAULT_FREEZE_LAYER_OPTIONS },
   thawLayerOptions: { ...DEFAULT_THAW_LAYER_OPTIONS },
+  workroomAutoSelectCadFiles: true,
 };
 let hideNonPrimary = true;
 let activeNoteTab = null;
@@ -3758,6 +3819,8 @@ async function loadUserSettings() {
       ...DEFAULT_THAW_LAYER_OPTIONS,
       ...(userSettings.thawLayerOptions || {}),
     };
+    userSettings.workroomAutoSelectCadFiles =
+      userSettings.workroomAutoSelectCadFiles !== false;
   } catch (e) {
     console.error("Failed to load settings:", e);
   }
@@ -3827,6 +3890,13 @@ function syncThawOptionsInputs() {
   setCheckboxValue("thaw_modal_scanAllLayers", thawOptions.scanAllLayers);
 }
 
+function syncWorkroomCadRoutingInputs() {
+  setCheckboxValue(
+    "settings_workroomAutoSelectCadFiles",
+    userSettings.workroomAutoSelectCadFiles !== false
+  );
+}
+
 async function populateSettingsModal() {
   document.getElementById("settings_userName").value =
     userSettings.userName || "";
@@ -3849,6 +3919,7 @@ async function populateSettingsModal() {
   syncPublishOptionsInputs();
   syncFreezeOptionsInputs();
   syncThawOptionsInputs();
+  syncWorkroomCadRoutingInputs();
 
   await refreshTimesheetsInfo();
 
@@ -4030,6 +4101,18 @@ function guessDeliverableName(legacy) {
   return "Deliverable";
 }
 
+function normalizeWorkroomCadDiscipline(value, fallback = "") {
+  const raw = String(value || "").trim();
+  const caseInsensitiveMatch = WORKROOM_CAD_DISCIPLINES.find(
+    (discipline) => discipline.toLowerCase() === raw.toLowerCase()
+  );
+  if (caseInsensitiveMatch) return caseInsensitiveMatch;
+  const fallbackMatch = WORKROOM_CAD_DISCIPLINES.find(
+    (discipline) => discipline.toLowerCase() === String(fallback || "").toLowerCase()
+  );
+  return fallbackMatch || "";
+}
+
 function normalizeDeliverable(deliverable = {}) {
   const out = {
     id: deliverable.id || createId("dlv"),
@@ -4046,6 +4129,10 @@ function normalizeDeliverable(deliverable = {}) {
       ? [...deliverable.statusTags]
       : [],
     status: deliverable.status || "",
+    workroomCadDiscipline: normalizeWorkroomCadDiscipline(
+      deliverable.workroomCadDiscipline,
+      ""
+    ),
   };
   migrateStatusFields(out);
   syncStatusArrays(out);
@@ -4067,6 +4154,7 @@ function createDeliverable(seed = {}) {
     statuses: seed.statuses || [],
     statusTags: seed.statusTags || [],
     status: seed.status || "",
+    workroomCadDiscipline: seed.workroomCadDiscipline || "",
   });
 }
 
@@ -6619,6 +6707,139 @@ function getActiveWorkroomContext() {
   return { project, deliverables, deliverable };
 }
 
+function getWorkroomDeliverableKeywordCorpus(deliverable) {
+  if (!deliverable) return "";
+  const taskText = Array.isArray(deliverable.tasks)
+    ? deliverable.tasks
+        .map((task) => {
+          if (!task) return "";
+          if (typeof task === "string") return task;
+          return task.text || "";
+        })
+        .join(" ")
+    : "";
+  return [deliverable.name || "", deliverable.notes || "", taskText]
+    .join(" ")
+    .toLowerCase();
+}
+
+function inferWorkroomCadDiscipline(deliverable, candidates = []) {
+  const options = candidates.filter((discipline) =>
+    WORKROOM_CAD_DISCIPLINES.includes(discipline)
+  );
+  if (!options.length) return "Electrical";
+  if (options.length === 1) return options[0];
+
+  const corpus = getWorkroomDeliverableKeywordCorpus(deliverable);
+  if (!corpus) return options[0];
+
+  let bestDiscipline = options[0];
+  let bestScore = -1;
+  let tie = false;
+
+  options.forEach((discipline) => {
+    const patterns = WORKROOM_DISCIPLINE_KEYWORDS[discipline] || [];
+    const score = patterns.reduce((total, pattern) => {
+      const matches = corpus.match(pattern);
+      return total + (matches ? matches.length : 0);
+    }, 0);
+    if (score > bestScore) {
+      bestScore = score;
+      bestDiscipline = discipline;
+      tie = false;
+    } else if (score === bestScore) {
+      tie = true;
+    }
+  });
+
+  if (bestScore <= 0 || tie) return options[0];
+  return bestDiscipline;
+}
+
+function ensureWorkroomCadDiscipline(deliverable, disciplines = []) {
+  const options = disciplines.length ? disciplines : getWorkroomAvailableDisciplines();
+  if (!options.length) return "Electrical";
+  if (!deliverable) return options[0];
+
+  const existing = normalizeWorkroomCadDiscipline(deliverable.workroomCadDiscipline, "");
+  if (existing && options.includes(existing)) return existing;
+
+  const inferred = inferWorkroomCadDiscipline(deliverable, options);
+  if (deliverable.workroomCadDiscipline !== inferred) {
+    deliverable.workroomCadDiscipline = inferred;
+    debouncedSave();
+  }
+  return inferred;
+}
+
+function renderWorkroomCadRoutingControl() {
+  const container = document.getElementById("workroomCadRouting");
+  if (!container) return;
+
+  const { deliverable } = getActiveWorkroomContext();
+  const disciplines = getWorkroomAvailableDisciplines();
+
+  if (!deliverable || disciplines.length <= 1) {
+    container.hidden = true;
+    container.innerHTML = "";
+    return;
+  }
+
+  const activeDiscipline = ensureWorkroomCadDiscipline(deliverable, disciplines);
+  container.hidden = false;
+  container.innerHTML = "";
+
+  container.appendChild(
+    el("p", {
+      className: "workroom-cad-routing-label",
+      textContent: "CAD Folder Discipline",
+    })
+  );
+
+  const group = el("div", {
+    className: "workroom-cad-routing-group",
+    role: "group",
+    "aria-label": "CAD folder discipline",
+  });
+
+  disciplines.forEach((discipline) => {
+    group.appendChild(
+      el("button", {
+        type: "button",
+        className: `workroom-cad-routing-btn ${discipline === activeDiscipline ? "active" : ""}`,
+        textContent: discipline,
+        title: `Route Workroom CAD tools to ${discipline} folder`,
+        "aria-pressed": String(discipline === activeDiscipline),
+        onclick: () => {
+          if (deliverable.workroomCadDiscipline === discipline) return;
+          deliverable.workroomCadDiscipline = discipline;
+          save();
+          renderWorkroomCadRoutingControl();
+        },
+      })
+    );
+  });
+
+  container.appendChild(group);
+}
+
+function buildWorkroomCadLaunchContext() {
+  const { project, deliverable } = getActiveWorkroomContext();
+  const disciplines = getWorkroomAvailableDisciplines();
+  const activeDiscipline = ensureWorkroomCadDiscipline(deliverable, disciplines);
+  return {
+    source: "workroom",
+    projectPath: String(project?.path || "").trim(),
+    discipline: activeDiscipline || disciplines[0] || "Electrical",
+  };
+}
+
+function consumePendingCadLaunchContext() {
+  const context = pendingCadLaunchContext;
+  pendingCadLaunchContext = null;
+  return context;
+}
+
 function initChecklistModalTabs(project, deliverableIndex) {
   const deliverables = getProjectDeliverables(project);
   const resolvedIndex = Number(deliverableIndex);
@@ -6799,6 +7020,10 @@ function triggerWorkroomTool(toolId) {
     toast("Selected tool is unavailable.");
     return;
   }
+  pendingCadLaunchContext = null;
+  if (WORKROOM_CAD_TOOL_IDS.has(toolId)) {
+    pendingCadLaunchContext = buildWorkroomCadLaunchContext();
+  }
   setWorkroomToolStatus({ toolId, message: "Starting...", phase: "running" });
   sourceCard.click();
 }
@@ -6806,6 +7031,7 @@ function triggerWorkroomTool(toolId) {
 function renderWorkroomToolsPanel() {
   const toolsList = document.getElementById("workroomToolsList");
   if (!toolsList) return;
+  renderWorkroomCadRoutingControl();
 
   const tools = getWorkroomVisibleTools();
   toolsList.innerHTML = "";
@@ -7380,6 +7606,7 @@ document.getElementById("checklistModal")?.addEventListener("close", () => {
   activeChecklistView = null;
   checklistModalState.appliedTabs = [];
   checklistModalState.activeInstanceId = null;
+  pendingCadLaunchContext = null;
   resetWorkroomToolStatus();
   const workroomSearchInput = document.getElementById("workroomNotesSearchInput");
   const workroomResults = document.getElementById("workroomNotesSearchResults");
@@ -9200,6 +9427,7 @@ function initTabbedInterfaces() {
       ensureBundlesRendered();
     } else if (tab === "projects") {
       render();
+      requestAnimationFrame(updateStickyOffsets);
     } else if (tab === "timesheets") {
       renderTimesheets();
     } else if (tab === "templates") {
@@ -9473,6 +9701,7 @@ function initEventListeners() {
   document
     .getElementById("toolPublishDwgs")
     .addEventListener("click", async (e) => {
+      const launchContext = consumePendingCadLaunchContext();
       if (e.currentTarget.classList.contains("running")) return;
       if (!userSettings.autocadPath) {
         await showAutocadSelectModal();
@@ -9480,12 +9709,17 @@ function initEventListeners() {
       }
       e.currentTarget.classList.add("running");
       window.updateToolStatus("toolPublishDwgs", "Initializing...");
-      await window.pywebview.api.run_publish_script();
+      if (launchContext) {
+        await window.pywebview.api.run_publish_script(launchContext);
+      } else {
+        await window.pywebview.api.run_publish_script();
+      }
     });
 
   document
     .getElementById("toolFreezeLayers")
     .addEventListener("click", async (e) => {
+      const launchContext = consumePendingCadLaunchContext();
       if (e.currentTarget.classList.contains("running")) return;
       if (!userSettings.autocadPath) {
         await showAutocadSelectModal();
@@ -9493,12 +9727,17 @@ function initEventListeners() {
       }
       e.currentTarget.classList.add("running");
       window.updateToolStatus("toolFreezeLayers", "Initializing...");
-      await window.pywebview.api.run_freeze_layers_script();
+      if (launchContext) {
+        await window.pywebview.api.run_freeze_layers_script(launchContext);
+      } else {
+        await window.pywebview.api.run_freeze_layers_script();
+      }
     });
 
   document
     .getElementById("toolThawLayers")
     .addEventListener("click", async (e) => {
+      const launchContext = consumePendingCadLaunchContext();
       if (e.currentTarget.classList.contains("running")) return;
       if (!userSettings.autocadPath) {
         await showAutocadSelectModal();
@@ -9506,12 +9745,17 @@ function initEventListeners() {
       }
       e.currentTarget.classList.add("running");
       window.updateToolStatus("toolThawLayers", "Initializing...");
-      await window.pywebview.api.run_thaw_layers_script();
+      if (launchContext) {
+        await window.pywebview.api.run_thaw_layers_script(launchContext);
+      } else {
+        await window.pywebview.api.run_thaw_layers_script();
+      }
     });
 
   document
     .getElementById("toolCleanXrefs")
     .addEventListener("click", async (e) => {
+      const launchContext = consumePendingCadLaunchContext();
       if (e.currentTarget.classList.contains("running")) return;
       if (!userSettings.autocadPath) {
         await showAutocadSelectModal();
@@ -9519,7 +9763,11 @@ function initEventListeners() {
       }
       e.currentTarget.classList.add("running");
       window.updateToolStatus("toolCleanXrefs", "Initializing...");
-      await window.pywebview.api.run_clean_xrefs_script();
+      if (launchContext) {
+        await window.pywebview.api.run_clean_xrefs_script(launchContext);
+      } else {
+        await window.pywebview.api.run_clean_xrefs_script();
+      }
     });
 
   const narrativeTemplateBtn = document.getElementById(
@@ -9982,6 +10230,17 @@ function initEventListeners() {
         debouncedSaveUserSettings();
       };
     });
+
+  const workroomAutoSelectCheckbox = document.getElementById(
+    "settings_workroomAutoSelectCadFiles"
+  );
+  if (workroomAutoSelectCheckbox) {
+    workroomAutoSelectCheckbox.onchange = (e) => {
+      userSettings.workroomAutoSelectCadFiles = e.target.checked;
+      syncWorkroomCadRoutingInputs();
+      debouncedSaveUserSettings();
+    };
+  }
 
   const cleanOptionBindings = [
     ["settings_clean_stripXrefs", "stripXrefs"],

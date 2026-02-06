@@ -1,7 +1,8 @@
 param(
   [string]$AcadCore,
   [string]$AutoDetectPaperSize = "true",
-  [int]$ShrinkPercent = 100
+  [int]$ShrinkPercent = 100,
+  [string]$FilesListPath = ""
 )
 
 function Convert-ToBool {
@@ -20,6 +21,11 @@ function Convert-ToBool {
 }
 
 $AutoDetectPaperSize = Convert-ToBool $AutoDetectPaperSize $true
+
+function Ensure-WinFormsAssemblies {
+  Add-Type -AssemblyName System.Windows.Forms
+  Add-Type -AssemblyName System.Drawing
+}
 
 # --- SCRIPT CONFIGURATION ---
 # Logic to find AutoCAD Core Console
@@ -81,6 +87,9 @@ if ([System.Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') {
   if ($PSBoundParameters.ContainsKey('ShrinkPercent')) {
     $argsList += @("-ShrinkPercent", $ShrinkPercent)
   }
+  if ($PSBoundParameters.ContainsKey('FilesListPath') -and $FilesListPath) {
+    $argsList += @("-FilesListPath", "`"$FilesListPath`"")
+  }
   Start-Process -FilePath $ps -ArgumentList $argsList -Wait
   exit
 }
@@ -91,20 +100,36 @@ if ([string]::IsNullOrEmpty($acadCore) -or -not (Test-Path $acadCore)) {
   exit 1
 }
 
-# --- Let the user select DWGs FIRST via a file explorer dialog ---
-Write-Host "PROGRESS: Waiting for user input..."
-Add-Type -AssemblyName System.Windows.Forms
-[System.Windows.Forms.Application]::EnableVisualStyles()
+Ensure-WinFormsAssemblies
 
-$dlg = New-Object System.Windows.Forms.OpenFileDialog
-$dlg.Title = "Select DWG file(s) to plot"
-$dlg.Filter = "DWG files (*.dwg)|*.dwg|All files (*.*)|*.*"
-$dlg.Multiselect = $true
-$dlg.InitialDirectory = [Environment]::GetFolderPath("Desktop")
-if ($dlg.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK -or -not $dlg.FileNames) {
-  Write-Host "PROGRESS: ERROR: No files selected."; exit
+# --- Resolve DWG files: prefer preselected list, otherwise prompt ---
+$files = @()
+if (-not [string]::IsNullOrWhiteSpace($FilesListPath) -and (Test-Path $FilesListPath)) {
+  $files = Get-Content -Path $FilesListPath -Encoding UTF8 |
+    Where-Object { $_ -and $_.Trim() -and (Test-Path $_.Trim()) } |
+    ForEach-Object { $_.Trim() }
+  if ($files.Count -gt 0) {
+    Write-Host "PROGRESS: Using $($files.Count) DWG file(s) from auto-selected project folder."
+  }
+  else {
+    Write-Host "PROGRESS: Provided files list was empty. Opening file picker..."
+  }
 }
-$files = $dlg.FileNames
+
+if (-not $files -or $files.Count -eq 0) {
+  Write-Host "PROGRESS: Waiting for user input..."
+  [System.Windows.Forms.Application]::EnableVisualStyles()
+
+  $dlg = New-Object System.Windows.Forms.OpenFileDialog
+  $dlg.Title = "Select DWG file(s) to plot"
+  $dlg.Filter = "DWG files (*.dwg)|*.dwg|All files (*.*)|*.*"
+  $dlg.Multiselect = $true
+  $dlg.InitialDirectory = [Environment]::GetFolderPath("Desktop")
+  if ($dlg.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK -or -not $dlg.FileNames) {
+    Write-Host "PROGRESS: ERROR: No files selected."; exit
+  }
+  $files = $dlg.FileNames
+}
 
 # --- Detect paper size from existing project PDFs ---
 $detectedPaperSize = ""

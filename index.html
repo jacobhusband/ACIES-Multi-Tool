@@ -2289,11 +2289,51 @@
                 <section class="workroom-panel workroom-tools-panel">
                     <div class="workroom-panel-header">
                         <h3>Tools</h3>
+                        <button type="button" class="icon-btn mini workroom-tools-settings-btn" id="workroomToolsSettingsBtn"
+                            aria-label="Project Workroom tool settings" title="Project Workroom tool settings">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="12" cy="12" r="3"></circle>
+                                <path
+                                    d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06A2 2 0 1 1 4.38 17l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82L4.21 7.2a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.08a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c0 .66.39 1.26 1 1.51H21a2 2 0 1 1 0 4h-.09c-.66 0-1.26.39-1.51 1z">
+                                </path>
+                            </svg>
+                        </button>
                     </div>
                     <div id="workroomCadRouting" class="workroom-cad-routing" hidden></div>
                     <div id="workroomToolsList" class="workroom-tools-list"></div>
                     <div id="workroomToolStatus" class="workroom-tool-status" aria-live="polite">Ready.</div>
                 </section>
+            </div>
+        </div>
+    </dialog>
+    <dialog id="workroomToolsSettingsDlg">
+        <div class="modal-header">
+            <div class="title">Project Workroom Tool Settings</div>
+            <button class="btn ghost" onclick="closeDlg('workroomToolsSettingsDlg')">Close</button>
+        </div>
+        <div class="modal-body stack tool-settings-body">
+            <div class="tool-settings-intro">
+                <div class="tool-settings-title">How this toggle works</div>
+                <p class="tiny muted">On means Workroom launches CAD tools with automatic DWG file selection by project
+                    path and discipline. Off keeps the normal manual file picker flow.</p>
+            </div>
+            <div class="tool-settings-list">
+                <div class="tool-setting">
+                    <div class="tool-setting-text">
+                        <div class="tool-setting-title">Auto select DWG files</div>
+                        <div class="tool-setting-desc">Applies to CAD tools launched from Project Workroom and reuses
+                            the same setting as the main Settings modal.</div>
+                    </div>
+                    <div class="tool-setting-control">
+                        <span class="toggle-label">Off</span>
+                        <label class="switch" aria-label="Auto select DWG files in Project Workroom">
+                            <input type="checkbox" id="workroom_modal_autoSelectCadFiles">
+                            <span class="slider"></span>
+                        </label>
+                        <span class="toggle-label">On</span>
+                    </div>
+                </div>
             </div>
         </div>
     </dialog>

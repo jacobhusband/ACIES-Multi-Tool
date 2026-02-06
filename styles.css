@@ -5703,6 +5703,18 @@ input.input-warning {
   text-transform: uppercase;
 }
 
+.workroom-tools-settings-btn {
+  flex-shrink: 0;
+}
+
+.workroom-tools-settings-btn svg {
+  pointer-events: none;
+}
+
+#workroomToolsSettingsDlg {
+  width: min(560px, 92vw);
+}
+
 .workroom-checklist-panel {
   min-height: 190px;
 }

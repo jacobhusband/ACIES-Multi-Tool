@@ -3891,10 +3891,12 @@ function syncThawOptionsInputs() {
 }
 
 function syncWorkroomCadRoutingInputs() {
+  const enabled = userSettings.workroomAutoSelectCadFiles !== false;
   setCheckboxValue(
     "settings_workroomAutoSelectCadFiles",
-    userSettings.workroomAutoSelectCadFiles !== false
+    enabled
   );
+  setCheckboxValue("workroom_modal_autoSelectCadFiles", enabled);
 }
 
 async function populateSettingsModal() {
@@ -7607,6 +7609,12 @@ document.getElementById("checklistModal")?.addEventListener("close", () => {
   checklistModalState.appliedTabs = [];
   checklistModalState.activeInstanceId = null;
   pendingCadLaunchContext = null;
+  const workroomToolsSettingsDlg = document.getElementById(
+    "workroomToolsSettingsDlg"
+  );
+  if (workroomToolsSettingsDlg?.open) {
+    workroomToolsSettingsDlg.close();
+  }
   resetWorkroomToolStatus();
   const workroomSearchInput = document.getElementById("workroomNotesSearchInput");
   const workroomResults = document.getElementById("workroomNotesSearchResults");
@@ -9465,6 +9473,18 @@ function initEventListeners() {
     });
   });
 
+  const workroomToolsSettingsBtn = document.getElementById(
+    "workroomToolsSettingsBtn"
+  );
+  if (workroomToolsSettingsBtn) {
+    workroomToolsSettingsBtn.onclick = (e) => {
+      e.stopPropagation();
+      syncWorkroomCadRoutingInputs();
+      const dlg = document.getElementById("workroomToolsSettingsDlg");
+      if (dlg && !dlg.open) dlg.showModal();
+    };
+  }
+
   const handleAppFocus = () => checkBundlesForUpdates({ showIndicator: true });
   window.addEventListener("focus", handleAppFocus);
   document.addEventListener("visibilitychange", () => {
@@ -10231,16 +10251,16 @@ function initEventListeners() {
       };
     });
 
-  const workroomAutoSelectCheckbox = document.getElementById(
-    "settings_workroomAutoSelectCadFiles"
-  );
-  if (workroomAutoSelectCheckbox) {
-    workroomAutoSelectCheckbox.onchange = (e) => {
-      userSettings.workroomAutoSelectCadFiles = e.target.checked;
-      syncWorkroomCadRoutingInputs();
-      debouncedSaveUserSettings();
-    };
-  }
+  ["settings_workroomAutoSelectCadFiles", "workroom_modal_autoSelectCadFiles"]
+    .map((id) => document.getElementById(id))
+    .filter(Boolean)
+    .forEach((checkbox) => {
+      checkbox.onchange = (e) => {
+        userSettings.workroomAutoSelectCadFiles = e.target.checked;
+        syncWorkroomCadRoutingInputs();
+        debouncedSaveUserSettings();
+      };
+    });
 
   const cleanOptionBindings = [
     ["settings_clean_stripXrefs", "stripXrefs"],

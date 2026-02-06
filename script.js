@@ -94,6 +94,12 @@ let checklistsDb = {
 let activeChecklistProject = null;
 let activeChecklistDeliverable = null;
 let activeChecklistTab = null;
+let workroomToolStatusState = {
+  toolId: "",
+  label: "",
+  message: "Ready.",
+  phase: "idle",
+};
 
 // ===================== CHECKLISTS SYSTEM =====================
 
@@ -6673,6 +6679,7 @@ function openChecklistModal(projectIndex) {
 
   populateChecklistDeliverableSelect(project);
   document.getElementById("checklistModal").showModal();
+  renderWorkroomToolStatusFooter();
 }
 
 function populateChecklistDeliverableSelect(project) {
@@ -6720,6 +6727,53 @@ function renderProjectWorkroom() {
   renderWorkroomToolsPanel();
 }
 
+function getToolTitle(toolId) {
+  const card = document.getElementById(toolId);
+  if (!card) return "Tool";
+  return card.querySelector(".tool-card-header")?.textContent?.trim() || "Tool";
+}
+
+function renderWorkroomToolStatusFooter() {
+  const statusEl = document.getElementById("workroomToolStatus");
+  if (!statusEl) return;
+  statusEl.classList.remove("is-running", "is-done", "is-error");
+  const phase = workroomToolStatusState?.phase || "idle";
+  if (phase === "running") statusEl.classList.add("is-running");
+  if (phase === "done") statusEl.classList.add("is-done");
+  if (phase === "error") statusEl.classList.add("is-error");
+  statusEl.textContent = workroomToolStatusState?.message || "Ready.";
+}
+
+function setWorkroomToolStatus({ toolId = "", message = "", phase = "idle" } = {}) {
+  const normalizedPhase =
+    phase === "running" || phase === "done" || phase === "error"
+      ? phase
+      : "idle";
+  const toolLabel = toolId ? getToolTitle(toolId) : "";
+  let nextMessage = String(message || "").trim();
+  if (!nextMessage) nextMessage = normalizedPhase === "done" ? "Done." : "Ready.";
+  if (toolLabel && normalizedPhase !== "idle") {
+    nextMessage = `${toolLabel}: ${nextMessage}`;
+  }
+  workroomToolStatusState = {
+    toolId,
+    label: toolLabel,
+    message: nextMessage,
+    phase: normalizedPhase,
+  };
+  renderWorkroomToolStatusFooter();
+}
+
+function resetWorkroomToolStatus() {
+  workroomToolStatusState = {
+    toolId: "",
+    label: "",
+    message: "Ready.",
+    phase: "idle",
+  };
+  renderWorkroomToolStatusFooter();
+}
+
 function getWorkroomVisibleTools() {
   return Array.from(
     document.querySelectorAll("#tools-panel .tool-card:not([hidden])")
@@ -6745,6 +6799,7 @@ function triggerWorkroomTool(toolId) {
     toast("Selected tool is unavailable.");
     return;
   }
+  setWorkroomToolStatus({ toolId, message: "Starting...", phase: "running" });
   sourceCard.click();
 }
 
@@ -6762,6 +6817,7 @@ function renderWorkroomToolsPanel() {
         textContent: "No tools available.",
       })
     );
+    renderWorkroomToolStatusFooter();
     return;
   }
 
@@ -6796,6 +6852,7 @@ function renderWorkroomToolsPanel() {
     );
     toolsList.appendChild(item);
   });
+  renderWorkroomToolStatusFooter();
 }
 
 function renderWorkroomChecklistPanel() {
@@ -7323,6 +7380,7 @@ document.getElementById("checklistModal")?.addEventListener("close", () => {
   activeChecklistView = null;
   checklistModalState.appliedTabs = [];
   checklistModalState.activeInstanceId = null;
+  resetWorkroomToolStatus();
   const workroomSearchInput = document.getElementById("workroomNotesSearchInput");
   const workroomResults = document.getElementById("workroomNotesSearchResults");
   if (workroomSearchInput) workroomSearchInput.value = "";
@@ -7619,9 +7677,31 @@ window.updateToolStatus = function (toolId, message) {
   if (!card) return;
   const statusEl = card.querySelector(".tool-card-status");
   const abortBtn = document.getElementById("abortBtn");
+  const nextMessage = String(message || "").trim();
+  let footerPhase = "running";
+  let footerMessage = nextMessage || "Running...";
+
+  if (nextMessage.startsWith("ERROR:")) {
+    footerPhase = "error";
+    footerMessage = nextMessage.substring(6).trim() || "Error.";
+  } else if (nextMessage === "DONE") {
+    footerPhase = "done";
+    footerMessage = "Done.";
+  }
+
+  const checklistModal = document.getElementById("checklistModal");
+  if (checklistModal?.open) {
+    setWorkroomToolStatus({
+      toolId,
+      message: footerMessage,
+      phase: footerPhase,
+    });
+  }
+
+  if (!statusEl) return;
   statusEl.classList.remove("error");
   if (toolId === "toolCleanDwgs" && abortBtn) {
-    if (message && message !== "DONE" && !message.startsWith("ERROR:")) {
+    if (nextMessage && nextMessage !== "DONE" && !nextMessage.startsWith("ERROR:")) {
       abortBtn.style.display = "inline-block";
       abortBtn.disabled = false;
       abortBtn.onclick = async () => {
@@ -7633,22 +7713,22 @@ window.updateToolStatus = function (toolId, message) {
       abortBtn.style.display = "none";
     }
   }
-  if (message.startsWith("ERROR:")) {
-    statusEl.textContent = message.substring(6).trim();
+  if (nextMessage.startsWith("ERROR:")) {
+    statusEl.textContent = nextMessage.substring(6).trim();
     statusEl.classList.add("error");
     card.classList.add("running");
     setTimeout(() => {
       card.classList.remove("running");
       if (abortBtn) abortBtn.style.display = "none";
     }, 5000);
-  } else if (message === "DONE") {
+  } else if (nextMessage === "DONE") {
     statusEl.textContent = "Done!";
     setTimeout(() => {
       card.classList.remove("running");
       if (abortBtn) abortBtn.style.display = "none";
     }, 2000);
   } else {
-    statusEl.textContent = message;
+    statusEl.textContent = nextMessage;
   }
 };
 

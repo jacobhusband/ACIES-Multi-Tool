@@ -1904,6 +1904,125 @@ dialog.circuit-breaker-dialog {
   font-size: 0.95rem;
 }
 
+.cb-panel-tabs-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.cb-panel-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+  flex: 1;
+  min-width: 220px;
+}
+
+.cb-panel-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--text-secondary);
+  max-width: 230px;
+  min-height: 30px;
+  transition: border-color 0.2s ease, background 0.2s ease, color 0.2s ease;
+}
+
+.cb-panel-tab.is-active {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  color: var(--text);
+}
+
+.cb-panel-tab-btn {
+  border: none;
+  background: transparent;
+  color: inherit;
+  min-height: 28px;
+  padding: 0.2rem 0.2rem 0.2rem 0.55rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 600;
+  flex: 1;
+  min-width: 0;
+}
+
+.cb-panel-tab-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.cb-panel-tab-label {
+  display: block;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cb-panel-tab-state {
+  font-size: 0.66rem;
+  opacity: 0.75;
+  letter-spacing: 0.02em;
+}
+
+.cb-panel-tab-remove {
+  border: none;
+  background: transparent;
+  color: inherit;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  padding: 0;
+  margin-right: 0.3rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.cb-panel-tab-remove:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.2);
+  color: #ef4444;
+}
+
+.cb-panel-tab-remove:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.cb-panel-add-btn {
+  border: 1px dashed var(--glass-border);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-secondary);
+  padding: 0.38rem 0.7rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.2s ease, background 0.2s ease, color 0.2s ease;
+}
+
+.cb-panel-add-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--surface);
+}
+
+.cb-panel-add-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .cb-upload-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -2021,6 +2140,7 @@ dialog.circuit-breaker-dialog {
   border-radius: 12px;
   border: 1px solid var(--glass-border);
   background: var(--bg);
+  color: var(--text);
   padding: 0.6rem 0.85rem;
   font-size: 0.85rem;
   font-weight: 600;
@@ -2036,8 +2156,14 @@ dialog.circuit-breaker-dialog {
 .cb-choice-btn.is-active {
   border-color: var(--accent);
   background: rgba(59, 130, 246, 0.16);
+  color: var(--text);
   box-shadow: 0 10px 20px rgba(59, 130, 246, 0.12);
   transform: translateY(-1px);
+}
+
+.cb-choice-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .cb-choice-btn:disabled {
@@ -2052,6 +2178,21 @@ dialog.circuit-breaker-dialog {
   flex-wrap: wrap;
   gap: 0.6rem;
   align-items: center;
+}
+
+.cb-file-row[hidden] {
+  display: none;
+}
+
+.cb-file-row .cb-file-pill {
+  flex: 1 1 360px;
+  min-width: 220px;
+}
+
+.cb-file-actions {
+  display: inline-flex;
+  gap: 0.45rem;
+  flex-wrap: wrap;
 }
 
 .cb-status-pill {
@@ -2092,6 +2233,7 @@ dialog.circuit-breaker-dialog {
 
 .circuit-breaker-footer .btn-primary {
   white-space: nowrap;
+  margin-left: auto;
 }
 
 .cb-running-overlay {
@@ -2122,9 +2264,25 @@ dialog.circuit-breaker-dialog {
 }
 
 @media (max-width: 720px) {
+  .cb-panel-tabs {
+    min-width: 100%;
+  }
+
+  .cb-file-row .cb-file-pill {
+    flex-basis: 100%;
+  }
+
+  .cb-file-actions {
+    width: 100%;
+  }
+
   .circuit-breaker-footer {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .circuit-breaker-footer .btn-primary {
+    margin-left: 0;
   }
 }
 

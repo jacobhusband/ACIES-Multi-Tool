@@ -2040,34 +2040,40 @@
             <div class="circuit-breaker-body">
                 <div class="circuit-breaker-form">
                     <section class="cb-section">
+                        <div class="cb-section-title">Panels</div>
+                        <p class="tiny muted">Each tab is one panel. Upload photos for the active panel tab.</p>
+                        <div class="cb-panel-tabs-row">
+                            <div id="cbPanelTabs" class="cb-panel-tabs" role="tablist" aria-label="Panel tabs"></div>
+                            <button class="cb-panel-add-btn" id="cbAddPanelTabBtn" type="button">Add panel</button>
+                        </div>
+                    </section>
+
+                    <section class="cb-section">
                         <div class="cb-section-title">1. Upload panel photos</div>
-                        <p class="tiny muted">Upload one photo of the circuit breakers and one photo of the circuit
-                            directory.</p>
+                        <p class="tiny muted">Upload one breaker photo and one directory photo for the active panel tab.</p>
                         <div class="cb-upload-grid">
                             <div class="cb-upload-card">
                                 <div class="cb-upload-title">Circuit breakers photo</div>
                                 <p class="tiny muted">Clear photo of the breaker labels and handles.</p>
                                 <div id="cbBreakerDrop" class="cb-drop-zone" role="button" tabindex="0">
-                                    <div class="cb-drop-icon">📷</div>
+                                    <div class="cb-drop-icon" aria-hidden="true">&#128247;</div>
                                     <div class="cb-drop-text">Drag &amp; drop a photo or click to select</div>
                                     <div class="tiny muted">JPG, PNG, HEIC supported</div>
                                 </div>
                                 <div class="cb-upload-actions">
-                                    <span id="cbBreakerFile" class="cb-file-pill" data-empty="true">No file
-                                        selected</span>
+                                    <span id="cbBreakerFile" class="cb-file-pill" data-empty="true">No file selected</span>
                                 </div>
                             </div>
                             <div class="cb-upload-card">
                                 <div class="cb-upload-title">Circuit directory photo</div>
                                 <p class="tiny muted">Photo of the directory or schedule labels.</p>
                                 <div id="cbDirectoryDrop" class="cb-drop-zone" role="button" tabindex="0">
-                                    <div class="cb-drop-icon">🗂️</div>
+                                    <div class="cb-drop-icon" aria-hidden="true">&#128194;</div>
                                     <div class="cb-drop-text">Drag &amp; drop a photo or click to select</div>
                                     <div class="tiny muted">JPG, PNG, HEIC supported</div>
                                 </div>
                                 <div class="cb-upload-actions">
-                                    <span id="cbDirectoryFile" class="cb-file-pill" data-empty="true">No file
-                                        selected</span>
+                                    <span id="cbDirectoryFile" class="cb-file-pill" data-empty="true">No file selected</span>
                                 </div>
                             </div>
                         </div>
@@ -2075,6 +2081,7 @@
 
                     <section class="cb-section">
                         <div class="cb-section-title">2. Panel schedule file</div>
+                        <p class="tiny muted">Choose one output workbook shared by all panel tabs in this run.</p>
                         <div class="cb-choice-row">
                             <button class="cb-choice-btn" id="cbOutputModeNew" type="button">
                                 Create a new panel schedule (.xlsx)
@@ -2085,10 +2092,17 @@
                         </div>
                         <div id="cbNewScheduleRow" class="cb-file-row">
                             <span id="cbNewSchedulePath" class="cb-file-pill" data-empty="true">No file selected</span>
+                            <div class="cb-file-actions">
+                                <button class="btn tiny" id="cbBrowseNewScheduleBtn" type="button">Browse...</button>
+                                <button class="btn tiny ghost" id="cbClearNewScheduleBtn" type="button">Clear</button>
+                            </div>
                         </div>
                         <div id="cbExistingScheduleRow" class="cb-file-row" hidden>
-                            <span id="cbExistingSchedulePath" class="cb-file-pill" data-empty="true">No file
-                                selected</span>
+                            <span id="cbExistingSchedulePath" class="cb-file-pill" data-empty="true">No file selected</span>
+                            <div class="cb-file-actions">
+                                <button class="btn tiny" id="cbBrowseExistingScheduleBtn" type="button">Browse...</button>
+                                <button class="btn tiny ghost" id="cbClearExistingScheduleBtn" type="button">Clear</button>
+                            </div>
                         </div>
                     </section>
 
@@ -2101,13 +2115,13 @@
                 <div class="circuit-breaker-footer">
                     <div id="cbRunStatus" class="cb-status-pill">Ready when you are.</div>
                     <button class="btn-primary" id="cbRunPanelScheduleBtn" type="button">
-                        Run in the background and notify me when ready
+                        Run all panels in background
                     </button>
                 </div>
                 <div id="cbRunningOverlay" class="cb-running-overlay" hidden>
                     <div class="cb-running-card">
                         <div class="spinner">Analyzing photos</div>
-                        <p class="tiny muted">We’ll notify you when the schedule is ready.</p>
+                        <p class="tiny muted">We'll notify you when the schedule is ready.</p>
                     </div>
                 </div>
             </div>

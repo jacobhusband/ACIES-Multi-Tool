@@ -2900,32 +2900,6 @@ TASK 3: LOAD TYPES
             except Exception:
                 data = {}
 
-        breaker_paths = self._normalize_panel_schedule_paths(
-            data.get('breakerPaths') or data.get('breakerPath')
-        )
-        directory_paths = self._normalize_panel_schedule_paths(
-            data.get('directoryPaths') or data.get('directoryPath')
-        )
-
-        temp_paths = []
-        breaker_uploads = data.get('breakerUploads') or data.get('breaker_uploads') or []
-        directory_uploads = data.get('directoryUploads') or data.get('directory_uploads') or []
-        if breaker_uploads:
-            uploaded_paths, created = self._panel_schedule_save_uploads(
-                breaker_uploads, "breaker"
-            )
-            breaker_paths.extend(uploaded_paths)
-            temp_paths.extend(created)
-        if directory_uploads:
-            uploaded_paths, created = self._panel_schedule_save_uploads(
-                directory_uploads, "directory"
-            )
-            directory_paths.extend(uploaded_paths)
-            temp_paths.extend(created)
-
-        if not breaker_paths or not directory_paths:
-            raise ValueError("Both a breaker photo and a directory photo are required.")
-
         output_mode = str(
             data.get('outputMode') or data.get('output_mode') or 'new'
         ).strip().lower()
@@ -2942,6 +2916,7 @@ TASK 3: LOAD TYPES
             raise ValueError("Panel schedule file is required.")
 
         output_path = os.path.normpath(output_path)
+        created_workbook = False
 
         if output_mode == "new":
             if not output_path.lower().endswith(".xlsx"):
@@ -2954,38 +2929,163 @@ TASK 3: LOAD TYPES
             if dest_dir:
                 os.makedirs(dest_dir, exist_ok=True)
             shutil.copy2(str(CB_TEMPLATE_PATH), output_path)
+            created_workbook = True
         else:
             if not output_path.lower().endswith(".xlsx"):
                 raise ValueError("Panel schedule must be an .xlsx file.")
             if not os.path.exists(output_path):
                 raise ValueError("Selected panel schedule was not found.")
 
-        panel_name = str(data.get('panelName') or data.get('panel_name') or '').strip()
-        if not panel_name:
-            panel_name = "PANEL"
+        panels_payload = data.get('panels')
+        panel_requests = []
+        if isinstance(panels_payload, list):
+            for index, raw_panel in enumerate(panels_payload):
+                if not isinstance(raw_panel, dict):
+                    continue
+                panel_name = str(
+                    raw_panel.get('panelName') or raw_panel.get('panel_name') or ''
+                ).strip()
+                if not panel_name:
+                    panel_name = f"PANEL {index + 1}"
+                panel_id = str(
+                    raw_panel.get('panelId') or raw_panel.get('panel_id') or f"panel_{index + 1}"
+                ).strip() or f"panel_{index + 1}"
+                panel_requests.append({
+                    'panel_id': panel_id,
+                    'panel_name': panel_name,
+                    'breaker_paths': self._normalize_panel_schedule_paths(
+                        raw_panel.get('breakerPaths') or raw_panel.get('breakerPath')
+                    ),
+                    'directory_paths': self._normalize_panel_schedule_paths(
+                        raw_panel.get('directoryPaths') or raw_panel.get('directoryPath')
+                    ),
+                    'breaker_uploads': raw_panel.get('breakerUploads') or raw_panel.get('breaker_uploads') or [],
+                    'directory_uploads': raw_panel.get('directoryUploads') or raw_panel.get('directory_uploads') or [],
+                })
 
-        try:
-            panel_data = self._analyze_panel_schedule_images(
-                panel_name, breaker_paths, directory_paths
-            )
-        except Exception as e:
-            raise RuntimeError(self._format_panel_schedule_ai_error(e)) from e
-        finally:
-            for temp_path in temp_paths:
+        if not panel_requests:
+            panel_name = str(data.get('panelName') or data.get('panel_name') or '').strip()
+            if not panel_name:
+                panel_name = "PANEL"
+            panel_requests.append({
+                'panel_id': 'panel_1',
+                'panel_name': panel_name,
+                'breaker_paths': self._normalize_panel_schedule_paths(
+                    data.get('breakerPaths') or data.get('breakerPath')
+                ),
+                'directory_paths': self._normalize_panel_schedule_paths(
+                    data.get('directoryPaths') or data.get('directoryPath')
+                ),
+                'breaker_uploads': data.get('breakerUploads') or data.get('breaker_uploads') or [],
+                'directory_uploads': data.get('directoryUploads') or data.get('directory_uploads') or [],
+            })
+
+        results = []
+        success_count = 0
+        failure_count = 0
+
+        for index, panel_request in enumerate(panel_requests):
+            panel_id = str(panel_request.get('panel_id') or f"panel_{index + 1}").strip() or f"panel_{index + 1}"
+            panel_name = str(panel_request.get('panel_name') or '').strip() or f"PANEL {index + 1}"
+            breaker_paths = list(panel_request.get('breaker_paths') or [])
+            directory_paths = list(panel_request.get('directory_paths') or [])
+            breaker_uploads = panel_request.get('breaker_uploads') or []
+            directory_uploads = panel_request.get('directory_uploads') or []
+            temp_paths = []
+
+            try:
+                if breaker_uploads:
+                    uploaded_paths, created = self._panel_schedule_save_uploads(
+                        breaker_uploads, "breaker"
+                    )
+                    breaker_paths.extend(uploaded_paths)
+                    temp_paths.extend(created)
+                if directory_uploads:
+                    uploaded_paths, created = self._panel_schedule_save_uploads(
+                        directory_uploads, "directory"
+                    )
+                    directory_paths.extend(uploaded_paths)
+                    temp_paths.extend(created)
+
+                if not breaker_paths or not directory_paths:
+                    raise ValueError("Both a breaker photo and a directory photo are required.")
+
                 try:
-                    os.remove(temp_path)
+                    panel_data = self._analyze_panel_schedule_images(
+                        panel_name, breaker_paths, directory_paths
+                    )
+                except Exception as e:
+                    raise RuntimeError(self._format_panel_schedule_ai_error(e)) from e
+
+                sheet_name = cb_update_excel_workbook(panel_data, output_path)
+                success_count += 1
+                results.append({
+                    'panelId': panel_id,
+                    'panelName': panel_name,
+                    'status': 'success',
+                    'sheetName': sheet_name,
+                    'message': f"Panel '{sheet_name}' added to schedule."
+                })
+            except Exception as e:
+                failure_count += 1
+                results.append({
+                    'panelId': panel_id,
+                    'panelName': panel_name,
+                    'status': 'error',
+                    'message': str(e)
+                })
+            finally:
+                for temp_path in temp_paths:
+                    try:
+                        os.remove(temp_path)
+                    except Exception:
+                        pass
+
+        output_folder = os.path.dirname(output_path)
+        first_success = next(
+            (item for item in results if item.get('status') == 'success'),
+            None
+        )
+
+        if success_count == 0:
+            if created_workbook:
+                try:
+                    os.remove(output_path)
                 except Exception:
                     pass
+            first_error_message = next(
+                (item.get('message') for item in results if item.get('message')),
+                "Panel Schedule AI failed."
+            )
+            return {
+                'status': 'error',
+                'message': first_error_message,
+                'outputPath': output_path,
+                'outputFolder': output_folder,
+                'successCount': success_count,
+                'failureCount': failure_count,
+                'results': results
+            }
 
-        sheet_name = cb_update_excel_workbook(panel_data, output_path)
-        output_folder = os.path.dirname(output_path)
+        if failure_count > 0:
+            message = (
+                f"Added {success_count} panel sheet{'s' if success_count != 1 else ''}; "
+                f"{failure_count} panel{'s' if failure_count != 1 else ''} failed."
+            )
+        else:
+            message = (
+                f"Added {success_count} panel sheet{'s' if success_count != 1 else ''} to schedule."
+            )
 
         return {
             'status': 'success',
-            'message': f"Panel '{sheet_name}' added to schedule.",
+            'message': message,
             'outputPath': output_path,
             'outputFolder': output_folder,
-            'sheetName': sheet_name
+            'sheetName': first_success.get('sheetName') if first_success else '',
+            'successCount': success_count,
+            'failureCount': failure_count,
+            'results': results
         }
 
     def _normalize_launch_context(self, launch_context):

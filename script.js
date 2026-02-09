@@ -85,6 +85,7 @@ const WORKROOM_ICON_PATH =
 
 const CHECK_ICON_PATH =
   "M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z";
+const MAX_DELIVERABLE_EMAIL_REFS = 3;
 
 // Checklists Data
 let checklistsDb = {
@@ -3460,6 +3461,16 @@ function normalizeEmailRef(value) {
   return { raw, url, label, source, savedAt };
 }
 
+function normalizeEmailRefKey(value) {
+  const ref = normalizeEmailRef(value);
+  if (!ref) return "";
+  return [
+    String(ref.raw || "").toLowerCase(),
+    String(ref.url || "").toLowerCase(),
+    String(ref.source || "").toLowerCase(),
+  ].join("|");
+}
+
 function sameEmailRef(a, b) {
   const left = normalizeEmailRef(a);
   const right = normalizeEmailRef(b);
@@ -3468,8 +3479,49 @@ function sameEmailRef(a, b) {
   return (
     String(left.raw || "").toLowerCase() === String(right.raw || "").toLowerCase() &&
     String(left.url || "").toLowerCase() === String(right.url || "").toLowerCase() &&
-    String(left.source || "") === String(right.source || "")
+    String(left.source || "").toLowerCase() === String(right.source || "").toLowerCase()
   );
+}
+
+function normalizeEmailRefs(value, fallbackSingle = null) {
+  const candidates = [];
+  if (Array.isArray(value)) {
+    candidates.push(...value);
+  } else if (value != null) {
+    candidates.push(value);
+  }
+  if (fallbackSingle != null) candidates.push(fallbackSingle);
+
+  const seen = new Set();
+  const out = [];
+  for (const candidate of candidates) {
+    const normalized = normalizeEmailRef(candidate);
+    if (!normalized) continue;
+    const key = normalizeEmailRefKey(normalized);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(normalized);
+    if (out.length >= MAX_DELIVERABLE_EMAIL_REFS) break;
+  }
+  return out;
+}
+
+function sameEmailRefList(a, b) {
+  const left = normalizeEmailRefs(a);
+  const right = normalizeEmailRefs(b);
+  if (left.length !== right.length) return false;
+  for (let i = 0; i < left.length; i++) {
+    if (!sameEmailRef(left[i], right[i])) return false;
+  }
+  return true;
+}
+
+function syncDeliverableEmailRefs(deliverable) {
+  if (!deliverable || typeof deliverable !== "object") return [];
+  const refs = normalizeEmailRefs(deliverable.emailRefs, deliverable.emailRef);
+  deliverable.emailRefs = refs;
+  deliverable.emailRef = refs[0] || null;
+  return refs;
 }
 
 function getEmailRefLocalPath(emailRef) {
@@ -4503,6 +4555,7 @@ function normalizeWorkroomCadDiscipline(value, fallback = "") {
 }
 
 function normalizeDeliverable(deliverable = {}) {
+  const emailRefs = normalizeEmailRefs(deliverable.emailRefs, deliverable.emailRef);
   const out = {
     id: deliverable.id || createId("dlv"),
     name: String(deliverable.name || "").trim(),
@@ -4518,7 +4571,8 @@ function normalizeDeliverable(deliverable = {}) {
       ? [...deliverable.statusTags]
       : [],
     status: deliverable.status || "",
-    emailRef: normalizeEmailRef(deliverable.emailRef),
+    emailRefs,
+    emailRef: emailRefs[0] || null,
     workroomCadDiscipline: normalizeWorkroomCadDiscipline(
       deliverable.workroomCadDiscipline,
       ""
@@ -4535,6 +4589,7 @@ function normalizeDeliverable(deliverable = {}) {
 }
 
 function createDeliverable(seed = {}) {
+  const seedEmailRefs = normalizeEmailRefs(seed.emailRefs, seed.emailRef);
   return normalizeDeliverable({
     id: seed.id || createId("dlv"),
     name: seed.name || "",
@@ -4544,7 +4599,8 @@ function createDeliverable(seed = {}) {
     statuses: seed.statuses || [],
     statusTags: seed.statusTags || [],
     status: seed.status || "",
-    emailRef: seed.emailRef || null,
+    emailRefs: seedEmailRefs,
+    emailRef: seedEmailRefs[0] || null,
     workroomCadDiscipline: seed.workroomCadDiscipline || "",
   });
 }
@@ -5083,19 +5139,83 @@ function ensureEmailButtonIcon(button) {
   button.appendChild(createIcon(MAIL_ICON_PATH, 14));
 }
 
-function updateDeliverableEmailButtonState(button, emailRef) {
+function updateDeliverableEmailButtonState(button, emailRef, slotIndex = 0) {
   if (!button) return;
   ensureEmailButtonIcon(button);
   const normalized = normalizeEmailRef(emailRef);
   const linked = !!normalized;
+  const slotNumber = slotIndex + 1;
   button.classList.toggle("is-linked", linked);
+  button.classList.toggle("is-empty", !linked);
   button.classList.remove("is-dragover");
   if (linked) {
-    button.title = "Open linked email thread (Shift+Click to replace)";
-    button.setAttribute("aria-label", "Open linked email thread");
+    button.title = `Open linked email ${slotNumber} (Shift+Click to replace)`;
+    button.setAttribute("aria-label", `Open linked email ${slotNumber}`);
   } else {
-    button.title = "Link email thread";
-    button.setAttribute("aria-label", "Link email thread");
+    button.title = `Link email ${slotNumber}`;
+    button.setAttribute("aria-label", `Link email ${slotNumber}`);
+  }
+}
+
+function getManagedEmailPathMap(emailRefs) {
+  const map = new Map();
+  normalizeEmailRefs(emailRefs).forEach((emailRef) => {
+    if (!isManagedSavedEmailRef(emailRef)) return;
+    const path = getEmailRefLocalPath(emailRef);
+    if (!path) return;
+    map.set(path.toLowerCase(), path);
+  });
+  return map;
+}
+
+function getAnyEmailPathMap(emailRefs) {
+  const map = new Map();
+  normalizeEmailRefs(emailRefs).forEach((emailRef) => {
+    const path = getEmailRefLocalPath(emailRef);
+    if (!path) return;
+    map.set(path.toLowerCase(), path);
+  });
+  return map;
+}
+
+async function reconcileManagedEmailRefTransitions(previousRefs, nextRefs, options = {}) {
+  const { modalCard = null } = options;
+  const previousPaths = getManagedEmailPathMap(previousRefs);
+  const nextManagedPaths = getManagedEmailPathMap(nextRefs);
+  const nextAnyPaths = getAnyEmailPathMap(nextRefs);
+  const removed = [];
+  const added = [];
+
+  previousPaths.forEach((path, key) => {
+    if (!nextAnyPaths.has(key)) removed.push(path);
+  });
+  nextManagedPaths.forEach((path, key) => {
+    if (!previousPaths.has(key)) added.push(path);
+  });
+
+  if (modalCard) {
+    nextAnyPaths.forEach((_, key) => {
+      modalEmailSession.deleteOnSave.delete(key);
+    });
+    for (const path of removed) {
+      const key = path.toLowerCase();
+      if (modalEmailSession.created.has(key)) {
+        modalEmailSession.created.delete(key);
+        await deleteManagedSavedEmailRef({ raw: path, source: "saved-file" });
+      } else {
+        modalEmailSession.deleteOnSave.set(key, path);
+      }
+    }
+    for (const path of added) {
+      const key = path.toLowerCase();
+      modalEmailSession.created.set(key, path);
+      modalEmailSession.deleteOnSave.delete(key);
+    }
+    return;
+  }
+
+  for (const path of removed) {
+    await deleteManagedSavedEmailRef({ raw: path, source: "saved-file" });
   }
 }
 
@@ -5142,52 +5262,70 @@ async function stageModalManagedEmailRefForRemoval(emailRef) {
   }
 }
 
-async function applyDeliverableEmailRef(deliverable, nextRef, options = {}) {
+async function stageModalManagedEmailRefsForRemoval(emailRefs) {
+  const refs = normalizeEmailRefs(emailRefs);
+  for (const emailRef of refs) {
+    await stageModalManagedEmailRefForRemoval(emailRef);
+  }
+}
+
+async function applyDeliverableEmailRefAtIndex(deliverable, slotIndex, nextRef, options = {}) {
   const {
     persistNow = false,
     modalCard = null,
   } = options;
-  const currentRef = normalizeEmailRef(deliverable?.emailRef);
   const normalizedNext = normalizeEmailRef(nextRef);
   if (!deliverable || !normalizedNext) return false;
-  if (sameEmailRef(currentRef, normalizedNext)) return false;
+  if (!Number.isInteger(slotIndex)) return false;
+  if (slotIndex < 0 || slotIndex >= MAX_DELIVERABLE_EMAIL_REFS) return false;
 
-  const currentPath = getEmailRefLocalPath(currentRef);
-  const nextPath = getEmailRefLocalPath(normalizedNext);
-  const shouldDeleteCurrentManaged =
-    !!currentRef &&
-    isManagedSavedEmailRef(currentRef) &&
-    currentPath &&
-    (!nextPath || currentPath.toLowerCase() !== nextPath.toLowerCase());
+  const currentRefs = syncDeliverableEmailRefs(deliverable).slice();
+  const currentLength = currentRefs.length;
+  if (slotIndex > currentLength) return false;
+  if (slotIndex === currentLength && currentLength >= MAX_DELIVERABLE_EMAIL_REFS) return false;
+  if (slotIndex < currentLength && sameEmailRef(currentRefs[slotIndex], normalizedNext)) return false;
 
-  if (modalCard) {
-    if (shouldDeleteCurrentManaged) {
-      const key = currentPath.toLowerCase();
-      if (modalEmailSession.created.has(key)) {
-        modalEmailSession.created.delete(key);
-        await deleteManagedSavedEmailRef(currentRef);
-      } else {
-        modalEmailSession.deleteOnSave.set(key, currentPath);
-      }
-    }
-    if (isManagedSavedEmailRef(normalizedNext) && nextPath) {
-      modalEmailSession.created.set(nextPath.toLowerCase(), nextPath);
-    }
-    if (nextPath) {
-      modalEmailSession.deleteOnSave.delete(nextPath.toLowerCase());
-    }
-  } else if (shouldDeleteCurrentManaged) {
-    await deleteManagedSavedEmailRef(currentRef);
+  const nextRefs = currentRefs.slice();
+  if (slotIndex === currentLength) {
+    nextRefs.push(normalizedNext);
+  } else {
+    nextRefs[slotIndex] = normalizedNext;
   }
 
-  deliverable.emailRef = normalizedNext;
-  if (modalCard) setDeliverableCardEmailRef(modalCard, normalizedNext);
+  const normalizedNextRefs = normalizeEmailRefs(nextRefs);
+  if (sameEmailRefList(currentRefs, normalizedNextRefs)) return false;
+  await reconcileManagedEmailRefTransitions(currentRefs, normalizedNextRefs, { modalCard });
+
+  deliverable.emailRefs = normalizedNextRefs;
+  deliverable.emailRef = normalizedNextRefs[0] || null;
+  if (modalCard) setDeliverableCardEmailRefs(modalCard, normalizedNextRefs);
   if (persistNow) await save();
   return true;
 }
 
-function bindDeliverableEmailButton(button, deliverable, options = {}) {
-  if (!button || !deliverable) return;
+async function removeDeliverableEmailRefAtIndex(deliverable, slotIndex, options = {}) {
+  const {
+    persistNow = false,
+    modalCard = null,
+  } = options;
+  if (!deliverable || !Number.isInteger(slotIndex)) return false;
+  if (slotIndex < 0 || slotIndex >= MAX_DELIVERABLE_EMAIL_REFS) return false;
+  const currentRefs = syncDeliverableEmailRefs(deliverable).slice();
+  if (slotIndex >= currentRefs.length) return false;
+
+  const nextRefs = currentRefs.filter((_, index) => index !== slotIndex);
+  if (sameEmailRefList(currentRefs, nextRefs)) return false;
+  await reconcileManagedEmailRefTransitions(currentRefs, nextRefs, { modalCard });
+
+  deliverable.emailRefs = nextRefs;
+  deliverable.emailRef = nextRefs[0] || null;
+  if (modalCard) setDeliverableCardEmailRefs(modalCard, nextRefs);
+  if (persistNow) await save();
+  return true;
+}
+
+function renderDeliverableEmailSlots(container, deliverable, options = {}) {
+  if (!container || !deliverable) return;
   const {
     project = null,
     persistNow = false,
@@ -5195,67 +5333,129 @@ function bindDeliverableEmailButton(button, deliverable, options = {}) {
     scope = "projects-tab",
   } = options;
 
-  updateDeliverableEmailButtonState(button, deliverable.emailRef);
+  syncDeliverableEmailRefs(deliverable);
+  container.classList.add("deliverable-email-slots");
+  container.innerHTML = "";
+  const emailRefs = deliverable.emailRefs || [];
+  const slotCount = emailRefs.length >= MAX_DELIVERABLE_EMAIL_REFS
+    ? MAX_DELIVERABLE_EMAIL_REFS
+    : Math.max(1, emailRefs.length + 1);
 
-  const applyRef = async (nextRef) => {
-    const changed = await applyDeliverableEmailRef(deliverable, nextRef, {
+  const rerender = () =>
+    renderDeliverableEmailSlots(container, deliverable, {
+      project,
       persistNow,
       modalCard,
+      scope,
     });
-    if (changed) updateDeliverableEmailButtonState(button, deliverable.emailRef);
-    return changed;
-  };
 
-  button.onclick = async (e) => {
-    e.stopPropagation();
-    if (button.classList.contains("is-busy")) return;
-    const currentRef = normalizeEmailRef(deliverable.emailRef);
-    if (currentRef && !e.shiftKey) {
-      await openDeliverableEmailRef(currentRef);
-      return;
-    }
-    const nextRef = await requestEmailRefFromFallbackActions();
-    if (!nextRef) return;
-    await applyRef(nextRef);
-  };
+  for (let slotIndex = 0; slotIndex < slotCount; slotIndex++) {
+    const currentRef = emailRefs[slotIndex] || null;
+    const slot = el("div", { className: "deliverable-email-slot" });
+    const button = el("button", {
+      className: "deliverable-email-btn",
+      type: "button",
+    });
 
-  button.addEventListener("dragover", (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (button.classList.contains("is-busy")) return;
-    button.classList.add("is-dragover");
-    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
-  });
+    updateDeliverableEmailButtonState(button, currentRef, slotIndex);
 
-  button.addEventListener("dragleave", (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    button.classList.remove("is-dragover");
-  });
+    const applyRef = async (nextRef) => {
+      const changed = await applyDeliverableEmailRefAtIndex(
+        deliverable,
+        slotIndex,
+        nextRef,
+        {
+          persistNow,
+          modalCard,
+        }
+      );
+      if (changed) rerender();
+      return changed;
+    };
 
-  button.addEventListener("drop", async (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    button.classList.remove("is-dragover");
-    if (button.classList.contains("is-busy")) return;
-    setEmailButtonBusy(button, true);
-    try {
-      const context = buildDeliverableEmailContext(deliverable, project, scope);
-      const resolved = await resolveEmailRefFromDrop(e, context);
-      if (!resolved.emailRef) {
-        showEmailLinkFallbackGuidance();
+    button.onclick = async (e) => {
+      e.stopPropagation();
+      if (button.classList.contains("is-busy")) return;
+      const refs = syncDeliverableEmailRefs(deliverable);
+      const slotRef = refs[slotIndex] || null;
+      if (slotRef && !e.shiftKey) {
+        await openDeliverableEmailRef(slotRef);
         return;
       }
-      await applyRef(resolved.emailRef);
-    } catch (error) {
-      console.warn("Failed to resolve email from drop:", error);
-      toast(error?.message || "Unable to process dropped email.");
-      showEmailLinkFallbackGuidance();
-    } finally {
-      setEmailButtonBusy(button, false);
-      updateDeliverableEmailButtonState(button, deliverable.emailRef);
+      const nextRef = await requestEmailRefFromFallbackActions();
+      if (!nextRef) return;
+      await applyRef(nextRef);
+    };
+
+    button.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (button.classList.contains("is-busy")) return;
+      button.classList.add("is-dragover");
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+    });
+
+    button.addEventListener("dragleave", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      button.classList.remove("is-dragover");
+    });
+
+    button.addEventListener("drop", async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      button.classList.remove("is-dragover");
+      if (button.classList.contains("is-busy")) return;
+      setEmailButtonBusy(button, true);
+      try {
+        const context = buildDeliverableEmailContext(deliverable, project, scope);
+        const resolved = await resolveEmailRefFromDrop(e, context);
+        if (!resolved.emailRef) {
+          showEmailLinkFallbackGuidance();
+          return;
+        }
+        await applyRef(resolved.emailRef);
+      } catch (error) {
+        console.warn("Failed to resolve email from drop:", error);
+        toast(error?.message || "Unable to process dropped email.");
+        showEmailLinkFallbackGuidance();
+      } finally {
+        setEmailButtonBusy(button, false);
+        if (button.isConnected) {
+          const refs = syncDeliverableEmailRefs(deliverable);
+          updateDeliverableEmailButtonState(button, refs[slotIndex] || null, slotIndex);
+        }
+      }
+    });
+
+    slot.appendChild(button);
+
+    if (currentRef) {
+      const removeBtn = el("button", {
+        className: "deliverable-email-remove",
+        type: "button",
+        title: `Remove linked email ${slotIndex + 1}`,
+        "aria-label": `Remove linked email ${slotIndex + 1}`,
+        textContent: "x",
+      });
+      removeBtn.onclick = async (e) => {
+        e.stopPropagation();
+        if (button.classList.contains("is-busy")) return;
+        const changed = await removeDeliverableEmailRefAtIndex(
+          deliverable,
+          slotIndex,
+          {
+            persistNow,
+            modalCard,
+          }
+        );
+        if (changed) rerender();
+      };
+      slot.appendChild(removeBtn);
     }
-  });
+
+    container.appendChild(slot);
+  }
 }
 
 function createCardHeader(deliverable, isPrimary, card, project) {
@@ -5334,7 +5534,7 @@ function createCardHeader(deliverable, isPrimary, card, project) {
   if (deliverable.due) {
     const ds = dueState(deliverable.due);
     const badgeClass = `deliverable-due-badge ${ds === "overdue" ? "overdue" : ds === "dueSoon" ? "due-soon" : "ok"}`;
-    const badgeText = ds === "overdue" ? "OVERDUE" : humanDate(deliverable.due).replace(/\//g, "/").toUpperCase();
+    const badgeText = humanDate(deliverable.due).replace(/\//g, "/").toUpperCase();
     const badge = el("div", {
       className: `${badgeClass} is-clickable`,
       textContent: badgeText
@@ -5345,7 +5545,7 @@ function createCardHeader(deliverable, isPrimary, card, project) {
     badge.setAttribute(
       "aria-label",
       ds === "overdue"
-        ? "Overdue. Click to change due date."
+        ? `Overdue – due ${humanDate(deliverable.due)}. Click to change due date.`
         : `Due ${humanDate(deliverable.due)}. Click to change due date.`
     );
     const handleOpen = (e) => {
@@ -5366,11 +5566,11 @@ function createCardHeader(deliverable, isPrimary, card, project) {
 
   // Right section: email + expand/contract controls
   const actions = el("div", { className: "deliverable-header-actions" });
-  const emailBtn = el("button", {
-    className: "deliverable-email-btn",
-    type: "button",
+  const emailSlots = el("div", {
+    className: "deliverable-email-slots",
+    "aria-label": "Deliverable email links",
   });
-  bindDeliverableEmailButton(emailBtn, deliverable, {
+  renderDeliverableEmailSlots(emailSlots, deliverable, {
     project,
     persistNow: true,
     modalCard: null,
@@ -5378,7 +5578,7 @@ function createCardHeader(deliverable, isPrimary, card, project) {
   });
 
   const expandToggle = createExpandToggle(card);
-  actions.append(emailBtn, expandToggle);
+  actions.append(emailSlots, expandToggle);
   header.appendChild(actions);
 
   return header;
@@ -6245,7 +6445,22 @@ function render() {
   emptyState.style.display = items.length ? "none" : "block";
   const rowTemplate = document.getElementById("project-row-template");
 
+  let lastWeekKey = null;
   items.forEach((p) => {
+    const projectDue = getProjectSortKey(p);
+    const weekKey = projectDue ? formatWeekKey(projectDue) : "no-date";
+    if (lastWeekKey === null || weekKey !== lastWeekKey) {
+      const sep = el("tr", { className: "week-separator-row" });
+      const weekLabel = projectDue ? formatWeekDisplay(projectDue) : "";
+      sep.appendChild(el("td", { colSpan: 7 }, [
+        el("div", { className: "week-separator" }, [
+          el("span", { className: "week-separator-label", textContent: weekLabel })
+        ])
+      ]));
+      tbody.appendChild(sep);
+    }
+    lastWeekKey = weekKey;
+
     const tr = rowTemplate.content.cloneNode(true).querySelector("tr");
     const idx = db.indexOf(p);
     const overviewDeliverables = getOverviewDeliverables(p);
@@ -6546,25 +6761,35 @@ function fillForm(project) {
   (p.refs || []).forEach(addRefRowFrom);
 }
 
-function getDeliverableCardEmailRef(card) {
-  if (!card) return null;
-  const raw = card.dataset.emailRef || "";
-  if (!raw) return null;
+function getDeliverableCardEmailRefs(card) {
+  if (!card) return [];
+  const raw = card.dataset.emailRefs || "";
+  if (raw) {
+    try {
+      return normalizeEmailRefs(JSON.parse(raw));
+    } catch {
+      /* fall through to legacy field */
+    }
+  }
+  const legacyRaw = card.dataset.emailRef || "";
+  if (!legacyRaw) return [];
   try {
-    return normalizeEmailRef(JSON.parse(raw));
+    return normalizeEmailRefs(null, JSON.parse(legacyRaw));
   } catch {
-    return null;
+    return normalizeEmailRefs(null, legacyRaw);
   }
 }
 
-function setDeliverableCardEmailRef(card, emailRef) {
+function setDeliverableCardEmailRefs(card, emailRefs) {
   if (!card) return;
-  const normalized = normalizeEmailRef(emailRef);
-  if (!normalized) {
+  const normalized = normalizeEmailRefs(emailRefs);
+  if (!normalized.length) {
+    delete card.dataset.emailRefs;
     delete card.dataset.emailRef;
     return;
   }
-  card.dataset.emailRef = JSON.stringify(normalized);
+  card.dataset.emailRefs = JSON.stringify(normalized);
+  card.dataset.emailRef = JSON.stringify(normalized[0]);
 }
 
 function addDeliverableCard(deliverable, primaryId, options = {}) {
@@ -6578,8 +6803,8 @@ function addDeliverableCard(deliverable, primaryId, options = {}) {
     .querySelector(".deliverable-card");
   const deliverableId = deliverable.id || createId("dlv");
   card.dataset.deliverableId = deliverableId;
-  deliverable.emailRef = normalizeEmailRef(deliverable.emailRef);
-  setDeliverableCardEmailRef(card, deliverable.emailRef);
+  syncDeliverableEmailRefs(deliverable);
+  setDeliverableCardEmailRefs(card, deliverable.emailRefs);
 
   card.querySelector(".d-name").value = deliverable.name || "";
   card.querySelector(".d-due").value = deliverable.due || "";
@@ -6591,9 +6816,9 @@ function addDeliverableCard(deliverable, primaryId, options = {}) {
     primaryInput.checked = true;
   }
 
-  const emailBtn = card.querySelector(".deliverable-email-btn");
-  if (emailBtn) {
-    bindDeliverableEmailButton(emailBtn, deliverable, {
+  const emailSlots = card.querySelector(".deliverable-email-slots");
+  if (emailSlots) {
+    renderDeliverableEmailSlots(emailSlots, deliverable, {
       project: null,
       persistNow: false,
       modalCard: card,
@@ -6611,8 +6836,9 @@ function addDeliverableCard(deliverable, primaryId, options = {}) {
   card.querySelector(".d-add-task").onclick = () =>
     addTaskRowFrom(taskList, {});
   card.querySelector(".btn-remove").onclick = async () => {
-    await stageModalManagedEmailRefForRemoval(
-      getDeliverableCardEmailRef(card) || deliverable.emailRef
+    const cardRefs = getDeliverableCardEmailRefs(card);
+    await stageModalManagedEmailRefsForRemoval(
+      cardRefs.length ? cardRefs : deliverable.emailRefs
     );
     card.remove();
   };
@@ -6768,7 +6994,7 @@ function readForm() {
     const statuses = readStatusPickerFrom(
       card.querySelector(".deliverable-status")
     );
-    const emailRef = getDeliverableCardEmailRef(card);
+    const emailRefs = getDeliverableCardEmailRefs(card);
 
     const tasks = [];
     card.querySelectorAll(".task-row").forEach((row) => {
@@ -6791,7 +7017,8 @@ function readForm() {
       notes,
       tasks,
       statuses,
-      emailRef,
+      emailRefs,
+      emailRef: emailRefs[0] || null,
     });
 
     out.deliverables.push(deliverable);

@@ -20,7 +20,8 @@
       "Bash(git push)",
       "Bash(npx tsc:*)",
       "Bash(npx vite build)",
-      "Bash(where:*)"
+      "Bash(where:*)",
+      "Bash(git push:*)"
     ]
   }
 }

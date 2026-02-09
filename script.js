@@ -3058,13 +3058,85 @@ function createCalendarGrid(year, month, onDateSelect) {
 }
 
 // Inline calendar picker for input fields
+function positionInlineCalendarPopup(anchorElement, calendarContainer, anchorParent) {
+  const gap = 6;
+  const rect = anchorElement.getBoundingClientRect();
+  const isBodyParent = anchorParent === document.body;
+  const scrollTop = isBodyParent
+    ? (window.scrollY || document.documentElement.scrollTop || 0)
+    : anchorParent.scrollTop;
+  const scrollLeft = isBodyParent
+    ? (window.scrollX || document.documentElement.scrollLeft || 0)
+    : anchorParent.scrollLeft;
+  const viewHeight = isBodyParent ? window.innerHeight : anchorParent.clientHeight;
+  const viewWidth = isBodyParent ? window.innerWidth : anchorParent.clientWidth;
+
+  calendarContainer.style.position = "absolute";
+  calendarContainer.style.zIndex = "999999";
+  calendarContainer.style.top = "0px";
+  calendarContainer.style.left = "0px";
+  calendarContainer.style.visibility = "hidden";
+
+  const popupHeight = calendarContainer.offsetHeight;
+  const popupWidth = calendarContainer.offsetWidth;
+  let anchorTop;
+  let anchorBottom;
+  let anchorLeft;
+  let viewTop;
+  let viewBottom;
+  let viewLeft;
+  let viewRight;
+
+  if (isBodyParent) {
+    // Body coordinates are page-based; using parentRect here would double-count scroll.
+    anchorTop = rect.top + scrollTop;
+    anchorBottom = rect.bottom + scrollTop;
+    anchorLeft = rect.left + scrollLeft;
+    viewTop = scrollTop;
+    viewBottom = scrollTop + viewHeight;
+    viewLeft = scrollLeft;
+    viewRight = scrollLeft + viewWidth;
+  } else {
+    const parentRect = anchorParent.getBoundingClientRect();
+    anchorTop = rect.top - parentRect.top + scrollTop;
+    anchorBottom = rect.bottom - parentRect.top + scrollTop;
+    anchorLeft = rect.left - parentRect.left + scrollLeft;
+    viewTop = scrollTop;
+    viewBottom = scrollTop + viewHeight;
+    viewLeft = scrollLeft;
+    viewRight = scrollLeft + viewWidth;
+  }
+
+  const availableAbove = anchorTop - viewTop;
+  const availableBelow = viewBottom - anchorBottom;
+
+  let top;
+  if (availableBelow >= popupHeight + gap) {
+    top = anchorBottom + gap;
+  } else if (availableAbove >= popupHeight + gap) {
+    top = anchorTop - popupHeight - gap;
+  } else if (availableBelow >= availableAbove) {
+    top = Math.max(viewTop + gap, viewBottom - popupHeight - gap);
+  } else {
+    top = Math.max(viewTop + gap, anchorTop - popupHeight - gap);
+  }
+
+  let left = anchorLeft;
+  const maxLeft = Math.max(viewLeft + gap, viewRight - popupWidth - gap);
+  left = Math.min(Math.max(left, viewLeft + gap), maxLeft);
+
+  calendarContainer.style.top = `${top}px`;
+  calendarContainer.style.left = `${left}px`;
+  calendarContainer.style.visibility = "";
+}
+
 function showCalendarForInput(inputElement, onSelectCallback) {
   // Remove any existing calendar
   const existingCalendar = document.getElementById('inlineCalendarPicker');
   if (existingCalendar) existingCalendar.remove();
 
-  // Get current value or default to today
-  const currentDate = parseDueStr(inputElement.value) || new Date();
+  // Always open to the current month/day.
+  const openDate = new Date();
 
   // Create calendar container
   const calendarContainer = el('div', {
@@ -3074,8 +3146,8 @@ function showCalendarForInput(inputElement, onSelectCallback) {
 
   // Render calendar
   const calendar = renderInlineCalendar(
-    currentDate.getFullYear(),
-    currentDate.getMonth(),
+    openDate.getFullYear(),
+    openDate.getMonth(),
     (selectedDate) => {
       // On date selection
       inputElement.value = formatDueDateShort(selectedDate);
@@ -3099,20 +3171,7 @@ function showCalendarForInput(inputElement, onSelectCallback) {
   const parentDialog = inputElement.closest('dialog');
   const anchorParent = parentDialog || document.body;
   anchorParent.appendChild(calendarContainer);
-
-  // Position the calendar above the input so it doesn't extend the modal
-  const rect = inputElement.getBoundingClientRect();
-  const parentRect = anchorParent.getBoundingClientRect();
-  calendarContainer.style.position = 'absolute';
-  calendarContainer.style.left = `${rect.left - parentRect.left + anchorParent.scrollLeft}px`;
-  calendarContainer.style.zIndex = '999999';
-
-  // Measure the calendar's height, then place it above the input
-  calendarContainer.style.visibility = 'hidden';
-  calendarContainer.style.top = '0px';
-  const calHeight = calendarContainer.offsetHeight;
-  calendarContainer.style.top = `${rect.top - parentRect.top + anchorParent.scrollTop - calHeight - 5}px`;
-  calendarContainer.style.visibility = '';
+  positionInlineCalendarPopup(inputElement, calendarContainer, anchorParent);
 
   // Close on outside click
   setTimeout(() => {
@@ -3133,8 +3192,8 @@ function showCalendarForDeliverableBadge(anchorElement, deliverable, project) {
   const existingCalendar = document.getElementById('inlineCalendarPicker');
   if (existingCalendar) existingCalendar.remove();
 
-  // Get current value or default to today
-  const currentDate = parseDueStr(deliverable.due) || new Date();
+  // Always open to the current month/day.
+  const openDate = new Date();
 
   // Create calendar container
   const calendarContainer = el('div', {
@@ -3144,8 +3203,8 @@ function showCalendarForDeliverableBadge(anchorElement, deliverable, project) {
 
   // Render calendar
   const calendar = renderInlineCalendar(
-    currentDate.getFullYear(),
-    currentDate.getMonth(),
+    openDate.getFullYear(),
+    openDate.getMonth(),
     async (selectedDate) => {
       deliverable.due = formatDueDateShort(selectedDate);
       if (project) autoSetPrimary(project);
@@ -3165,20 +3224,7 @@ function showCalendarForDeliverableBadge(anchorElement, deliverable, project) {
   const parentDialog = anchorElement.closest('dialog');
   const anchorParent = parentDialog || document.body;
   anchorParent.appendChild(calendarContainer);
-
-  // Position the calendar above the anchor
-  const rect = anchorElement.getBoundingClientRect();
-  const parentRect = anchorParent.getBoundingClientRect();
-  calendarContainer.style.position = 'absolute';
-  calendarContainer.style.left = `${rect.left - parentRect.left + anchorParent.scrollLeft}px`;
-  calendarContainer.style.zIndex = '999999';
-
-  // Measure the calendar's height, then place it above the anchor
-  calendarContainer.style.visibility = 'hidden';
-  calendarContainer.style.top = '0px';
-  const calHeight = calendarContainer.offsetHeight;
-  calendarContainer.style.top = `${rect.top - parentRect.top + anchorParent.scrollTop - calHeight - 5}px`;
-  calendarContainer.style.visibility = '';
+  positionInlineCalendarPopup(anchorElement, calendarContainer, anchorParent);
 
   // Close on outside click
   setTimeout(() => {

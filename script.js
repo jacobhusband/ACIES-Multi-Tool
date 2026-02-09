@@ -354,6 +354,33 @@ function el(tag, props = {}, children = []) {
   return n;
 }
 
+function highlightText(text, query) {
+  const frag = document.createDocumentFragment();
+  if (!query || !text) {
+    frag.appendChild(document.createTextNode(text || ""));
+    return frag;
+  }
+  const lower = text.toLowerCase();
+  const qLen = query.length;
+  let lastIdx = 0;
+  let idx = lower.indexOf(query, lastIdx);
+  while (idx !== -1) {
+    if (idx > lastIdx) {
+      frag.appendChild(document.createTextNode(text.slice(lastIdx, idx)));
+    }
+    const mark = document.createElement("mark");
+    mark.className = "search-highlight";
+    mark.textContent = text.slice(idx, idx + qLen);
+    frag.appendChild(mark);
+    lastIdx = idx + qLen;
+    idx = lower.indexOf(query, lastIdx);
+  }
+  if (lastIdx < text.length) {
+    frag.appendChild(document.createTextNode(text.slice(lastIdx)));
+  }
+  return frag;
+}
+
 // ===================== TIMESHEET UTILITIES =====================
 
 function getWeekStartDate(date) {
@@ -6069,15 +6096,85 @@ function sortProjectsByDueDesc(items) {
   });
 }
 
+function createContextSnippet(text, q, contextChars = 60) {
+  const span = el("span", { className: "search-context-snippet" });
+  const lower = text.toLowerCase();
+  const idx = lower.indexOf(q);
+  if (idx === -1) {
+    span.textContent = text.slice(0, contextChars * 2) + (text.length > contextChars * 2 ? "..." : "");
+    return span;
+  }
+  const start = Math.max(0, idx - contextChars);
+  const end = Math.min(text.length, idx + q.length + contextChars);
+  const snippet = (start > 0 ? "..." : "") + text.slice(start, end) + (end < text.length ? "..." : "");
+  span.appendChild(highlightText(snippet, q));
+  return span;
+}
+
+function buildMatchContextRow(q, project, context) {
+  const tr = el("tr", { className: "search-context-row" });
+  const td = el("td", { colSpan: 7 });
+  const container = el("div", { className: "search-context" });
+
+  if (context.projectFields.includes("notes") && project.notes) {
+    const item = el("div", { className: "search-context-item" });
+    item.append(
+      el("span", { className: "search-context-label", textContent: "Project Notes: " }),
+      createContextSnippet(project.notes, q)
+    );
+    container.appendChild(item);
+  }
+
+  context.deliverables.forEach((dCtx) => {
+    const d = dCtx.deliverable;
+
+    if (dCtx.fields.includes("name")) {
+      const item = el("div", { className: "search-context-item" });
+      const label = el("span", { className: "search-context-label", textContent: "Deliverable: " });
+      item.append(label);
+      item.appendChild(highlightText(d.name, q));
+      container.appendChild(item);
+    }
+
+    if (dCtx.fields.includes("notes") && d.notes) {
+      const item = el("div", { className: "search-context-item" });
+      item.append(
+        el("span", { className: "search-context-label", textContent: d.name + " Notes: " }),
+        createContextSnippet(d.notes, q)
+      );
+      container.appendChild(item);
+    }
+
+    dCtx.matchingTasks.forEach((taskText) => {
+      const item = el("div", { className: "search-context-item" });
+      item.append(
+        el("span", { className: "search-context-label", textContent: d.name + " Task: " })
+      );
+      item.appendChild(highlightText(taskText, q));
+      container.appendChild(item);
+    });
+  });
+
+  if (!container.children.length) return null;
+  td.appendChild(container);
+  tr.appendChild(td);
+  return tr;
+}
+
 function render() {
   const tbody = document.getElementById("tbody");
   const emptyState = document.getElementById("emptyState");
   tbody.innerHTML = "";
 
   const q = val("search").toLowerCase();
+  const matchContextMap = new Map();
 
   let items = db.filter((p) => {
-    if (q && !matches(q, p)) return false;
+    if (q) {
+      const ctx = getMatchContext(q, p);
+      if (!ctx) return false;
+      matchContextMap.set(p, ctx);
+    }
     const overviewDeliverables = getOverviewDeliverables(p);
     if (!overviewDeliverables.length) return false;
     const primaryDeliverable = getPrimaryDeliverable(p);
@@ -6271,6 +6368,11 @@ function render() {
     );
     actionsCell.append(actionsStack);
     tbody.appendChild(tr);
+
+    if (q && matchContextMap.has(p)) {
+      const contextRow = buildMatchContextRow(q, p, matchContextMap.get(p));
+      if (contextRow) tbody.appendChild(contextRow);
+    }
   });
 }
 
@@ -6302,26 +6404,38 @@ function renderStatusToggles(p) {
   return wrap;
 }
 
+function getMatchContext(q, p) {
+  if (!q) return null;
+  const str = (val) => (val || "").toLowerCase();
+  const context = { projectFields: [], deliverables: [] };
+  let hasMatch = false;
+
+  if (str(p.id).includes(q)) { context.projectFields.push("id"); hasMatch = true; }
+  if (str(p.name).includes(q)) { context.projectFields.push("name"); hasMatch = true; }
+  if (str(p.nick).includes(q)) { context.projectFields.push("nick"); hasMatch = true; }
+  if (str(p.notes).includes(q)) { context.projectFields.push("notes"); hasMatch = true; }
+
+  getProjectDeliverables(p).forEach((d) => {
+    const dCtx = { deliverable: d, fields: [], matchingTasks: [] };
+    if (str(d.name).includes(q)) dCtx.fields.push("name");
+    if (str(d.notes).includes(q)) dCtx.fields.push("notes");
+    if (str(d.due).includes(q)) dCtx.fields.push("due");
+    (d.tasks || []).forEach((t) => {
+      if (str(t.text).includes(q)) dCtx.matchingTasks.push(t.text);
+    });
+    const hasStatusMatch = (d.statuses || []).some((s) => str(s).includes(q));
+    if (dCtx.fields.length || dCtx.matchingTasks.length || hasStatusMatch) {
+      context.deliverables.push(dCtx);
+      hasMatch = true;
+    }
+  });
+
+  return hasMatch ? context : null;
+}
+
 function matches(q, p) {
   if (!q) return true;
-  const str = (val) => (val || "").toLowerCase();
-  if (
-    str(p.id).includes(q) ||
-    str(p.name).includes(q) ||
-    str(p.nick).includes(q) ||
-    str(p.notes).includes(q)
-  )
-    return true;
-  return getProjectDeliverables(p).some((d) => {
-    if (
-      str(d.name).includes(q) ||
-      str(d.notes).includes(q) ||
-      str(d.due).includes(q)
-    )
-      return true;
-    if ((d.tasks || []).some((t) => str(t.text).includes(q))) return true;
-    return (d.statuses || []).some((s) => str(s).includes(q));
-  });
+  return getMatchContext(q, p) !== null;
 }
 
 function updateSortHeaders() {

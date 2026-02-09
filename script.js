@@ -74,6 +74,8 @@ const PENCIL_ICON_PATH =
   "M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zm17.71-10.21c.39-.39.39-1.02 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z";
 const TRASH_ICON_PATH =
   "M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zm13-15h-3.5l-1-1h-5l-1 1H5v2h14V4z";
+const MAIL_ICON_PATH =
+  "M20 4H4c-1.1 0-2 .9-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V6c0-1.1-.9-2-2-2zm-.8 2L12 11.2 4.8 6h14.4zM4 18V7l7.4 5.2a1 1 0 0 0 1.2 0L20 7v11H4z";
 
 // Checklist Icons
 const CHECKLIST_ICON_PATH =
@@ -2810,6 +2812,9 @@ function setStat(id, value) {
 }
 
 function closeDlg(id) {
+  if (id === "editDlg") {
+    flushModalEmailSession(false);
+  }
   if (id === "editDlg" && _aiMatchSnapshot) {
     db[_aiMatchSnapshot.index] = normalizeProject(_aiMatchSnapshot.data);
     _aiMatchSnapshot = null;
@@ -3373,6 +3378,310 @@ function normalizeLink(input) {
   return { label, url, raw };
 }
 
+function fileUrlToLocalPath(url) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "file:") return "";
+    let path = decodeURIComponent(parsed.pathname || "");
+    if (/^\/[A-Za-z]:/.test(path)) path = path.slice(1);
+    if (parsed.host) {
+      const uncPath = path.replace(/\//g, "\\");
+      return `\\\\${parsed.host}${uncPath}`;
+    }
+    return path.replace(/\//g, "\\");
+  } catch {
+    return "";
+  }
+}
+
+function isEmailFilePath(value) {
+  const s = String(value || "").trim();
+  return /\.(msg|eml)$/i.test(s);
+}
+
+function inferEmailRefSource(raw = "", url = "") {
+  const joined = `${raw} ${url}`.toLowerCase();
+  if (joined.includes(".msg") || joined.includes(".eml") || /^file:\/\//i.test(url)) {
+    return "file";
+  }
+  if (/^outlook:/i.test(raw) || /^outlook:/i.test(url)) return "outlook-url";
+  if (/^mailto:/i.test(raw) || /^mailto:/i.test(url)) return "mailto";
+  return "url";
+}
+
+function normalizeEmailRef(value) {
+  if (!value) return null;
+  if (typeof value === "string") {
+    const link = normalizeLink(value);
+    if (!link.raw) return null;
+    return {
+      raw: link.raw,
+      url: link.url || link.raw,
+      label: link.label || "Email",
+      source: inferEmailRefSource(link.raw, link.url),
+      savedAt: "",
+    };
+  }
+  if (typeof value !== "object") return null;
+  const raw = String(value.raw || value.url || "").trim();
+  if (!raw) return null;
+  const link = normalizeLink(raw);
+  const url = String(value.url || link.url || raw).trim();
+  const label = String(value.label || link.label || "Email").trim() || "Email";
+  const source = String(value.source || inferEmailRefSource(raw, url)).trim();
+  const savedAt = String(value.savedAt || value.saved_at || "").trim();
+  return { raw, url, label, source, savedAt };
+}
+
+function sameEmailRef(a, b) {
+  const left = normalizeEmailRef(a);
+  const right = normalizeEmailRef(b);
+  if (!left && !right) return true;
+  if (!left || !right) return false;
+  return (
+    String(left.raw || "").toLowerCase() === String(right.raw || "").toLowerCase() &&
+    String(left.url || "").toLowerCase() === String(right.url || "").toLowerCase() &&
+    String(left.source || "") === String(right.source || "")
+  );
+}
+
+function getEmailRefLocalPath(emailRef) {
+  const ref = normalizeEmailRef(emailRef);
+  if (!ref) return "";
+  const raw = String(ref.raw || "").trim();
+  if (/^[A-Za-z]:[\\/]/.test(raw) || /^\\\\/.test(raw)) return raw;
+  if (/^file:\/\//i.test(raw)) return fileUrlToLocalPath(raw);
+  const url = String(ref.url || "").trim();
+  if (/^file:\/\//i.test(url)) return fileUrlToLocalPath(url);
+  return "";
+}
+
+function isManagedSavedEmailRef(emailRef) {
+  const ref = normalizeEmailRef(emailRef);
+  return !!ref && String(ref.source || "").toLowerCase() === "saved-file";
+}
+
+async function deleteManagedSavedEmailRef(emailRef) {
+  const path = getEmailRefLocalPath(emailRef);
+  if (!path || !isManagedSavedEmailRef(emailRef)) return;
+  if (!window.pywebview?.api?.delete_saved_email) return;
+  try {
+    await window.pywebview.api.delete_saved_email(path);
+  } catch (e) {
+    console.warn("Failed to delete managed saved email:", e);
+  }
+}
+
+async function openDeliverableEmailRef(emailRef) {
+  const ref = normalizeEmailRef(emailRef);
+  if (!ref) return false;
+  const localPath = getEmailRefLocalPath(ref);
+  if (localPath && window.pywebview?.api?.open_path) {
+    try {
+      const res = await window.pywebview.api.open_path(localPath);
+      if (res && res.status === "error") {
+        throw new Error(res.message || "Unable to open email file.");
+      }
+      return true;
+    } catch (e) {
+      toast("Could not open linked email file.");
+      return false;
+    }
+  }
+  openExternalUrl(ref.url || ref.raw);
+  return true;
+}
+
+function buildEmailRefFromRawInput(rawInput, source = "url") {
+  const raw = String(rawInput || "").trim();
+  if (!raw) return null;
+  const isUrlLike =
+    /^https?:\/\//i.test(raw) ||
+    /^outlook:/i.test(raw) ||
+    /^mailto:/i.test(raw) ||
+    /^file:\/\//i.test(raw);
+  const isPathLike = /^[A-Za-z]:[\\/]/.test(raw) || /^\\\\/.test(raw);
+  if (!isUrlLike && !isPathLike && !isEmailFilePath(raw)) {
+    return null;
+  }
+  const normalized = normalizeEmailRef({
+    raw,
+    url: toFileURL(raw),
+    label: basename(raw) || "Email",
+    source,
+    savedAt: new Date().toISOString(),
+  });
+  if (!normalized) return null;
+  if (source === "saved-file") normalized.source = "saved-file";
+  return normalized;
+}
+
+function extractEmailUrlFromUriList(uriList) {
+  const lines = String(uriList || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("#"));
+  return lines[0] || "";
+}
+
+function extractEmailUrlFromHtml(html) {
+  if (!html) return "";
+  try {
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const anchor = doc.querySelector("a[href]");
+    return anchor?.getAttribute("href")?.trim() || "";
+  } catch {
+    return "";
+  }
+}
+
+function extractEmailUrlFromText(text) {
+  const s = String(text || "").trim();
+  if (!s) return "";
+  const match = s.match(
+    /(https?:\/\/[^\s<>"']+|outlook:[^\s<>"']+|mailto:[^\s<>"']+|file:\/\/\/[^\s<>"']+)/i
+  );
+  if (match) return match[1].trim();
+  return "";
+}
+
+function getTransferDataText(dt, type) {
+  try {
+    return dt?.getData?.(type) || "";
+  } catch {
+    return "";
+  }
+}
+
+function extractEmailUrlFromDropData(dt) {
+  const uriList =
+    getTransferDataText(dt, "text/uri-list") ||
+    getTransferDataText(dt, "URL") ||
+    getTransferDataText(dt, "UniformResourceLocator") ||
+    getTransferDataText(dt, "UniformResourceLocatorW");
+  const fromUriList = extractEmailUrlFromUriList(uriList);
+  if (fromUriList) return fromUriList;
+
+  const html = getTransferDataText(dt, "text/html");
+  const fromHtml = extractEmailUrlFromHtml(html);
+  if (fromHtml) return fromHtml;
+
+  const text =
+    getTransferDataText(dt, "text/plain") ||
+    getTransferDataText(dt, "Text") ||
+    getTransferDataText(dt, "text/x-moz-url");
+  return extractEmailUrlFromText(text);
+}
+
+function isSupportedEmailFile(file) {
+  if (!file) return false;
+  const name = String(file.name || "").toLowerCase();
+  return name.endsWith(".msg") || name.endsWith(".eml");
+}
+
+function buildDeliverableEmailContext(deliverable, project, scope = "projects-tab") {
+  return {
+    projectId: String(project?.id || val("f_id") || "").trim(),
+    projectName: String(project?.name || val("f_name") || "").trim(),
+    deliverableId: String(deliverable?.id || "").trim(),
+    deliverableName: String(deliverable?.name || "").trim(),
+    scope,
+  };
+}
+
+async function saveDroppedEmailFile(file, context = {}) {
+  if (!isSupportedEmailFile(file)) {
+    throw new Error("Only .msg or .eml files are supported.");
+  }
+  if (!window.pywebview?.api?.save_dropped_email) {
+    throw new Error("Email file saving API is unavailable.");
+  }
+  const upload = {
+    name: file.name || "email.msg",
+    dataUrl: await readFileAsDataUrl(file),
+  };
+  const response = await window.pywebview.api.save_dropped_email(upload, context);
+  if (!response || response.status !== "success") {
+    throw new Error(response?.message || "Failed to save dropped email.");
+  }
+  const normalized = normalizeEmailRef(response.emailRef);
+  if (!normalized) throw new Error("Invalid email reference returned by backend.");
+  normalized.source = "saved-file";
+  return normalized;
+}
+
+async function resolveEmailRefFromDrop(event, context = {}) {
+  const dt = event?.dataTransfer;
+  if (!dt) return { emailRef: null, reason: "no-data-transfer" };
+
+  const files = Array.from(dt.files || []);
+  const emailFile = files.find(isSupportedEmailFile);
+  if (emailFile) {
+    const emailRef = await saveDroppedEmailFile(emailFile, context);
+    return { emailRef, source: "file-drop" };
+  }
+
+  const urlCandidate = extractEmailUrlFromDropData(dt);
+  if (urlCandidate) {
+    const emailRef = buildEmailRefFromRawInput(urlCandidate, "url");
+    if (emailRef) {
+      return { emailRef, source: "url-drop" };
+    }
+  }
+
+  return { emailRef: null, reason: "unsupported-drop-data" };
+}
+
+async function promptForEmailLinkRef() {
+  const raw = prompt("Paste an Outlook/OWA email link.");
+  if (raw == null) return null;
+  const emailRef = buildEmailRefFromRawInput(raw, "url");
+  if (!emailRef) {
+    toast("That does not look like a valid email link.");
+    return null;
+  }
+  return emailRef;
+}
+
+async function chooseEmailFileRefFromPicker() {
+  if (!window.pywebview?.api?.select_files) {
+    toast("File picker is unavailable.");
+    return null;
+  }
+  try {
+    const res = await window.pywebview.api.select_files({
+      allow_multiple: false,
+      file_types: [
+        "Email Files (*.msg;*.eml)",
+        "Outlook Message (*.msg)",
+        "Email Message (*.eml)",
+      ],
+    });
+    if (res?.status !== "success" || !res.paths?.length) return null;
+    return buildEmailRefFromRawInput(res.paths[0], "file");
+  } catch (e) {
+    toast("Unable to open file picker.");
+    return null;
+  }
+}
+
+async function requestEmailRefFromFallbackActions() {
+  const choosePaste = confirm(
+    "No email is linked yet.\nPress OK to paste an email link.\nPress Cancel to choose a .msg/.eml file."
+  );
+  if (choosePaste) {
+    const pasted = await promptForEmailLinkRef();
+    if (pasted) return pasted;
+    const chooseFileInstead = confirm("No valid link was provided. Choose a .msg/.eml file instead?");
+    if (!chooseFileInstead) return null;
+  }
+  return chooseEmailFileRefFromPicker();
+}
+
+function showEmailLinkFallbackGuidance() {
+  toast("Could not read Outlook drop data. Use the email icon to paste a link or choose a .msg/.eml file.");
+}
+
 function openExternalUrl(url) {
   try {
     if (window.pywebview?.api?.open_url) {
@@ -3573,6 +3882,11 @@ let currentSort = { key: "due", dir: "desc" };
 let statusFilter = "all";
 let dueFilter = "all";
 let pendingCadLaunchContext = null;
+let modalEmailSession = {
+  active: false,
+  created: new Map(),
+  deleteOnSave: new Map(),
+};
 
 const DEFAULT_CLEAN_DWG_OPTIONS = {
   stripXrefs: true,
@@ -4177,6 +4491,7 @@ function normalizeDeliverable(deliverable = {}) {
       ? [...deliverable.statusTags]
       : [],
     status: deliverable.status || "",
+    emailRef: normalizeEmailRef(deliverable.emailRef),
     workroomCadDiscipline: normalizeWorkroomCadDiscipline(
       deliverable.workroomCadDiscipline,
       ""
@@ -4202,6 +4517,7 @@ function createDeliverable(seed = {}) {
     statuses: seed.statuses || [],
     statusTags: seed.statusTags || [],
     status: seed.status || "",
+    emailRef: seed.emailRef || null,
     workroomCadDiscipline: seed.workroomCadDiscipline || "",
   });
 }
@@ -4728,6 +5044,193 @@ function getTaskCompletionStats(deliverable) {
   return { total, completed, percentage };
 }
 
+function setEmailButtonBusy(button, busy) {
+  if (!button) return;
+  button.classList.toggle("is-busy", !!busy);
+  button.setAttribute("aria-busy", String(!!busy));
+}
+
+function ensureEmailButtonIcon(button) {
+  if (!button || button.querySelector("svg")) return;
+  button.textContent = "";
+  button.appendChild(createIcon(MAIL_ICON_PATH, 14));
+}
+
+function updateDeliverableEmailButtonState(button, emailRef) {
+  if (!button) return;
+  ensureEmailButtonIcon(button);
+  const normalized = normalizeEmailRef(emailRef);
+  const linked = !!normalized;
+  button.classList.toggle("is-linked", linked);
+  button.classList.remove("is-dragover");
+  if (linked) {
+    button.title = "Open linked email thread (Shift+Click to replace)";
+    button.setAttribute("aria-label", "Open linked email thread");
+  } else {
+    button.title = "Link email thread";
+    button.setAttribute("aria-label", "Link email thread");
+  }
+}
+
+function beginModalEmailSession() {
+  modalEmailSession.active = true;
+  modalEmailSession.created = new Map();
+  modalEmailSession.deleteOnSave = new Map();
+}
+
+async function flushModalEmailSession(committed) {
+  if (!modalEmailSession.active) return;
+  const created = [...modalEmailSession.created.values()];
+  const deleteOnSave = [...modalEmailSession.deleteOnSave.values()];
+  modalEmailSession.active = false;
+  modalEmailSession.created = new Map();
+  modalEmailSession.deleteOnSave = new Map();
+
+  if (committed) {
+    for (const path of deleteOnSave) {
+      await deleteManagedSavedEmailRef({ raw: path, source: "saved-file" });
+    }
+    return;
+  }
+
+  for (const path of created) {
+    await deleteManagedSavedEmailRef({ raw: path, source: "saved-file" });
+  }
+}
+
+async function stageModalManagedEmailRefForRemoval(emailRef) {
+  if (!isManagedSavedEmailRef(emailRef)) return;
+  const path = getEmailRefLocalPath(emailRef);
+  if (!path) return;
+  if (!modalEmailSession.active) {
+    await deleteManagedSavedEmailRef(emailRef);
+    return;
+  }
+  const key = path.toLowerCase();
+  if (modalEmailSession.created.has(key)) {
+    modalEmailSession.created.delete(key);
+    await deleteManagedSavedEmailRef(emailRef);
+  } else {
+    modalEmailSession.deleteOnSave.set(key, path);
+  }
+}
+
+async function applyDeliverableEmailRef(deliverable, nextRef, options = {}) {
+  const {
+    persistNow = false,
+    modalCard = null,
+  } = options;
+  const currentRef = normalizeEmailRef(deliverable?.emailRef);
+  const normalizedNext = normalizeEmailRef(nextRef);
+  if (!deliverable || !normalizedNext) return false;
+  if (sameEmailRef(currentRef, normalizedNext)) return false;
+
+  const currentPath = getEmailRefLocalPath(currentRef);
+  const nextPath = getEmailRefLocalPath(normalizedNext);
+  const shouldDeleteCurrentManaged =
+    !!currentRef &&
+    isManagedSavedEmailRef(currentRef) &&
+    currentPath &&
+    (!nextPath || currentPath.toLowerCase() !== nextPath.toLowerCase());
+
+  if (modalCard) {
+    if (shouldDeleteCurrentManaged) {
+      const key = currentPath.toLowerCase();
+      if (modalEmailSession.created.has(key)) {
+        modalEmailSession.created.delete(key);
+        await deleteManagedSavedEmailRef(currentRef);
+      } else {
+        modalEmailSession.deleteOnSave.set(key, currentPath);
+      }
+    }
+    if (isManagedSavedEmailRef(normalizedNext) && nextPath) {
+      modalEmailSession.created.set(nextPath.toLowerCase(), nextPath);
+    }
+    if (nextPath) {
+      modalEmailSession.deleteOnSave.delete(nextPath.toLowerCase());
+    }
+  } else if (shouldDeleteCurrentManaged) {
+    await deleteManagedSavedEmailRef(currentRef);
+  }
+
+  deliverable.emailRef = normalizedNext;
+  if (modalCard) setDeliverableCardEmailRef(modalCard, normalizedNext);
+  if (persistNow) await save();
+  return true;
+}
+
+function bindDeliverableEmailButton(button, deliverable, options = {}) {
+  if (!button || !deliverable) return;
+  const {
+    project = null,
+    persistNow = false,
+    modalCard = null,
+    scope = "projects-tab",
+  } = options;
+
+  updateDeliverableEmailButtonState(button, deliverable.emailRef);
+
+  const applyRef = async (nextRef) => {
+    const changed = await applyDeliverableEmailRef(deliverable, nextRef, {
+      persistNow,
+      modalCard,
+    });
+    if (changed) updateDeliverableEmailButtonState(button, deliverable.emailRef);
+    return changed;
+  };
+
+  button.onclick = async (e) => {
+    e.stopPropagation();
+    if (button.classList.contains("is-busy")) return;
+    const currentRef = normalizeEmailRef(deliverable.emailRef);
+    if (currentRef && !e.shiftKey) {
+      await openDeliverableEmailRef(currentRef);
+      return;
+    }
+    const nextRef = await requestEmailRefFromFallbackActions();
+    if (!nextRef) return;
+    await applyRef(nextRef);
+  };
+
+  button.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (button.classList.contains("is-busy")) return;
+    button.classList.add("is-dragover");
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+  });
+
+  button.addEventListener("dragleave", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    button.classList.remove("is-dragover");
+  });
+
+  button.addEventListener("drop", async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    button.classList.remove("is-dragover");
+    if (button.classList.contains("is-busy")) return;
+    setEmailButtonBusy(button, true);
+    try {
+      const context = buildDeliverableEmailContext(deliverable, project, scope);
+      const resolved = await resolveEmailRefFromDrop(e, context);
+      if (!resolved.emailRef) {
+        showEmailLinkFallbackGuidance();
+        return;
+      }
+      await applyRef(resolved.emailRef);
+    } catch (error) {
+      console.warn("Failed to resolve email from drop:", error);
+      toast(error?.message || "Unable to process dropped email.");
+      showEmailLinkFallbackGuidance();
+    } finally {
+      setEmailButtonBusy(button, false);
+      updateDeliverableEmailButtonState(button, deliverable.emailRef);
+    }
+  });
+}
+
 function createCardHeader(deliverable, isPrimary, card, project) {
   const header = el("div", { className: "deliverable-card-header-new" });
 
@@ -4834,9 +5337,22 @@ function createCardHeader(deliverable, isPrimary, card, project) {
 
   header.appendChild(leftSection);
 
-  // Right section: expand/contract toggle
+  // Right section: email + expand/contract controls
+  const actions = el("div", { className: "deliverable-header-actions" });
+  const emailBtn = el("button", {
+    className: "deliverable-email-btn",
+    type: "button",
+  });
+  bindDeliverableEmailButton(emailBtn, deliverable, {
+    project,
+    persistNow: true,
+    modalCard: null,
+    scope: "projects-tab",
+  });
+
   const expandToggle = createExpandToggle(card);
-  header.appendChild(expandToggle);
+  actions.append(emailBtn, expandToggle);
+  header.appendChild(actions);
 
   return header;
 }
@@ -5833,6 +6349,7 @@ function createBlankProject() {
 
 function openEdit(i) {
   editIndex = i;
+  beginModalEmailSession();
   const p = db[i];
   document.getElementById("dlgTitle").textContent = `Edit Project — ${p.id || "Untitled"
     }`;
@@ -5842,6 +6359,7 @@ function openEdit(i) {
 }
 function openNew() {
   editIndex = -1;
+  beginModalEmailSession();
   document.getElementById("dlgTitle").textContent = "New Project";
   document.getElementById("btnSaveProject").textContent = "Create Project";
   fillForm(createBlankProject());
@@ -5879,6 +6397,7 @@ function onSaveProject() {
   }
   save();
   render();
+  flushModalEmailSession(true);
   closeDlg("editDlg");
 }
 
@@ -5913,6 +6432,27 @@ function fillForm(project) {
   (p.refs || []).forEach(addRefRowFrom);
 }
 
+function getDeliverableCardEmailRef(card) {
+  if (!card) return null;
+  const raw = card.dataset.emailRef || "";
+  if (!raw) return null;
+  try {
+    return normalizeEmailRef(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
+function setDeliverableCardEmailRef(card, emailRef) {
+  if (!card) return;
+  const normalized = normalizeEmailRef(emailRef);
+  if (!normalized) {
+    delete card.dataset.emailRef;
+    return;
+  }
+  card.dataset.emailRef = JSON.stringify(normalized);
+}
+
 function addDeliverableCard(deliverable, primaryId, options = {}) {
   const list = document.getElementById("deliverableList");
   const template = document.getElementById("deliverable-card-template");
@@ -5924,6 +6464,8 @@ function addDeliverableCard(deliverable, primaryId, options = {}) {
     .querySelector(".deliverable-card");
   const deliverableId = deliverable.id || createId("dlv");
   card.dataset.deliverableId = deliverableId;
+  deliverable.emailRef = normalizeEmailRef(deliverable.emailRef);
+  setDeliverableCardEmailRef(card, deliverable.emailRef);
 
   card.querySelector(".d-name").value = deliverable.name || "";
   card.querySelector(".d-due").value = deliverable.due || "";
@@ -5935,6 +6477,16 @@ function addDeliverableCard(deliverable, primaryId, options = {}) {
     primaryInput.checked = true;
   }
 
+  const emailBtn = card.querySelector(".deliverable-email-btn");
+  if (emailBtn) {
+    bindDeliverableEmailButton(emailBtn, deliverable, {
+      project: null,
+      persistNow: false,
+      modalCard: card,
+      scope: "edit-modal",
+    });
+  }
+
   // No secondary action needed on primary change anymore
 
   const taskList = card.querySelector(".deliverable-task-list");
@@ -5944,7 +6496,12 @@ function addDeliverableCard(deliverable, primaryId, options = {}) {
 
   card.querySelector(".d-add-task").onclick = () =>
     addTaskRowFrom(taskList, {});
-  card.querySelector(".btn-remove").onclick = () => card.remove();
+  card.querySelector(".btn-remove").onclick = async () => {
+    await stageModalManagedEmailRefForRemoval(
+      getDeliverableCardEmailRef(card) || deliverable.emailRef
+    );
+    card.remove();
+  };
 
   const statusContainer = card.querySelector(".deliverable-status");
   const markTasksDone = () => {
@@ -6097,6 +6654,7 @@ function readForm() {
     const statuses = readStatusPickerFrom(
       card.querySelector(".deliverable-status")
     );
+    const emailRef = getDeliverableCardEmailRef(card);
 
     const tasks = [];
     card.querySelectorAll(".task-row").forEach((row) => {
@@ -6119,6 +6677,7 @@ function readForm() {
       notes,
       tasks,
       statuses,
+      emailRef,
     });
 
     out.deliverables.push(deliverable);
@@ -9975,6 +10534,12 @@ function initEventListeners() {
   }
 
   document.getElementById("btnSaveProject").onclick = onSaveProject;
+  const editDlg = document.getElementById("editDlg");
+  if (editDlg) {
+    editDlg.addEventListener("close", () => {
+      if (modalEmailSession.active) flushModalEmailSession(false);
+    });
+  }
 
   const pathInput = document.getElementById("f_path");
   if (pathInput) {

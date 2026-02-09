@@ -23,6 +23,8 @@ import re
 import base64
 from typing import List
 import importlib
+import uuid
+from urllib.parse import urlparse, unquote
 
 # Work around NumPy 2.x removing scalar aliases used by openpyxl.
 _NUMPY_ALIAS_MAP = {
@@ -2487,6 +2489,143 @@ Return ONLY the JSON object.
             logging.error(f"Error uninstalling plugins: {e}")
             return {'status': 'error', 'message': str(e)}
 
+    def open_url(self, url):
+        """Opens a URL or protocol link using the OS default handler."""
+        try:
+            target = str(url or "").strip()
+            if not target:
+                return {'status': 'error', 'message': 'URL is required.'}
+
+            if target.lower().startswith("file://"):
+                local_path = self._coerce_local_email_path(target)
+                if local_path:
+                    return self.open_path(local_path)
+
+            if sys.platform == "win32":
+                os.startfile(target)
+            else:
+                subprocess.run(
+                    ['open', target] if sys.platform == "darwin" else ['xdg-open', target],
+                    check=False
+                )
+            return {'status': 'success'}
+        except Exception as e:
+            logging.error(f"Error opening URL: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def save_dropped_email(self, upload, context=None):
+        """Persists a dropped .msg/.eml payload and returns a normalized email reference."""
+        try:
+            payload = upload or {}
+            if isinstance(payload, str):
+                payload = json.loads(payload)
+            if not isinstance(payload, dict):
+                return {'status': 'error', 'message': 'Invalid upload payload.'}
+
+            data_url = payload.get('dataUrl') or payload.get('data_url')
+            if not data_url:
+                return {'status': 'error', 'message': 'Missing email payload data.'}
+
+            file_name = str(payload.get('name') or 'email.msg').strip() or 'email.msg'
+            data, mime = self._decode_data_url(data_url)
+            max_size_bytes = 20 * 1024 * 1024
+            if len(data) > max_size_bytes:
+                return {'status': 'error', 'message': 'Email attachment exceeds the 20 MB limit.'}
+
+            ext = os.path.splitext(file_name)[1].lower()
+            if ext not in ('.msg', '.eml'):
+                mime_lower = (mime or '').lower()
+                if 'rfc822' in mime_lower:
+                    ext = '.eml'
+                elif 'ms-outlook' in mime_lower:
+                    ext = '.msg'
+                else:
+                    return {'status': 'error', 'message': 'Only .msg or .eml files are supported.'}
+
+            context_data = context or {}
+            if isinstance(context_data, str):
+                try:
+                    context_data = json.loads(context_data)
+                except Exception:
+                    context_data = {}
+
+            project_hint = self._sanitize_email_path_component(
+                context_data.get('projectId') or context_data.get('projectName'),
+                'project'
+            )
+            deliverable_hint = self._sanitize_email_path_component(
+                context_data.get('deliverableId') or context_data.get('deliverableName'),
+                'deliverable'
+            )
+            file_stem = self._sanitize_email_path_component(
+                os.path.splitext(os.path.basename(file_name))[0],
+                'email'
+            )
+
+            email_root = self._get_email_links_root()
+            target_dir = os.path.abspath(os.path.join(email_root, project_hint, deliverable_hint))
+            if not self._is_within_directory(email_root, target_dir):
+                return {'status': 'error', 'message': 'Invalid destination path.'}
+            os.makedirs(target_dir, exist_ok=True)
+
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            unique = uuid.uuid4().hex[:8]
+            final_name = f"{timestamp}_{unique}_{file_stem}{ext}"
+            output_path = os.path.abspath(os.path.join(target_dir, final_name))
+            if not self._is_within_directory(email_root, output_path):
+                return {'status': 'error', 'message': 'Invalid output path.'}
+
+            with open(output_path, 'wb') as f:
+                f.write(data)
+
+            label = f"{file_stem}{ext}"
+            saved_at = datetime.datetime.now().isoformat()
+            return {
+                'status': 'success',
+                'emailRef': {
+                    'raw': output_path,
+                    'url': Path(output_path).as_uri(),
+                    'label': label,
+                    'source': 'saved-file',
+                    'savedAt': saved_at,
+                }
+            }
+        except Exception as e:
+            logging.error(f"Error saving dropped email: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def delete_saved_email(self, path):
+        """Deletes a previously saved dropped email if it lives inside the managed email-links directory."""
+        try:
+            raw = str(path or '').strip()
+            if not raw:
+                return {'status': 'error', 'message': 'Path is required.'}
+
+            target_path = os.path.abspath(self._coerce_local_email_path(raw))
+            email_root = self._get_email_links_root()
+            if not self._is_within_directory(email_root, target_path):
+                return {'status': 'error', 'message': 'Path is outside managed email storage.'}
+
+            if os.path.isdir(target_path):
+                return {'status': 'error', 'message': 'Expected a file path, not a directory.'}
+
+            deleted = False
+            if os.path.exists(target_path):
+                os.remove(target_path)
+                deleted = True
+
+                current = os.path.dirname(target_path)
+                while current and current != email_root and self._is_within_directory(email_root, current):
+                    if os.listdir(current):
+                        break
+                    os.rmdir(current)
+                    current = os.path.dirname(current)
+
+            return {'status': 'success', 'deleted': deleted}
+        except Exception as e:
+            logging.error(f"Error deleting saved email: {e}")
+            return {'status': 'error', 'message': str(e)}
+
     def open_path(self, path):
         """Opens a path in the file explorer."""
         try:
@@ -2764,6 +2903,42 @@ Return ONLY the JSON object.
         if header.startswith("data:"):
             mime = header.split(";", 1)[0].replace("data:", "").strip()
         return base64.b64decode(encoded), mime
+
+    def _get_email_links_root(self):
+        root = os.path.join(os.path.dirname(TASKS_FILE), "email-links")
+        os.makedirs(root, exist_ok=True)
+        return os.path.abspath(root)
+
+    def _is_within_directory(self, base_path, target_path):
+        try:
+            base = os.path.abspath(base_path)
+            target = os.path.abspath(target_path)
+            return os.path.commonpath([base, target]) == base
+        except Exception:
+            return False
+
+    def _sanitize_email_path_component(self, value, fallback):
+        text = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", str(value or "").strip())
+        text = re.sub(r"\s+", " ", text).strip().strip(".")
+        text = text[:80]
+        return text or fallback
+
+    def _coerce_local_email_path(self, raw):
+        value = str(raw or "").strip()
+        if not value:
+            return ""
+        if value.lower().startswith("file://"):
+            parsed = urlparse(value)
+            path = unquote(parsed.path or "")
+            if parsed.netloc:
+                unc_path = path.replace("/", "\\")
+                if unc_path and not unc_path.startswith("\\"):
+                    unc_path = "\\" + unc_path
+                return os.path.normpath(f"\\\\{parsed.netloc}{unc_path}")
+            if sys.platform == "win32" and re.match(r"^/[A-Za-z]:", path):
+                path = path[1:]
+            return os.path.normpath(path)
+        return os.path.normpath(value)
 
     def _panel_schedule_save_uploads(self, uploads, label):
         temp_paths = []

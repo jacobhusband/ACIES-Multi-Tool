@@ -1143,6 +1143,54 @@ main {
   align-items: center;
 }
 
+.deliverable-email-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid var(--glass-border);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.deliverable-email-btn svg {
+  width: 14px;
+  height: 14px;
+  pointer-events: none;
+}
+
+.deliverable-email-btn:hover {
+  background: var(--bg-hover);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.deliverable-email-btn.is-linked {
+  color: var(--accent);
+  border-color: rgba(16, 185, 129, 0.45);
+  background: rgba(16, 185, 129, 0.12);
+}
+
+.deliverable-email-btn.is-dragover {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.18);
+}
+
+.deliverable-email-btn.is-busy {
+  opacity: 0.7;
+  cursor: progress;
+}
+
+.deliverable-email-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .deliverable-status {
   display: flex;
   flex-wrap: wrap;
@@ -4091,6 +4139,13 @@ dialog::backdrop {
   gap: 0.75rem;
   flex: 1;
   min-width: 0;
+}
+
+.deliverable-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-left: auto;
 }
 
 /* Expand/contract toggle button */

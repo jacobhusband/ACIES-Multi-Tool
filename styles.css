@@ -6008,7 +6008,8 @@ input.input-warning {
 .workroom-modal[open] {
   display: flex;
   flex-direction: column;
-  width: min(98vw, 1720px);
+  width: min(99vw, 1920px);
+  max-width: none;
   height: 94vh;
   border-radius: var(--radius-lg);
   background: var(--modal-bg);
@@ -6065,11 +6066,7 @@ input.input-warning {
 
 .workroom-body {
   display: grid;
-  grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
-  grid-template-areas:
-    "left notes"
-    "left tools";
-  grid-template-rows: minmax(0, 0.58fr) minmax(0, 0.42fr);
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.3fr);
   gap: 0.55rem;
   flex: 1;
   min-height: 0;
@@ -6077,26 +6074,17 @@ input.input-warning {
   overflow: hidden;
 }
 
-.workroom-left-column {
-  grid-area: left;
+.workroom-main-grid {
   display: grid;
-  grid-template-rows: minmax(0, 0.46fr) minmax(0, 0.29fr) minmax(0, 0.25fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
   gap: 0.5rem;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
 }
 
-.workroom-right-column {
-  grid-area: notes;
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  overflow: hidden;
-}
-
 .workroom-tools-column {
-  grid-area: tools;
   min-width: 0;
   min-height: 0;
   display: flex;
@@ -6143,13 +6131,30 @@ input.input-warning {
 
 .workroom-checklist-panel,
 .workroom-tasks-panel,
-.workroom-deliverable-notes-panel {
+.workroom-deliverable-notes-panel,
+.workroom-general-notes-panel {
   min-height: 0;
   overflow: hidden;
 }
 
+.workroom-checklist-panel {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.workroom-tasks-panel {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.workroom-deliverable-notes-panel {
+  grid-column: 1;
+  grid-row: 2;
+}
+
 .workroom-general-notes-panel {
-  flex: 1;
+  grid-column: 2;
+  grid-row: 2;
   display: grid;
   grid-template-rows: auto auto auto minmax(0, 1fr) minmax(88px, 0.55fr);
   min-height: 0;
@@ -6392,11 +6397,12 @@ input.input-warning {
   padding: 0.42rem;
   line-height: 1.3;
   font-size: 0.8rem;
+  min-height: 0;
 }
 
 .workroom-deliverable-notes-textarea {
-  min-height: 0;
-  height: 100%;
+  flex: 1 1 auto;
+  height: auto;
   resize: none;
   overflow-y: auto;
 }
@@ -6607,34 +6613,25 @@ input.input-warning {
 
 @container (max-width: 1200px) {
   .workroom-modal[open] {
-    width: min(98vw, 1320px);
+    width: min(99vw, 1320px);
     height: 95vh;
   }
 
   .workroom-body {
-    grid-template-columns: 1fr;
-    grid-template-areas:
-      "left"
-      "notes"
-      "tools";
-    grid-template-rows: minmax(0, 0.44fr) minmax(0, 0.33fr) minmax(0, 0.23fr);
+    grid-template-columns: minmax(0, 1fr) minmax(200px, 0.32fr);
     gap: 0.45rem;
     padding: 0.45rem;
     overflow: hidden;
   }
 
-  .workroom-left-column {
-    grid-template-rows: minmax(0, 0.45fr) minmax(0, 0.3fr) minmax(0, 0.25fr);
+  .workroom-main-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: repeat(2, minmax(0, 1fr));
   }
 
-  .workroom-right-column,
   .workroom-tools-column {
     min-height: 0;
     overflow: hidden;
-  }
-
-  .workroom-general-notes-panel {
-    grid-template-rows: auto auto auto minmax(0, 1fr) minmax(76px, 0.5fr);
   }
 
   .workroom-select-wrapper {
@@ -6661,6 +6658,52 @@ input.input-warning {
   }
 
   .workroom-body {
-    grid-template-rows: minmax(0, 0.42fr) minmax(0, 0.34fr) minmax(0, 0.24fr);
+    grid-template-columns: minmax(0, 1fr) minmax(170px, 0.34fr);
+    gap: 0.4rem;
+  }
+
+  .workroom-main-grid {
+    gap: 0.4rem;
+  }
+}
+
+@container (max-width: 600px) {
+  .workroom-body {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr) minmax(150px, 0.42fr);
+    gap: 0.35rem;
+    padding: 0.4rem;
+  }
+
+  .workroom-main-grid {
+    grid-template-columns: 1fr;
+    grid-template-rows: repeat(4, minmax(0, 1fr));
+    gap: 0.35rem;
+  }
+
+  .workroom-checklist-panel {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .workroom-tasks-panel {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .workroom-deliverable-notes-panel {
+    grid-column: 1;
+    grid-row: 3;
+  }
+
+  .workroom-general-notes-panel {
+    grid-column: 1;
+    grid-row: 4;
+    grid-template-rows: auto auto auto minmax(0, 1fr) minmax(72px, 0.48fr);
+  }
+
+  .workroom-tools-column {
+    min-height: 0;
+    overflow: hidden;
   }
 }

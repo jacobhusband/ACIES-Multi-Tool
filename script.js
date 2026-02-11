@@ -3949,6 +3949,36 @@ const updateStickyOffsets = () => {
 const debouncedStickyOffsets = debounce(updateStickyOffsets, 150);
 window.addEventListener("resize", debouncedStickyOffsets);
 
+const PROJECTS_BACK_TO_TOP_SCROLL_THRESHOLD = 240;
+
+const isProjectsTabActive = () => {
+  const panel = document.getElementById("projects-panel");
+  return Boolean(panel && !panel.hidden && panel.classList.contains("active"));
+};
+
+function updateProjectsBackToTopVisibility() {
+  const backToTopBtn = document.getElementById("projectsBackToTopBtn");
+  if (!backToTopBtn) return;
+  const scrollTop = window.scrollY || document.documentElement.scrollTop || 0;
+  const shouldShow =
+    isProjectsTabActive() && scrollTop > PROJECTS_BACK_TO_TOP_SCROLL_THRESHOLD;
+  backToTopBtn.classList.toggle("is-visible", shouldShow);
+  backToTopBtn.setAttribute("aria-hidden", shouldShow ? "false" : "true");
+}
+
+function initProjectsBackToTop() {
+  const backToTopBtn = document.getElementById("projectsBackToTopBtn");
+  if (!backToTopBtn) return;
+  backToTopBtn.addEventListener("click", () => {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  });
+  window.addEventListener("scroll", updateProjectsBackToTopVisibility, {
+    passive: true,
+  });
+  window.addEventListener("resize", updateProjectsBackToTopVisibility);
+  updateProjectsBackToTopVisibility();
+}
+
 // ===================== SERVER I/O =====================
 
 // State variables
@@ -4929,6 +4959,49 @@ function getAllDeliverables() {
       project,
       deliverable,
     }))
+  );
+}
+
+async function pinUrgentDeliverables() {
+  const confirmed = confirm(
+    "Pin all projects with overdue incomplete deliverables or deliverables due today?"
+  );
+  if (!confirmed) return;
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  let projectsPinned = 0;
+  let deliverablesMatched = 0;
+
+  db.forEach((project) => {
+    const deliverables = getProjectDeliverables(project);
+    const urgentIncompleteCount = deliverables.filter((deliverable) => {
+      if (isFinished(deliverable)) return false;
+      const due = parseDueStr(deliverable?.due);
+      if (!due) return false;
+      return isSameDay(due, today) || due < today;
+    }).length;
+
+    if (!urgentIncompleteCount) return;
+    deliverablesMatched += urgentIncompleteCount;
+    if (!project.pinned) {
+      project.pinned = true;
+      projectsPinned += 1;
+    }
+  });
+
+  if (!deliverablesMatched) {
+    toast("No urgent incomplete deliverables found.");
+    return;
+  }
+
+  await save();
+  render();
+  toast(
+    projectsPinned
+      ? `Pinned ${projectsPinned} project${projectsPinned === 1 ? "" : "s"} with ${deliverablesMatched} urgent deliverable${deliverablesMatched === 1 ? "" : "s"}.`
+      : `${deliverablesMatched} urgent deliverable${deliverablesMatched === 1 ? "" : "s"} already pinned.`
   );
 }
 
@@ -6445,21 +6518,34 @@ function render() {
   emptyState.style.display = items.length ? "none" : "block";
   const rowTemplate = document.getElementById("project-row-template");
 
+  const appendSectionSeparator = (label) => {
+    const sep = el("tr", { className: "week-separator-row" });
+    sep.appendChild(el("td", { colSpan: 7 }, [
+      el("div", { className: "week-separator" }, [
+        el("span", { className: "week-separator-label", textContent: label })
+      ])
+    ]));
+    tbody.appendChild(sep);
+  };
+
   let lastWeekKey = null;
+  let pinnedSectionShown = false;
   items.forEach((p) => {
+    const isPinnedProject = !!p?.pinned;
     const projectDue = getProjectSortKey(p);
     const weekKey = projectDue ? formatWeekKey(projectDue) : "no-date";
-    if (lastWeekKey === null || weekKey !== lastWeekKey) {
-      const sep = el("tr", { className: "week-separator-row" });
-      const weekLabel = projectDue ? formatWeekDisplay(projectDue) : "";
-      sep.appendChild(el("td", { colSpan: 7 }, [
-        el("div", { className: "week-separator" }, [
-          el("span", { className: "week-separator-label", textContent: weekLabel })
-        ])
-      ]));
-      tbody.appendChild(sep);
+    if (isPinnedProject) {
+      if (!pinnedSectionShown) {
+        appendSectionSeparator("Pinned Projects");
+        pinnedSectionShown = true;
+      }
+    } else {
+      if (lastWeekKey === null || weekKey !== lastWeekKey) {
+        const weekLabel = projectDue ? formatWeekDisplay(projectDue) : "";
+        appendSectionSeparator(weekLabel);
+      }
+      lastWeekKey = weekKey;
     }
-    lastWeekKey = weekKey;
 
     const tr = rowTemplate.content.cloneNode(true).querySelector("tr");
     const idx = db.indexOf(p);
@@ -10632,6 +10718,7 @@ function initTabbedInterfaces() {
     } else if (tab === "templates") {
       renderTemplates();
     }
+    updateProjectsBackToTopVisibility();
   });
 }
 
@@ -10649,6 +10736,14 @@ function initEventListeners() {
     openExternalUrl(HELP_LINKS.main);
   document.getElementById("projectsHelpBtn").onclick = () =>
     openExternalUrl(HELP_LINKS.projects);
+  const pinUrgentDeliverablesBtn = document.getElementById(
+    "pinUrgentDeliverablesBtn"
+  );
+  if (pinUrgentDeliverablesBtn) {
+    pinUrgentDeliverablesBtn.textContent = "";
+    pinUrgentDeliverablesBtn.appendChild(createIcon(PIN_ICON_PATH, 14));
+    pinUrgentDeliverablesBtn.onclick = () => pinUrgentDeliverables();
+  }
 
   document.querySelectorAll(".tool-card-settings").forEach((btn) => {
     btn.addEventListener("click", (e) => {
@@ -11681,6 +11776,7 @@ async function init() {
       await new Promise((r) => window.addEventListener("pywebviewready", r));
     initEventListeners();
     initTabbedInterfaces();
+    initProjectsBackToTop();
     updateStickyOffsets();
     refreshAppUpdateStatus();
     await loadUserSettings();

@@ -489,8 +489,8 @@ DEFAULT_TEMPLATES = [
     {
         "name": "Plan Check Comments",
         "discipline": "General",
-        "fileType": "docx",
-        "sourcePath": str(BASE_DIR / "templates" / "Plan Check Comments.docx"),
+        "fileType": "doc",
+        "sourcePath": str(BASE_DIR / "templates" / "PCC.doc"),
         "description": "Plan check comments response table template"
     }
 ]

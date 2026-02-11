@@ -585,6 +585,8 @@
                             title="View Statistics">📊</button>
                         <button class="icon-btn" id="toggleNonPrimaryBtn" aria-label="Toggle non-primary deliverables"
                             title="Show/Hide non-primary deliverables">👁️</button>
+                        <button class="icon-btn" id="pinUrgentDeliverablesBtn" aria-label="Pin urgent deliverables"
+                            title="Pin all overdue and due-today deliverables"></button>
                         <button class="icon-btn" id="projectsHelpBtn" aria-label="Projects help"
                             title="Projects help">?</button>
                     </div>
@@ -1022,6 +1024,8 @@
             </section>
         </div>
     </main>
+    <button id="projectsBackToTopBtn" class="projects-back-to-top" type="button" aria-label="Back to top"
+        title="Back to top">Top</button>
     <!-- Timesheet Project Selection Dialog -->
     <dialog id="timesheetProjectDlg">
         <div class="modal-header">
@@ -1821,9 +1825,9 @@
             </div>
 
             <!-- Controls -->
-            <div class="filter-controls" style="margin-bottom: 1rem;">
-                <div class="modal-grid">
-                    <div class="col-6">
+            <div class="filter-controls stats-controls">
+                <div class="modal-grid stats-controls-grid">
+                    <div class="col-6 stats-control-col">
                         <div class="filter-label">Timeframe</div>
                         <div class="due-filter-group" id="statsRangeGroup">
                             <button class="filter-chip" data-range="1W">1 Week</button>
@@ -1831,62 +1835,64 @@
                             <button class="filter-chip active" data-range="1Y">1 Year</button>
                             <button class="filter-chip" data-range="3Y">3 Years</button>
                         </div>
-                        <div class="col-6">
-                            <div class="filter-label">Aggregation</div>
-                            <div class="status-filter-group" id="statsAggGroup">
-                                <button class="filter-chip" data-agg="day">Days</button>
-                                <button class="filter-chip" data-agg="week">Weeks</button>
-                                <button class="filter-chip active" data-agg="month">Months</button>
-                                <button class="filter-chip" data-agg="quarter">Quarters</button>
-                            </div>
-                        </div>
                     </div>
-
-                    <!-- Numbers Grid (Always Visible) -->
-                    <div class="stats-grid">
-                        <div class="stats-section-title">Overview & History</div>
-                        <div class="stat-card">
-                            <div class="stat-icon">📊</div>
-                            <div class="stat-value" id="statTotal">0</div>
-                            <div class="stat-label">Total Deliverables</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-icon">✅</div>
-                            <div class="stat-value" id="statCompleted">0</div>
-                            <div class="stat-label">Completed</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-icon">📈</div>
-                            <div class="stat-value" id="statAvg">0</div>
-                            <div class="stat-label">Avg Completions / Week</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-icon">📅</div>
-                            <div class="stat-value" id="statAvgMonth">0</div>
-                            <div class="stat-label">Avg Completions / Month</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-icon">⚠️</div>
-                            <div class="stat-value" id="statLastWeek">0</div>
-                            <div class="stat-label">Due Last Week</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-icon">📅</div>
-                            <div class="stat-value" id="statThisWeek">0</div>
-                            <div class="stat-label">Due This Week</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-icon">🔮</div>
-                            <div class="stat-value" id="statUpcoming">0</div>
-                            <div class="stat-label">Upcoming</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-icon">🏆</div>
-                            <div class="stat-value" id="statCompletedThisYear">0</div>
-                            <div class="stat-label">Done This Year</div>
+                    <div class="col-6 stats-control-col">
+                        <div class="filter-label">Aggregation</div>
+                        <div class="status-filter-group" id="statsAggGroup">
+                            <button class="filter-chip" data-agg="day">Days</button>
+                            <button class="filter-chip" data-agg="week">Weeks</button>
+                            <button class="filter-chip active" data-agg="month">Months</button>
+                            <button class="filter-chip" data-agg="quarter">Quarters</button>
                         </div>
                     </div>
                 </div>
+            </div>
+
+            <!-- Numbers Grid (Always Visible) -->
+            <div class="stats-grid">
+                <div class="stats-section-title">Overview &amp; History</div>
+                <div class="stat-card">
+                    <div class="stat-icon">📊</div>
+                    <div class="stat-value" id="statTotal">0</div>
+                    <div class="stat-label">Total Deliverables</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">✅</div>
+                    <div class="stat-value" id="statCompleted">0</div>
+                    <div class="stat-label">Completed</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">📈</div>
+                    <div class="stat-value" id="statAvg">0</div>
+                    <div class="stat-label">Avg Completions / Week</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">📅</div>
+                    <div class="stat-value" id="statAvgMonth">0</div>
+                    <div class="stat-label">Avg Completions / Month</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">⚠️</div>
+                    <div class="stat-value" id="statLastWeek">0</div>
+                    <div class="stat-label">Due Last Week</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">📅</div>
+                    <div class="stat-value" id="statThisWeek">0</div>
+                    <div class="stat-label">Due This Week</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">🔮</div>
+                    <div class="stat-value" id="statUpcoming">0</div>
+                    <div class="stat-label">Upcoming</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">🏆</div>
+                    <div class="stat-value" id="statCompletedThisYear">0</div>
+                    <div class="stat-label">Done This Year</div>
+                </div>
+            </div>
+        </div>
     </dialog>
     <!-- API Key Help Modal -->
     <dialog id="apiKeyHelpDlg">

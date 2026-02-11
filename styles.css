@@ -532,6 +532,50 @@ main {
   }
 }
 
+.projects-back-to-top {
+  position: fixed;
+  right: 1.5rem;
+  bottom: 1.5rem;
+  z-index: 120;
+  min-width: 72px;
+  height: 38px;
+  padding: 0 0.85rem;
+  border-radius: 999px;
+  border: 1px solid var(--glass-border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  box-shadow: var(--shadow-md);
+  opacity: 0;
+  transform: translateY(10px);
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+}
+
+.projects-back-to-top:hover {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+}
+
+.projects-back-to-top.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+@media (max-width: 768px) {
+  .projects-back-to-top {
+    right: 1rem;
+    bottom: 1rem;
+    min-width: 64px;
+    height: 36px;
+    padding: 0 0.75rem;
+  }
+}
+
 .panel {
   background: var(--panel-bg);
   backdrop-filter: blur(10px);
@@ -1730,6 +1774,14 @@ select:focus {
   border-bottom: 1px solid var(--glass-border);
 }
 
+#statsDlg .stats-controls-grid {
+  gap: 1rem;
+}
+
+#statsDlg .stats-control-col {
+  min-width: 0;
+}
+
 .slider-container {
   width: 100%;
   padding: 0 1rem;
@@ -1853,6 +1905,26 @@ select:focus {
   font-size: 0.75rem;
   color: var(--muted);
   font-weight: 500;
+}
+
+#statsDlg .stats-grid {
+  grid-template-columns: repeat(auto-fill, minmax(165px, 1fr));
+}
+
+@media (max-width: 720px) {
+  #statsDlg .stats-controls-grid .stats-control-col {
+    grid-column: span 12;
+  }
+
+  #statsDlg .stats-grid {
+    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+    gap: 0.75rem;
+  }
+
+  #statsDlg .stats-graph-container {
+    height: 220px;
+    margin-bottom: 1rem;
+  }
 }
 
 /* Tools Sections */

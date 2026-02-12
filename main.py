@@ -3266,6 +3266,28 @@ TASK 3: LOAD TYPES
     def _normalize_launch_context(self, launch_context):
         if isinstance(launch_context, dict):
             return launch_context
+        if isinstance(launch_context, str):
+            raw_text = launch_context.strip()
+            if not raw_text:
+                return {}
+            try:
+                parsed = json.loads(raw_text)
+                if isinstance(parsed, dict):
+                    return parsed
+                logging.info(
+                    "_normalize_launch_context: Ignoring JSON launch context because it is not an object "
+                    f"(type={type(parsed).__name__}).")
+                return {}
+            except Exception as e:
+                preview = raw_text[:120]
+                logging.warning(
+                    "_normalize_launch_context: Failed to parse launch context JSON string "
+                    f"(preview={preview!r}): {e}")
+                return {}
+        if launch_context is not None:
+            logging.info(
+                "_normalize_launch_context: Ignoring unsupported launch context type "
+                f"(type={type(launch_context).__name__}).")
         return {}
 
     def _primary_discipline_from_settings(self, settings):
@@ -3281,31 +3303,82 @@ TASK 3: LOAD TYPES
         }
         return discipline_map.get(discipline.lower(), 'Electrical')
 
+    def _get_settings_workroom_disciplines(self, settings):
+        discipline_map = {
+            'electrical': 'Electrical',
+            'mechanical': 'Mechanical',
+            'plumbing': 'Plumbing',
+        }
+        raw_value = settings.get('discipline', ['Electrical'])
+        if isinstance(raw_value, str):
+            candidates = [raw_value]
+        elif isinstance(raw_value, list):
+            candidates = raw_value
+        else:
+            candidates = ['Electrical']
+
+        result = []
+        seen = set()
+        for item in candidates:
+            normalized = discipline_map.get(str(item or '').strip().lower())
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            result.append(normalized)
+        return result or ['Electrical']
+
+    def _resolve_workroom_discipline(self, settings, launch_context):
+        settings_disciplines = self._get_settings_workroom_disciplines(settings)
+        if len(settings_disciplines) == 1:
+            return settings_disciplines[0], 'settings_single'
+
+        context = self._normalize_launch_context(launch_context)
+        requested = str(context.get('discipline') or '').strip().lower()
+        mapped_requested = {
+            'electrical': 'Electrical',
+            'mechanical': 'Mechanical',
+            'plumbing': 'Plumbing',
+        }.get(requested)
+        if mapped_requested and mapped_requested in settings_disciplines:
+            return mapped_requested, 'launch_context'
+        return settings_disciplines[0], 'settings_fallback'
+
     def _resolve_workroom_context(self, settings, launch_context):
         context = self._normalize_launch_context(launch_context)
         source = str(context.get('source') or '').strip().lower()
         project_path = str(context.get('projectPath') or '').strip()
-        requested_discipline = str(context.get('discipline') or '').strip()
-        discipline_map = {
-            'electrical': 'Electrical',
-            'mechanical': 'Mechanical',
-            'plumbing': 'Plumbing'
-        }
-        discipline = discipline_map.get(requested_discipline.lower())
-        if not discipline:
+        if source == 'workroom':
+            discipline, discipline_source = self._resolve_workroom_discipline(
+                settings, launch_context)
+        else:
             discipline = self._primary_discipline_from_settings(settings)
+            discipline_source = 'settings_primary'
         normalized_project_path = os.path.normpath(project_path) if project_path else ''
+        logging.info(
+            f"_resolve_workroom_context: source={source or 'none'} "
+            f"discipline={discipline} discipline_source={discipline_source} "
+            f"project_path={normalized_project_path or '<empty>'}")
         return {
             'source': source,
             'project_path': normalized_project_path,
-            'discipline': discipline
+            'discipline': discipline,
+            'discipline_source': discipline_source,
         }
 
     def _is_workroom_auto_select_enabled(self, settings, launch_context):
         context = self._resolve_workroom_context(settings, launch_context)
-        if context.get('source') != 'workroom':
+        source = str(context.get('source') or '').strip().lower()
+        auto_select_setting = bool(settings.get('workroomAutoSelectCadFiles', True))
+        if source != 'workroom':
+            logging.info(
+                "_is_workroom_auto_select_enabled: disabled because launch source is not workroom "
+                f"(source={source or 'none'}, launch_context_type={type(launch_context).__name__}).")
             return False
-        return bool(settings.get('workroomAutoSelectCadFiles', True))
+        if not auto_select_setting:
+            logging.info(
+                "_is_workroom_auto_select_enabled: disabled because workroomAutoSelectCadFiles is off.")
+            return False
+        return True
 
     def _list_base_level_dwgs(self, folder_path):
         if not folder_path or not os.path.isdir(folder_path):
@@ -3330,6 +3403,76 @@ TASK 3: LOAD TYPES
         temp_file.close()
         return temp_file.name
 
+    def _resolve_workroom_discipline_folder(self, project_path, discipline):
+        requested_discipline = str(discipline or '').strip() or 'Electrical'
+        discipline_map = {
+            'electrical': 'Electrical',
+            'mechanical': 'Mechanical',
+            'plumbing': 'Plumbing',
+            'arch': 'Arch',
+        }
+        resolved_discipline = discipline_map.get(
+            requested_discipline.lower(), requested_discipline)
+
+        known_folder_names = {'electrical', 'mechanical', 'plumbing', 'arch'}
+        candidate_entries = []
+        seen = set()
+
+        def _add_candidate(path_value, mode):
+            if not path_value:
+                return
+            normalized = os.path.normpath(path_value)
+            key = os.path.normcase(normalized)
+            if key in seen:
+                return
+            seen.add(key)
+            candidate_entries.append({
+                'mode': mode,
+                'path': normalized,
+            })
+
+        normalized_project_path = os.path.normpath(
+            project_path) if project_path else ''
+        project_base = os.path.basename(
+            normalized_project_path.rstrip("\\/")
+        ).strip() if normalized_project_path else ''
+
+        if normalized_project_path:
+            if project_base.lower() == resolved_discipline.lower():
+                _add_candidate(
+                    normalized_project_path, 'project_path_is_discipline_folder')
+
+            _add_candidate(
+                os.path.join(normalized_project_path, resolved_discipline),
+                'project_path_child_folder',
+            )
+
+            if project_base.lower() in known_folder_names:
+                parent_path = os.path.dirname(
+                    normalized_project_path.rstrip("\\/"))
+                if parent_path:
+                    _add_candidate(
+                        os.path.join(parent_path, resolved_discipline),
+                        'discipline_sibling_folder',
+                    )
+
+        for entry in candidate_entries:
+            folder_path = entry['path']
+            if os.path.isdir(folder_path):
+                return {
+                    'resolved_folder': folder_path,
+                    'mode': entry['mode'],
+                    'discipline': resolved_discipline,
+                    'candidates': [item['path'] for item in candidate_entries],
+                }
+
+        return {
+            'resolved_folder': '',
+            'mode': 'not_found',
+            'discipline': resolved_discipline,
+            'candidates': [item['path'] for item in candidate_entries],
+        }
+
     def _resolve_workroom_auto_file_selection(self, settings, launch_context, tool_name):
         if not self._is_workroom_auto_select_enabled(settings, launch_context):
             return None
@@ -3340,10 +3483,15 @@ TASK 3: LOAD TYPES
             logging.info(
                 f"{tool_name}: Workroom auto-select fallback to manual file picker (missing project path).")
             return None
-        discipline_folder = os.path.join(project_path, discipline)
-        if not os.path.isdir(discipline_folder):
+        folder_resolution = self._resolve_workroom_discipline_folder(
+            project_path, discipline)
+        discipline_folder = folder_resolution.get('resolved_folder') or ''
+        if not discipline_folder:
+            candidates = folder_resolution.get('candidates') or []
+            candidate_text = '; '.join(candidates) if candidates else 'none'
             logging.info(
-                f"{tool_name}: Workroom auto-select fallback to manual file picker (missing folder: {discipline_folder}).")
+                f"{tool_name}: Workroom auto-select fallback to manual file picker "
+                f"(project_path={project_path}; discipline={discipline}; checked={candidate_text}).")
             return None
         dwg_files = self._list_base_level_dwgs(discipline_folder)
         if not dwg_files:
@@ -3352,13 +3500,15 @@ TASK 3: LOAD TYPES
             return None
         files_list_path = self._write_files_list_temp(dwg_files)
         logging.info(
-            f"{tool_name}: Auto-selected {len(dwg_files)} DWG(s) from {discipline_folder}.")
+            f"{tool_name}: Auto-selected {len(dwg_files)} DWG(s) from {discipline_folder} "
+            f"(mode={folder_resolution.get('mode')}).")
         return {
             'files_list_path': files_list_path,
             'project_path': project_path,
-            'discipline': discipline,
+            'discipline': folder_resolution.get('discipline') or discipline,
             'folder_path': discipline_folder,
-            'count': len(dwg_files)
+            'count': len(dwg_files),
+            'resolution_mode': folder_resolution.get('mode', ''),
         }
 
     def _resolve_workroom_arch_folder(self, settings, launch_context):
@@ -3368,10 +3518,31 @@ TASK 3: LOAD TYPES
         project_path = context.get('project_path') or ''
         if not project_path:
             return ''
-        arch_folder = os.path.join(project_path, 'Arch')
+        arch_resolution = self._resolve_workroom_discipline_folder(
+            project_path, 'Arch')
+        arch_folder = arch_resolution.get('resolved_folder') or ''
         if os.path.isdir(arch_folder):
+            logging.info(
+                f"_resolve_workroom_arch_folder: Resolved Arch folder at {arch_folder} "
+                f"(mode={arch_resolution.get('mode')}).")
             return arch_folder
+        candidates = arch_resolution.get('candidates') or []
+        if candidates:
+            logging.info(
+                "_resolve_workroom_arch_folder: Arch folder not found. "
+                f"Checked: {'; '.join(candidates)}")
         return ''
+
+    def _notify_tool_status(self, tool_id, message):
+        try:
+            if not webview.windows:
+                return
+            js_message = json.dumps(str(message or '').strip())
+            webview.windows[0].evaluate_js(
+                f'window.updateToolStatus("{tool_id}", {js_message})')
+        except Exception as e:
+            logging.debug(
+                f"_notify_tool_status failed for {tool_id}: {e}")
 
     def run_publish_script(self, launch_context=None):
         """Runs the PlotDWGs.ps1 PowerShell script with progress updates."""
@@ -3391,6 +3562,19 @@ TASK 3: LOAD TYPES
 
         auto_selection = self._resolve_workroom_auto_file_selection(
             settings, launch_context, 'run_publish_script')
+        if self._is_workroom_auto_select_enabled(settings, launch_context) and not auto_selection:
+            fallback_context = self._resolve_workroom_context(
+                settings, launch_context)
+            logging.info(
+                "run_publish_script: Workroom auto-select unavailable; opening file picker "
+                f"(source={fallback_context.get('source') or 'none'}, "
+                f"project_path={fallback_context.get('project_path') or '<empty>'}, "
+                f"discipline={fallback_context.get('discipline')}, "
+                f"discipline_source={fallback_context.get('discipline_source')}).")
+            self._notify_tool_status(
+                'toolPublishDwgs',
+                "Workroom auto-select unavailable. Opening file picker...",
+            )
         command = (
             f'powershell.exe -ExecutionPolicy Bypass -File "{script_path}" '
             f'-AcadCore "{acad_path}" '
@@ -3420,6 +3604,19 @@ TASK 3: LOAD TYPES
 
         auto_selection = self._resolve_workroom_auto_file_selection(
             settings, launch_context, 'run_freeze_layers_script')
+        if self._is_workroom_auto_select_enabled(settings, launch_context) and not auto_selection:
+            fallback_context = self._resolve_workroom_context(
+                settings, launch_context)
+            logging.info(
+                "run_freeze_layers_script: Workroom auto-select unavailable; opening file picker "
+                f"(source={fallback_context.get('source') or 'none'}, "
+                f"project_path={fallback_context.get('project_path') or '<empty>'}, "
+                f"discipline={fallback_context.get('discipline')}, "
+                f"discipline_source={fallback_context.get('discipline_source')}).")
+            self._notify_tool_status(
+                'toolFreezeLayers',
+                "Workroom auto-select unavailable. Opening file picker...",
+            )
         command = (
             f'powershell.exe -ExecutionPolicy Bypass -File "{script_path}" '
             f'-AcadCore "{acad_path}" '
@@ -3448,6 +3645,19 @@ TASK 3: LOAD TYPES
 
         auto_selection = self._resolve_workroom_auto_file_selection(
             settings, launch_context, 'run_thaw_layers_script')
+        if self._is_workroom_auto_select_enabled(settings, launch_context) and not auto_selection:
+            fallback_context = self._resolve_workroom_context(
+                settings, launch_context)
+            logging.info(
+                "run_thaw_layers_script: Workroom auto-select unavailable; opening file picker "
+                f"(source={fallback_context.get('source') or 'none'}, "
+                f"project_path={fallback_context.get('project_path') or '<empty>'}, "
+                f"discipline={fallback_context.get('discipline')}, "
+                f"discipline_source={fallback_context.get('discipline_source')}).")
+            self._notify_tool_status(
+                'toolThawLayers',
+                "Workroom auto-select unavailable. Opening file picker...",
+            )
         command = (
             f'powershell.exe -ExecutionPolicy Bypass -File "{script_path}" '
             f'-AcadCore "{acad_path}" '
@@ -3484,6 +3694,10 @@ TASK 3: LOAD TYPES
                 logging.info(
                     f"run_clean_xrefs_script: opening picker in Arch folder: {arch_folder}")
             elif self._is_workroom_auto_select_enabled(settings, launch_context):
+                self._notify_tool_status(
+                    'toolCleanXrefs',
+                    "Workroom Arch folder not found. Opening file picker...",
+                )
                 logging.info(
                     "run_clean_xrefs_script: Arch folder not found, opening default file picker.")
             file_paths = window.create_file_dialog(

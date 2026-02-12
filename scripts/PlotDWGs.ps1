@@ -156,9 +156,11 @@ Ensure-WinFormsAssemblies
 # --- Resolve DWG files: prefer preselected list, otherwise prompt ---
 $files = @()
 if (-not [string]::IsNullOrWhiteSpace($FilesListPath) -and (Test-Path $FilesListPath)) {
-  $files = Get-Content -Path $FilesListPath -Encoding UTF8 |
-    Where-Object { $_ -and $_.Trim() -and (Test-Path $_.Trim()) } |
-    ForEach-Object { $_.Trim() }
+  $files = @(
+    Get-Content -Path $FilesListPath -Encoding UTF8 |
+      Where-Object { $_ -and $_.Trim() -and (Test-Path $_.Trim()) } |
+      ForEach-Object { $_.Trim() }
+  )
   if ($files.Count -gt 0) {
     Write-Host "PROGRESS: Using $($files.Count) DWG file(s) from auto-selected project folder."
   }
@@ -181,6 +183,9 @@ if (-not $files -or $files.Count -eq 0) {
   }
   $files = $dlg.FileNames
 }
+
+# Normalize to a string array so single-file runs still behave like multi-file runs.
+$files = @($files)
 
 # --- Detect paper size from existing project PDFs ---
 $detectedPaperSize = ""

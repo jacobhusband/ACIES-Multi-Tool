@@ -11014,6 +11014,7 @@ function initEventListeners() {
     .getElementById("toolPublishDwgs")
     .addEventListener("click", async (e) => {
       const launchContext = consumePendingCadLaunchContext();
+      console.debug("Workroom CAD launch context (publish):", launchContext);
       if (e.currentTarget.classList.contains("running")) return;
       if (!userSettings.autocadPath) {
         await showAutocadSelectModal();
@@ -11032,6 +11033,7 @@ function initEventListeners() {
     .getElementById("toolFreezeLayers")
     .addEventListener("click", async (e) => {
       const launchContext = consumePendingCadLaunchContext();
+      console.debug("Workroom CAD launch context (freeze):", launchContext);
       if (e.currentTarget.classList.contains("running")) return;
       if (!userSettings.autocadPath) {
         await showAutocadSelectModal();
@@ -11050,6 +11052,7 @@ function initEventListeners() {
     .getElementById("toolThawLayers")
     .addEventListener("click", async (e) => {
       const launchContext = consumePendingCadLaunchContext();
+      console.debug("Workroom CAD launch context (thaw):", launchContext);
       if (e.currentTarget.classList.contains("running")) return;
       if (!userSettings.autocadPath) {
         await showAutocadSelectModal();

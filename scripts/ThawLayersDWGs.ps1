@@ -160,9 +160,11 @@ function Show-DwgFileSelectionPrompt {
 
 $files = @()
 if (-not [string]::IsNullOrWhiteSpace($FilesListPath) -and (Test-Path $FilesListPath)) {
-  $files = Get-Content -Path $FilesListPath -Encoding UTF8 |
-    Where-Object { $_ -and $_.Trim() -and (Test-Path $_.Trim()) } |
-    ForEach-Object { $_.Trim() }
+  $files = @(
+    Get-Content -Path $FilesListPath -Encoding UTF8 |
+      Where-Object { $_ -and $_.Trim() -and (Test-Path $_.Trim()) } |
+      ForEach-Object { $_.Trim() }
+  )
   if ($files.Count -gt 0) {
     Write-Host "PROGRESS: Using $($files.Count) DWG file(s) from auto-selected project folder."
   }
@@ -175,6 +177,9 @@ if (-not $files -or $files.Count -eq 0) {
   $files = Show-DwgFileSelectionPrompt
   if (-not $files -or $files.Count -eq 0) { exit }
 }
+
+# Normalize to a string array so single-file runs still behave like multi-file runs.
+$files = @($files)
 
 # ---------------- 3) PREP TOOL FOLDER ----------------
 if (-not (Test-Path $ToolDir)) { New-Item -ItemType Directory -Path $ToolDir | Out-Null }

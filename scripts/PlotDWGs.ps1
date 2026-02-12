@@ -27,6 +27,25 @@ function Ensure-WinFormsAssemblies {
   Add-Type -AssemblyName System.Drawing
 }
 
+function Convert-ToLispPath {
+  param([string]$PathValue)
+  if ([string]::IsNullOrWhiteSpace($PathValue)) { return "" }
+  return ($PathValue -replace '\\', '/')
+}
+
+function Convert-ToLispQuotedList {
+  param([string[]]$Values)
+  $cleanValues = @(
+    $Values |
+      Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+      Select-Object -Unique
+  )
+  if ($cleanValues.Count -eq 0) {
+    return '"ctextapp.arx"'
+  }
+  return ($cleanValues | ForEach-Object { '"' + ($_ -replace '"', '\"') + '"' }) -join " "
+}
+
 # --- SCRIPT CONFIGURATION ---
 # Logic to find AutoCAD Core Console
 if ($AcadCore -and (Test-Path -Path $AcadCore)) {
@@ -99,6 +118,38 @@ if ([string]::IsNullOrEmpty($acadCore) -or -not (Test-Path $acadCore)) {
   Write-Host "Please ensure AutoCAD is installed in the default 'C:\Program Files\Autodesk' directory."
   exit 1
 }
+
+$arcAlignedTextSupportCandidates = [System.Collections.Generic.List[string]]::new()
+$acadInstallDir = Split-Path -Path $acadCore -Parent
+if (-not [string]::IsNullOrWhiteSpace($acadInstallDir)) {
+  $candidateFromExpress = Join-Path $acadInstallDir "Express\ctextapp.arx"
+  $candidateFromRoot = Join-Path $acadInstallDir "ctextapp.arx"
+  foreach ($candidate in @($candidateFromExpress, $candidateFromRoot)) {
+    if (-not [string]::IsNullOrWhiteSpace($candidate)) {
+      [void]$arcAlignedTextSupportCandidates.Add($candidate)
+    }
+  }
+}
+[void]$arcAlignedTextSupportCandidates.Add("ctextapp.arx")
+$arcAlignedTextSupportCandidates = @(
+  $arcAlignedTextSupportCandidates |
+    Where-Object { $_ -and $_.Trim() } |
+    Select-Object -Unique
+)
+$arcAlignedTextSupportCandidatesForLisp = @(
+  $arcAlignedTextSupportCandidates | ForEach-Object { Convert-ToLispPath $_ }
+)
+$lispArcAlignedTextSupportCandidates = Convert-ToLispQuotedList $arcAlignedTextSupportCandidatesForLisp
+$arcAlignedTextFailureMarker = "ACIES_ERROR: ARCALIGNEDTEXT_NOT_SUPPORTED"
+$arcCheckPresentMarker = "ACIES_ARC_CHECK:PRESENT"
+$arcCheckAbsentMarker = "ACIES_ARC_CHECK:ABSENT"
+$arcModuleLoadSuccessMarker = "ACIES_ARC_MODULE_LOAD:SUCCESS"
+$arcModuleLoadFailedMarker = "ACIES_ARC_MODULE_LOAD:FAILED"
+$arcModuleLoadSkippedMarker = "ACIES_ARC_MODULE_LOAD:SKIPPED"
+$plotDecisionContinueMarker = "ACIES_PLOT_DECISION:CONTINUE"
+$plotDecisionSkipMarker = "ACIES_PLOT_DECISION:SKIP"
+$preflightErrorMarker = "ACIES_PREFLIGHT_ERROR"
+Write-Host "PROGRESS: ARCALIGNEDTEXT module candidates: $($arcAlignedTextSupportCandidates -join '; ')"
 
 Ensure-WinFormsAssemblies
 
@@ -281,12 +332,15 @@ $logFile = Join-Path $batchOutputDir "_BatchPlotLog.txt"
 "===== Batch Plot Started: $(Get-Date -f 'yyyy-MM-dd HH:mm:ss') =====" | Out-File $logFile
 "Selected Paper Size: $selectedPaperSize" | Out-File $logFile -Append
 "AutoCAD Core Used: $acadCore" | Out-File $logFile -Append
+"ARCALIGNEDTEXT module candidates: $($arcAlignedTextSupportCandidates -join '; ')" | Out-File $logFile -Append
 "Output Folder: $batchOutputDir" | Out-File $logFile -Append
 "Processing $($files.Count) files..." | Out-File $logFile -Append
 
 # Initialize lists to track progress and generated files
 $allGeneratedPdfs = [System.Collections.ArrayList]::new()
 $failed = @()
+$arcAlignedTextSupportFailures = @()
+$noPdfOutputFailures = @()
 $i = 0
 
 # --- Main Processing Loop (Plotting ONLY) ---
@@ -337,27 +391,134 @@ foreach ($dwgPath in $files) {
   )
 )
 
-(defun c:PlotAllLayouts ()
-  (setvar "BACKGROUNDPLOT" 0)
-  (setvar "FILEDIA" 0)
-  (SafeRefreshLinkedOLEs)
-  (setq main-dict (namedobjdict))
-  (setq layout-dict (dictsearch main-dict "ACAD_LAYOUT"))
-  (foreach item layout-dict
-    (if (= (car item) 3)
+(defun AciesLog (msg)
+  (princ (strcat "\n" msg))
+)
+
+(defun AciesSafeArxLoad (module / res msg)
+  (if (and module (> (strlen module) 0))
+    (progn
+      (setq res (vl-catch-all-apply 'arxload (list module)))
+      (if (vl-catch-all-error-p res)
+        (progn
+          (setq msg (strcase (vl-catch-all-error-message res)))
+          (or (wcmatch msg "*ALREADY*LOADED*")
+              (wcmatch msg "*DUPLICATE*LOAD*"))
+        )
+        T
+      )
+    )
+    nil
+  )
+)
+
+(defun EnsureArcAlignedTextSupport (/ candidates candidate resolved loaded)
+  (setq loaded nil)
+  (setq candidates (list $lispArcAlignedTextSupportCandidates))
+  (foreach candidate candidates
+    (if (not loaded)
       (progn
-        (setq layout-name (cdr item))
-        (if (/= (strcase layout-name) "MODEL")
-          (progn
-            (setvar 'CTAB layout-name)
-            (setq pdfName (strcat "$lispOutputDir\\" "$dwgNameWithoutExt" "-" layout-name ".pdf"))
-            (command "-PLOT" "Y" "" "DWG to PDF.pc3" "$selectedPaperSize" "I" "L" "N" "L" "1:1" "0.00,0.00" "Y" "510-monochrome.ctb" "Y" "N" "N" "N" pdfName "N" "Y")
-          )
+        (setq resolved (findfile candidate))
+        (if (not resolved)
+          (setq resolved candidate)
+        )
+        (if (AciesSafeArxLoad resolved)
+          (setq loaded T)
         )
       )
     )
   )
-  (command "QUIT" "Y")
+  loaded
+)
+
+(defun SafeRegenAll (/ result)
+  (setq result (vl-catch-all-apply 'command (list "._REGENALL")))
+  (if (vl-catch-all-error-p result)
+    (AciesLog (strcat "REGENALL skipped: " (vl-catch-all-error-message result)))
+  )
+)
+
+(defun EnsurePublishPreflight (/ hasArcAlignedText arcSupportLoaded arcSelectResult)
+  (setvar "BACKGROUNDPLOT" 0)
+  (setvar "FILEDIA" 0)
+  (setvar "DEMANDLOAD" 3)
+  (setvar "PROXYSHOW" 1)
+  (SafeRefreshLinkedOLEs)
+  (setq hasArcAlignedText nil)
+  (setq arcSelectResult (vl-catch-all-apply 'ssget (list "_X" (list (cons 0 "ARCALIGNEDTEXT")))))
+  (if (vl-catch-all-error-p arcSelectResult)
+    (progn
+      (AciesLog (strcat "${preflightErrorMarker}: " (vl-catch-all-error-message arcSelectResult)))
+      (AciesLog "$plotDecisionSkipMarker")
+      nil
+    )
+    (progn
+      (setq hasArcAlignedText (and arcSelectResult (> (sslength arcSelectResult) 0)))
+      (if hasArcAlignedText
+        (progn
+          (AciesLog "$arcCheckPresentMarker")
+          (AciesLog "Loading ARCALIGNEDTEXT support module (ctextapp.arx)...")
+          (setq arcSupportLoaded (EnsureArcAlignedTextSupport))
+          (SafeRegenAll)
+          (if arcSupportLoaded
+            (progn
+              (AciesLog "$arcModuleLoadSuccessMarker")
+              (AciesLog "$plotDecisionContinueMarker")
+              T
+            )
+            (progn
+              (AciesLog "$arcModuleLoadFailedMarker")
+              (AciesLog "$arcAlignedTextFailureMarker")
+              (AciesLog "$plotDecisionSkipMarker")
+              nil
+            )
+          )
+        )
+        (progn
+          (AciesLog "$arcCheckAbsentMarker")
+          (AciesLog "$arcModuleLoadSkippedMarker")
+          (AciesLog "$plotDecisionContinueMarker")
+          T
+        )
+      )
+    )
+  )
+)
+
+(defun c:PlotAllLayouts (/ main-dict layout-dict item layout-name pdfName preflightResult)
+  (setq preflightResult (vl-catch-all-apply 'EnsurePublishPreflight '()))
+  (if (vl-catch-all-error-p preflightResult)
+    (progn
+      (AciesLog (strcat "${preflightErrorMarker}: " (vl-catch-all-error-message preflightResult)))
+      (AciesLog "$plotDecisionSkipMarker")
+      (command "QUIT" "N")
+    )
+    (if preflightResult
+      (progn
+        (setq main-dict (namedobjdict))
+        (setq layout-dict (dictsearch main-dict "ACAD_LAYOUT"))
+        (foreach item layout-dict
+          (if (= (car item) 3)
+            (progn
+              (setq layout-name (cdr item))
+              (if (/= (strcase layout-name) "MODEL")
+                (progn
+                  (setvar "CTAB" layout-name)
+                  (setq pdfName (strcat "$lispOutputDir\\" "$dwgNameWithoutExt" "-" layout-name ".pdf"))
+                  (command "-PLOT" "Y" "" "DWG to PDF.pc3" "$selectedPaperSize" "I" "L" "N" "L" "1:1" "0.00,0.00" "Y" "510-monochrome.ctb" "Y" "N" "N" "N" pdfName "N" "Y")
+                )
+              )
+            )
+          )
+        )
+        (command "QUIT" "N")
+      )
+      (progn
+        (AciesLog "Skipping plot because ARCALIGNEDTEXT support is unavailable in headless mode.")
+        (command "QUIT" "N")
+      )
+    )
+  )
   (princ)
 )
 "@
@@ -370,18 +531,100 @@ foreach ($dwgPath in $files) {
 PlotAllLayouts
 "@
   Set-Content -Encoding ASCII -Path $scriptFile -Value $scriptContent
-    
-  & $acadCore /i "$dwgPath" /s "$scriptFile" 2>&1 | Tee-Object -FilePath $logFile -Append
+
+  $existingPerDwgPdfs = @(Get-ChildItem -Path $batchOutputDir -Filter "$($dwgNameWithoutExt)-*.pdf" -ErrorAction SilentlyContinue)
+  $existingPerDwgPdfSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+  foreach ($existingPdf in $existingPerDwgPdfs) {
+    [void]$existingPerDwgPdfSet.Add($existingPdf.FullName)
+  }
+
+  $plotOutput = & $acadCore /i "$dwgPath" /s "$scriptFile" 2>&1 | Tee-Object -FilePath $logFile -Append
   $code = $LASTEXITCODE
-  "ExitCode: $code" | Out-File $logFile -Append
-    
+  $plotOutputText = ($plotOutput | ForEach-Object { "$_" }) -join [Environment]::NewLine
+  $plotOutputTextNormalized = $plotOutputText -replace ([char]0), ''
+  $normalizedOutputLines = @(
+    $plotOutput | ForEach-Object { ("$_" -replace ([char]0), '') }
+  )
+  $arcCheckPresent = $plotOutputTextNormalized -match [regex]::Escape($arcCheckPresentMarker)
+  $arcCheckAbsent = $plotOutputTextNormalized -match [regex]::Escape($arcCheckAbsentMarker)
+  $arcModuleLoadSuccess = $plotOutputTextNormalized -match [regex]::Escape($arcModuleLoadSuccessMarker)
+  $arcModuleLoadFailed = $plotOutputTextNormalized -match [regex]::Escape($arcModuleLoadFailedMarker)
+  $arcModuleLoadSkipped = $plotOutputTextNormalized -match [regex]::Escape($arcModuleLoadSkippedMarker)
+  $plotDecisionContinue = $plotOutputTextNormalized -match [regex]::Escape($plotDecisionContinueMarker)
+  $plotDecisionSkip = $plotOutputTextNormalized -match [regex]::Escape($plotDecisionSkipMarker)
+  $missingArcAlignedTextSupport = $plotOutputTextNormalized -match [regex]::Escape($arcAlignedTextFailureMarker)
+  $preflightError = $plotOutputTextNormalized -match [regex]::Escape($preflightErrorMarker)
+  $preflightErrorLine = @(
+    $normalizedOutputLines |
+      Where-Object { $_ -like "*$preflightErrorMarker*" } |
+      Select-Object -First 1
+  )
+
+  $arcCheckStatus = "unknown"
+  if ($arcCheckPresent) { $arcCheckStatus = "present" }
+  elseif ($arcCheckAbsent) { $arcCheckStatus = "absent" }
+
+  $arcModuleLoadStatus = "unknown"
+  if ($arcModuleLoadSuccess) { $arcModuleLoadStatus = "success" }
+  elseif ($arcModuleLoadFailed) { $arcModuleLoadStatus = "failed" }
+  elseif ($arcModuleLoadSkipped) { $arcModuleLoadStatus = "skipped" }
+
+  $plotDecision = "unknown"
+  if ($plotDecisionContinue) { $plotDecision = "continue" }
+  elseif ($plotDecisionSkip) { $plotDecision = "skip" }
+
+  $currentPerDwgPdfs = @(Get-ChildItem -Path $batchOutputDir -Filter "$($dwgNameWithoutExt)-*.pdf" -ErrorAction SilentlyContinue | Sort-Object FullName)
+  $newPerDwgPdfs = @($currentPerDwgPdfs | Where-Object { -not $existingPerDwgPdfSet.Contains($_.FullName) })
+  $newPerDwgPdfCount = $newPerDwgPdfs.Count
+
+  "ARC_CHECK: $arcCheckStatus" | Out-File $logFile -Append
+  "ARC_MODULE_LOAD: $arcModuleLoadStatus" | Out-File $logFile -Append
+  "PLOT_DECISION: $plotDecision" | Out-File $logFile -Append
+  "PDF_COUNT_AFTER_DWG: $newPerDwgPdfCount" | Out-File $logFile -Append
+  Write-Host "TELEMETRY: $($dwgItem.Name): ARC_CHECK=$arcCheckStatus; ARC_MODULE_LOAD=$arcModuleLoadStatus; PLOT_DECISION=$plotDecision; PDF_COUNT_AFTER_DWG=$newPerDwgPdfCount"
+
+  $preflightSkipped = ($plotDecision -eq "skip")
+  $noPdfOutputFailure = (($plotDecision -eq "continue" -or $plotDecision -eq "unknown") -and $newPerDwgPdfCount -eq 0)
+
+  if ($missingArcAlignedTextSupport -or ($preflightSkipped -and $arcCheckStatus -eq "present" -and $arcModuleLoadStatus -eq "failed")) {
+    if (-not ($arcAlignedTextSupportFailures -contains $dwgPath)) {
+      $arcAlignedTextSupportFailures += $dwgPath
+    }
+    Write-Host "PROGRESS: ERROR: $($dwgItem.Name) - ARCALIGNEDTEXT support missing (ctextapp.arx is not loadable by accoreconsole)."
+    "ARCALIGNEDTEXT support failure detected in headless plotting output." | Out-File $logFile -Append
+    "Hint: Ensure Express Tools is installed and ctextapp.arx is loadable by accoreconsole." | Out-File $logFile -Append
+  }
+  elseif ($preflightSkipped) {
+    Write-Host "PROGRESS: ERROR: $($dwgItem.Name) - Plot skipped by preflight checks."
+    "Plot skipped by preflight checks." | Out-File $logFile -Append
+  }
+  if ($preflightError) {
+    $details = if ($preflightErrorLine) { $preflightErrorLine } else { "Preflight reported an unspecified AutoLISP error." }
+    Write-Host "PROGRESS: ERROR: $($dwgItem.Name) - $details"
+    "Preflight error detail: $details" | Out-File $logFile -Append
+  }
+
+  if ($noPdfOutputFailure) {
+    if (-not ($noPdfOutputFailures -contains $dwgPath)) {
+      $noPdfOutputFailures += $dwgPath
+    }
+    Write-Host "PROGRESS: ERROR: $($dwgItem.Name) - No PDFs were generated from layouts."
+    "No PDFs were generated from layouts for this DWG." | Out-File $logFile -Append
+  }
+
   if ($code -ne 0) {
-    $failed += $dwgPath
+    Write-Host "PROGRESS: ERROR: $($dwgItem.Name) - accoreconsole exited with code $code."
+  }
+  "ExitCode: $code" | Out-File $logFile -Append
+
+  if ($code -ne 0 -or $missingArcAlignedTextSupport -or $preflightSkipped -or $preflightError -or $noPdfOutputFailure) {
+    if (-not ($failed -contains $dwgPath)) {
+      $failed += $dwgPath
+    }
   }
   else {
-    $individualPdfs = @(Get-ChildItem -Path $batchOutputDir -Filter "$($dwgNameWithoutExt)-*.pdf")
-    if ($individualPdfs.Count -gt 0) {
-      $pdfPaths = @($individualPdfs | ForEach-Object { $_.FullName } | Sort-Object)
+    if ($newPerDwgPdfs.Count -gt 0) {
+      $pdfPaths = @($newPerDwgPdfs | ForEach-Object { $_.FullName } | Sort-Object)
       $allGeneratedPdfs.AddRange($pdfPaths)
     }
   }
@@ -439,11 +682,30 @@ else {
 
 # --- CLEANUP & NOTIFICATION ---
 "===== Batch Plot Finished: $(Get-Date -f 'yyyy-MM-dd HH:mm:ss') =====" | Out-File $logFile -Append
+if ($arcAlignedTextSupportFailures.Count) {
+  $arcFails = @($arcAlignedTextSupportFailures | Select-Object -Unique)
+  $arcFailMsg = "ARCALIGNEDTEXT entities could not be plotted in headless mode because ctextapp.arx could not be loaded: $($arcFails -join ', ')"
+  Write-Host "PROGRESS: ERROR: $arcFailMsg"
+  Write-Host "PROGRESS: ERROR: Install/repair AutoCAD Express Tools (ctextapp.arx) for the selected AutoCAD Core Console."
+  $arcFailMsg | Out-File $logFile -Append
+  "Install/repair AutoCAD Express Tools and verify ctextapp.arx can be loaded by accoreconsole." | Out-File $logFile -Append
+}
+if ($noPdfOutputFailures.Count) {
+  $noPdfFails = @($noPdfOutputFailures | Select-Object -Unique)
+  $noPdfFailMsg = "One or more files reported plot success but produced zero layout PDFs: $($noPdfFails -join ', ')"
+  Write-Host "PROGRESS: ERROR: $noPdfFailMsg"
+  $noPdfFailMsg | Out-File $logFile -Append
+}
 if ($failed.Count) {
-  $failMsg = "One or more files failed to plot: $($failed -join ', ')"
+  $failedUnique = @($failed | Select-Object -Unique)
+  $failMsg = "One or more files failed to plot: $($failedUnique -join ', ')"
   Write-Host "PROGRESS: ERROR: $failMsg"
   $failMsg | Out-File $logFile -Append
 }
 
 # Open the final output folder as the very last step
 Invoke-Item $batchOutputDir
+
+if ($failed.Count) {
+  exit 1
+}

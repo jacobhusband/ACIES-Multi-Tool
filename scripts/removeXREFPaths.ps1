@@ -1,12 +1,14 @@
 param(
   [string]$AcadCore,
   [string]$DisciplineShort,
-  [string]$FilesListPath,
+  [string]$FilesListPath = "",
+  [string]$DefaultDirectory = "",
   [int]$StripXrefs = 1,
   [int]$SetByLayer = 1,
   [int]$Purge = 1,
   [int]$Audit = 1,
-  [int]$HatchColor = 1
+  [int]$HatchColor = 1,
+  [int]$SkipAcad = 0
 )
 
 # removeXrefPaths.ps1
@@ -49,11 +51,26 @@ if ($StripXrefs -and -not (Test-Path $dll)) {
   exit 1
 }
 
-# Validate files list path parameter
-if ([string]::IsNullOrEmpty($FilesListPath) -or -not (Test-Path $FilesListPath)) {
-  Write-Host "PROGRESS: ERROR: No files list provided or file not found."
-  exit 1
+# Relaunch in STA mode to guarantee the custom file picker can be sized/moved.
+if ([System.Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') {
+  $ps = (Get-Process -Id $PID).Path
+  $argsList = @("-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"")
+  if ($AcadCore) { $argsList += @("-AcadCore", "`"$AcadCore`"") }
+  if ($DisciplineShort) { $argsList += @("-DisciplineShort", "`"$DisciplineShort`"") }
+  if ($FilesListPath) { $argsList += @("-FilesListPath", "`"$FilesListPath`"") }
+  if ($DefaultDirectory) { $argsList += @("-DefaultDirectory", "`"$DefaultDirectory`"") }
+  if ($PSBoundParameters.ContainsKey('StripXrefs')) { $argsList += @("-StripXrefs", $StripXrefs) }
+  if ($PSBoundParameters.ContainsKey('SetByLayer')) { $argsList += @("-SetByLayer", $SetByLayer) }
+  if ($PSBoundParameters.ContainsKey('Purge')) { $argsList += @("-Purge", $Purge) }
+  if ($PSBoundParameters.ContainsKey('Audit')) { $argsList += @("-Audit", $Audit) }
+  if ($PSBoundParameters.ContainsKey('HatchColor')) { $argsList += @("-HatchColor", $HatchColor) }
+  if ($PSBoundParameters.ContainsKey('SkipAcad')) { $argsList += @("-SkipAcad", $SkipAcad) }
+  $child = Start-Process -FilePath $ps -ArgumentList $argsList -Wait -PassThru
+  exit $child.ExitCode
 }
+
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
 
 function Get-DisciplineShort([string]$value) {
   $short = ($value -split '[,;/\s]')[0]
@@ -115,6 +132,93 @@ function Get-CleanFileName([string]$name) {
   $clean = $clean.Trim()
   if ([string]::IsNullOrWhiteSpace($clean)) { return "Sheet" }
   return $clean
+}
+
+function Show-DwgFileSelectionPrompt {
+  param([string]$InitialDirectory = "")
+
+  $promptForm = New-Object System.Windows.Forms.Form
+  $promptForm.Text = "Select DWG file(s)"
+  $promptForm.StartPosition = "CenterScreen"
+  $promptForm.Size = New-Object System.Drawing.Size(560, 190)
+  $promptForm.MinimumSize = New-Object System.Drawing.Size(560, 190)
+  $promptForm.MaximumSize = New-Object System.Drawing.Size(560, 190)
+  $promptForm.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
+  $promptForm.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::Font
+  $promptForm.MaximizeBox = $false
+  $promptForm.MinimizeBox = $false
+  $promptForm.TopMost = $true
+  $promptForm.ShowInTaskbar = $true
+
+  $lblPrompt = New-Object System.Windows.Forms.Label
+  $lblPrompt.Text = "Choose one or more DWG files to process. This window stays on top until files are selected or you exit."
+  $lblPrompt.Location = New-Object System.Drawing.Point(16, 16)
+  $lblPrompt.Size = New-Object System.Drawing.Size(520, 52)
+  $lblPrompt.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+  $promptForm.Controls.Add($lblPrompt)
+
+  $btnSelectFiles = New-Object System.Windows.Forms.Button
+  $btnSelectFiles.Text = "Select DWG Files..."
+  $btnSelectFiles.Size = New-Object System.Drawing.Size(210, 44)
+  $btnSelectFiles.Location = New-Object System.Drawing.Point(222, 92)
+  $btnSelectFiles.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Right
+  $btnSelectFiles.Font = New-Object System.Drawing.Font("Segoe UI", 9.5, [System.Drawing.FontStyle]::Bold)
+  $btnSelectFiles.FlatStyle = [System.Windows.Forms.FlatStyle]::System
+  $promptForm.Controls.Add($btnSelectFiles)
+
+  $btnExitPrompt = New-Object System.Windows.Forms.Button
+  $btnExitPrompt.Text = "Exit"
+  $btnExitPrompt.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+  $btnExitPrompt.Size = New-Object System.Drawing.Size(110, 44)
+  $btnExitPrompt.Location = New-Object System.Drawing.Point(434, 92)
+  $btnExitPrompt.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Right
+  $btnExitPrompt.Font = New-Object System.Drawing.Font("Segoe UI", 10)
+  $btnExitPrompt.FlatStyle = [System.Windows.Forms.FlatStyle]::System
+  $promptForm.Controls.Add($btnExitPrompt)
+
+  $promptForm.CancelButton = $btnExitPrompt
+  $promptForm.AcceptButton = $btnSelectFiles
+
+  $dlg = New-Object System.Windows.Forms.OpenFileDialog
+  $dlg.Title = "Select DWG file(s)"
+  $dlg.Filter = "DWG files (*.dwg)|*.dwg"
+  $dlg.Multiselect = $true
+  $dlg.CheckFileExists = $true
+  $dlg.CheckPathExists = $true
+  $dlg.RestoreDirectory = $true
+  if ($InitialDirectory -and (Test-Path $InitialDirectory)) {
+    $dlg.InitialDirectory = $InitialDirectory
+  }
+
+  $btnSelectFiles.add_Click({
+      $promptForm.TopMost = $true
+      $promptForm.Activate()
+      $result = $dlg.ShowDialog($promptForm)
+      if ($result -eq [System.Windows.Forms.DialogResult]::OK -and $dlg.FileNames.Count -gt 0) {
+        $promptForm.Tag = [string[]]$dlg.FileNames
+        $promptForm.DialogResult = [System.Windows.Forms.DialogResult]::OK
+        $promptForm.Close()
+        return
+      }
+      $promptForm.TopMost = $true
+      $promptForm.Activate()
+      $promptForm.BringToFront()
+    })
+
+  $promptForm.add_Shown({
+      $promptForm.Activate()
+      $promptForm.BringToFront()
+      $btnSelectFiles.PerformClick()
+    })
+
+  $promptResult = $promptForm.ShowDialog()
+  if ($promptResult -eq [System.Windows.Forms.DialogResult]::OK) {
+    $selectedFiles = @($promptForm.Tag)
+    if ($selectedFiles.Count -gt 0) {
+      return $selectedFiles
+    }
+  }
+  return $null
 }
 
 Write-Host "PROGRESS: Staging cleanup commands..."
@@ -238,14 +342,35 @@ $scriptLines += "QUIT"
 $scriptContent = $scriptLines -join "`r`n"
 Set-Content -Encoding ASCII -Path $script -Value $scriptContent
 
-# Read files from list file (one path per line)
-$files = Get-Content -Path $FilesListPath -Encoding UTF8 |
-  Where-Object { $_ -and $_.Trim() -and (Test-Path $_.Trim()) } |
-  ForEach-Object { $_.Trim() }
-if ($files.Count -eq 0) {
-  Write-Host "PROGRESS: ERROR: No valid files found in list."
-  exit 1
+# Resolve files: prefer preselected list, otherwise open custom picker.
+$files = @()
+if (-not [string]::IsNullOrWhiteSpace($FilesListPath) -and (Test-Path $FilesListPath)) {
+  $files = @(
+    Get-Content -Path $FilesListPath -Encoding UTF8 |
+      Where-Object { $_ -and $_.Trim() -and (Test-Path $_.Trim()) } |
+      ForEach-Object { $_.Trim() }
+  )
+  if ($files.Count -gt 0) {
+    Write-Host "PROGRESS: Using $($files.Count) DWG file(s) from auto-selected project folder."
+  }
+  else {
+    Write-Host "PROGRESS: Provided files list was empty. Opening file picker..."
+  }
 }
+elseif (-not [string]::IsNullOrWhiteSpace($FilesListPath)) {
+  Write-Host "PROGRESS: Provided files list path not found. Opening file picker..."
+}
+
+if (-not $files -or $files.Count -eq 0) {
+  $files = Show-DwgFileSelectionPrompt -InitialDirectory $DefaultDirectory
+  if (-not $files -or $files.Count -eq 0) {
+    Write-Host "PROGRESS: Cancelled. No files selected."
+    exit 0
+  }
+}
+
+# Normalize to string array for single-file selection consistency.
+$files = @($files)
 Write-Host "PROGRESS: Processing $($files.Count) file(s)..."
 
 $disciplineShort = Get-DisciplineShort $DisciplineShort
@@ -263,7 +388,10 @@ foreach ($dwg in $files) {
     if ($xrefIndex -lt 0) { $xrefIndex = Find-FolderIndex $parts 'Xref' }
     $archIndex = Find-FolderIndex $parts 'Arch'
 
+    $sourcePath = $fullPath
     $workingPath = $fullPath
+    $targetDir = Split-Path -Parent $fullPath
+    $copiedFromArch = $false
     if ($xrefIndex -ge 0) {
       # Already in Xrefs/Xref folder - use as-is
       $workingPath = $fullPath
@@ -283,11 +411,11 @@ foreach ($dwg in $files) {
         New-Item -Path $targetDir -ItemType Directory -Force | Out-Null
         Write-Host "PROGRESS: Created Xrefs folder at $targetDir"
       }
-      $workingPath = Join-Path -Path $targetDir -ChildPath $parts[-1]
-      Copy-Item -LiteralPath $fullPath -Destination $workingPath -Force
+      $copiedFromArch = $true
+      Write-Host "PROGRESS: Preparing Arch source for Xrefs transfer: $name"
     }
 
-    $baseName = [IO.Path]::GetFileNameWithoutExtension($workingPath)
+    $baseName = [IO.Path]::GetFileNameWithoutExtension($sourcePath)
     $sheetId = Get-SheetIdFromName $baseName
     if ($sheetId) {
       $targetBase = Get-CleanFileName $sheetId
@@ -296,11 +424,20 @@ foreach ($dwg in $files) {
       $targetBase = Get-CleanFileName $baseName
     }
     $targetName = "{0} ({1})" -f $targetBase, $disciplineShort
-    $targetDir = Split-Path -Parent $workingPath
     $targetPath = Join-Path -Path $targetDir -ChildPath "$targetName.dwg"
+
+    if ($copiedFromArch) {
+      $incomingName = "__incoming__{0}.dwg" -f ([guid]::NewGuid().ToString('N'))
+      $incomingPath = Join-Path -Path $targetDir -ChildPath $incomingName
+      Copy-Item -LiteralPath $sourcePath -Destination $incomingPath -Force
+      $workingPath = $incomingPath
+      Write-Host "PROGRESS: Staged Arch source in Xrefs as $incomingName"
+      Write-Host "PROGRESS: Final target in Xrefs: $([IO.Path]::GetFileName($targetPath))"
+    }
 
     $existing = Get-ChildItem -LiteralPath $targetDir -File |
       Where-Object { $_.BaseName -ieq $targetName }
+    Write-Host "PROGRESS: Checking exact target-name collisions for '$targetName' in $targetDir"
     foreach ($item in $existing) {
       if ($item.FullName -ne $workingPath) {
         # Archive the existing file instead of deleting it
@@ -329,6 +466,11 @@ foreach ($dwg in $files) {
   }
 
   Write-Host "PROGRESS: Processing $i of $($files.Count): $([IO.Path]::GetFileName($workingPath))"
+
+  if ($SkipAcad) {
+    Write-Host "PROGRESS: SkipAcad enabled. Skipping accoreconsole execution for $([IO.Path]::GetFileName($workingPath))."
+    continue
+  }
 
   # IMPORTANT: no /ld here; we NETLOAD via the .scr
   # The 2>&1 redirects stderr to stdout, so the Python wrapper can catch errors.

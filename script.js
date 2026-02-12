@@ -8663,6 +8663,54 @@ document.getElementById("checklistModalCloseBtn")?.addEventListener("click", (e)
 // Make functions globally available
 window.openChecklistModal = openChecklistModal;
 window.switchChecklistView = () => {};
+window.__aciesAutomation = {
+  openWorkroom(projectIndex = 0) {
+    const idx = Number.isInteger(Number(projectIndex)) ? Number(projectIndex) : 0;
+    openChecklistModal(idx);
+    return this.getWorkroomState();
+  },
+  closeWorkroom() {
+    const modal = document.getElementById("checklistModal");
+    if (modal?.open) modal.close();
+    return this.getWorkroomState();
+  },
+  runWorkroomTool(toolId) {
+    triggerWorkroomTool(toolId);
+    return this.getToolState(toolId);
+  },
+  getWorkroomState() {
+    const modal = document.getElementById("checklistModal");
+    const deliverableSelect = document.getElementById("checklistDeliverableSelect");
+    return {
+      modalOpen: !!modal?.open,
+      activeProjectIndex: activeChecklistProject,
+      activeDeliverableIndex: activeChecklistDeliverable,
+      deliverableOptions: deliverableSelect?.options?.length || 0,
+    };
+  },
+  getToolState(toolId) {
+    const card = document.getElementById(toolId);
+    const statusEl = card?.querySelector(".tool-card-status");
+    const statusText = (statusEl?.textContent || "").trim();
+    const running = !!card?.classList.contains("running");
+    let phase = "idle";
+    if (statusText.toLowerCase().startsWith("error")) {
+      phase = "error";
+    } else if (statusText.toLowerCase().includes("done")) {
+      phase = "done";
+    } else if (running) {
+      phase = "running";
+    }
+    return {
+      toolId,
+      exists: !!card,
+      running,
+      phase,
+      statusText,
+      workroom: this.getWorkroomState(),
+    };
+  },
+};
 // ===================== BUNDLE / PLUGIN MANAGER =====================
 
 // Fetch description from specific GitHub RAW url based on bundle name

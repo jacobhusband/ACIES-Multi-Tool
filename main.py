@@ -779,6 +779,13 @@ class Api:
             appdata_path, 'Autodesk', 'ApplicationPlugins')
         os.makedirs(self.app_plugins_folder, exist_ok=True)
 
+        test_mode_raw = str(os.getenv('ACIES_TEST_MODE', '')).strip().lower()
+        self.test_mode = test_mode_raw in ('1', 'true', 'yes', 'on')
+        self._test_mode_records = []
+        if self.test_mode:
+            logging.info(
+                "Api initialized in ACIES_TEST_MODE. CAD tools run in deterministic validation mode.")
+
     # --- Application update helpers ---
     def _fetch_latest_release(self):
         """Fetch latest release metadata for this application.
@@ -3544,12 +3551,114 @@ TASK 3: LOAD TYPES
             logging.debug(
                 f"_notify_tool_status failed for {tool_id}: {e}")
 
+    def _record_test_mode_event(self, event):
+        if not self.test_mode:
+            return
+        event_data = dict(event or {})
+        event_data['timestamp'] = datetime.datetime.utcnow().isoformat() + 'Z'
+        self._test_mode_records.append(event_data)
+
+    def get_test_mode_records(self):
+        return {
+            'status': 'success',
+            'test_mode': self.test_mode,
+            'records': list(self._test_mode_records),
+        }
+
+    def _run_workroom_cad_tool_in_test_mode(self, settings, launch_context, tool_id, tool_name):
+        context = self._resolve_workroom_context(settings, launch_context)
+        source = context.get('source') or 'none'
+        project_path = context.get('project_path') or ''
+        discipline = context.get('discipline') or self._primary_discipline_from_settings(settings)
+        discipline_source = context.get('discipline_source') or 'unknown'
+
+        if not self._is_workroom_auto_select_enabled(settings, launch_context):
+            message = (
+                "TEST MODE: Workroom auto-select is disabled for this run. "
+                f"(source={source}, project_path={project_path or '<empty>'}, "
+                f"discipline={discipline}, discipline_source={discipline_source})"
+            )
+            self._record_test_mode_event({
+                'tool_id': tool_id,
+                'tool_name': tool_name,
+                'status': 'error',
+                'reason': 'auto_select_disabled',
+                'source': source,
+                'project_path': project_path,
+                'discipline': discipline,
+                'discipline_source': discipline_source,
+            })
+            self._notify_tool_status(tool_id, f"ERROR: {message}")
+            return {'status': 'error', 'test_mode': True, 'message': message}
+
+        auto_selection = self._resolve_workroom_auto_file_selection(
+            settings, launch_context, f'{tool_name}_test_mode'
+        )
+        if not auto_selection:
+            message = (
+                "TEST MODE: Expected auto-selected DWG files but none were resolved. "
+                f"(source={source}, project_path={project_path or '<empty>'}, "
+                f"discipline={discipline}, discipline_source={discipline_source})"
+            )
+            self._record_test_mode_event({
+                'tool_id': tool_id,
+                'tool_name': tool_name,
+                'status': 'error',
+                'reason': 'no_auto_selected_files',
+                'source': source,
+                'project_path': project_path,
+                'discipline': discipline,
+                'discipline_source': discipline_source,
+            })
+            self._notify_tool_status(tool_id, f"ERROR: {message}")
+            return {'status': 'error', 'test_mode': True, 'message': message}
+
+        count = int(auto_selection.get('count') or 0)
+        folder_path = auto_selection.get('folder_path') or ''
+        self._record_test_mode_event({
+            'tool_id': tool_id,
+            'tool_name': tool_name,
+            'status': 'success',
+            'source': source,
+            'project_path': project_path,
+            'discipline': discipline,
+            'discipline_source': discipline_source,
+            'folder_path': folder_path,
+            'count': count,
+            'resolution_mode': auto_selection.get('resolution_mode') or '',
+        })
+        self._notify_tool_status(
+            tool_id,
+            f"TEST MODE: Auto-selected {count} DWG(s) from {folder_path or 'unknown folder'}."
+        )
+        # Match normal tool completion signal so UI state is identical to production runs.
+        self._notify_tool_status(tool_id, "DONE")
+        return {
+            'status': 'success',
+            'test_mode': True,
+            'tool_id': tool_id,
+            'tool_name': tool_name,
+            'source': source,
+            'project_path': project_path,
+            'discipline': discipline,
+            'discipline_source': discipline_source,
+            'folder_path': folder_path,
+            'count': count,
+        }
+
     def run_publish_script(self, launch_context=None):
         """Runs the PlotDWGs.ps1 PowerShell script with progress updates."""
         script_path = os.path.join(BASE_DIR, "scripts", "PlotDWGs.ps1")
         if not os.path.exists(script_path):
             raise Exception("PlotDWGs.ps1 not found in scripts directory.")
         settings = self.get_user_settings()
+        if self.test_mode:
+            return self._run_workroom_cad_tool_in_test_mode(
+                settings,
+                launch_context,
+                'toolPublishDwgs',
+                'run_publish_script',
+            )
         acad_path = settings.get('autocadPath', '')
         if not acad_path:
             raise Exception("No AutoCAD version selected in settings.")
@@ -3593,6 +3702,13 @@ TASK 3: LOAD TYPES
             raise Exception(
                 "FreezeLayersDWGs.ps1 not found in scripts directory.")
         settings = self.get_user_settings()
+        if self.test_mode:
+            return self._run_workroom_cad_tool_in_test_mode(
+                settings,
+                launch_context,
+                'toolFreezeLayers',
+                'run_freeze_layers_script',
+            )
         acad_path = settings.get('autocadPath', '')
         if not acad_path:
             raise Exception("No AutoCAD version selected in settings.")
@@ -3634,6 +3750,13 @@ TASK 3: LOAD TYPES
             raise Exception(
                 "ThawLayersDWGs.ps1 not found in scripts directory.")
         settings = self.get_user_settings()
+        if self.test_mode:
+            return self._run_workroom_cad_tool_in_test_mode(
+                settings,
+                launch_context,
+                'toolThawLayers',
+                'run_thaw_layers_script',
+            )
         acad_path = settings.get('autocadPath', '')
         if not acad_path:
             raise Exception("No AutoCAD version selected in settings.")
@@ -3679,37 +3802,6 @@ TASK 3: LOAD TYPES
             acad_path = settings.get('autocadPath', '')
             if not acad_path:
                 raise Exception("No AutoCAD version selected in settings.")
-
-            # Use pywebview file dialog to select DWG files
-            window = webview.windows[0]
-            print("DEBUG: Opening file dialog for DWG selection...")
-            dialog_kwargs = {
-                'allow_multiple': True,
-                'file_types': ('DWG Files (*.dwg)',)
-            }
-            arch_folder = self._resolve_workroom_arch_folder(
-                settings, launch_context)
-            if arch_folder:
-                dialog_kwargs['directory'] = arch_folder
-                logging.info(
-                    f"run_clean_xrefs_script: opening picker in Arch folder: {arch_folder}")
-            elif self._is_workroom_auto_select_enabled(settings, launch_context):
-                self._notify_tool_status(
-                    'toolCleanXrefs',
-                    "Workroom Arch folder not found. Opening file picker...",
-                )
-                logging.info(
-                    "run_clean_xrefs_script: Arch folder not found, opening default file picker.")
-            file_paths = window.create_file_dialog(
-                webview.FileDialog.OPEN,
-                **dialog_kwargs
-            )
-            print(f"DEBUG: File dialog returned: {file_paths}")
-            if not file_paths:
-                # User cancelled - update status and return
-                window.evaluate_js('window.updateToolStatus("toolCleanXrefs", "DONE")')
-                return {'status': 'cancelled'}
-
             context = self._resolve_workroom_context(settings, launch_context)
             discipline = context.get('discipline') or self._primary_discipline_from_settings(settings)
             discipline_short_map = {
@@ -3734,34 +3826,46 @@ TASK 3: LOAD TYPES
 
             def _ps_bool(value):
                 return "1" if value else "0"
-
-            # Write file paths to a temp file to avoid command line escaping issues
-            import tempfile
-            temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8')
-            for fp in file_paths:
-                temp_file.write(fp + '\n')
-            temp_file.close()
-            print(f"DEBUG: Wrote {len(file_paths)} files to temp file: {temp_file.name}")
+            auto_selection = self._resolve_workroom_auto_file_selection(
+                settings, launch_context, 'run_clean_xrefs_script')
+            arch_folder = self._resolve_workroom_arch_folder(
+                settings, launch_context)
+            if self._is_workroom_auto_select_enabled(settings, launch_context) and not auto_selection:
+                if arch_folder:
+                    self._notify_tool_status(
+                        'toolCleanXrefs',
+                        "Workroom auto-select unavailable. Opening Arch folder picker...",
+                    )
+                    logging.info(
+                        "run_clean_xrefs_script: Workroom auto-select unavailable, opening picker in Arch folder.")
+                else:
+                    self._notify_tool_status(
+                        'toolCleanXrefs',
+                        "Workroom Arch folder not found. Opening file picker...",
+                    )
+                    logging.info(
+                        "run_clean_xrefs_script: Arch folder not found, opening default file picker.")
 
             command = (
                 f'powershell.exe -ExecutionPolicy Bypass -File "{script_path}" '
                 f'-AcadCore "{acad_path}" -DisciplineShort "{discipline_short}" '
-                f'-FilesListPath "{temp_file.name}" '
                 f'-StripXrefs {_ps_bool(strip_xrefs)} '
                 f'-SetByLayer {_ps_bool(set_by_layer)} '
                 f'-Purge {_ps_bool(purge)} '
                 f'-Audit {_ps_bool(audit)} '
                 f'-HatchColor {_ps_bool(hatch_color)}'
             )
-            print(f"DEBUG: Command: {command}")
+            if auto_selection:
+                command += f' -FilesListPath "{auto_selection["files_list_path"]}"'
+            if arch_folder:
+                command += f' -DefaultDirectory "{arch_folder}"'
             self._run_script_with_progress(command, 'toolCleanXrefs')
             return {'status': 'success'}
         except Exception as e:
-            print(f"DEBUG ERROR: {e}")
-            import traceback
-            traceback.print_exc()
-            window = webview.windows[0]
-            window.evaluate_js(f'window.updateToolStatus("toolCleanXrefs", "ERROR: {str(e)}")')
+            logging.error(f"run_clean_xrefs_script failed: {e}")
+            if webview.windows:
+                window = webview.windows[0]
+                window.evaluate_js(f'window.updateToolStatus("toolCleanXrefs", "ERROR: {str(e)}")')
             return {'status': 'error', 'message': str(e)}
 
     def select_files(self, options):

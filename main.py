@@ -3387,6 +3387,10 @@ TASK 3: LOAD TYPES
             return False
         return True
 
+    def _should_force_workroom_clean_xrefs_manual_selection(self, context):
+        source = str((context or {}).get('source') or '').strip().lower()
+        return source == 'workroom'
+
     def _list_base_level_dwgs(self, folder_path):
         if not folder_path or not os.path.isdir(folder_path):
             return []
@@ -3519,11 +3523,14 @@ TASK 3: LOAD TYPES
         }
 
     def _resolve_workroom_arch_folder(self, settings, launch_context):
-        if not self._is_workroom_auto_select_enabled(settings, launch_context):
-            return ''
         context = self._resolve_workroom_context(settings, launch_context)
+        source = str(context.get('source') or '').strip().lower()
+        if source != 'workroom':
+            return ''
         project_path = context.get('project_path') or ''
         if not project_path:
+            logging.info(
+                "_resolve_workroom_arch_folder: Missing project path for workroom launch.")
             return ''
         arch_resolution = self._resolve_workroom_discipline_folder(
             project_path, 'Arch')
@@ -3644,6 +3651,86 @@ TASK 3: LOAD TYPES
             'discipline_source': discipline_source,
             'folder_path': folder_path,
             'count': count,
+        }
+
+    def _run_workroom_clean_xrefs_tool_in_test_mode(self, settings, launch_context):
+        context = self._resolve_workroom_context(settings, launch_context)
+        source = context.get('source') or 'none'
+        project_path = context.get('project_path') or ''
+        discipline = context.get('discipline') or self._primary_discipline_from_settings(settings)
+        discipline_source = context.get('discipline_source') or 'unknown'
+
+        if not self._should_force_workroom_clean_xrefs_manual_selection(context):
+            message = (
+                "TEST MODE: Non-workroom launch. "
+                "Clean-xrefs uses manual file selection with the default picker location "
+                f"(source={source}, project_path={project_path or '<empty>'}, "
+                f"discipline={discipline}, discipline_source={discipline_source})."
+            )
+            self._record_test_mode_event({
+                'tool_id': 'toolCleanXrefs',
+                'tool_name': 'run_clean_xrefs_script',
+                'status': 'success',
+                'reason': 'non_workroom_manual_picker',
+                'source': source,
+                'project_path': project_path,
+                'discipline': discipline,
+                'discipline_source': discipline_source,
+                'manual_selection_enforced': False,
+                'arch_folder': '',
+            })
+            self._notify_tool_status('toolCleanXrefs', message)
+            self._notify_tool_status('toolCleanXrefs', "DONE")
+            return {
+                'status': 'success',
+                'test_mode': True,
+                'tool_id': 'toolCleanXrefs',
+                'tool_name': 'run_clean_xrefs_script',
+                'source': source,
+                'project_path': project_path,
+                'discipline': discipline,
+                'discipline_source': discipline_source,
+                'manual_selection_enforced': False,
+                'arch_folder': '',
+            }
+
+        arch_folder = self._resolve_workroom_arch_folder(settings, launch_context)
+        if arch_folder:
+            message = (
+                "TEST MODE: Workroom manual selection enforced. "
+                f"Opening Arch folder picker at {arch_folder}."
+            )
+        else:
+            message = (
+                "TEST MODE: Workroom manual selection enforced. "
+                "Arch folder not found; opening default file picker."
+            )
+
+        self._record_test_mode_event({
+            'tool_id': 'toolCleanXrefs',
+            'tool_name': 'run_clean_xrefs_script',
+            'status': 'success',
+            'source': source,
+            'project_path': project_path,
+            'discipline': discipline,
+            'discipline_source': discipline_source,
+            'manual_selection_enforced': True,
+            'arch_folder': arch_folder,
+        })
+        self._notify_tool_status('toolCleanXrefs', message)
+        # Match normal tool completion signal so UI state is identical to production runs.
+        self._notify_tool_status('toolCleanXrefs', "DONE")
+        return {
+            'status': 'success',
+            'test_mode': True,
+            'tool_id': 'toolCleanXrefs',
+            'tool_name': 'run_clean_xrefs_script',
+            'source': source,
+            'project_path': project_path,
+            'discipline': discipline,
+            'discipline_source': discipline_source,
+            'manual_selection_enforced': True,
+            'arch_folder': arch_folder,
         }
 
     def run_publish_script(self, launch_context=None):
@@ -3799,6 +3886,11 @@ TASK 3: LOAD TYPES
                 raise Exception(
                     "removeXREFPaths.ps1 not found in scripts directory.")
             settings = self.get_user_settings()
+            if self.test_mode:
+                return self._run_workroom_clean_xrefs_tool_in_test_mode(
+                    settings,
+                    launch_context,
+                )
             acad_path = settings.get('autocadPath', '')
             if not acad_path:
                 raise Exception("No AutoCAD version selected in settings.")
@@ -3826,25 +3918,52 @@ TASK 3: LOAD TYPES
 
             def _ps_bool(value):
                 return "1" if value else "0"
-            auto_selection = self._resolve_workroom_auto_file_selection(
-                settings, launch_context, 'run_clean_xrefs_script')
+
+            source = context.get('source') or 'none'
+            project_path = context.get('project_path') or ''
+            discipline_source = context.get('discipline_source') or 'unknown'
+            force_manual_selection = self._should_force_workroom_clean_xrefs_manual_selection(
+                context)
+
+            auto_selection = None
             arch_folder = self._resolve_workroom_arch_folder(
-                settings, launch_context)
-            if self._is_workroom_auto_select_enabled(settings, launch_context) and not auto_selection:
+                settings, launch_context) if force_manual_selection else ''
+            if force_manual_selection:
                 if arch_folder:
                     self._notify_tool_status(
                         'toolCleanXrefs',
-                        "Workroom auto-select unavailable. Opening Arch folder picker...",
+                        "Opening Arch folder for file selection...",
                     )
                     logging.info(
-                        "run_clean_xrefs_script: Workroom auto-select unavailable, opening picker in Arch folder.")
+                        "run_clean_xrefs_script: Workroom manual selection enforced. "
+                        f"(source={source}, project_path={project_path or '<empty>'}, "
+                        f"discipline={discipline}, discipline_source={discipline_source}, "
+                        f"arch_folder={arch_folder})")
                 else:
                     self._notify_tool_status(
                         'toolCleanXrefs',
-                        "Workroom Arch folder not found. Opening file picker...",
+                        "Arch folder not found. Opening file picker...",
                     )
                     logging.info(
-                        "run_clean_xrefs_script: Arch folder not found, opening default file picker.")
+                        "run_clean_xrefs_script: Workroom manual selection enforced, Arch folder not found. "
+                        f"(source={source}, project_path={project_path or '<empty>'}, "
+                        f"discipline={discipline}, discipline_source={discipline_source})")
+            else:
+                auto_selection = self._resolve_workroom_auto_file_selection(
+                    settings, launch_context, 'run_clean_xrefs_script')
+                if self._is_workroom_auto_select_enabled(settings, launch_context) and not auto_selection:
+                    fallback_context = self._resolve_workroom_context(
+                        settings, launch_context)
+                    logging.info(
+                        "run_clean_xrefs_script: Workroom auto-select unavailable; opening file picker "
+                        f"(source={fallback_context.get('source') or 'none'}, "
+                        f"project_path={fallback_context.get('project_path') or '<empty>'}, "
+                        f"discipline={fallback_context.get('discipline')}, "
+                        f"discipline_source={fallback_context.get('discipline_source')}).")
+                    self._notify_tool_status(
+                        'toolCleanXrefs',
+                        "Workroom auto-select unavailable. Opening file picker...",
+                    )
 
             command = (
                 f'powershell.exe -ExecutionPolicy Bypass -File "{script_path}" '

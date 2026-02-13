@@ -27,6 +27,7 @@ TOOL_IDS = [
     "toolPublishDwgs",
     "toolFreezeLayers",
     "toolThawLayers",
+    "toolCleanXrefs",
 ]
 
 
@@ -224,6 +225,26 @@ def run_automation(window, api, artifacts_dir, timeout_seconds, result_holder):
                 f"Missing successful backend test records for: {', '.join(missing)}"
             )
 
+        clean_record = next(
+            (
+                record
+                for record in record_list
+                if record.get("tool_id") == "toolCleanXrefs"
+                and record.get("status") == "success"
+            ),
+            None,
+        )
+        if not clean_record:
+            raise RuntimeError("Missing successful backend test record for toolCleanXrefs.")
+        if not clean_record.get("manual_selection_enforced"):
+            raise RuntimeError(
+                "toolCleanXrefs did not enforce manual file selection in workroom test mode."
+            )
+        if not clean_record.get("arch_folder"):
+            raise RuntimeError(
+                "toolCleanXrefs did not resolve an Arch folder for workroom manual selection."
+            )
+
         result_holder["status"] = "success"
         result_holder["workroom_state"] = workroom_state
         result_holder["tools"] = tool_results
@@ -264,9 +285,12 @@ def main():
     fixture_root = Path(tempfile.mkdtemp(prefix="acies-workroom-e2e-"))
     project_root = fixture_root / "E2E Project"
     electrical_dir = project_root / "Electrical"
+    arch_dir = project_root / "Arch"
     electrical_dir.mkdir(parents=True, exist_ok=True)
+    arch_dir.mkdir(parents=True, exist_ok=True)
     (electrical_dir / "E2E-001.dwg").write_text("", encoding="utf-8")
     (electrical_dir / "E2E-002.dwg").write_text("", encoding="utf-8")
+    (arch_dir / "A-001.dwg").write_text("", encoding="utf-8")
 
     existing_settings = read_json_or_default(SETTINGS_FILE, {})
     fixture_settings = build_fixture_settings(existing_settings)

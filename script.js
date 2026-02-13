@@ -4039,6 +4039,14 @@ let currentStatsAggregation = "month";
 let lightingScheduleProjectIndex = null;
 let lightingScheduleProjectQuery = "";
 let lightingTemplateQuery = "";
+let aiNoMatchState = {
+  rawAiData: null,
+  aiProject: null,
+  query: "",
+  selectedProjectIndex: -1,
+  candidateProjectIndices: [],
+  mode: "choice",
+};
 
 // Timesheet State
 let timesheetDb = { weeks: {}, lastModified: null };
@@ -6241,6 +6249,264 @@ function findBestProjectMatch(aiProject) {
     }
   }
   return bestMatch;
+}
+
+function buildAiDeliverableFromData(rawAiData = {}) {
+  return createDeliverable({
+    name: guessDeliverableName(rawAiData),
+    due: rawAiData?.due || "",
+    notes: rawAiData?.notes || "",
+    tasks: rawAiData?.tasks || [],
+  });
+}
+
+function openAiCreateNewProject(rawAiData = {}) {
+  openNew();
+  fillForm(rawAiData || {});
+}
+
+function resetAiNoMatchState() {
+  aiNoMatchState = {
+    rawAiData: null,
+    aiProject: null,
+    query: "",
+    selectedProjectIndex: -1,
+    candidateProjectIndices: [],
+    mode: "choice",
+  };
+}
+
+function setAiNoMatchDialogMode(mode = "choice") {
+  aiNoMatchState.mode = mode === "search" ? "search" : "choice";
+  const choiceSection = document.getElementById("aiNoMatchChoiceSection");
+  const searchSection = document.getElementById("aiNoMatchSearchSection");
+  if (choiceSection) choiceSection.hidden = aiNoMatchState.mode !== "choice";
+  if (searchSection) searchSection.hidden = aiNoMatchState.mode !== "search";
+}
+
+function getAiNoMatchCandidates(query = "") {
+  const normalizedQuery = normalizeProjectMatchValue(query);
+  return db
+    .map((project, index) => ({ index, project: normalizeProject(project) }))
+    .filter(({ project }) => !!project)
+    .filter(({ project }) => {
+      if (!normalizedQuery) return true;
+      const name = normalizeProjectMatchValue(project?.name);
+      const nick = normalizeProjectMatchValue(project?.nick);
+      return (
+        (name && name.includes(normalizedQuery)) ||
+        (nick && nick.includes(normalizedQuery))
+      );
+    });
+}
+
+function renderAiNoMatchProjectOptions() {
+  const list = document.getElementById("aiNoMatchProjectList");
+  const addBtn = document.getElementById("aiNoMatchAddBtn");
+  if (!list) return;
+
+  const candidates = getAiNoMatchCandidates(aiNoMatchState.query);
+  aiNoMatchState.candidateProjectIndices = candidates.map(
+    ({ index }) => index
+  );
+  if (
+    aiNoMatchState.selectedProjectIndex >= 0 &&
+    !aiNoMatchState.candidateProjectIndices.includes(
+      aiNoMatchState.selectedProjectIndex
+    )
+  ) {
+    aiNoMatchState.selectedProjectIndex = -1;
+  }
+
+  list.innerHTML = "";
+  candidates.forEach(({ index, project }) => {
+    const option = el("button", {
+      className:
+        "ts-project-option ai-no-match-project-option" +
+        (aiNoMatchState.selectedProjectIndex === index ? " is-selected" : ""),
+      type: "button",
+    });
+    option.append(
+      el("div", {
+        className: "ai-no-match-project-option-name",
+        textContent:
+          project.name ||
+          project.nick ||
+          project.id ||
+          `Project ${index + 1}`,
+      }),
+      el("div", {
+        className: "ai-no-match-project-option-meta",
+        textContent:
+          `Nickname: ${project.nick || "--"} | ID: ${project.id || "--"} | ` +
+          `Deliverables: ${getProjectDeliverables(project).length}`,
+      })
+    );
+    option.onclick = () => {
+      aiNoMatchState.selectedProjectIndex = index;
+      renderAiNoMatchProjectOptions();
+    };
+    list.appendChild(option);
+  });
+
+  if (!candidates.length) {
+    const message = db.length
+      ? "No matching projects found."
+      : "No projects exist yet. Create a new project from AI details.";
+    list.innerHTML = `<p class="muted" style="padding: 1rem; text-align: center;">${message}</p>`;
+  }
+
+  if (addBtn) addBtn.disabled = aiNoMatchState.selectedProjectIndex < 0;
+}
+
+function getAiNoMatchDialogState() {
+  const dlg = document.getElementById("aiNoMatchDlg");
+  const addBtn = document.getElementById("aiNoMatchAddBtn");
+  return {
+    open: !!dlg?.open,
+    mode: aiNoMatchState.mode,
+    query: aiNoMatchState.query,
+    selectedProjectIndex: aiNoMatchState.selectedProjectIndex,
+    candidateProjectIndices: [...aiNoMatchState.candidateProjectIndices],
+    resultCount: aiNoMatchState.candidateProjectIndices.length,
+    canAdd: !!addBtn && !addBtn.disabled,
+  };
+}
+
+function openAiNoMatchResolution(rawAiData = {}, aiProject = null) {
+  const dlg = document.getElementById("aiNoMatchDlg");
+  if (!dlg) return { open: false };
+
+  aiNoMatchState.rawAiData = rawAiData || {};
+  aiNoMatchState.aiProject = aiProject || normalizeProject(rawAiData || {});
+  aiNoMatchState.query = String(
+    aiNoMatchState.aiProject?.name || aiNoMatchState.aiProject?.nick || ""
+  ).trim();
+  aiNoMatchState.selectedProjectIndex = -1;
+  aiNoMatchState.candidateProjectIndices = [];
+  setAiNoMatchDialogMode("choice");
+
+  const searchInput = document.getElementById("aiNoMatchSearchInput");
+  if (searchInput) searchInput.value = aiNoMatchState.query;
+  renderAiNoMatchProjectOptions();
+  showDialog(dlg);
+  return getAiNoMatchDialogState();
+}
+
+function openAiNoMatchSearch() {
+  const searchInput = document.getElementById("aiNoMatchSearchInput");
+  setAiNoMatchDialogMode("search");
+  if (searchInput) {
+    searchInput.value = aiNoMatchState.query;
+    searchInput.focus();
+    searchInput.select();
+  }
+  renderAiNoMatchProjectOptions();
+  return getAiNoMatchDialogState();
+}
+
+function setAiNoMatchSearchQuery(query = "") {
+  aiNoMatchState.query = String(query || "");
+  const searchInput = document.getElementById("aiNoMatchSearchInput");
+  if (searchInput && searchInput.value !== aiNoMatchState.query) {
+    searchInput.value = aiNoMatchState.query;
+  }
+  renderAiNoMatchProjectOptions();
+  return getAiNoMatchDialogState();
+}
+
+function selectAiNoMatchProject(indexOrPosition) {
+  const value = Number(indexOrPosition);
+  if (!Number.isInteger(value)) return false;
+
+  let resolvedIndex = -1;
+  if (aiNoMatchState.candidateProjectIndices.includes(value)) {
+    resolvedIndex = value;
+  } else if (
+    value >= 0 &&
+    value < aiNoMatchState.candidateProjectIndices.length
+  ) {
+    resolvedIndex = aiNoMatchState.candidateProjectIndices[value];
+  }
+  if (resolvedIndex < 0 || !db[resolvedIndex]) return false;
+
+  aiNoMatchState.selectedProjectIndex = resolvedIndex;
+  renderAiNoMatchProjectOptions();
+  return true;
+}
+
+function closeAiNoMatchDialog() {
+  const dlg = document.getElementById("aiNoMatchDlg");
+  if (dlg?.open) dlg.close();
+  resetAiNoMatchState();
+}
+
+function addAiDeliverableToProject(projectIndex, aiProject, rawAiData) {
+  if (!Number.isInteger(projectIndex) || projectIndex < 0 || !db[projectIndex]) {
+    return false;
+  }
+
+  const snapshot = JSON.parse(JSON.stringify(db[projectIndex]));
+  const target = normalizeProject(db[projectIndex]);
+  if (!target) return false;
+
+  const newDeliverable = buildAiDeliverableFromData(rawAiData);
+  if (!target.path && aiProject?.path) target.path = aiProject.path;
+  if (!target.id && aiProject?.id) target.id = aiProject.id;
+  target.deliverables.push(newDeliverable);
+  target.overviewDeliverableId = newDeliverable.id;
+  db[projectIndex] = target;
+  editIndex = projectIndex;
+  _aiMatchSnapshot = { index: projectIndex, data: snapshot };
+  document.getElementById("dlgTitle").textContent =
+    `Edit Project \u2014 ${target.id || "Untitled"}`;
+  document.getElementById("btnSaveProject").textContent = "Save Changes";
+  fillForm(target);
+  document.getElementById("editDlg").showModal();
+  return true;
+}
+
+function applyAiToMatchedProject(match, aiProject, rawAiData) {
+  if (!match || !Number.isInteger(match.index)) return false;
+  const applied = addAiDeliverableToProject(match.index, aiProject, rawAiData);
+  if (!applied) return false;
+  const confidenceText = Number.isFinite(match.score)
+    ? `${Math.round(match.score * 100)}% confidence`
+    : "match confirmed";
+  toast(`Matched existing project (${match.method || "auto"}, ${confidenceText}).`);
+  return true;
+}
+
+function confirmAiNoMatchAddToProject() {
+  const selectedIndex = aiNoMatchState.selectedProjectIndex;
+  if (!Number.isInteger(selectedIndex) || selectedIndex < 0 || !db[selectedIndex]) {
+    return false;
+  }
+  const aiProject = aiNoMatchState.aiProject || normalizeProject(aiNoMatchState.rawAiData || {});
+  const rawAiData = aiNoMatchState.rawAiData || {};
+  closeAiNoMatchDialog();
+  const applied = addAiDeliverableToProject(selectedIndex, aiProject, rawAiData);
+  if (applied) toast("Added deliverable to selected project.");
+  return applied;
+}
+
+function handleAiProjectResult(rawAiData) {
+  const aiProject = normalizeProject(rawAiData || {});
+  if (!aiProject) {
+    openAiCreateNewProject(rawAiData || {});
+    return { branch: "new-project" };
+  }
+  const match = findBestProjectMatch(aiProject);
+  if (match) {
+    applyAiToMatchedProject(match, aiProject, rawAiData || {});
+    return { branch: "matched", match };
+  }
+  const dialogState = openAiNoMatchResolution(rawAiData || {}, aiProject);
+  if (!dialogState.open) {
+    openAiCreateNewProject(rawAiData || {});
+    return { branch: "new-project" };
+  }
+  return { branch: "no-match" };
 }
 
 function pickShortestPath(projects = []) {
@@ -8709,6 +8975,83 @@ window.__aciesAutomation = {
       statusText,
       workroom: this.getWorkroomState(),
     };
+  },
+  simulateAiResult(aiData = {}) {
+    return handleAiProjectResult(aiData || {});
+  },
+  getAiNoMatchDialogState() {
+    return getAiNoMatchDialogState();
+  },
+  openAiNoMatchSearch() {
+    return openAiNoMatchSearch();
+  },
+  setAiNoMatchSearch(query = "") {
+    return setAiNoMatchSearchQuery(query);
+  },
+  selectAiNoMatchProject(indexOrPosition) {
+    const selected = selectAiNoMatchProject(indexOrPosition);
+    return { selected, state: getAiNoMatchDialogState() };
+  },
+  confirmAiNoMatchAddToProject() {
+    const added = confirmAiNoMatchAddToProject();
+    return { added, state: getAiNoMatchDialogState(), edit: this.getEditDialogState() };
+  },
+  chooseAiNoMatchCreateNew() {
+    const rawAiData = aiNoMatchState.rawAiData || {};
+    closeAiNoMatchDialog();
+    openAiCreateNewProject(rawAiData);
+    return this.getEditDialogState();
+  },
+  closeAiNoMatchDialog() {
+    closeAiNoMatchDialog();
+    return getAiNoMatchDialogState();
+  },
+  getProjectSummary(projectIndex) {
+    const idx = Number(projectIndex);
+    if (!Number.isInteger(idx) || idx < 0 || !db[idx]) {
+      return { exists: false, index: idx };
+    }
+    const project = normalizeProject(db[idx]);
+    return {
+      exists: true,
+      index: idx,
+      id: project.id || "",
+      name: project.name || "",
+      nick: project.nick || "",
+      deliverableCount: getProjectDeliverables(project).length,
+      deliverables: getProjectDeliverables(project).map((deliverable) => ({
+        id: deliverable.id || "",
+        name: deliverable.name || "",
+        due: deliverable.due || "",
+        taskCount: Array.isArray(deliverable.tasks) ? deliverable.tasks.length : 0,
+      })),
+    };
+  },
+  getEditDialogState() {
+    const dlg = document.getElementById("editDlg");
+    return {
+      open: !!dlg?.open,
+      editIndex,
+      title: document.getElementById("dlgTitle")?.textContent || "",
+      saveButtonText: document.getElementById("btnSaveProject")?.textContent || "",
+      projectId: document.getElementById("f_id")?.value || "",
+      projectName: document.getElementById("f_name")?.value || "",
+      projectNick: document.getElementById("f_nick")?.value || "",
+      projectPath: document.getElementById("f_path")?.value || "",
+      deliverableCards:
+        document.querySelectorAll("#deliverableList .deliverable-card-new").length ||
+        0,
+    };
+  },
+  commitEditDialog() {
+    const button = document.getElementById("btnSaveProject");
+    if (button) button.click();
+    return this.getEditDialogState();
+  },
+  cancelEditDialog() {
+    const dlg = document.getElementById("editDlg");
+    if (dlg?.open) closeDlg("editDlg");
+    return this.getEditDialogState();
   },
 };
 // ===================== BUNDLE / PLUGIN MANAGER =====================
@@ -11505,43 +11848,81 @@ function initEventListeners() {
       );
       if (res.status === "success") {
         closeDlg("emailDlg");
-        const aiProject = normalizeProject(res.data);
-        const match = findBestProjectMatch(aiProject);
-        if (match) {
-          const snapshot = JSON.parse(JSON.stringify(db[match.index]));
-          const target = normalizeProject(db[match.index]);
-          const newDeliverable = createDeliverable({
-            name: guessDeliverableName(res.data),
-            due: res.data.due || "",
-            notes: res.data.notes || "",
-            tasks: res.data.tasks || [],
-          });
-          if (!target.path && aiProject.path) target.path = aiProject.path;
-          if (!target.id && aiProject.id) target.id = aiProject.id;
-          target.deliverables.push(newDeliverable);
-          target.overviewDeliverableId = newDeliverable.id;
-          db[match.index] = target;
-          editIndex = match.index;
-          _aiMatchSnapshot = { index: match.index, data: snapshot };
-          document.getElementById("dlgTitle").textContent =
-            `Edit Project \u2014 ${target.id || "Untitled"}`;
-          document.getElementById("btnSaveProject").textContent = "Save Changes";
-          fillForm(target);
-          document.getElementById("editDlg").showModal();
-          toast(
-            `Matched existing project (${match.method}, ` +
-            `${Math.round(match.score * 100)}% confidence).`
-          );
-        } else {
-          openNew();
-          fillForm(res.data);
-        }
+        handleAiProjectResult(res.data || {});
       } else throw new Error(res.message);
     } catch (e) {
       toast("AI Error: " + e.message);
     }
     document.getElementById("aiSpinner").style.display = "none";
   };
+
+  const aiNoMatchDlg = document.getElementById("aiNoMatchDlg");
+  if (aiNoMatchDlg) {
+    aiNoMatchDlg.addEventListener("close", () => {
+      resetAiNoMatchState();
+    });
+  }
+
+  const aiNoMatchCancelBtn = document.getElementById("aiNoMatchCancelBtn");
+  if (aiNoMatchCancelBtn) {
+    aiNoMatchCancelBtn.onclick = () => closeAiNoMatchDialog();
+  }
+
+  const aiNoMatchSearchBtn = document.getElementById("aiNoMatchSearchBtn");
+  if (aiNoMatchSearchBtn) {
+    aiNoMatchSearchBtn.onclick = () => openAiNoMatchSearch();
+  }
+
+  const aiNoMatchCreateNewBtn = document.getElementById("aiNoMatchCreateNewBtn");
+  if (aiNoMatchCreateNewBtn) {
+    aiNoMatchCreateNewBtn.onclick = () => {
+      const rawAiData = aiNoMatchState.rawAiData || {};
+      closeAiNoMatchDialog();
+      openAiCreateNewProject(rawAiData);
+    };
+  }
+
+  const aiNoMatchBackBtn = document.getElementById("aiNoMatchBackBtn");
+  if (aiNoMatchBackBtn) {
+    aiNoMatchBackBtn.onclick = () => setAiNoMatchDialogMode("choice");
+  }
+
+  const aiNoMatchSearchInput = document.getElementById("aiNoMatchSearchInput");
+  if (aiNoMatchSearchInput) {
+    aiNoMatchSearchInput.oninput = (e) => {
+      setAiNoMatchSearchQuery(e.target.value);
+    };
+    aiNoMatchSearchInput.onkeydown = (e) => {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      if (
+        aiNoMatchState.selectedProjectIndex < 0 &&
+        aiNoMatchState.candidateProjectIndices.length === 1
+      ) {
+        selectAiNoMatchProject(aiNoMatchState.candidateProjectIndices[0]);
+        return;
+      }
+      if (aiNoMatchState.selectedProjectIndex >= 0) {
+        confirmAiNoMatchAddToProject();
+      }
+    };
+  }
+
+  const aiNoMatchCreateNewFallbackBtn = document.getElementById(
+    "aiNoMatchCreateNewFallbackBtn"
+  );
+  if (aiNoMatchCreateNewFallbackBtn) {
+    aiNoMatchCreateNewFallbackBtn.onclick = () => {
+      const rawAiData = aiNoMatchState.rawAiData || {};
+      closeAiNoMatchDialog();
+      openAiCreateNewProject(rawAiData);
+    };
+  }
+
+  const aiNoMatchAddBtn = document.getElementById("aiNoMatchAddBtn");
+  if (aiNoMatchAddBtn) {
+    aiNoMatchAddBtn.onclick = () => confirmAiNoMatchAddToProject();
+  }
 
   document
     .getElementById("notesTextarea")

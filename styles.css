@@ -4825,6 +4825,38 @@ dialog::backdrop {
   background: var(--surface-hover);
 }
 
+.ai-no-match-project-list {
+  margin-top: 0.5rem;
+}
+
+.ai-no-match-project-option {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.ai-no-match-project-option.is-selected {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.ai-no-match-project-option-name {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.ai-no-match-project-option-meta {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ai-no-match-footer {
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
 /* Remove Button */
 .ts-remove-btn {
   width: 24px;

@@ -1158,6 +1158,35 @@
             <div id="aiSpinner" class="spinner" style="display:none;">Processing with AI...</div>
         </div>
     </dialog>
+    <dialog id="aiNoMatchDlg">
+        <div class="modal-header">
+            <div class="title">AI Could Not Locate a Project</div>
+            <button class="btn ghost" id="aiNoMatchCancelBtn">Cancel</button>
+        </div>
+        <div class="modal-body stack">
+            <p class="tiny muted">No strong match was found. Search for an existing project by name or nickname, or create
+                a new project from the AI details.</p>
+            <div id="aiNoMatchChoiceSection" class="modal-grid">
+                <div class="col-6">
+                    <button class="btn block" id="aiNoMatchSearchBtn">Search Existing Project</button>
+                </div>
+                <div class="col-6">
+                    <button class="btn-primary block" id="aiNoMatchCreateNewBtn">Create New Project</button>
+                </div>
+            </div>
+            <div id="aiNoMatchSearchSection" class="stack" hidden>
+                <label class="label" for="aiNoMatchSearchInput">Search Existing Projects</label>
+                <input id="aiNoMatchSearchInput" type="search" placeholder="Search by project name or nickname..." />
+                <div id="aiNoMatchProjectList" class="timesheet-project-list ai-no-match-project-list"></div>
+                <p class="tiny muted">Select one project and then add the new AI deliverable to it.</p>
+                <div class="modal-footer ai-no-match-footer">
+                    <button class="btn ghost" id="aiNoMatchBackBtn">Back</button>
+                    <button class="btn ghost" id="aiNoMatchCreateNewFallbackBtn">Create New Project Instead</button>
+                    <button class="btn-primary" id="aiNoMatchAddBtn" disabled>Add Deliverable to Selected Project</button>
+                </div>
+            </div>
+        </div>
+    </dialog>
     <!-- Paste CSV Modal -->
     <dialog id="pasteDlg">
         <div class="modal-header">
@@ -1408,7 +1437,8 @@
                             Workroom</label>
                     </div>
                     <div class="tiny muted" style="margin-top: 0.35rem;">On: Publish/Freeze/Thaw auto-select base-level
-                        DWGs from the active discipline folder. Prepare CAD DWG opens the picker at the Arch folder.
+                        DWGs from the active discipline folder. Prepare CAD DWG for Reference always opens the Arch
+                        folder for manual file selection.
                     </div>
                 </div>
             </div>
@@ -2332,15 +2362,16 @@
         <div class="modal-body stack tool-settings-body">
             <div class="tool-settings-intro">
                 <div class="tool-settings-title">How this toggle works</div>
-                <p class="tiny muted">On means Workroom launches CAD tools with automatic DWG file selection by project
-                    path and discipline. Off keeps the normal manual file picker flow.</p>
+                <p class="tiny muted">On means Workroom auto-selects files for Publish/Freeze/Thaw by project path and
+                    discipline. Prepare CAD DWG for Reference always uses manual file selection and opens at the Arch
+                    folder when available.</p>
             </div>
             <div class="tool-settings-list">
                 <div class="tool-setting">
                     <div class="tool-setting-text">
                         <div class="tool-setting-title">Auto select DWG files</div>
-                        <div class="tool-setting-desc">Applies to CAD tools launched from Project Workroom and reuses
-                            the same setting as the main Settings modal.</div>
+                        <div class="tool-setting-desc">Applies to Publish/Freeze/Thaw launched from Project Workroom and
+                            reuses the same setting as the main Settings modal.</div>
                     </div>
                     <div class="tool-setting-control">
                         <span class="toggle-label">Off</span>

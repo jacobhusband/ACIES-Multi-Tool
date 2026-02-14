@@ -4535,28 +4535,65 @@ function normalizeTask(task) {
   };
 }
 
+const NUMBERED_DELIVERABLE_NAME_RULES = [
+  { regex: /\bRFI\s*#?\s*0*(\d+)\b/i, label: "RFI" },
+  { regex: /\bASR\s*#?\s*0*(\d+)\b/i, label: "ASR" },
+  { regex: /\bPCC\s*#?\s*0*(\d+)\b/i, label: "PCC" },
+  { regex: /\bBulletin\s*#?\s*0*(\d+)\b/i, label: "Bulletin" },
+  { regex: /\bRevision\s*#?\s*0*(\d+)\b/i, label: "Revision" },
+];
+
+const BASE_DELIVERABLE_NAME_RULES = [
+  { regex: /\bRFI\b/i, label: "RFI" },
+  { regex: /\bASR\b/i, label: "ASR" },
+  { regex: /\bPCC\b/i, label: "PCC" },
+  { regex: /\bBulletin\b/i, label: "Bulletin" },
+];
+
 const DELIVERABLE_NAME_RULES = [
-  { regex: /\bDD\s*50\b/i, label: "DD50" },
-  { regex: /\bDD\s*90\b/i, label: "DD90" },
-  { regex: /\bCD\s*50\b/i, label: "CD50" },
-  { regex: /\bCD\s*90\b/i, label: "CD90" },
+  { regex: /\b(?:DD\s*[- ]?\s*50|50\s*%?\s*DD)\b/i, label: "DD50" },
+  { regex: /\b(?:DD\s*[- ]?\s*60|60\s*%?\s*DD)\b/i, label: "DD60" },
+  { regex: /\b(?:DD\s*[- ]?\s*90|90\s*%?\s*DD)\b/i, label: "DD90" },
+  { regex: /\b(?:CD\s*[- ]?\s*50|50\s*%?\s*CDS?)\b/i, label: "CD50" },
+  { regex: /\b(?:CD\s*[- ]?\s*60|60\s*%?\s*CDS?)\b/i, label: "CD60" },
+  { regex: /\b(?:CD\s*[- ]?\s*90|90\s*%?\s*CDS?)\b/i, label: "CD90" },
+  { regex: /\b(?:CD\s*[- ]?\s*100|100\s*%?\s*CDS?)\b/i, label: "CD100" },
   { regex: /\bCDF\b/i, label: "CDF" },
   { regex: /\bIFP\b/i, label: "IFP" },
   { regex: /\bIFC\b/i, label: "IFC" },
-  { regex: /\bASR\b/i, label: "ASR" },
+  { regex: /\blighting\s+submittals?\b/i, label: "Lighting Submittal" },
+  { regex: /\bcontrols?\s+submittals?\b/i, label: "Controls Submittal" },
+  { regex: /\brecord\s+drawings?\b/i, label: "Record Drawings" },
+  { regex: /\brecord\s+sets?\b/i, label: "Record Set" },
+  { regex: /\bsite\s+survey\b/i, label: "Site Survey" },
+  { regex: /\bsurvey\s+reports?\b/i, label: "Survey Report" },
+  { regex: /\bsubmittals?\b/i, label: "Submittal" },
+  { regex: /\bcoordination\b/i, label: "Coordination" },
+  { regex: /\bmeeting\b/i, label: "Meeting" },
+  { regex: /\brevision\b/i, label: "Revision" },
 ];
+
+function normalizeDeliverableSequenceNumber(value) {
+  const parsed = Number.parseInt(String(value || "").trim(), 10);
+  if (!Number.isFinite(parsed)) return "";
+  return String(parsed);
+}
 
 function extractDeliverableName(text) {
   if (!text) return "";
   const raw = String(text);
-  const rfiMatch = raw.match(/\bRFI\s*#?\s*(\d+)\b/i);
-  if (rfiMatch) return `RFI #${rfiMatch[1]}`;
-  if (/\bRFI\b/i.test(raw)) return "RFI";
-  const pccMatch = raw.match(/\bPCC\s*#?\s*(\d+)\b/i);
-  if (pccMatch) return `PCC ${pccMatch[1]}`;
-  if (/\bPCC\b/i.test(raw)) return "PCC";
-  const asrMatch = raw.match(/\bASR\s*#?\s*(\d+)\b/i);
-  if (asrMatch) return `ASR #${asrMatch[1]}`;
+
+  for (const rule of NUMBERED_DELIVERABLE_NAME_RULES) {
+    const match = raw.match(rule.regex);
+    if (!match) continue;
+    const sequence = normalizeDeliverableSequenceNumber(match[1]);
+    if (sequence) return `${rule.label} #${sequence}`;
+  }
+
+  for (const rule of BASE_DELIVERABLE_NAME_RULES) {
+    if (rule.regex.test(raw)) return rule.label;
+  }
+
   for (const rule of DELIVERABLE_NAME_RULES) {
     if (rule.regex.test(raw)) return rule.label;
   }
@@ -4566,13 +4603,13 @@ function extractDeliverableName(text) {
 function guessDeliverableName(legacy) {
   const candidates = [];
   if (legacy?.deliverable) candidates.push(legacy.deliverable);
-  if (legacy?.nick) candidates.push(legacy.nick);
-  if (legacy?.name) candidates.push(legacy.name);
-  if (legacy?.path) candidates.push(basename(legacy.path));
   if (Array.isArray(legacy?.tasks)) {
     legacy.tasks.forEach((t) => candidates.push(t?.text || t));
   }
   if (legacy?.notes) candidates.push(legacy.notes);
+  if (legacy?.path) candidates.push(basename(legacy.path));
+  if (legacy?.name) candidates.push(legacy.name);
+  if (legacy?.nick) candidates.push(legacy.nick);
   for (const text of candidates) {
     const name = extractDeliverableName(text);
     if (name) return name;
@@ -11506,6 +11543,62 @@ function initEventListeners() {
     });
   }
 
+  const copyProjectLocallyBtn = document.getElementById("toolCopyProjectLocally");
+  if (copyProjectLocallyBtn) {
+    const handler = async () => {
+      if (copyProjectLocallyBtn.classList.contains("running")) return;
+      copyProjectLocallyBtn.classList.add("running");
+      window.updateToolStatus("toolCopyProjectLocally", "Select server project folder...");
+
+      try {
+        const selection = await window.pywebview.api.select_folder();
+        if (selection?.status === "error") {
+          throw new Error(selection.message || "Failed to choose a folder.");
+        }
+        if (!selection || selection.status === "cancelled" || !selection.path) {
+          const statusEl = copyProjectLocallyBtn.querySelector(".tool-card-status");
+          if (statusEl) statusEl.textContent = "";
+          copyProjectLocallyBtn.classList.remove("running");
+          return;
+        }
+
+        window.updateToolStatus("toolCopyProjectLocally", "Copying project...");
+        const result = await window.pywebview.api.copy_project_locally(selection.path);
+        if (result?.status !== "success") {
+          throw new Error(result?.message || "Failed to copy project locally.");
+        }
+
+        window.updateToolStatus("toolCopyProjectLocally", "DONE");
+        toast("Project copied locally.");
+
+        const missingFolders = Array.isArray(result?.missingServerFolders)
+          ? result.missingServerFolders
+          : [];
+        if (missingFolders.length) {
+          toast(
+            `Missing on server (created empty locally): ${missingFolders.join(", ")}`,
+            7000
+          );
+        }
+
+        if (result?.localProjectPath) {
+          await window.pywebview.api.open_path(result.localProjectPath);
+        }
+      } catch (e) {
+        const message = e?.message || "Failed to copy project locally.";
+        window.updateToolStatus("toolCopyProjectLocally", `ERROR: ${message}`);
+      }
+    };
+
+    copyProjectLocallyBtn.addEventListener("click", handler);
+    copyProjectLocallyBtn.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        handler();
+      }
+    });
+  }
+
 
   const wireSizerBtn = document.getElementById("toolWireSizer");
   if (wireSizerBtn) {
@@ -11838,22 +11931,46 @@ function initEventListeners() {
   document.getElementById("btnProcessEmail").onclick = async () => {
     const txt = val("emailArea");
     if (!txt) return;
-    document.getElementById("aiSpinner").style.display = "flex";
+    const aiSpinner = document.getElementById("aiSpinner");
+    const btnProcessEmail = document.getElementById("btnProcessEmail");
+    const AI_EMAIL_TIMEOUT_MS = 120000;
+    let timeoutId = null;
+    aiSpinner.style.display = "flex";
+    if (btnProcessEmail) btnProcessEmail.disabled = true;
     try {
-      const res = await window.pywebview.api.process_email_with_ai(
+      const aiRequest = window.pywebview.api.process_email_with_ai(
         txt,
         userSettings.apiKey,
         userSettings.userName,
         userSettings.discipline
       );
-      if (res.status === "success") {
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => {
+          reject(
+            new Error(
+              `AI request timed out after ${Math.round(
+                AI_EMAIL_TIMEOUT_MS / 1000
+              )} seconds. Please try again.`
+            )
+          );
+        }, AI_EMAIL_TIMEOUT_MS);
+      });
+      const res = await Promise.race([aiRequest, timeoutPromise]);
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+      if (res?.status === "success") {
         closeDlg("emailDlg");
         handleAiProjectResult(res.data || {});
-      } else throw new Error(res.message);
+      } else throw new Error(res?.message || "Failed to process email.");
     } catch (e) {
-      toast("AI Error: " + e.message);
+      toast("AI Error: " + (e?.message || "Unknown error."));
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+      aiSpinner.style.display = "none";
+      if (btnProcessEmail) btnProcessEmail.disabled = false;
     }
-    document.getElementById("aiSpinner").style.display = "none";
   };
 
   const aiNoMatchDlg = document.getElementById("aiNoMatchDlg");

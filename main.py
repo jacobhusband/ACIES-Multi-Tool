@@ -1417,11 +1417,12 @@ class Api:
             discipline, list) else (discipline or 'Engineering')
         prompt = f"""
 You are an intelligent assistant for {user_name}, a(n) {disciplines_str} engineering project manager. Your task is to analyze an email and extract specific project details. Focus ONLY on the primary {disciplines_str} engineering tasks mentioned. Ignore tasks for other disciplines.
-Analyze the following email text and extract the information into a valid JSON object with the following keys: "id", "name", "due", "path", "tasks", "notes".
+Analyze the following email text and extract the information into a valid JSON object with the following keys: "id", "name", "due", "path", "deliverable", "tasks", "notes".
 - "id": Find a project number or project ID (e.g., "250597", "P-12345", "Job #1042"). Look in the subject line, headers, and body. This could be called a job number, project number, project ID, or similar. If none, leave it empty.
 - "name": Determine the project name, typically including the client and address or building name (e.g., "BofA, 22004 Sherman Way, Canoga Park, CA"). Include enough detail to uniquely identify the project. If no formal name is found, compose one from the client name and location mentioned.
 - "due": Find the due date and format it as "MM/DD/YY". The current date is {current_date}. If the year is not specified in the email, assume the current year or the next year if the date would be in the past. Ensure the due date is on or after today. If multiple dates, choose the most relevant upcoming one.
 - "path": Find the main project file path (e.g., "M:\\\\Gensler\\\\...").
+- "deliverable": Infer the deliverable name from the email if possible. Prefer concise, standardized names when present (for example: DD60, DD90, CD60, CD90, CD100, CDF, RFI, RFI #2, Submittal, Lighting Submittal, Controls Submittal, Record Set, Record Drawings, IFP, Site Survey, Survey Report, ASR, ASR #2, PCC, PCC #3, Bulletin #2, Coordination, Meeting, Revision). If no deliverable is clear, leave it empty.
 - "tasks": Create a JSON array of strings listing only the key {disciplines_str} engineering action items. Be concise. Examples: ["Update CAD per architect's comments", "Fill out permit forms", "Prepare binded CADs for IFP submission"].
 - "notes": Provide a brief, one-sentence summary of the email's main request.
 If a piece of information is not found, the value should be an empty string "" for strings, or an empty array [] for tasks.
@@ -1433,7 +1434,10 @@ Return ONLY the JSON object.
 """.strip()
         try:
             self._ensure_aiohttp()
-            client = genai.Client(api_key=final_api_key)
+            client = genai.Client(
+                api_key=final_api_key,
+                http_options=types.HttpOptions(timeout=120000),
+            )
             model = "gemini-3-flash-preview"
 
             contents = [
@@ -1485,6 +1489,7 @@ Return ONLY the JSON object.
             project_data.setdefault("name", "")
             project_data.setdefault("due", "")
             project_data.setdefault("path", "")
+            project_data.setdefault("deliverable", "")
             project_data.setdefault("tasks", [])
             project_data.setdefault("notes", "")
 
@@ -2715,6 +2720,122 @@ Return ONLY the JSON object.
             return {'status': 'success'}
         except Exception as e:
             logging.error(f"Error creating folder: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def _get_copy_project_disciplines(self, settings):
+        """Normalize settings discipline value into a non-empty list."""
+        if not isinstance(settings, dict):
+            return ['Electrical']
+
+        raw_value = settings.get('discipline', ['Electrical'])
+        if isinstance(raw_value, str):
+            candidates = [
+                part.strip() for part in re.split(r'[,/;]+', raw_value) if part and part.strip()
+            ]
+        elif isinstance(raw_value, (list, tuple, set)):
+            candidates = [str(item or '').strip() for item in raw_value if str(item or '').strip()]
+        else:
+            candidates = []
+
+        if not candidates:
+            return ['Electrical']
+
+        canonical_map = {
+            'electrical': 'Electrical',
+            'mechanical': 'Mechanical',
+            'plumbing': 'Plumbing',
+            'arch': 'Arch',
+            'architecture': 'Arch',
+            'general': 'Electrical',
+        }
+        result = []
+        seen = set()
+        for item in candidates:
+            canonical = canonical_map.get(item.lower(), item)
+            key = canonical.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append(canonical)
+
+        return result or ['Electrical']
+
+    def _copy_folder_contents(self, source_folder, destination_folder):
+        """Copy all direct children from source folder into destination folder."""
+        for name in os.listdir(source_folder):
+            source_path = os.path.join(source_folder, name)
+            destination_path = os.path.join(destination_folder, name)
+            if os.path.isdir(source_path):
+                shutil.copytree(source_path, destination_path)
+            else:
+                shutil.copy2(source_path, destination_path)
+
+    def copy_project_locally(self, server_project_path):
+        """Copy key project folders from server to local Documents\\Local Projects."""
+        try:
+            raw_server_path = str(server_project_path or '').strip()
+            if not raw_server_path:
+                return {'status': 'error', 'message': 'Server project path is required.'}
+
+            normalized_server_path = os.path.normpath(raw_server_path)
+            if not os.path.isdir(normalized_server_path):
+                return {'status': 'error', 'message': 'Server project path does not exist.'}
+
+            project_name = os.path.basename(normalized_server_path.rstrip('\\/'))
+            if not project_name:
+                return {'status': 'error', 'message': 'Invalid server project path.'}
+
+            local_root = os.path.join(_get_windows_documents_dir(), 'Local Projects')
+            os.makedirs(local_root, exist_ok=True)
+            local_project_path = os.path.normpath(os.path.join(local_root, project_name))
+
+            if os.path.exists(local_project_path):
+                return {
+                    'status': 'error',
+                    'message': f'Local project already exists: {local_project_path}'
+                }
+
+            settings = self.get_user_settings()
+            disciplines = self._get_copy_project_disciplines(settings)
+
+            required_folders = []
+            seen_required = set()
+            for folder_name in ['Arch', *disciplines, 'Xrefs', 'Documents', 'RFI']:
+                clean_name = str(folder_name or '').strip()
+                if not clean_name:
+                    continue
+                key = clean_name.lower()
+                if key in seen_required:
+                    continue
+                seen_required.add(key)
+                required_folders.append(clean_name)
+
+            os.makedirs(local_project_path, exist_ok=False)
+            for folder_name in required_folders:
+                os.makedirs(os.path.join(local_project_path, folder_name), exist_ok=True)
+
+            copied_folders = []
+            missing_server_folders = []
+            for folder_name in required_folders:
+                source_folder = os.path.join(normalized_server_path, folder_name)
+                destination_folder = os.path.join(local_project_path, folder_name)
+                if os.path.isdir(source_folder):
+                    self._copy_folder_contents(source_folder, destination_folder)
+                    copied_folders.append(folder_name)
+                else:
+                    missing_server_folders.append(folder_name)
+
+            return {
+                'status': 'success',
+                'serverProjectPath': normalized_server_path,
+                'localProjectPath': local_project_path,
+                'projectName': project_name,
+                'disciplines': disciplines,
+                'copiedFolders': copied_folders,
+                'missingServerFolders': missing_server_folders,
+            }
+        except Exception as e:
+            logging.error(f"Error copying project locally: {e}")
             return {'status': 'error', 'message': str(e)}
 
     def get_wire_sizer_url(self):

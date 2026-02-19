@@ -542,9 +542,36 @@
             </div>
             <button class="btn btn-primary tiny" id="appUpdateBtn" style="display:none;">Update</button>
             <button class="icon-btn theme-toggle" id="themeToggleBtn" aria-label="Toggle theme"
-                title="Toggle light/dark mode">☀️</button>
-            <button class="icon-btn" id="settingsBtn" aria-label="Settings" title="Settings">⚙️</button>
-            <button class="icon-btn" id="mainHelpBtn" aria-label="Help" title="Help">?</button>
+                title="Toggle light/dark mode">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="5"></circle>
+                    <line x1="12" y1="1" x2="12" y2="3"></line>
+                    <line x1="12" y1="21" x2="12" y2="23"></line>
+                    <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                    <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                    <line x1="1" y1="12" x2="3" y2="12"></line>
+                    <line x1="21" y1="12" x2="23" y2="12"></line>
+                    <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                    <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+                </svg>
+            </button>
+            <button class="icon-btn" id="settingsBtn" aria-label="Settings" title="Settings">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <path
+                        d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+                    <circle cx="12" cy="12" r="3" />
+                </svg>
+            </button>
+            <button class="icon-btn" id="mainHelpBtn" aria-label="Help" title="Help">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+                    <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                </svg>
+            </button>
         </div>
     </header>
     <!-- Setup Help Notification -->
@@ -577,18 +604,46 @@
                         <input id="search" type="search" placeholder="Search projects..." />
                     </div>
                     <div class="toolbar-actions">
-                        <button class="icon-btn quick-add" id="quickNew" aria-label="New project"
-                            title="New project">＋</button>
-                        <button class="icon-btn" id="aiBtn" aria-label="AI Project"
-                            title="Create project with AI">🤖</button>
-                        <button class="icon-btn" id="statsBtn" aria-label="Statistics"
-                            title="View Statistics">📊</button>
+                        <button class="icon-btn quick-add" id="quickNew" aria-label="New project" title="New project">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <line x1="12" y1="5" x2="12" y2="19"></line>
+                                <line x1="5" y1="12" x2="19" y2="12"></line>
+                            </svg>
+                        </button>
+                        <button class="icon-btn" id="aiBtn" aria-label="AI Project" title="Create project with AI">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path
+                                    d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z" />
+                            </svg>
+                        </button>
+                        <button class="icon-btn" id="statsBtn" aria-label="Statistics" title="View Statistics">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <line x1="18" y1="20" x2="18" y2="10"></line>
+                                <line x1="12" y1="20" x2="12" y2="4"></line>
+                                <line x1="6" y1="20" x2="6" y2="14"></line>
+                            </svg>
+                        </button>
                         <button class="icon-btn" id="toggleNonPrimaryBtn" aria-label="Toggle non-primary deliverables"
-                            title="Show/Hide non-primary deliverables">👁️</button>
+                            title="Show/Hide non-primary deliverables">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                                <circle cx="12" cy="12" r="3"></circle>
+                            </svg>
+                        </button>
                         <button class="icon-btn" id="pinUrgentDeliverablesBtn" aria-label="Pin urgent deliverables"
                             title="Pin all overdue and due-today deliverables"></button>
-                        <button class="icon-btn" id="projectsHelpBtn" aria-label="Projects help"
-                            title="Projects help">?</button>
+                        <button class="icon-btn" id="projectsHelpBtn" aria-label="Projects help" title="Projects help">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+                                <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                            </svg>
+                        </button>
                     </div>
                 </div>
                 <div class="filter-controls projects-filter-controls" id="projectsFilterControls">
@@ -658,7 +713,13 @@
                         <input id="notesSearch" type="search" placeholder="Search notes..." />
                     </div>
                     <div class="toolbar-actions">
-                        <button class="icon-btn" id="notesHelpBtn" aria-label="Notes help" title="Notes help">?</button>
+                        <button class="icon-btn" id="notesHelpBtn" aria-label="Notes help" title="Notes help"><svg
+                                width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+                                <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                            </svg></button>
                     </div>
                 </div>
                 <div class="notes-controls">
@@ -686,7 +747,11 @@
                     </div>
                     <div class="toolbar-actions">
                         <button class="icon-btn" id="checklistsHelpBtn" aria-label="Checklists help"
-                            title="Checklists help">?</button>
+                            title="Checklists help" <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+                            <line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
                     </div>
                 </div>
                 <div class="checklists-controls">
@@ -721,7 +786,13 @@
                         <p class="tiny muted">Utilities and automation tools for ACIES workflows.</p>
                     </div>
                     <div class="toolbar-actions">
-                        <button class="icon-btn" id="toolsHelpBtn" aria-label="Tools help" title="Tools help">?</button>
+                        <button class="icon-btn" id="toolsHelpBtn" aria-label="Tools help" title="Tools help"><svg
+                                width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+                                <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                            </svg></button>
                         <button id="abortBtn" class="btn btn-danger" style="display: none;">⏹ Abort Process</button>
                     </div>
                 </div>
@@ -874,7 +945,13 @@
                         </div>
                         <div class="toolbar-actions">
                             <button class="icon-btn" id="pluginsHelpBtn" aria-label="Plugins help"
-                                title="Plugins help">?</button>
+                                title="Plugins help"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                                    stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                    stroke-linejoin="round">
+                                    <circle cx="12" cy="12" r="10"></circle>
+                                    <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+                                    <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                                </svg></button>
                         </div>
                     </div>
                     <div id="commands-container" class="tools-grid">
@@ -921,7 +998,12 @@
                             Export Excel
                         </button>
                         <button class="icon-btn" id="timesheetsHelpBtn" aria-label="Timesheets help"
-                            title="Timesheets help">?</button>
+                            title="Timesheets help"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+                                <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                            </svg></button>
                     </div>
                 </div>
 
@@ -1176,7 +1258,8 @@
             <button class="btn ghost" id="aiNoMatchCancelBtn">Cancel</button>
         </div>
         <div class="modal-body stack">
-            <p class="tiny muted">No strong match was found. Search for an existing project by name or nickname, or create
+            <p class="tiny muted">No strong match was found. Search for an existing project by name or nickname, or
+                create
                 a new project from the AI details.</p>
             <div id="aiNoMatchChoiceSection" class="modal-grid">
                 <div class="col-6">
@@ -1194,7 +1277,8 @@
                 <div class="modal-footer ai-no-match-footer">
                     <button class="btn ghost" id="aiNoMatchBackBtn">Back</button>
                     <button class="btn ghost" id="aiNoMatchCreateNewFallbackBtn">Create New Project Instead</button>
-                    <button class="btn-primary" id="aiNoMatchAddBtn" disabled>Add Deliverable to Selected Project</button>
+                    <button class="btn-primary" id="aiNoMatchAddBtn" disabled>Add Deliverable to Selected
+                        Project</button>
                 </div>
             </div>
         </div>
@@ -2098,7 +2182,8 @@
 
                     <section class="cb-section">
                         <div class="cb-section-title">1. Upload panel photos</div>
-                        <p class="tiny muted">Upload one breaker photo and one directory photo for the active panel tab.</p>
+                        <p class="tiny muted">Upload one breaker photo and one directory photo for the active panel tab.
+                        </p>
                         <div class="cb-upload-grid">
                             <div class="cb-upload-card">
                                 <div class="cb-upload-title">Circuit breakers photo</div>
@@ -2109,7 +2194,8 @@
                                     <div class="tiny muted">JPG, PNG, HEIC supported</div>
                                 </div>
                                 <div class="cb-upload-actions">
-                                    <span id="cbBreakerFile" class="cb-file-pill" data-empty="true">No file selected</span>
+                                    <span id="cbBreakerFile" class="cb-file-pill" data-empty="true">No file
+                                        selected</span>
                                 </div>
                             </div>
                             <div class="cb-upload-card">
@@ -2121,7 +2207,8 @@
                                     <div class="tiny muted">JPG, PNG, HEIC supported</div>
                                 </div>
                                 <div class="cb-upload-actions">
-                                    <span id="cbDirectoryFile" class="cb-file-pill" data-empty="true">No file selected</span>
+                                    <span id="cbDirectoryFile" class="cb-file-pill" data-empty="true">No file
+                                        selected</span>
                                 </div>
                             </div>
                         </div>
@@ -2146,10 +2233,13 @@
                             </div>
                         </div>
                         <div id="cbExistingScheduleRow" class="cb-file-row" hidden>
-                            <span id="cbExistingSchedulePath" class="cb-file-pill" data-empty="true">No file selected</span>
+                            <span id="cbExistingSchedulePath" class="cb-file-pill" data-empty="true">No file
+                                selected</span>
                             <div class="cb-file-actions">
-                                <button class="btn tiny" id="cbBrowseExistingScheduleBtn" type="button">Browse...</button>
-                                <button class="btn tiny ghost" id="cbClearExistingScheduleBtn" type="button">Clear</button>
+                                <button class="btn tiny" id="cbBrowseExistingScheduleBtn"
+                                    type="button">Browse...</button>
+                                <button class="btn tiny ghost" id="cbClearExistingScheduleBtn"
+                                    type="button">Clear</button>
                             </div>
                         </div>
                     </section>
@@ -2348,8 +2438,9 @@
                 <section class="workroom-panel workroom-tools-panel">
                     <div class="workroom-panel-header">
                         <h3>Tools</h3>
-                        <button type="button" class="icon-btn mini workroom-tools-settings-btn" id="workroomToolsSettingsBtn"
-                            aria-label="Project Workroom tool settings" title="Project Workroom tool settings">
+                        <button type="button" class="icon-btn mini workroom-tools-settings-btn"
+                            id="workroomToolsSettingsBtn" aria-label="Project Workroom tool settings"
+                            title="Project Workroom tool settings">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                 <circle cx="12" cy="12" r="3"></circle>

@@ -2219,11 +2219,18 @@
                         <p class="tiny muted">Choose one output workbook shared by all panel tabs in this run.</p>
                         <div class="cb-choice-row">
                             <button class="cb-choice-btn" id="cbOutputModeNew" type="button">
-                                Create a new panel schedule (.xlsx)
+                                Create a new panel schedule (.xlsx/.xls)
                             </button>
                             <button class="cb-choice-btn" id="cbOutputModeExisting" type="button">
                                 Add sheets to an existing panel schedule
                             </button>
+                        </div>
+                        <div id="cbNewScheduleFormatRow" class="cb-format-row">
+                            <label class="label" for="cbNewScheduleFormat">New schedule format</label>
+                            <select id="cbNewScheduleFormat">
+                                <option value="xlsx">Excel Workbook (.xlsx)</option>
+                                <option value="xls">Excel 97-2003 Workbook (.xls)</option>
+                            </select>
                         </div>
                         <div id="cbNewScheduleRow" class="cb-file-row">
                             <span id="cbNewSchedulePath" class="cb-file-pill" data-empty="true">No file selected</span>

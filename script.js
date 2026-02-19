@@ -9502,6 +9502,7 @@ const circuitBreakerState = {
   activePanelId: "",
   nextPanelNumber: 1,
   outputMode: "new",
+  newOutputExtension: "xlsx",
   newOutputPath: "",
   existingOutputPath: "",
   running: false,
@@ -9610,6 +9611,29 @@ function getCircuitBreakerOutputPath() {
     : circuitBreakerState.newOutputPath;
 }
 
+function normalizeCircuitBreakerOutputExtension(value) {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^\./, "");
+  if (normalized === "xls" || normalized === "xlsx") {
+    return normalized;
+  }
+  return "xlsx";
+}
+
+function getCircuitBreakerOutputExtensionFromPath(path) {
+  const ext = String(path || "")
+    .trim()
+    .split(".")
+    .pop()
+    ?.toLowerCase();
+  if (ext === "xls" || ext === "xlsx") {
+    return ext;
+  }
+  return "";
+}
+
 function getCircuitBreakerFileLabel(path, file) {
   if (file?.name) return file.name;
   if (!path) return "No file selected";
@@ -9683,6 +9707,8 @@ function updateCircuitBreakerUi() {
   const breakerFile = document.getElementById("cbBreakerFile");
   const directoryFile = document.getElementById("cbDirectoryFile");
   const newRow = document.getElementById("cbNewScheduleRow");
+  const newFormatRow = document.getElementById("cbNewScheduleFormatRow");
+  const newFormatSelect = document.getElementById("cbNewScheduleFormat");
   const existingRow = document.getElementById("cbExistingScheduleRow");
   const newPath = document.getElementById("cbNewSchedulePath");
   const existingPath = document.getElementById("cbExistingSchedulePath");
@@ -9750,7 +9776,18 @@ function updateCircuitBreakerUi() {
   }
 
   if (newRow) newRow.hidden = circuitBreakerState.outputMode !== "new";
+  if (newFormatRow) newFormatRow.hidden = circuitBreakerState.outputMode !== "new";
   if (existingRow) existingRow.hidden = circuitBreakerState.outputMode !== "existing";
+
+  if (newFormatSelect) {
+    const normalizedExtension = normalizeCircuitBreakerOutputExtension(
+      circuitBreakerState.newOutputExtension
+    );
+    if (newFormatSelect.value !== normalizedExtension) {
+      newFormatSelect.value = normalizedExtension;
+    }
+    newFormatSelect.disabled = circuitBreakerState.running;
+  }
 
   if (panelNameInput && panelNameInput.value !== (activePanel?.panelName || "")) {
     panelNameInput.value = activePanel?.panelName || "";
@@ -9821,6 +9858,7 @@ function resetCircuitBreakerForm() {
   circuitBreakerState.activePanelId = "";
   circuitBreakerState.nextPanelNumber = 1;
   circuitBreakerState.outputMode = "new";
+  circuitBreakerState.newOutputExtension = "xlsx";
   circuitBreakerState.newOutputPath = "";
   circuitBreakerState.existingOutputPath = "";
   circuitBreakerState.running = false;
@@ -9875,13 +9913,22 @@ async function selectCircuitBreakerSchedulePath(mode) {
   }
   if (mode === "new") {
     try {
+      const outputExtension = normalizeCircuitBreakerOutputExtension(
+        circuitBreakerState.newOutputExtension
+      );
       const selection = await window.pywebview.api.select_template_save_location(
         null,
         "Panel_Schedule",
-        "xlsx"
+        outputExtension
       );
       if (selection?.status === "success" && selection.path) {
         circuitBreakerState.newOutputPath = selection.path;
+        const selectedExtension = getCircuitBreakerOutputExtensionFromPath(
+          selection.path
+        );
+        if (selectedExtension) {
+          circuitBreakerState.newOutputExtension = selectedExtension;
+        }
         updateCircuitBreakerUi();
       }
     } catch (e) {
@@ -9893,7 +9940,7 @@ async function selectCircuitBreakerSchedulePath(mode) {
   try {
     const selection = await window.pywebview.api.select_files({
       allow_multiple: false,
-      file_types: ["Excel Files (*.xlsx)"],
+      file_types: ["Excel Files (*.xlsx;*.xls)"],
     });
     if (selection?.status === "success" && selection.paths?.length) {
       circuitBreakerState.existingOutputPath = selection.paths[0];
@@ -10017,6 +10064,12 @@ async function runCircuitBreakerInBackground() {
   const payload = {
     outputMode: circuitBreakerState.outputMode,
     outputPath,
+    outputExtension:
+      circuitBreakerState.outputMode === "new"
+        ? normalizeCircuitBreakerOutputExtension(
+          circuitBreakerState.newOutputExtension
+        )
+        : "",
     panels,
     breakerPath: firstPanel.breakerPath || "",
     directoryPath: firstPanel.directoryPath || "",
@@ -11714,6 +11767,17 @@ function initEventListeners() {
   const cbAddPanelTabBtn = document.getElementById("cbAddPanelTabBtn");
   if (cbAddPanelTabBtn) {
     cbAddPanelTabBtn.addEventListener("click", addCircuitBreakerPanel);
+  }
+
+  const cbNewScheduleFormat = document.getElementById("cbNewScheduleFormat");
+  if (cbNewScheduleFormat) {
+    cbNewScheduleFormat.addEventListener("change", (e) => {
+      if (circuitBreakerState.running) return;
+      const selected = normalizeCircuitBreakerOutputExtension(e.target.value);
+      circuitBreakerState.newOutputExtension = selected;
+      circuitBreakerState.newOutputPath = "";
+      updateCircuitBreakerUi();
+    });
   }
 
   const cbBrowseNewScheduleBtn = document.getElementById("cbBrowseNewScheduleBtn");

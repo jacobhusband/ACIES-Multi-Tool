@@ -3136,6 +3136,84 @@ Return ONLY the JSON object.
             return 'API rate limit exceeded. Please wait a moment and try again.'
         return msg
 
+    def _normalize_panel_schedule_extension(self, ext_value):
+        ext = str(ext_value or "").strip().lower()
+        if not ext:
+            return ""
+        if not ext.startswith("."):
+            ext = f".{ext}"
+        return ext
+
+    def _panel_schedule_excel_requirement_message(self):
+        return "Editing .xls requires Microsoft Excel installed on this machine."
+
+    def _convert_excel_workbook(self, source_path, dest_path, target_extension):
+        target_extension = self._normalize_panel_schedule_extension(target_extension)
+        if target_extension not in (".xlsx", ".xls"):
+            raise ValueError("Excel conversion target must be .xlsx or .xls.")
+
+        source_abs = os.path.abspath(str(source_path))
+        dest_abs = os.path.abspath(str(dest_path))
+        if not os.path.exists(source_abs):
+            raise FileNotFoundError(f"Workbook not found: {source_abs}")
+
+        try:
+            import win32com.client
+        except Exception as exc:
+            raise RuntimeError(self._panel_schedule_excel_requirement_message()) from exc
+
+        excel = None
+        workbook = None
+        file_format = 56 if target_extension == ".xls" else 51
+
+        try:
+            excel = win32com.client.DispatchEx("Excel.Application")
+            excel.Visible = False
+            excel.DisplayAlerts = False
+
+            workbook = excel.Workbooks.Open(source_abs)
+            workbook.SaveAs(dest_abs, FileFormat=file_format)
+        except Exception as exc:
+            raise RuntimeError(
+                f"{self._panel_schedule_excel_requirement_message()} "
+                f"Excel conversion failed: {exc}"
+            ) from exc
+        finally:
+            if workbook is not None:
+                try:
+                    workbook.Close(False)
+                except Exception:
+                    pass
+            if excel is not None:
+                try:
+                    excel.Quit()
+                except Exception:
+                    pass
+
+    def _update_panel_schedule_workbook(self, panel_data, output_path):
+        output_extension = self._normalize_panel_schedule_extension(
+            os.path.splitext(str(output_path))[1]
+        )
+        if output_extension == ".xlsx":
+            return cb_update_excel_workbook(panel_data, output_path)
+        if output_extension != ".xls":
+            raise ValueError("Panel schedule must be an .xlsx or .xls file.")
+
+        temp_xlsx = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
+        temp_xlsx_path = temp_xlsx.name
+        temp_xlsx.close()
+
+        try:
+            self._convert_excel_workbook(output_path, temp_xlsx_path, ".xlsx")
+            sheet_name = cb_update_excel_workbook(panel_data, temp_xlsx_path)
+            self._convert_excel_workbook(temp_xlsx_path, output_path, ".xls")
+            return sheet_name
+        finally:
+            try:
+                os.remove(temp_xlsx_path)
+            except Exception:
+                pass
+
     def _analyze_panel_schedule_images(self, panel_name, breaker_paths, directory_paths):
         api_key = self._resolve_panel_schedule_api_key()
         if not api_key:
@@ -3235,11 +3313,21 @@ TASK 3: LOAD TYPES
             raise ValueError("Panel schedule file is required.")
 
         output_path = os.path.normpath(output_path)
+        output_extension_hint = self._normalize_panel_schedule_extension(
+            data.get('outputExtension') or data.get('output_extension')
+        )
+        output_extension = self._normalize_panel_schedule_extension(
+            os.path.splitext(output_path)[1]
+        )
+
         created_workbook = False
 
         if output_mode == "new":
-            if not output_path.lower().endswith(".xlsx"):
-                output_path = f"{output_path}.xlsx"
+            if not output_extension:
+                output_extension = output_extension_hint if output_extension_hint in (".xlsx", ".xls") else ".xlsx"
+                output_path = f"{output_path}{output_extension}"
+            if output_extension not in (".xlsx", ".xls"):
+                raise ValueError("Panel schedule must be an .xlsx or .xls file.")
             if os.path.exists(output_path):
                 raise ValueError("The selected file already exists. Choose a new name or add to the existing schedule.")
             if not CB_TEMPLATE_PATH.exists():
@@ -3247,11 +3335,14 @@ TASK 3: LOAD TYPES
             dest_dir = os.path.dirname(output_path)
             if dest_dir:
                 os.makedirs(dest_dir, exist_ok=True)
-            shutil.copy2(str(CB_TEMPLATE_PATH), output_path)
+            if output_extension == ".xlsx":
+                shutil.copy2(str(CB_TEMPLATE_PATH), output_path)
+            else:
+                self._convert_excel_workbook(str(CB_TEMPLATE_PATH), output_path, ".xls")
             created_workbook = True
         else:
-            if not output_path.lower().endswith(".xlsx"):
-                raise ValueError("Panel schedule must be an .xlsx file.")
+            if output_extension not in (".xlsx", ".xls"):
+                raise ValueError("Panel schedule must be an .xlsx or .xls file.")
             if not os.path.exists(output_path):
                 raise ValueError("Selected panel schedule was not found.")
 
@@ -3336,7 +3427,7 @@ TASK 3: LOAD TYPES
                 except Exception as e:
                     raise RuntimeError(self._format_panel_schedule_ai_error(e)) from e
 
-                sheet_name = cb_update_excel_workbook(panel_data, output_path)
+                sheet_name = self._update_panel_schedule_workbook(panel_data, output_path)
                 success_count += 1
                 results.append({
                     'panelId': panel_id,

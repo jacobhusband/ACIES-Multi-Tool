@@ -2420,6 +2420,17 @@ dialog.circuit-breaker-dialog {
   box-shadow: none;
 }
 
+.cb-format-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  max-width: 320px;
+}
+
+.cb-format-row .label {
+  margin-bottom: 0;
+}
+
 .cb-file-row {
   display: flex;
   flex-wrap: wrap;

@@ -45,8 +45,8 @@
   --warning-bg: rgba(245, 158, 11, 0.15);
 
   /* Shadows */
-  --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-sm: 0 4px 12px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.4);
   --glow: 0 0 15px rgba(16, 185, 129, 0.15);
 
   /* Metrics */
@@ -58,6 +58,7 @@
   --radius: 12px;
   --radius-lg: 16px;
   --font-main: "Inter", system-ui, sans-serif;
+  --transition-fast: all 0.2s ease;
 
   /* Structural Backgrounds (Dark Mode Defaults) */
   --header-bg: rgba(1, 24, 20, 0.85);
@@ -421,7 +422,8 @@ h4 {
   display: grid;
   place-items: center;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: var(--transition-fast);
+  box-shadow: var(--shadow-sm);
 }
 
 .icon-btn.mini {
@@ -634,16 +636,18 @@ main {
   background: transparent;
   border: 1px solid var(--glass-border);
   color: var(--text-secondary);
-  padding: 4px 12px;
+  padding: 6px 14px;
   border-radius: 20px;
   font-size: 12px;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: var(--transition-fast);
 }
 
 .filter-chip:hover {
   border-color: var(--accent);
   color: var(--text);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
 }
 
 .filter-chip.active {
@@ -739,7 +743,7 @@ main {
   text-align: left;
   font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.1em;
   color: var(--muted);
   padding: 0 1rem 0.5rem 1rem;
   font-weight: 600;
@@ -781,13 +785,15 @@ main {
 
 .row {
   background: var(--surface);
-  transition: all 0.2s ease;
+  transition: var(--transition-fast);
+  box-shadow: var(--shadow-sm);
 }
 
 .row:hover {
   background: var(--surface-hover);
-  /* Scale and Shadow removed to prevent "glow" and blurriness on large rows */
   border-color: var(--glass-border);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
 }
 
 .row td {
@@ -873,10 +879,16 @@ main {
 }
 
 /* Explicitly remove hover effects that might look like a glow in the table context */
+.row .actions .btn {
+  opacity: 0.5;
+  transition: var(--transition-fast);
+}
+
 .row .actions .btn:hover {
+  opacity: 1;
   border-color: var(--glass-border);
   background: var(--surface);
-  box-shadow: none;
+  box-shadow: var(--shadow-sm);
   margin-top: 0;
   margin-bottom: 0;
 }
@@ -1188,11 +1200,15 @@ mark.search-highlight {
   border-radius: var(--radius-sm);
   border: 1px solid var(--glass-border);
   background: var(--bg-tertiary);
+  border-left: 4px solid transparent;
+  transition: var(--transition-fast);
 }
 
 .deliverable-row.is-primary {
   border-color: var(--accent);
+  border-left-color: #fbbf24;
   box-shadow: var(--shadow-sm);
+  background: var(--bg-secondary);
 }
 
 .deliverable-label {
@@ -1418,17 +1434,17 @@ mark.search-highlight {
   justify-content: center;
   gap: 0.35rem;
   font-size: 11px;
-  padding: 4px 10px;
+  padding: 6px 14px;
   border-radius: var(--radius-sm);
   background: var(--surface);
   border: 1px solid var(--glass-border);
   color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: var(--transition-fast);
   min-width: 120px;
   font-weight: 600;
   letter-spacing: 0.01em;
-  box-shadow: none;
+  box-shadow: var(--shadow-sm);
 }
 
 .st:hover {
@@ -1436,6 +1452,7 @@ mark.search-highlight {
   border-color: var(--accent);
   color: var(--text);
   transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
 }
 
 .st[aria-pressed="true"] {
@@ -1478,7 +1495,6 @@ mark.search-highlight {
   color: var(--btn-text-on-accent);
 }
 
-/* Buttons */
 .btn {
   display: inline-flex;
   align-items: center;
@@ -1491,13 +1507,16 @@ mark.search-highlight {
   background: var(--surface);
   color: var(--text);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: var(--transition-fast);
   font-family: var(--font-main);
+  box-shadow: var(--shadow-sm);
 }
 
 .btn:hover {
   background: var(--surface-hover);
   border-color: var(--text-secondary);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
 }
 
 .btn-primary {
@@ -1516,16 +1535,17 @@ mark.search-highlight {
 }
 
 .btn-accent {
-  background: var(--accent-dim);
-  color: var(--accent);
-  border-color: var(--accent);
+  background: linear-gradient(135deg, var(--accent), var(--accent-hover));
+  color: var(--btn-text-on-accent);
+  border: none;
   font-weight: 600;
+  box-shadow: var(--shadow-sm);
 }
 
 .btn-accent:hover {
-  background: var(--accent);
-  color: var(--btn-text-on-accent);
-  border-color: var(--accent-hover);
+  background: linear-gradient(135deg, var(--accent-hover), var(--accent));
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
 }
 
 .btn-danger {
@@ -3119,17 +3139,20 @@ dialog::backdrop {
 .command-tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
+  gap: 0.75rem;
+  /* Increased spacing */
   margin-top: 0.25rem;
 }
 
 .command-tag {
-  background: var(--bg-tertiary);
+  background: var(--surface);
   border: 1px solid var(--glass-border);
-  padding: 2px 8px;
-  border-radius: 4px;
+  padding: 4px 10px;
+  /* Increased padding */
+  border-radius: 20px;
+  /* Pill-shaped */
   font-size: 11px;
-  color: var(--muted);
+  color: var(--text-secondary);
   white-space: nowrap;
   /* Prevent squished text inside tags */
 }
@@ -6754,4 +6777,67 @@ input.input-warning {
     overflow: hidden;
   }
 }
-\n/* Added Checklist and Tool button styles */\n.tool-card-settings {\n  width: 32px !important;\n  height: 32px !important;\n  border-radius: 50% !important;\n  font-size: 16px !important;\n  display: grid;\n  place-items: center;\n  transition: all 0.2s ease;\n  background: transparent;\n  color: var(--text-secondary);\n  border: 1px solid transparent;\n}\n.tool-card-settings:hover {\n  background: var(--surface-hover);\n  color: var(--text);\n  border-color: var(--glass-border);\n}\n\n.checklist-reset-btn, .checklist-delete-btn {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  border-radius: var(--radius-sm);\n  padding: 0.5rem 1rem;\n  font-weight: 600;\n  border: 1px solid transparent;\n  transition: all 0.2s ease;\n  cursor: pointer;\n}\n\n.checklist-reset-btn {\n  background: var(--surface);\n  color: var(--text);\n  border-color: var(--glass-border);\n}\n\n.checklist-reset-btn:hover {\n  background: var(--surface-hover);\n}\n\n.checklist-delete-btn {\n  background: var(--danger-bg);\n  color: var(--danger);\n}\n\n.checklist-delete-btn:hover {\n  background: var(--danger);\n  color: white;\n}\n
+
+\n
+
+/* Added Checklist and Tool button styles */
+\n.tool-card-settings {
+  \n width: 32px !important;
+  \n height: 32px !important;
+  \n border-radius: 50% !important;
+  \n font-size: 16px !important;
+  \n display: grid;
+  \n place-items: center;
+  \n transition: all 0.2s ease;
+  \n background: transparent;
+  \n color: var(--text-secondary);
+  \n border: 1px solid transparent;
+  \n
+}
+
+\n.tool-card-settings:hover {
+  \n background: var(--surface-hover);
+  \n color: var(--text);
+  \n border-color: var(--glass-border);
+  \n
+}
+
+\n\n.checklist-reset-btn,
+.checklist-delete-btn {
+  \n display: inline-flex;
+  \n align-items: center;
+  \n justify-content: center;
+  \n border-radius: var(--radius-sm);
+  \n padding: 0.5rem 1rem;
+  \n font-weight: 600;
+  \n border: 1px solid transparent;
+  \n transition: all 0.2s ease;
+  \n cursor: pointer;
+  \n
+}
+
+\n\n.checklist-reset-btn {
+  \n background: var(--surface);
+  \n color: var(--text);
+  \n border-color: var(--glass-border);
+  \n
+}
+
+\n\n.checklist-reset-btn:hover {
+  \n background: var(--surface-hover);
+  \n
+}
+
+\n\n.checklist-delete-btn {
+  \n background: var(--danger-bg);
+  \n color: var(--danger);
+  \n
+}
+
+\n\n.checklist-delete-btn:hover {
+  \n background: var(--danger);
+  \n color: white;
+  \n
+}
+
+\n

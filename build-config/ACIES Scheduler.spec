@@ -20,6 +20,7 @@ a = Analysis(
         ('scripts\\ThawLayersDWGs.ps1', 'scripts'),
         ('scripts\\removeXREFPaths.ps1', 'scripts'),
         ('scripts\\StripRefPaths.dll', 'scripts'),
+        ('templates', 'templates'),
         ('WireSizerApplication\\dist', 'WireSizerApplication\\dist')
     ],
     hiddenimports=[],

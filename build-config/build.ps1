@@ -75,7 +75,8 @@ $pyInstallerArgs = @(
     "--add-data", "scripts\FreezeLayersDWGs.ps1;scripts",
     "--add-data", "scripts\ThawLayersDWGs.ps1;scripts",
     "--add-data", "scripts\removeXREFPaths.ps1;scripts",
-    "--add-data", "scripts\StripRefPaths.dll;scripts"
+    "--add-data", "scripts\StripRefPaths.dll;scripts",
+    "--add-data", "templates;templates"
 )
 
 if (Test-Path $wireSizerDist) {

@@ -478,19 +478,39 @@ TIMESHEETS_FILE = get_app_data_path("timesheets.json")
 TEMPLATES_FILE = get_app_data_path("templates.json")
 CHECKLISTS_FILE = get_app_data_path("checklists.json")
 
+
+def get_bundled_template_path(template_name: str) -> Path:
+    """
+    Resolve template files for both dev runs and packaged desktop runs.
+    """
+    candidates = [BASE_DIR / "templates" / template_name]
+
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).resolve().parent
+        candidates.extend([
+            exe_dir / "_internal" / "templates" / template_name,
+            exe_dir / "templates" / template_name,
+        ])
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    return candidates[0]
+
 DEFAULT_TEMPLATES = [
     {
         "name": "Narrative of Changes",
         "discipline": "General",
         "fileType": "docx",
-        "sourcePath": str(BASE_DIR / "templates" / "Narrative of Changes.docx"),
+        "sourcePath": str(get_bundled_template_path("Narrative of Changes.docx")),
         "description": "Standard narrative of changes template with MEP sections"
     },
     {
         "name": "Plan Check Comments",
         "discipline": "General",
         "fileType": "doc",
-        "sourcePath": str(BASE_DIR / "templates" / "PCC.doc"),
+        "sourcePath": str(get_bundled_template_path("PCC.doc")),
         "description": "Plan check comments response table template"
     }
 ]
@@ -1933,9 +1953,7 @@ Return ONLY the JSON object.
             from openpyxl.drawing.image import Image as XLImage
             from PIL import Image as PILImage
 
-            # Get the template path (relative to this script)
-            script_dir = Path(__file__).resolve().parent
-            template_path = script_dir / "templates" / "Template_Timesheet.xlsx"
+            template_path = get_bundled_template_path("Template_Timesheet.xlsx")
 
             if not template_path.exists():
                 return {'status': 'error', 'message': f'Template file not found: {template_path}'}
@@ -2194,9 +2212,7 @@ Return ONLY the JSON object.
             from openpyxl.drawing.image import Image as XLImage
             from PIL import Image as PILImage
 
-            # Get the template path
-            script_dir = Path(__file__).resolve().parent
-            template_path = script_dir / "templates" / "Template_Timesheet.xlsx"
+            template_path = get_bundled_template_path("Template_Timesheet.xlsx")
 
             if not template_path.exists():
                 return {'status': 'error', 'message': f'Template file not found: {template_path}'}

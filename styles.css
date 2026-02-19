@@ -308,20 +308,23 @@ h4 {
   display: flex;
   background: var(--bg-secondary);
   padding: 4px;
-  border-radius: var(--radius);
+  border-radius: 999px;
   border: 1px solid var(--glass-border);
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.15);
+  position: relative;
 }
 
 .main-tab-btn {
   background: transparent;
   border: none;
   color: var(--text-secondary);
-  padding: 6px 16px;
+  padding: 8px 20px;
   font-size: 13px;
   font-weight: 500;
-  border-radius: var(--radius-sm);
+  border-radius: 999px;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.3s ease;
+  position: relative;
 }
 
 .main-tab-btn:hover {
@@ -342,7 +345,7 @@ h4 {
 
 .search-icon {
   position: absolute;
-  left: 12px;
+  left: 14px;
   top: 50%;
   transform: translateY(-50%);
   color: var(--muted);
@@ -353,18 +356,19 @@ h4 {
   width: 100%;
   background: var(--bg-secondary);
   border: 1px solid var(--glass-border);
-  padding: 8px 12px 8px 38px;
-  border-radius: var(--radius);
+  padding: 8px 16px 8px 42px;
+  border-radius: 999px;
   color: var(--text);
   font-size: 13px;
-  transition: all 0.2s;
+  transition: all 0.3s ease;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
 .nav-search input:focus {
   background: var(--bg-tertiary);
   border-color: var(--accent);
   outline: none;
-  box-shadow: 0 0 0 2px var(--accent-dim);
+  box-shadow: 0 0 0 3px var(--accent-dim), inset 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
 /* Header Actions */
@@ -6750,3 +6754,4 @@ input.input-warning {
     overflow: hidden;
   }
 }
+\n/* Added Checklist and Tool button styles */\n.tool-card-settings {\n  width: 32px !important;\n  height: 32px !important;\n  border-radius: 50% !important;\n  font-size: 16px !important;\n  display: grid;\n  place-items: center;\n  transition: all 0.2s ease;\n  background: transparent;\n  color: var(--text-secondary);\n  border: 1px solid transparent;\n}\n.tool-card-settings:hover {\n  background: var(--surface-hover);\n  color: var(--text);\n  border-color: var(--glass-border);\n}\n\n.checklist-reset-btn, .checklist-delete-btn {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  border-radius: var(--radius-sm);\n  padding: 0.5rem 1rem;\n  font-weight: 600;\n  border: 1px solid transparent;\n  transition: all 0.2s ease;\n  cursor: pointer;\n}\n\n.checklist-reset-btn {\n  background: var(--surface);\n  color: var(--text);\n  border-color: var(--glass-border);\n}\n\n.checklist-reset-btn:hover {\n  background: var(--surface-hover);\n}\n\n.checklist-delete-btn {\n  background: var(--danger-bg);\n  color: var(--danger);\n}\n\n.checklist-delete-btn:hover {\n  background: var(--danger);\n  color: white;\n}\n

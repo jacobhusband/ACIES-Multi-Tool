@@ -7967,7 +7967,6 @@ function renderChecklistItems() {
     const removeBtn = el("button", {
       className: "checklist-item-remove",
       type: "button",
-      textContent: "×",
       title: "Remove item",
       onclick: () => {
         if (confirm('Remove this item?')) {
@@ -7976,8 +7975,14 @@ function renderChecklistItems() {
         }
       },
     });
+    // Use an elegant X for the remove button instead of text
+    removeBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`;
 
-    row.append(order, input, removeBtn);
+    // SVG icon for drag handle (lucide styling)
+    const dragHandle = el("div", { className: "checklist-drag-handle", title: "Drag to reorder (Coming soon)" });
+    dragHandle.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="12" r="1"></circle><circle cx="9" cy="5" r="1"></circle><circle cx="9" cy="19" r="1"></circle><circle cx="15" cy="12" r="1"></circle><circle cx="15" cy="5" r="1"></circle><circle cx="15" cy="19" r="1"></circle></svg>`;
+
+    row.append(dragHandle, order, input, removeBtn);
     container.appendChild(row);
   });
 }

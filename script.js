@@ -64,6 +64,8 @@ const LIGHTING_SCHEDULE_DEFAULT_NOTES = [
   "1.  CONFIRM THE DRIVER TYPE WITH VENDOR. LIGHT DRIVER SHALL BE COMPATIBLE WITH THE DIMMER. REFER TO THE SENSOR SCHEDULE FOR DETAILS.",
   "2.  COORDINATE THE FINAL MANUFACTURER AND MODEL WITH ARCHITECT.",
 ].join("\n");
+const LIGHTING_SCHEDULE_SYNC_SCHEMA_VERSION = "1.0.0";
+const LIGHTING_SCHEDULE_SYNC_FILE_NAME = "T24LightingFixtureSchedule.sync.json";
 const STAR_ICON_PATH =
   "M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z";
 const EYE_ICON_PATH =
@@ -283,6 +285,7 @@ const WORKROOM_CAD_TOOL_IDS = new Set([
   "toolThawLayers",
   "toolCleanXrefs",
 ]);
+const WORKROOM_HIDDEN_TOOL_IDS = new Set(["toolLightingSchedule"]);
 const WORKROOM_DISCIPLINE_KEYWORDS = {
   Electrical: [
     /\belectrical\b/gi,
@@ -4039,6 +4042,7 @@ let currentStatsAggregation = "month";
 let lightingScheduleProjectIndex = null;
 let lightingScheduleProjectQuery = "";
 let lightingTemplateQuery = "";
+let lightingScheduleSyncStatusMessage = "";
 let aiNoMatchState = {
   rawAiData: null,
   aiProject: null,
@@ -4912,6 +4916,9 @@ function normalizeProject(project) {
     deliverables: Array.isArray(project.deliverables)
       ? project.deliverables.map(normalizeDeliverable)
       : [],
+    lightingSchedule: normalizeLightingSchedule(
+      project.lightingSchedule || createDefaultLightingSchedule()
+    ),
   };
   if (!out.deliverables.length) out.deliverables = [createDeliverable()];
   if (
@@ -4957,6 +4964,9 @@ function migrateProjects(raw = []) {
       project = convertLegacyProject(item);
       changed = true;
     } else {
+      if (needsLightingScheduleMigration(item?.lightingSchedule)) {
+        changed = true;
+      }
       project = normalizeProject(item);
     }
     const key = getProjectMergeKey(project, index);
@@ -7064,6 +7074,7 @@ function createBlankProject() {
     refs: [],
     deliverables: [deliverable],
     overviewDeliverableId: deliverable.id,
+    lightingSchedule: createDefaultLightingSchedule(),
   };
 }
 
@@ -8344,7 +8355,7 @@ function getWorkroomVisibleTools() {
   )
     .map((card) => {
       const id = card.id;
-      if (!id) return null;
+      if (!id || WORKROOM_HIDDEN_TOOL_IDS.has(id)) return null;
       return {
         id,
         icon: card.querySelector(".tool-icon")?.textContent?.trim() || "TOOL",
@@ -10173,17 +10184,28 @@ function autoResizeTextarea(textarea) {
   textarea.style.height = `${textarea.scrollHeight}px`;
 }
 
-function createLightingScheduleRow(seed = {}) {
+function normalizeLightingScheduleText(value) {
+  return String(value ?? "").replace(/\r\n?/g, "\n");
+}
+
+function createDefaultLightingScheduleSyncMeta() {
   return {
-    mark: seed.mark ?? "",
-    description: seed.description ?? "",
-    manufacturer: seed.manufacturer ?? "",
-    modelNumber: seed.modelNumber ?? "",
-    mounting: seed.mounting ?? "",
-    volts: seed.volts ?? "",
-    watts: seed.watts ?? "",
-    notes: seed.notes ?? "",
+    targetDwgPath: "",
+    lastSyncFilePath: "",
+    lastPulledAtUtc: "",
+    lastPushedAtUtc: "",
+    lastPulledFingerprint: "",
+    lastPushedFingerprint: "",
+    lastSyncSource: "",
   };
+}
+
+function createLightingScheduleRow(seed = {}) {
+  const row = {};
+  LIGHTING_SCHEDULE_FIELDS.forEach((field) => {
+    row[field] = normalizeLightingScheduleText(seed[field]);
+  });
+  return row;
 }
 
 function createDefaultLightingSchedule() {
@@ -10191,32 +10213,75 @@ function createDefaultLightingSchedule() {
     rows: [createLightingScheduleRow()],
     generalNotes: LIGHTING_SCHEDULE_DEFAULT_GENERAL_NOTES,
     notes: LIGHTING_SCHEDULE_DEFAULT_NOTES,
+    ...createDefaultLightingScheduleSyncMeta(),
   };
 }
 
 function normalizeLightingSchedule(schedule) {
-  const normalized =
-    schedule && typeof schedule === "object" ? schedule : {};
+  const normalized = schedule && typeof schedule === "object" ? schedule : {};
+  const syncDefaults = createDefaultLightingScheduleSyncMeta();
   if (!Array.isArray(normalized.rows) || normalized.rows.length === 0) {
     normalized.rows = [createLightingScheduleRow()];
   } else {
-    normalized.rows = normalized.rows.map((row) => {
-      if (!row || typeof row !== "object") {
-        return createLightingScheduleRow();
-      }
-      LIGHTING_SCHEDULE_FIELDS.forEach((field) => {
-        if (row[field] == null) row[field] = "";
-      });
-      return row;
-    });
+    normalized.rows = normalized.rows.map((row) => createLightingScheduleRow(row));
   }
   if (normalized.generalNotes == null) {
     normalized.generalNotes = LIGHTING_SCHEDULE_DEFAULT_GENERAL_NOTES;
+  } else {
+    normalized.generalNotes = normalizeLightingScheduleText(
+      normalized.generalNotes
+    );
   }
   if (normalized.notes == null) {
     normalized.notes = LIGHTING_SCHEDULE_DEFAULT_NOTES;
+  } else {
+    normalized.notes = normalizeLightingScheduleText(normalized.notes);
   }
+  Object.keys(syncDefaults).forEach((key) => {
+    normalized[key] = normalizeLightingScheduleText(normalized[key] ?? "");
+  });
   return normalized;
+}
+
+function buildCanonicalLightingSchedule(schedule) {
+  const normalized = normalizeLightingSchedule(schedule || {});
+  return {
+    rows: normalized.rows.map((row) => createLightingScheduleRow(row)),
+    generalNotes: normalizeLightingScheduleText(normalized.generalNotes),
+    notes: normalizeLightingScheduleText(normalized.notes),
+  };
+}
+
+function stableStringify(value) {
+  if (value === null || value === undefined) {
+    return "null";
+  }
+  if (typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(",")}]`;
+  }
+  const keys = Object.keys(value).sort();
+  const parts = keys.map(
+    (key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`
+  );
+  return `{${parts.join(",")}}`;
+}
+
+function hashFNV1a(text) {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}
+
+function computeLightingScheduleFingerprint(schedule) {
+  const canonical = buildCanonicalLightingSchedule(schedule);
+  const serialized = stableStringify(canonical);
+  return `fnv1a:${hashFNV1a(serialized)}`;
 }
 
 function ensureLightingSchedule(project) {
@@ -10230,6 +10295,19 @@ function ensureLightingSchedule(project) {
   schedule = normalizeLightingSchedule(schedule);
   project.lightingSchedule = schedule;
   return { schedule, created };
+}
+
+function needsLightingScheduleMigration(schedule) {
+  if (!schedule || typeof schedule !== "object") return true;
+  if (!Array.isArray(schedule.rows) || schedule.rows.length === 0) return true;
+  if (schedule.generalNotes == null || schedule.notes == null) return true;
+  const syncDefaults = createDefaultLightingScheduleSyncMeta();
+  return Object.keys(syncDefaults).some((key) => schedule[key] == null);
+}
+
+function getActiveLightingScheduleProject() {
+  if (lightingScheduleProjectIndex == null) return null;
+  return db[lightingScheduleProjectIndex] || null;
 }
 
 function getLightingScheduleProjectLabel(project, index) {
@@ -10266,6 +10344,7 @@ function renderLightingScheduleProjectOptions(filterText = "") {
 
   if (!matches.length) {
     lightingScheduleProjectIndex = null;
+    lightingScheduleSyncStatusMessage = "";
     renderLightingSchedule(
       null,
       db.length
@@ -10290,6 +10369,417 @@ function getActiveLightingSchedule() {
   const project = db[lightingScheduleProjectIndex];
   if (!project) return null;
   return ensureLightingSchedule(project).schedule;
+}
+
+function normalizeLightingSchedulePath(rawPath) {
+  if (!rawPath) return "";
+  let path = String(rawPath).trim().replace(/^['"]+|['"]+$/g, "");
+  if (!path) return "";
+  path = path.replace(/\//g, "\\").replace(/\\+$/g, "");
+  return path;
+}
+
+function getLightingSchedulePathKey(rawPath) {
+  return normalizeLightingSchedulePath(rawPath).toLowerCase();
+}
+
+function getFileNameFromPath(rawPath) {
+  const path = normalizeLightingSchedulePath(rawPath);
+  if (!path) return "";
+  const idx = path.lastIndexOf("\\");
+  if (idx < 0) return path;
+  return path.slice(idx + 1);
+}
+
+function getFolderFromPath(rawPath) {
+  const path = normalizeLightingSchedulePath(rawPath);
+  if (!path) return "";
+  const idx = path.lastIndexOf("\\");
+  if (idx <= 0) return "";
+  return path.slice(0, idx);
+}
+
+function getLightingScheduleSyncFilePathFromDwg(dwgPath) {
+  const folder = getFolderFromPath(dwgPath);
+  if (!folder) return "";
+  return `${folder}\\${LIGHTING_SCHEDULE_SYNC_FILE_NAME}`;
+}
+
+function formatLightingScheduleSyncTimestamp(rawValue) {
+  const value = String(rawValue || "").trim();
+  if (!value) return "";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString();
+}
+
+function buildLightingScheduleSyncDefaultMessage(project, schedule) {
+  if (!project || !schedule) {
+    return "Select a project and target DWG to enable sync.";
+  }
+  const targetDwgPath = normalizeLightingSchedulePath(schedule.targetDwgPath);
+  if (!targetDwgPath) {
+    return "Choose Target DWG. Pull flow: run LFSPULL in AutoCAD and select table, then click Pull. Push flow: click Push, then run LFSPUSH in AutoCAD and select table.";
+  }
+
+  const syncPath = getLightingScheduleSyncFilePathFromDwg(targetDwgPath);
+  const segments = [];
+  if (syncPath) segments.push(`Sync file: ${syncPath}`);
+  if (schedule.lastPulledAtUtc) {
+    segments.push(`Last pull: ${formatLightingScheduleSyncTimestamp(schedule.lastPulledAtUtc)}`);
+  }
+  if (schedule.lastPushedAtUtc) {
+    segments.push(`Last push: ${formatLightingScheduleSyncTimestamp(schedule.lastPushedAtUtc)}`);
+  }
+  segments.push("Pull: run LFSPULL in AutoCAD, then click Pull.");
+  segments.push("Push: click Push, then run LFSPUSH in AutoCAD.");
+  return segments.join(" ");
+}
+
+function setLightingScheduleSyncStatus(message) {
+  lightingScheduleSyncStatusMessage = String(message || "").trim();
+  const project = getActiveLightingScheduleProject();
+  const schedule = getActiveLightingSchedule();
+  renderLightingScheduleSyncControls(project, schedule);
+}
+
+function renderLightingScheduleSyncControls(project, schedule) {
+  const targetInput = document.getElementById("lightingScheduleTargetDwg");
+  const browseBtn = document.getElementById("lightingScheduleBrowseDwg");
+  const clearBtn = document.getElementById("lightingScheduleClearDwg");
+  const pullBtn = document.getElementById("lightingSchedulePullBtn");
+  const pushBtn = document.getElementById("lightingSchedulePushBtn");
+  const statusEl = document.getElementById("lightingScheduleSyncStatus");
+  if (!targetInput && !statusEl) return;
+
+  const hasProject = !!project && !!schedule;
+  const targetPath = hasProject
+    ? normalizeLightingSchedulePath(schedule.targetDwgPath)
+    : "";
+
+  if (targetInput) {
+    targetInput.value = targetPath;
+    targetInput.title = targetPath || "";
+    targetInput.disabled = !hasProject;
+  }
+  if (browseBtn) browseBtn.disabled = !hasProject;
+  if (clearBtn) clearBtn.disabled = !hasProject || !targetPath;
+  if (pullBtn) pullBtn.disabled = !hasProject || !targetPath;
+  if (pushBtn) pushBtn.disabled = !hasProject || !targetPath;
+
+  if (statusEl) {
+    statusEl.textContent =
+      lightingScheduleSyncStatusMessage ||
+      buildLightingScheduleSyncDefaultMessage(project, schedule);
+  }
+}
+
+function updateLightingScheduleTargetDwgPath(project, schedule, dwgPath) {
+  if (!project || !schedule) return;
+  const normalizedPath = normalizeLightingSchedulePath(dwgPath);
+  schedule.targetDwgPath = normalizedPath;
+  schedule.lastSyncFilePath = normalizedPath
+    ? getLightingScheduleSyncFilePathFromDwg(normalizedPath)
+    : "";
+}
+
+function getLightingScheduleProjectMatchResult(project, syncProject, targetDwgPath) {
+  const desktopProjectId = String(project?.id || "").trim();
+  const syncProjectId = String(syncProject?.projectId || "").trim();
+  if (desktopProjectId && syncProjectId) {
+    return {
+      matched: desktopProjectId === syncProjectId,
+      mode: "projectId",
+      desktopValue: desktopProjectId,
+      syncValue: syncProjectId,
+    };
+  }
+
+  const desktopBaseKey = getProjectBaseKey(project?.path || targetDwgPath || "");
+  const syncBaseKey = getProjectBaseKey(
+    syncProject?.projectBasePath || syncProject?.dwgPath || ""
+  );
+  if (desktopBaseKey && syncBaseKey) {
+    return {
+      matched: desktopBaseKey === syncBaseKey,
+      mode: "projectBasePath",
+      desktopValue: getProjectBasePath(project?.path || targetDwgPath || ""),
+      syncValue: getProjectBasePath(
+        syncProject?.projectBasePath || syncProject?.dwgPath || ""
+      ),
+    };
+  }
+
+  return {
+    matched: false,
+    mode: "unknown",
+    desktopValue: "",
+    syncValue: "",
+  };
+}
+
+function normalizeIncomingLightingSyncPayload(rawPayload) {
+  const payload =
+    rawPayload && typeof rawPayload === "object" ? rawPayload : null;
+  if (!payload) {
+    return null;
+  }
+  const rows =
+    Array.isArray(payload?.schedule?.rows) && payload.schedule.rows.length
+      ? payload.schedule.rows.map((row) => createLightingScheduleRow(row))
+      : [createLightingScheduleRow()];
+  const schedule = {
+    rows,
+    generalNotes: normalizeLightingScheduleText(payload?.schedule?.generalNotes),
+    notes: normalizeLightingScheduleText(payload?.schedule?.notes),
+  };
+  return {
+    schemaVersion: String(payload.schemaVersion || "").trim(),
+    metadata:
+      payload.metadata && typeof payload.metadata === "object"
+        ? payload.metadata
+        : {},
+    project:
+      payload.project && typeof payload.project === "object"
+        ? payload.project
+        : {},
+    table:
+      payload.table && typeof payload.table === "object" ? payload.table : {},
+    schedule,
+  };
+}
+
+function buildLightingScheduleSyncPayload(project, schedule) {
+  const targetDwgPath = normalizeLightingSchedulePath(schedule.targetDwgPath);
+  const canonicalSchedule = buildCanonicalLightingSchedule(schedule);
+  const fingerprint = computeLightingScheduleFingerprint(canonicalSchedule);
+  return {
+    schemaVersion: LIGHTING_SCHEDULE_SYNC_SCHEMA_VERSION,
+    metadata: {
+      sourceApp: "desktop",
+      generatedAtUtc: new Date().toISOString(),
+      generatedBy: String(userSettings?.userName || "desktop").trim() || "desktop",
+      fingerprint,
+    },
+    project: {
+      projectId: String(project?.id || "").trim(),
+      projectBasePath: getProjectBasePath(project?.path || targetDwgPath || ""),
+      dwgPath: targetDwgPath,
+      dwgName: getFileNameFromPath(targetDwgPath),
+    },
+    table: {
+      tableHandle: "",
+    },
+    schedule: canonicalSchedule,
+  };
+}
+
+async function browseLightingScheduleTargetDwg() {
+  const project = getActiveLightingScheduleProject();
+  const schedule = getActiveLightingSchedule();
+  if (!project || !schedule) {
+    toast("Select a project first.");
+    return;
+  }
+  if (!window.pywebview?.api?.select_files) {
+    toast("File picker is unavailable.");
+    return;
+  }
+
+  try {
+    const result = await window.pywebview.api.select_files({
+      allow_multiple: false,
+      file_types: ["Drawing Files (*.dwg)"],
+    });
+    if (result?.status !== "success" || !Array.isArray(result.paths) || !result.paths.length) {
+      return;
+    }
+    updateLightingScheduleTargetDwgPath(project, schedule, result.paths[0]);
+    lightingScheduleSyncStatusMessage = "";
+    renderLightingScheduleSyncControls(project, schedule);
+    save();
+  } catch (error) {
+    reportClientError("Failed to browse target DWG", error);
+    toast("Unable to select DWG path.");
+  }
+}
+
+function clearLightingScheduleTargetDwg() {
+  const project = getActiveLightingScheduleProject();
+  const schedule = getActiveLightingSchedule();
+  if (!project || !schedule) return;
+  updateLightingScheduleTargetDwgPath(project, schedule, "");
+  lightingScheduleSyncStatusMessage = "";
+  renderLightingScheduleSyncControls(project, schedule);
+  save();
+}
+
+async function pullLightingScheduleFromAutoCAD() {
+  const project = getActiveLightingScheduleProject();
+  const schedule = getActiveLightingSchedule();
+  if (!project || !schedule) {
+    toast("Select a project first.");
+    return;
+  }
+  const targetDwgPath = normalizeLightingSchedulePath(schedule.targetDwgPath);
+  if (!targetDwgPath) {
+    toast("Select Target DWG before pulling.");
+    return;
+  }
+  if (!window.pywebview?.api?.get_lighting_schedule_sync) {
+    toast("Desktop backend is missing lighting schedule sync APIs.");
+    return;
+  }
+
+  const ready = confirm(
+    "In AutoCAD, run LFSPULL and select the target lighting fixture table.\n\nPress OK after LFSPULL has completed to import into the desktop schedule."
+  );
+  if (!ready) {
+    setLightingScheduleSyncStatus("Pull cancelled. Run LFSPULL first, then click Pull again.");
+    return;
+  }
+
+  try {
+    const response = await window.pywebview.api.get_lighting_schedule_sync(
+      targetDwgPath
+    );
+    if (response?.status !== "success") {
+      throw new Error(response?.message || "Unable to read sync file.");
+    }
+    if (!response.exists) {
+      setLightingScheduleSyncStatus(
+        `No sync file found at ${response.path}. Run LFSPULL in AutoCAD and then click Pull again.`
+      );
+      toast("Sync file not found. Run LFSPULL first.");
+      return;
+    }
+
+    const payload = normalizeIncomingLightingSyncPayload(response.data);
+    if (!payload) {
+      throw new Error("Sync payload is empty or malformed.");
+    }
+    const incomingFingerprint =
+      String(payload?.metadata?.fingerprint || "").trim() ||
+      computeLightingScheduleFingerprint(payload.schedule);
+
+    const match = getLightingScheduleProjectMatchResult(
+      project,
+      payload.project,
+      targetDwgPath
+    );
+    if (!match.matched) {
+      const keepGoing = confirm(
+        `Project mismatch detected (${match.mode}).\nDesktop: ${match.desktopValue || "(unknown)"}\nSync file: ${match.syncValue || "(unknown)"}\n\nPress OK to continue importing anyway.`
+      );
+      if (!keepGoing) {
+        setLightingScheduleSyncStatus("Pull cancelled because project match validation failed.");
+        return;
+      }
+    }
+
+    const currentFingerprint = computeLightingScheduleFingerprint(schedule);
+    if (currentFingerprint !== incomingFingerprint) {
+      const overwrite = confirm(
+        "Desktop lighting schedule differs from AutoCAD sync data.\n\nPress OK to overwrite desktop schedule with pulled AutoCAD data."
+      );
+      if (!overwrite) {
+        setLightingScheduleSyncStatus("Pull cancelled. Desktop schedule was not overwritten.");
+        return;
+      }
+    }
+
+    schedule.rows = payload.schedule.rows.map((row) => createLightingScheduleRow(row));
+    schedule.generalNotes = payload.schedule.generalNotes;
+    schedule.notes = payload.schedule.notes;
+    schedule.lastSyncFilePath = String(response.path || "").trim();
+    schedule.lastPulledAtUtc = new Date().toISOString();
+    schedule.lastPulledFingerprint = incomingFingerprint;
+    schedule.lastSyncSource = "autocad";
+
+    lightingScheduleSyncStatusMessage = "";
+    renderLightingSchedule(schedule);
+    save();
+    setLightingScheduleSyncStatus(
+      `Pulled AutoCAD sync data from ${response.path}. Schedule is now updated in desktop for project ${project.id || project.name || "(unnamed)"}.`
+    );
+    toast("Lighting schedule pulled from AutoCAD sync file.");
+  } catch (error) {
+    reportClientError("Failed to pull lighting schedule sync", error);
+    setLightingScheduleSyncStatus(
+      `Pull failed: ${error?.message || "Unknown error"}.`
+    );
+    toast("Pull failed. See sync status for details.");
+  }
+}
+
+async function pushLightingScheduleToAutoCAD() {
+  const project = getActiveLightingScheduleProject();
+  const schedule = getActiveLightingSchedule();
+  if (!project || !schedule) {
+    toast("Select a project first.");
+    return;
+  }
+  const targetDwgPath = normalizeLightingSchedulePath(schedule.targetDwgPath);
+  if (!targetDwgPath) {
+    toast("Select Target DWG before pushing.");
+    return;
+  }
+  if (!window.pywebview?.api?.save_lighting_schedule_sync) {
+    toast("Desktop backend is missing lighting schedule sync APIs.");
+    return;
+  }
+
+  try {
+    const payload = buildLightingScheduleSyncPayload(project, schedule);
+    const nextFingerprint = String(payload?.metadata?.fingerprint || "").trim();
+
+    if (window.pywebview?.api?.get_lighting_schedule_sync) {
+      const existing = await window.pywebview.api.get_lighting_schedule_sync(
+        targetDwgPath
+      );
+      if (existing?.status === "success" && existing.exists) {
+        const existingPayload = normalizeIncomingLightingSyncPayload(existing.data);
+        const existingFingerprint =
+          String(existingPayload?.metadata?.fingerprint || "").trim() ||
+          computeLightingScheduleFingerprint(existingPayload?.schedule || {});
+        if (existingFingerprint !== nextFingerprint) {
+          const overwrite = confirm(
+            "Existing AutoCAD sync file differs from desktop lighting schedule.\n\nPress OK to overwrite sync file with desktop data."
+          );
+          if (!overwrite) {
+            setLightingScheduleSyncStatus("Push cancelled. Existing sync file was kept.");
+            return;
+          }
+        }
+      }
+    }
+
+    const response = await window.pywebview.api.save_lighting_schedule_sync(
+      targetDwgPath,
+      payload
+    );
+    if (response?.status !== "success") {
+      throw new Error(response?.message || "Failed to write sync file.");
+    }
+
+    schedule.lastSyncFilePath = String(response.path || "").trim();
+    schedule.lastPushedAtUtc = new Date().toISOString();
+    schedule.lastPushedFingerprint = nextFingerprint;
+    schedule.lastSyncSource = "desktop";
+    lightingScheduleSyncStatusMessage = "";
+    renderLightingScheduleSyncControls(project, schedule);
+    save();
+    setLightingScheduleSyncStatus(
+      `Push complete. Run LFSPUSH in AutoCAD, then select the target table to apply ${response.path}.`
+    );
+    toast("Lighting schedule sync file written. Run LFSPUSH in AutoCAD.");
+  } catch (error) {
+    reportClientError("Failed to push lighting schedule sync", error);
+    setLightingScheduleSyncStatus(
+      `Push failed: ${error?.message || "Unknown error"}.`
+    );
+    toast("Push failed. See sync status for details.");
+  }
 }
 
 function getLightingTemplates() {
@@ -10466,6 +10956,7 @@ function renderLightingSchedule(
       notes.value = "";
       autoResizeTextarea(notes);
     }
+    renderLightingScheduleSyncControls(null, null);
     return;
   }
 
@@ -10481,15 +10972,18 @@ function renderLightingSchedule(
     autoResizeTextarea(notes);
   }
   renderLightingScheduleRows(schedule);
+  renderLightingScheduleSyncControls(getActiveLightingScheduleProject(), schedule);
 }
 
 function setLightingScheduleProject(index) {
   if (!Number.isInteger(index) || !db[index]) {
     lightingScheduleProjectIndex = null;
+    lightingScheduleSyncStatusMessage = "";
     renderLightingSchedule(null);
     return;
   }
   lightingScheduleProjectIndex = index;
+  lightingScheduleSyncStatusMessage = "";
   const select = document.getElementById("lightingScheduleProjectSelect");
   if (select) select.value = String(index);
   const { schedule, created } = ensureLightingSchedule(db[index]);
@@ -10525,6 +11019,10 @@ function openLightingSchedule() {
   );
   if (projectSearch) projectSearch.value = lightingScheduleProjectQuery;
   renderLightingScheduleProjectOptions(lightingScheduleProjectQuery);
+  const activeProject = getActiveLightingScheduleProject();
+  if (activeProject) {
+    renderLightingSchedule(ensureLightingSchedule(activeProject).schedule);
+  }
 
   const templateSearch = document.getElementById("lightingTemplateSearch");
   if (templateSearch) templateSearch.value = lightingTemplateQuery;
@@ -11888,6 +12386,46 @@ function initEventListeners() {
   );
   if (lightingScheduleAddRowBtn) {
     lightingScheduleAddRowBtn.addEventListener("click", addLightingScheduleRow);
+  }
+
+  const lightingScheduleBrowseDwgBtn = document.getElementById(
+    "lightingScheduleBrowseDwg"
+  );
+  if (lightingScheduleBrowseDwgBtn) {
+    lightingScheduleBrowseDwgBtn.addEventListener(
+      "click",
+      browseLightingScheduleTargetDwg
+    );
+  }
+
+  const lightingScheduleClearDwgBtn = document.getElementById(
+    "lightingScheduleClearDwg"
+  );
+  if (lightingScheduleClearDwgBtn) {
+    lightingScheduleClearDwgBtn.addEventListener(
+      "click",
+      clearLightingScheduleTargetDwg
+    );
+  }
+
+  const lightingSchedulePullBtn = document.getElementById(
+    "lightingSchedulePullBtn"
+  );
+  if (lightingSchedulePullBtn) {
+    lightingSchedulePullBtn.addEventListener(
+      "click",
+      pullLightingScheduleFromAutoCAD
+    );
+  }
+
+  const lightingSchedulePushBtn = document.getElementById(
+    "lightingSchedulePushBtn"
+  );
+  if (lightingSchedulePushBtn) {
+    lightingSchedulePushBtn.addEventListener(
+      "click",
+      pushLightingScheduleToAutoCAD
+    );
   }
 
   const lightingTemplateSearch = document.getElementById(

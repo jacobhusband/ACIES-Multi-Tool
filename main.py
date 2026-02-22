@@ -477,6 +477,69 @@ SETTINGS_FILE = get_app_data_path("settings.json")
 TIMESHEETS_FILE = get_app_data_path("timesheets.json")
 TEMPLATES_FILE = get_app_data_path("templates.json")
 CHECKLISTS_FILE = get_app_data_path("checklists.json")
+LIGHTING_SCHEDULE_SYNC_FILE = "T24LightingFixtureSchedule.sync.json"
+
+
+def _normalize_sync_dwg_path(dwg_path):
+    raw = str(dwg_path or "").strip().strip('"').strip("'")
+    if not raw:
+        raise ValueError("DWG path is required.")
+    normalized = os.path.normpath(raw)
+    if not os.path.isabs(normalized):
+        raise ValueError("DWG path must be an absolute path.")
+    if os.path.splitext(normalized)[1].lower() != ".dwg":
+        raise ValueError("DWG path must end with .dwg.")
+    folder = os.path.dirname(normalized)
+    if not folder:
+        raise ValueError("DWG path must include a parent folder.")
+    return normalized
+
+
+def _resolve_lighting_schedule_sync_path(dwg_path):
+    normalized_dwg = _normalize_sync_dwg_path(dwg_path)
+    folder = os.path.dirname(normalized_dwg)
+    sync_path = os.path.join(folder, LIGHTING_SCHEDULE_SYNC_FILE)
+    return normalized_dwg, sync_path
+
+
+def _read_json_file_strict(path):
+    try:
+        with open(path, "r", encoding="utf-8-sig") as f:
+            raw_text = f.read()
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"Sync file '{path}' is not valid UTF-8 text: {exc}.")
+
+    if raw_text.startswith("\ufeff"):
+        raw_text = raw_text.lstrip("\ufeff")
+
+    try:
+        return json.loads(raw_text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"Malformed JSON in sync file '{path}': {exc.msg} "
+            f"(line {exc.lineno}, column {exc.colno})."
+        )
+
+
+def _atomic_write_json_file(path, payload):
+    folder = os.path.dirname(path)
+    os.makedirs(folder, exist_ok=True)
+    fd, temp_path = tempfile.mkstemp(
+        prefix="lfs_sync_",
+        suffix=".tmp",
+        dir=folder,
+        text=True,
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+        os.replace(temp_path, path)
+    finally:
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
 
 
 def get_bundled_template_path(template_name: str) -> Path:
@@ -1559,6 +1622,67 @@ Return ONLY the JSON object.
             return {'status': 'success'}
         except Exception as e:
             logging.error(f"Error saving tasks: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def get_lighting_schedule_sync(self, dwg_path):
+        """Read project-specific light fixture schedule sync JSON near the DWG."""
+        try:
+            _, sync_path = _resolve_lighting_schedule_sync_path(dwg_path)
+            exists = os.path.exists(sync_path)
+            modified = None
+            payload = None
+            if exists:
+                payload = _read_json_file_strict(sync_path)
+                mtime = os.path.getmtime(sync_path)
+                modified = datetime.datetime.fromtimestamp(mtime).isoformat()
+
+            result = {
+                'status': 'success',
+                'exists': exists,
+                'path': sync_path,
+                'modified': modified,
+            }
+            if payload is not None:
+                result['data'] = payload
+            return result
+        except ValueError as e:
+            logging.warning(f"Lighting schedule sync read validation failed: {e}")
+            return {'status': 'error', 'message': str(e)}
+        except FileNotFoundError:
+            return {'status': 'success', 'exists': False, 'path': '', 'modified': None}
+        except Exception as e:
+            logging.error(f"Error reading lighting schedule sync: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def save_lighting_schedule_sync(self, dwg_path, payload):
+        """Write project-specific light fixture schedule sync JSON near the DWG."""
+        try:
+            if not isinstance(payload, dict):
+                raise ValueError("Sync payload must be a JSON object.")
+
+            _, sync_path = _resolve_lighting_schedule_sync_path(dwg_path)
+            sync_dir = os.path.dirname(sync_path)
+            if not os.path.isdir(sync_dir):
+                raise ValueError(f"DWG folder does not exist: {sync_dir}")
+
+            try:
+                json.dumps(payload)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"Sync payload is not valid JSON: {exc}")
+
+            _atomic_write_json_file(sync_path, payload)
+            mtime = os.path.getmtime(sync_path)
+            modified = datetime.datetime.fromtimestamp(mtime).isoformat()
+            return {
+                'status': 'success',
+                'path': sync_path,
+                'modified': modified,
+            }
+        except ValueError as e:
+            logging.warning(f"Lighting schedule sync save validation failed: {e}")
+            return {'status': 'error', 'message': str(e)}
+        except Exception as e:
+            logging.error(f"Error saving lighting schedule sync: {e}")
             return {'status': 'error', 'message': str(e)}
 
     def get_notes(self):

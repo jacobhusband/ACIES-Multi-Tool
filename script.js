@@ -66,6 +66,15 @@ const LIGHTING_SCHEDULE_DEFAULT_NOTES = [
 ].join("\n");
 const LIGHTING_SCHEDULE_SYNC_SCHEMA_VERSION = "1.0.0";
 const LIGHTING_SCHEDULE_SYNC_FILE_NAME = "T24LightingFixtureSchedule.sync.json";
+const TITLE24_SCHEMA_VERSION = "1.0.0";
+const TITLE24_SCOPE_OPTIONS_FILE_PATH =
+  "assets/title24/energycodeace.indoor.page1.options.json";
+const TITLE24_PAGE_COUNT = 4;
+const TITLE24_SCOPE_OPTION_FIELDS = [
+  "occupancyType",
+  "projectScopeType",
+  "lightingSystemType",
+];
 const STAR_ICON_PATH =
   "M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z";
 const EYE_ICON_PATH =
@@ -285,7 +294,10 @@ const WORKROOM_CAD_TOOL_IDS = new Set([
   "toolThawLayers",
   "toolCleanXrefs",
 ]);
-const WORKROOM_HIDDEN_TOOL_IDS = new Set(["toolLightingSchedule"]);
+const WORKROOM_HIDDEN_TOOL_IDS = new Set([
+  "toolLightingSchedule",
+  "toolTitle24Compliance",
+]);
 const WORKROOM_DISCIPLINE_KEYWORDS = {
   Electrical: [
     /\belectrical\b/gi,
@@ -4043,6 +4055,11 @@ let lightingScheduleProjectIndex = null;
 let lightingScheduleProjectQuery = "";
 let lightingTemplateQuery = "";
 let lightingScheduleSyncStatusMessage = "";
+let title24ProjectIndex = null;
+let title24ProjectQuery = "";
+let title24ScopeOptionsDataset = null;
+let title24ScopeOptionsLoadError = "";
+let title24ScopeOptionsLoadingPromise = null;
 let aiNoMatchState = {
   rawAiData: null,
   aiProject: null,
@@ -4866,6 +4883,7 @@ function mergeProjects(base, incoming) {
   base.refs = mergeRefs(base.refs || [], incoming.refs || []);
   if (!base.lightingSchedule && incoming.lightingSchedule)
     base.lightingSchedule = incoming.lightingSchedule;
+  if (!base.title24 && incoming.title24) base.title24 = incoming.title24;
   if (!Array.isArray(base.deliverables)) base.deliverables = [];
   if (Array.isArray(incoming.deliverables))
     base.deliverables.push(...incoming.deliverables);
@@ -4895,6 +4913,7 @@ function convertLegacyProject(legacy) {
     deliverables: [deliverable],
     overviewDeliverableId: deliverable.id,
     lightingSchedule: legacy?.lightingSchedule || null,
+    title24: legacy?.title24 || null,
   };
 }
 
@@ -4919,6 +4938,7 @@ function normalizeProject(project) {
     lightingSchedule: normalizeLightingSchedule(
       project.lightingSchedule || createDefaultLightingSchedule()
     ),
+    title24: normalizeTitle24(project.title24 || createDefaultTitle24()),
   };
   if (!out.deliverables.length) out.deliverables = [createDeliverable()];
   if (
@@ -4965,6 +4985,9 @@ function migrateProjects(raw = []) {
       changed = true;
     } else {
       if (needsLightingScheduleMigration(item?.lightingSchedule)) {
+        changed = true;
+      }
+      if (needsTitle24Migration(item?.title24)) {
         changed = true;
       }
       project = normalizeProject(item);
@@ -7075,6 +7098,7 @@ function createBlankProject() {
     deliverables: [deliverable],
     overviewDeliverableId: deliverable.id,
     lightingSchedule: createDefaultLightingSchedule(),
+    title24: createDefaultTitle24(),
   };
 }
 
@@ -7371,10 +7395,13 @@ function readStatusPickerFrom(container) {
 function readForm() {
   const baseSchedule =
     editIndex >= 0 && db[editIndex] ? db[editIndex].lightingSchedule : null;
+  const baseTitle24 =
+    editIndex >= 0 && db[editIndex] ? db[editIndex].title24 : null;
   const existingProject = editIndex >= 0 && db[editIndex] ? db[editIndex] : null;
   const lightingSchedule = normalizeLightingSchedule(
     baseSchedule ?? createDefaultLightingSchedule()
   );
+  const title24 = normalizeTitle24(baseTitle24 ?? createDefaultTitle24());
   const out = {
     id: val("f_id"),
     name: val("f_name"),
@@ -7386,6 +7413,7 @@ function readForm() {
     overviewDeliverableId: "",
     pinned: !!existingProject?.pinned,
     lightingSchedule,
+    title24,
   };
 
   document.querySelectorAll("#deliverableList .deliverable-card").forEach((card) => {
@@ -7632,6 +7660,7 @@ function importRows(rows, hasHeader = true) {
       deliverables: [deliverable],
       overviewDeliverableId: deliverable.id,
       lightingSchedule: createDefaultLightingSchedule(),
+      title24: createDefaultTitle24(),
     });
     added++;
   }
@@ -10177,11 +10206,239 @@ window.handlePanelScheduleResult = async function (payload) {
 };
 
 const debouncedSaveLightingSchedule = debounce(() => save(), 400);
+const debouncedSaveTitle24 = debounce(() => save(), 400);
 
 function autoResizeTextarea(textarea) {
   if (!textarea) return;
   textarea.style.height = "auto";
   textarea.style.height = `${textarea.scrollHeight}px`;
+}
+
+function normalizeTitle24Text(value) {
+  return String(value ?? "").trim();
+}
+
+function normalizeTitle24Stories(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed <= 0) return null;
+  return parsed;
+}
+
+function normalizeTitle24SquareFeet(value) {
+  if (value === "" || value == null) return 0;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return 0;
+  return Number(parsed.toFixed(4));
+}
+
+function createTitle24RoomAreaRow(seed = {}) {
+  return {
+    roomType: normalizeTitle24Text(seed.roomType ?? seed.RoomType),
+    squareFeet: normalizeTitle24SquareFeet(seed.squareFeet ?? seed.SquareFeet),
+  };
+}
+
+function computeTitle24RoomAreaTotal(rows = []) {
+  const total = rows.reduce(
+    (sum, row) => sum + normalizeTitle24SquareFeet(row?.squareFeet),
+    0
+  );
+  return Number(total.toFixed(4));
+}
+
+function clampTitle24Page(page) {
+  const parsed = Number(page);
+  if (!Number.isInteger(parsed)) return 1;
+  return Math.min(Math.max(parsed, 1), TITLE24_PAGE_COUNT);
+}
+
+function createDefaultTitle24() {
+  return {
+    schemaVersion: TITLE24_SCHEMA_VERSION,
+    currentPage: 1,
+    projectScope: {
+      occupancyType: "",
+      projectScopeType: "",
+      lightingSystemType: "",
+      aboveGradeStories: null,
+    },
+    roomAreas: {
+      sourcePath: "",
+      importedAtUtc: "",
+      rows: [],
+      totalSquareFeet: 0,
+    },
+  };
+}
+
+function normalizeTitle24(title24) {
+  const normalized = title24 && typeof title24 === "object" ? title24 : {};
+  const projectScope =
+    normalized.projectScope && typeof normalized.projectScope === "object"
+      ? normalized.projectScope
+      : {};
+  const roomAreas =
+    normalized.roomAreas && typeof normalized.roomAreas === "object"
+      ? normalized.roomAreas
+      : {};
+  const rows = Array.isArray(roomAreas.rows)
+    ? roomAreas.rows.map((row) => createTitle24RoomAreaRow(row))
+    : [];
+
+  return {
+    schemaVersion: TITLE24_SCHEMA_VERSION,
+    currentPage: clampTitle24Page(normalized.currentPage),
+    projectScope: {
+      occupancyType: normalizeTitle24Text(projectScope.occupancyType),
+      projectScopeType: normalizeTitle24Text(projectScope.projectScopeType),
+      lightingSystemType: normalizeTitle24Text(projectScope.lightingSystemType),
+      aboveGradeStories: normalizeTitle24Stories(projectScope.aboveGradeStories),
+    },
+    roomAreas: {
+      sourcePath: normalizeTitle24Text(roomAreas.sourcePath),
+      importedAtUtc: normalizeTitle24Text(roomAreas.importedAtUtc),
+      rows,
+      totalSquareFeet: computeTitle24RoomAreaTotal(rows),
+    },
+  };
+}
+
+function needsTitle24Migration(title24) {
+  if (!title24 || typeof title24 !== "object") return true;
+  if (title24.schemaVersion == null) return true;
+  if (title24.currentPage == null) return true;
+  if (!title24.projectScope || typeof title24.projectScope !== "object")
+    return true;
+  if (!title24.roomAreas || typeof title24.roomAreas !== "object") return true;
+  if (!Array.isArray(title24.roomAreas.rows)) return true;
+  if (title24.roomAreas.totalSquareFeet == null) return true;
+  return TITLE24_SCOPE_OPTION_FIELDS.some(
+    (field) => title24.projectScope[field] == null
+  );
+}
+
+function ensureTitle24(project) {
+  if (!project) return { title24: null, created: false, migrated: false };
+  const existing = project.title24;
+  const created = !existing;
+  const migrated = needsTitle24Migration(existing);
+  const title24 = normalizeTitle24(existing || createDefaultTitle24());
+  project.title24 = title24;
+  return { title24, created, migrated };
+}
+
+function createDefaultTitle24ScopeOptionsDataset() {
+  return {
+    schemaVersion: TITLE24_SCHEMA_VERSION,
+    isPlaceholder: true,
+    source: "EnergyCodeAce Indoor Lighting Compliance Form",
+    capturedAtUtc: "",
+    fields: {
+      occupancyType: [],
+      projectScopeType: [],
+      lightingSystemType: [],
+    },
+  };
+}
+
+function normalizeTitle24ScopeOptionEntry(entry) {
+  if (entry == null) return null;
+  if (typeof entry === "string") {
+    const value = normalizeTitle24Text(entry);
+    if (!value) return null;
+    return { value, label: value };
+  }
+  if (typeof entry !== "object") return null;
+  const value = normalizeTitle24Text(entry.value);
+  const label = normalizeTitle24Text(entry.label ?? entry.value);
+  if (!value || !label) return null;
+  return { value, label };
+}
+
+function normalizeTitle24ScopeOptionsDataset(rawDataset) {
+  const defaults = createDefaultTitle24ScopeOptionsDataset();
+  const raw =
+    rawDataset && typeof rawDataset === "object" ? rawDataset : defaults;
+  const fields = raw.fields && typeof raw.fields === "object" ? raw.fields : {};
+
+  const normalizedFields = {};
+  TITLE24_SCOPE_OPTION_FIELDS.forEach((field) => {
+    const source = Array.isArray(fields[field]) ? fields[field] : [];
+    const seen = new Set();
+    normalizedFields[field] = source
+      .map((entry) => normalizeTitle24ScopeOptionEntry(entry))
+      .filter((entry) => {
+        if (!entry) return false;
+        const key = entry.value.toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+  });
+
+  return {
+    schemaVersion:
+      normalizeTitle24Text(raw.schemaVersion) || TITLE24_SCHEMA_VERSION,
+    isPlaceholder: raw.isPlaceholder !== false,
+    source: normalizeTitle24Text(raw.source) || defaults.source,
+    capturedAtUtc: normalizeTitle24Text(raw.capturedAtUtc),
+    fields: normalizedFields,
+  };
+}
+
+function getMissingTitle24ScopeFields(dataset) {
+  const fields =
+    dataset?.fields && typeof dataset.fields === "object"
+      ? dataset.fields
+      : {};
+  return TITLE24_SCOPE_OPTION_FIELDS.filter(
+    (field) => !Array.isArray(fields[field]) || !fields[field].length
+  );
+}
+
+function isTitle24ScopeOptionsBlocked(dataset) {
+  if (!dataset) return true;
+  if (dataset.isPlaceholder) return true;
+  return getMissingTitle24ScopeFields(dataset).length > 0;
+}
+
+async function loadTitle24ScopeOptionsDataset({ force = false } = {}) {
+  if (title24ScopeOptionsDataset && !force) {
+    return title24ScopeOptionsDataset;
+  }
+  if (!force && title24ScopeOptionsLoadingPromise) {
+    return title24ScopeOptionsLoadingPromise;
+  }
+
+  title24ScopeOptionsLoadingPromise = (async () => {
+    const fallback = createDefaultTitle24ScopeOptionsDataset();
+    try {
+      const response = await fetch(TITLE24_SCOPE_OPTIONS_FILE_PATH, {
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} while loading options file.`);
+      }
+      const payload = await response.json();
+      const normalized = normalizeTitle24ScopeOptionsDataset(payload);
+      title24ScopeOptionsDataset = normalized;
+      title24ScopeOptionsLoadError = "";
+      return normalized;
+    } catch (error) {
+      console.warn("Failed to load Title 24 scope options dataset:", error);
+      title24ScopeOptionsDataset = normalizeTitle24ScopeOptionsDataset(fallback);
+      title24ScopeOptionsLoadError =
+        error?.message ||
+        "Could not load options file from assets/title24 folder.";
+      return title24ScopeOptionsDataset;
+    } finally {
+      title24ScopeOptionsLoadingPromise = null;
+    }
+  })();
+
+  return title24ScopeOptionsLoadingPromise;
 }
 
 function normalizeLightingScheduleText(value) {
@@ -11032,6 +11289,533 @@ function openLightingSchedule() {
 
 function closeLightingSchedule() {
   const dlg = document.getElementById("lightingScheduleDlg");
+  if (dlg?.open) dlg.close();
+  save();
+}
+
+function getActiveTitle24Project() {
+  if (title24ProjectIndex == null) return null;
+  return db[title24ProjectIndex] || null;
+}
+
+function getActiveTitle24() {
+  if (title24ProjectIndex == null) return null;
+  const project = db[title24ProjectIndex];
+  if (!project) return null;
+  return ensureTitle24(project).title24;
+}
+
+function getTitle24PageTitle(page) {
+  const titles = {
+    1: "Project Scope",
+    2: "Lighting Systems",
+    3: "Controls",
+    4: "Review",
+  };
+  return titles[page] || `Page ${page}`;
+}
+
+function getTitle24ScopeFieldLabel(field) {
+  const labels = {
+    occupancyType: "Occupancy Type",
+    projectScopeType: "Project Scope",
+    lightingSystemType: "Lighting System Type",
+  };
+  return labels[field] || field;
+}
+
+function getTitle24ScopeBlockingMessage(dataset) {
+  if (title24ScopeOptionsLoadError) {
+    return `Strict dropdowns are locked because options could not be loaded (${title24ScopeOptionsLoadError}). Populate ${TITLE24_SCOPE_OPTIONS_FILE_PATH} with exact EnergyCodeAce options.`;
+  }
+  if (!dataset || dataset.isPlaceholder) {
+    return `Strict dropdowns are locked until ${TITLE24_SCOPE_OPTIONS_FILE_PATH} is populated with exact EnergyCodeAce options.`;
+  }
+  const missing = getMissingTitle24ScopeFields(dataset);
+  if (missing.length) {
+    const labels = missing.map((field) => getTitle24ScopeFieldLabel(field));
+    return `Strict dropdowns are locked because option lists are missing for: ${labels.join(", ")}.`;
+  }
+  return "";
+}
+
+function renderTitle24ScopeBlockingNotice(dataset) {
+  const notice = document.getElementById("title24ScopeBlockedNotice");
+  if (!notice) return;
+  const blocked = isTitle24ScopeOptionsBlocked(dataset);
+  if (!blocked) {
+    notice.hidden = true;
+    notice.textContent = "";
+    return;
+  }
+  notice.hidden = false;
+  notice.textContent = getTitle24ScopeBlockingMessage(dataset);
+}
+
+function populateTitle24ScopeSelect(
+  select,
+  options = [],
+  selectedValue = "",
+  disabled = false
+) {
+  if (!select) return;
+  const selected = normalizeTitle24Text(selectedValue);
+  const normalizedOptions = Array.isArray(options)
+    ? options.map((option) => normalizeTitle24ScopeOptionEntry(option)).filter(Boolean)
+    : [];
+
+  select.innerHTML = "";
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = disabled
+    ? "Options locked until dataset is populated"
+    : "Select an option";
+  select.appendChild(placeholder);
+
+  let hasSelected = false;
+  normalizedOptions.forEach((option) => {
+    const optEl = document.createElement("option");
+    optEl.value = option.value;
+    optEl.textContent = option.label;
+    if (option.value === selected) hasSelected = true;
+    select.appendChild(optEl);
+  });
+
+  if (selected && !hasSelected) {
+    const savedOpt = document.createElement("option");
+    savedOpt.value = selected;
+    savedOpt.textContent = `${selected} (Saved)`;
+    select.appendChild(savedOpt);
+    hasSelected = true;
+  }
+
+  select.value = hasSelected ? selected : "";
+  select.disabled = !!disabled;
+}
+
+function formatTitle24Timestamp(rawValue) {
+  const value = normalizeTitle24Text(rawValue);
+  if (!value) return "";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString();
+}
+
+function formatTitle24TotalSquareFeet(value) {
+  const n = normalizeTitle24SquareFeet(value);
+  return `${n.toLocaleString(undefined, { maximumFractionDigits: 2 })} sq ft`;
+}
+
+function updateTitle24RoomAreasTotal(title24) {
+  if (!title24) return;
+  title24.roomAreas.totalSquareFeet = computeTitle24RoomAreaTotal(
+    title24.roomAreas.rows
+  );
+}
+
+function renderTitle24RoomAreaSummary(roomAreas) {
+  const sourcePathEl = document.getElementById("title24RoomAreasSourcePath");
+  const importedAtEl = document.getElementById("title24RoomAreasImportedAt");
+  const totalEl = document.getElementById("title24RoomAreasTotalSqFt");
+  if (sourcePathEl) {
+    const sourcePath = normalizeTitle24Text(roomAreas?.sourcePath);
+    sourcePathEl.textContent = sourcePath || "(not imported)";
+    sourcePathEl.title = sourcePath;
+  }
+  if (importedAtEl) {
+    const importedAt = formatTitle24Timestamp(roomAreas?.importedAtUtc);
+    importedAtEl.textContent = importedAt || "(not imported)";
+  }
+  if (totalEl) {
+    totalEl.textContent = formatTitle24TotalSquareFeet(
+      roomAreas?.totalSquareFeet || 0
+    );
+  }
+}
+
+function renderTitle24RoomAreaRows(title24) {
+  const body = document.getElementById("title24RoomAreasRows");
+  if (!body) return;
+  body.innerHTML = "";
+
+  const rows = Array.isArray(title24?.roomAreas?.rows)
+    ? title24.roomAreas.rows
+    : [];
+
+  if (!rows.length) {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = 3;
+    td.className = "title24-room-empty-row tiny muted";
+    td.textContent =
+      "No room areas imported yet. Click Import T24Output.json to load room types.";
+    tr.appendChild(td);
+    body.appendChild(tr);
+    return;
+  }
+
+  rows.forEach((row, rowIndex) => {
+    const tr = document.createElement("tr");
+
+    const roomTypeTd = document.createElement("td");
+    const roomTypeInput = document.createElement("input");
+    roomTypeInput.type = "text";
+    roomTypeInput.value = row.roomType || "";
+    roomTypeInput.placeholder = "Room type";
+    roomTypeInput.addEventListener("input", (e) => {
+      row.roomType = String(e.target.value || "");
+      debouncedSaveTitle24();
+    });
+    roomTypeTd.appendChild(roomTypeInput);
+
+    const squareFeetTd = document.createElement("td");
+    const squareFeetInput = document.createElement("input");
+    squareFeetInput.type = "number";
+    squareFeetInput.min = "0";
+    squareFeetInput.step = "0.01";
+    squareFeetInput.value =
+      row.squareFeet > 0 ? String(normalizeTitle24SquareFeet(row.squareFeet)) : "";
+    squareFeetInput.placeholder = "0";
+    squareFeetInput.addEventListener("input", (e) => {
+      const raw = String(e.target.value || "").trim();
+      if (!raw) {
+        row.squareFeet = 0;
+        squareFeetInput.classList.remove("input-error");
+      } else {
+        const parsed = Number(raw);
+        if (!Number.isFinite(parsed) || parsed < 0) {
+          squareFeetInput.classList.add("input-error");
+          return;
+        }
+        row.squareFeet = Number(parsed);
+        squareFeetInput.classList.remove("input-error");
+      }
+      updateTitle24RoomAreasTotal(title24);
+      renderTitle24RoomAreaSummary(title24.roomAreas);
+      debouncedSaveTitle24();
+    });
+    squareFeetTd.appendChild(squareFeetInput);
+
+    const actionsTd = document.createElement("td");
+    actionsTd.className = "title24-room-actions-cell";
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "title24-room-remove";
+    removeBtn.textContent = "X";
+    removeBtn.title = "Remove row";
+    removeBtn.setAttribute("aria-label", "Remove row");
+    removeBtn.addEventListener("click", () => {
+      removeTitle24RoomAreaRow(rowIndex);
+    });
+    actionsTd.appendChild(removeBtn);
+
+    tr.append(roomTypeTd, squareFeetTd, actionsTd);
+    body.appendChild(tr);
+  });
+}
+
+function renderTitle24PageShell(title24) {
+  const titleEl = document.getElementById("title24PageTitle");
+  const indicatorEl = document.getElementById("title24PageIndicator");
+  const prevBtn = document.getElementById("title24PrevPageBtn");
+  const nextBtn = document.getElementById("title24NextPageBtn");
+
+  const hasData = !!title24;
+  const currentPage = hasData ? clampTitle24Page(title24.currentPage) : 1;
+  if (hasData) title24.currentPage = currentPage;
+
+  if (titleEl) titleEl.textContent = getTitle24PageTitle(currentPage);
+  if (indicatorEl) {
+    indicatorEl.textContent = `Page ${currentPage} of ${TITLE24_PAGE_COUNT}`;
+  }
+  if (prevBtn) prevBtn.disabled = !hasData || currentPage <= 1;
+  if (nextBtn) nextBtn.disabled = !hasData || currentPage >= TITLE24_PAGE_COUNT;
+
+  for (let page = 1; page <= TITLE24_PAGE_COUNT; page += 1) {
+    const section = document.getElementById(`title24Page${page}`);
+    if (!section) continue;
+    section.hidden = !hasData || page !== currentPage;
+  }
+}
+
+function renderTitle24ProjectScopePage(title24) {
+  const dataset =
+    title24ScopeOptionsDataset || createDefaultTitle24ScopeOptionsDataset();
+  const blocked = isTitle24ScopeOptionsBlocked(dataset);
+
+  renderTitle24ScopeBlockingNotice(dataset);
+
+  populateTitle24ScopeSelect(
+    document.getElementById("title24OccupancyTypeSelect"),
+    dataset.fields?.occupancyType,
+    title24?.projectScope?.occupancyType || "",
+    blocked
+  );
+  populateTitle24ScopeSelect(
+    document.getElementById("title24ProjectScopeTypeSelect"),
+    dataset.fields?.projectScopeType,
+    title24?.projectScope?.projectScopeType || "",
+    blocked
+  );
+  populateTitle24ScopeSelect(
+    document.getElementById("title24LightingSystemTypeSelect"),
+    dataset.fields?.lightingSystemType,
+    title24?.projectScope?.lightingSystemType || "",
+    blocked
+  );
+
+  const storiesInput = document.getElementById("title24AboveGradeStoriesInput");
+  if (storiesInput) {
+    storiesInput.disabled = !title24;
+    storiesInput.value =
+      title24?.projectScope?.aboveGradeStories == null
+        ? ""
+        : String(title24.projectScope.aboveGradeStories);
+    storiesInput.classList.remove("input-error");
+  }
+}
+
+function renderTitle24Compliance(
+  title24,
+  emptyMessage = "Create a project to start Title 24 compliance data entry."
+) {
+  const emptyState = document.getElementById("title24ComplianceEmptyState");
+  const content = document.getElementById("title24ComplianceContent");
+  const importBtn = document.getElementById("title24ImportRoomAreasBtn");
+  const addRowBtn = document.getElementById("title24RoomAreasAddRow");
+
+  if (!title24) {
+    if (emptyState) {
+      emptyState.textContent = emptyMessage;
+      emptyState.hidden = false;
+    }
+    if (content) content.hidden = true;
+    if (importBtn) importBtn.disabled = true;
+    if (addRowBtn) addRowBtn.disabled = true;
+    renderTitle24PageShell(null);
+    renderTitle24ScopeBlockingNotice(
+      title24ScopeOptionsDataset || createDefaultTitle24ScopeOptionsDataset()
+    );
+    renderTitle24RoomAreaSummary({
+      sourcePath: "",
+      importedAtUtc: "",
+      totalSquareFeet: 0,
+    });
+    const rowsBody = document.getElementById("title24RoomAreasRows");
+    if (rowsBody) rowsBody.innerHTML = "";
+    return;
+  }
+
+  if (emptyState) emptyState.hidden = true;
+  if (content) content.hidden = false;
+  if (importBtn) importBtn.disabled = false;
+  if (addRowBtn) addRowBtn.disabled = false;
+
+  renderTitle24PageShell(title24);
+  renderTitle24ProjectScopePage(title24);
+  renderTitle24RoomAreaRows(title24);
+  renderTitle24RoomAreaSummary(title24.roomAreas);
+}
+
+function renderTitle24ProjectOptions(filterText = "") {
+  const select = document.getElementById("title24ProjectSelect");
+  if (!select) return;
+  select.innerHTML = "";
+  const query = String(filterText || "").trim().toLowerCase();
+  const matches = db
+    .map((project, index) => ({ project, index }))
+    .filter(({ project }) => {
+      if (!query) return true;
+      const id = String(project?.id || "").toLowerCase();
+      const name = String(project?.name || "").toLowerCase();
+      const nick = String(project?.nick || "").toLowerCase();
+      return id.includes(query) || name.includes(query) || nick.includes(query);
+    });
+
+  matches.forEach(({ project, index }) => {
+    const option = el("option", {
+      value: String(index),
+      textContent: getLightingScheduleProjectLabel(project, index),
+    });
+    select.appendChild(option);
+  });
+  select.disabled = matches.length === 0;
+
+  if (!matches.length) {
+    title24ProjectIndex = null;
+    renderTitle24Compliance(
+      null,
+      db.length
+        ? "No projects match that search."
+        : "Create a project to start Title 24 compliance data entry."
+    );
+    return;
+  }
+
+  const availableIndexes = matches.map(({ index }) => index);
+  if (availableIndexes.includes(title24ProjectIndex)) {
+    select.value = String(title24ProjectIndex);
+    return;
+  }
+
+  const nextIndex = availableIndexes[0];
+  setTitle24Project(nextIndex);
+}
+
+function setTitle24Project(index) {
+  if (!Number.isInteger(index) || !db[index]) {
+    title24ProjectIndex = null;
+    renderTitle24Compliance(null);
+    return;
+  }
+  title24ProjectIndex = index;
+  const select = document.getElementById("title24ProjectSelect");
+  if (select) select.value = String(index);
+  const { title24, created, migrated } = ensureTitle24(db[index]);
+  if (created || migrated) save();
+  renderTitle24Compliance(title24);
+}
+
+function handleTitle24ScopeSelectChange(field, value) {
+  const title24 = getActiveTitle24();
+  if (!title24 || !title24.projectScope) return;
+  if (!TITLE24_SCOPE_OPTION_FIELDS.includes(field)) return;
+  title24.projectScope[field] = normalizeTitle24Text(value);
+  save();
+}
+
+function updateTitle24AboveGradeStories(rawValue, { showInvalidToast = false } = {}) {
+  const title24 = getActiveTitle24();
+  if (!title24) return false;
+  const input = document.getElementById("title24AboveGradeStoriesInput");
+  const raw = String(rawValue ?? "").trim();
+
+  if (!raw) {
+    title24.projectScope.aboveGradeStories = null;
+    if (input) input.classList.remove("input-error");
+    save();
+    return true;
+  }
+
+  const parsed = normalizeTitle24Stories(raw);
+  if (parsed == null) {
+    if (input) input.classList.add("input-error");
+    if (showInvalidToast) {
+      toast("Above grade stories must be a positive whole number.");
+    }
+    return false;
+  }
+
+  title24.projectScope.aboveGradeStories = parsed;
+  if (input) input.classList.remove("input-error");
+  save();
+  return true;
+}
+
+function addTitle24RoomAreaRow() {
+  const title24 = getActiveTitle24();
+  if (!title24) return;
+  title24.roomAreas.rows.push(createTitle24RoomAreaRow());
+  updateTitle24RoomAreasTotal(title24);
+  renderTitle24RoomAreaRows(title24);
+  renderTitle24RoomAreaSummary(title24.roomAreas);
+  save();
+}
+
+function removeTitle24RoomAreaRow(rowIndex) {
+  const title24 = getActiveTitle24();
+  if (!title24) return;
+  if (rowIndex < 0 || rowIndex >= title24.roomAreas.rows.length) return;
+  title24.roomAreas.rows.splice(rowIndex, 1);
+  updateTitle24RoomAreasTotal(title24);
+  renderTitle24RoomAreaRows(title24);
+  renderTitle24RoomAreaSummary(title24.roomAreas);
+  save();
+}
+
+function changeTitle24Page(delta) {
+  const title24 = getActiveTitle24();
+  if (!title24) return;
+  const nextPage = clampTitle24Page((title24.currentPage || 1) + Number(delta || 0));
+  if (nextPage === title24.currentPage) return;
+  title24.currentPage = nextPage;
+  renderTitle24PageShell(title24);
+  save();
+}
+
+async function importTitle24OutputJson() {
+  const title24 = getActiveTitle24();
+  if (!title24) {
+    toast("Select a project first.");
+    return;
+  }
+  if (!window.pywebview?.api?.select_files) {
+    toast("File picker is unavailable.");
+    return;
+  }
+  if (!window.pywebview?.api?.read_t24_output_json) {
+    toast("Desktop backend is missing read_t24_output_json API.");
+    return;
+  }
+
+  try {
+    const selection = await window.pywebview.api.select_files({
+      allow_multiple: false,
+      file_types: ["JSON Files (*.json)"],
+    });
+    if (
+      selection?.status !== "success" ||
+      !Array.isArray(selection.paths) ||
+      !selection.paths.length
+    ) {
+      return;
+    }
+
+    const response = await window.pywebview.api.read_t24_output_json(
+      selection.paths[0]
+    );
+    if (response?.status !== "success") {
+      throw new Error(response?.message || "Failed to read T24Output.json.");
+    }
+
+    const incomingRows = Array.isArray(response?.data?.rows)
+      ? response.data.rows.map((row) => createTitle24RoomAreaRow(row))
+      : [];
+
+    title24.roomAreas.rows = incomingRows;
+    title24.roomAreas.sourcePath = normalizeTitle24Text(
+      response.path || selection.paths[0]
+    );
+    title24.roomAreas.importedAtUtc = new Date().toISOString();
+    updateTitle24RoomAreasTotal(title24);
+
+    renderTitle24Compliance(title24);
+    save();
+    toast(
+      `Imported ${incomingRows.length} room type entr${incomingRows.length === 1 ? "y" : "ies"} from T24Output.json.`
+    );
+  } catch (error) {
+    reportClientError("Failed to import T24Output.json", error);
+    toast(`Import failed: ${error?.message || "Unknown error."}`);
+  }
+}
+
+async function openTitle24Compliance() {
+  const dlg = document.getElementById("title24ComplianceDlg");
+  if (!dlg) return;
+  await loadTitle24ScopeOptionsDataset({ force: true });
+  const projectSearch = document.getElementById("title24ProjectSearch");
+  if (projectSearch) projectSearch.value = title24ProjectQuery;
+  renderTitle24ProjectOptions(title24ProjectQuery);
+  const activeProject = getActiveTitle24Project();
+  if (activeProject) {
+    renderTitle24Compliance(ensureTitle24(activeProject).title24);
+  }
+  if (!dlg.open) dlg.showModal();
+}
+
+function closeTitle24Compliance() {
+  const dlg = document.getElementById("title24ComplianceDlg");
   if (dlg?.open) dlg.close();
   save();
 }
@@ -12462,6 +13246,110 @@ function initEventListeners() {
       autoResizeTextarea(lightingScheduleNotes);
       debouncedSaveLightingSchedule();
     });
+  }
+
+  const title24ComplianceBtn = document.getElementById("toolTitle24Compliance");
+  if (title24ComplianceBtn) {
+    title24ComplianceBtn.addEventListener("click", openTitle24Compliance);
+    title24ComplianceBtn.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        openTitle24Compliance();
+      }
+    });
+  }
+
+  const title24ComplianceCloseBtn = document.getElementById(
+    "title24ComplianceCloseBtn"
+  );
+  if (title24ComplianceCloseBtn) {
+    title24ComplianceCloseBtn.addEventListener("click", closeTitle24Compliance);
+  }
+
+  const title24ComplianceDlg = document.getElementById("title24ComplianceDlg");
+  if (title24ComplianceDlg) {
+    title24ComplianceDlg.addEventListener("close", () => {
+      save();
+    });
+  }
+
+  const title24ProjectSelect = document.getElementById("title24ProjectSelect");
+  if (title24ProjectSelect) {
+    title24ProjectSelect.addEventListener("change", (e) => {
+      const idx = Number(e.target.value);
+      if (!Number.isNaN(idx)) setTitle24Project(idx);
+    });
+  }
+
+  const title24ProjectSearch = document.getElementById("title24ProjectSearch");
+  if (title24ProjectSearch) {
+    title24ProjectSearch.addEventListener("input", (e) => {
+      title24ProjectQuery = e.target.value;
+      renderTitle24ProjectOptions(title24ProjectQuery);
+    });
+  }
+
+  const title24PrevPageBtn = document.getElementById("title24PrevPageBtn");
+  if (title24PrevPageBtn) {
+    title24PrevPageBtn.addEventListener("click", () => changeTitle24Page(-1));
+  }
+
+  const title24NextPageBtn = document.getElementById("title24NextPageBtn");
+  if (title24NextPageBtn) {
+    title24NextPageBtn.addEventListener("click", () => changeTitle24Page(1));
+  }
+
+  const title24OccupancyTypeSelect = document.getElementById(
+    "title24OccupancyTypeSelect"
+  );
+  if (title24OccupancyTypeSelect) {
+    title24OccupancyTypeSelect.addEventListener("change", (e) => {
+      handleTitle24ScopeSelectChange("occupancyType", e.target.value);
+    });
+  }
+
+  const title24ProjectScopeTypeSelect = document.getElementById(
+    "title24ProjectScopeTypeSelect"
+  );
+  if (title24ProjectScopeTypeSelect) {
+    title24ProjectScopeTypeSelect.addEventListener("change", (e) => {
+      handleTitle24ScopeSelectChange("projectScopeType", e.target.value);
+    });
+  }
+
+  const title24LightingSystemTypeSelect = document.getElementById(
+    "title24LightingSystemTypeSelect"
+  );
+  if (title24LightingSystemTypeSelect) {
+    title24LightingSystemTypeSelect.addEventListener("change", (e) => {
+      handleTitle24ScopeSelectChange("lightingSystemType", e.target.value);
+    });
+  }
+
+  const title24AboveGradeStoriesInput = document.getElementById(
+    "title24AboveGradeStoriesInput"
+  );
+  if (title24AboveGradeStoriesInput) {
+    title24AboveGradeStoriesInput.addEventListener("input", (e) => {
+      updateTitle24AboveGradeStories(e.target.value, { showInvalidToast: false });
+    });
+    title24AboveGradeStoriesInput.addEventListener("blur", (e) => {
+      updateTitle24AboveGradeStories(e.target.value, { showInvalidToast: true });
+    });
+  }
+
+  const title24ImportRoomAreasBtn = document.getElementById(
+    "title24ImportRoomAreasBtn"
+  );
+  if (title24ImportRoomAreasBtn) {
+    title24ImportRoomAreasBtn.addEventListener("click", importTitle24OutputJson);
+  }
+
+  const title24RoomAreasAddRowBtn = document.getElementById(
+    "title24RoomAreasAddRow"
+  );
+  if (title24RoomAreasAddRowBtn) {
+    title24RoomAreasAddRowBtn.addEventListener("click", addTitle24RoomAreaRow);
   }
 
 

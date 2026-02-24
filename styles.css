@@ -2872,6 +2872,258 @@ dialog.lighting-schedule-dialog {
   resize: vertical;
 }
 
+/* Title 24 Compliance Dialog */
+dialog.title24-compliance-dialog {
+  width: min(1320px, 96vw);
+  height: min(920px, 94vh);
+}
+
+.title24-compliance-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.title24-compliance-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 1.25rem;
+  border-bottom: 1px solid var(--glass-border);
+  background: var(--bg-tertiary);
+}
+
+.title24-compliance-title {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.title24-compliance-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1rem 1.25rem 1.25rem;
+  overflow: auto;
+}
+
+.title24-compliance-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.title24-compliance-select {
+  min-width: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.title24-compliance-empty {
+  padding: 1rem;
+  text-align: center;
+  color: var(--muted);
+  border: 1px dashed var(--glass-border);
+  border-radius: var(--radius);
+}
+
+.title24-compliance-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.title24-page-shell {
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+  padding: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.title24-page-shell-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.title24-page-shell-title-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.title24-page-shell-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.title24-page-shell-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.title24-page-section {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.title24-scope-blocking {
+  border: 1px dashed rgba(239, 68, 68, 0.45);
+  border-radius: var(--radius-sm);
+  background: var(--danger-bg);
+  color: var(--danger);
+  padding: 0.55rem 0.65rem;
+  line-height: 1.45;
+}
+
+.title24-room-panel {
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  background: var(--bg-tertiary);
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.title24-room-panel-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.title24-room-panel-title-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.title24-room-panel-title {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.title24-room-panel-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.title24-room-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.45rem 0.75rem;
+  font-size: 12px;
+}
+
+.title24-room-table-wrap {
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  overflow: auto;
+  background: var(--bg-secondary);
+}
+
+.title24-room-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 520px;
+}
+
+.title24-room-table th,
+.title24-room-table td {
+  border: 1px solid var(--glass-border);
+  padding: 0.5rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.title24-room-table th {
+  background: var(--bg-tertiary);
+  color: var(--muted);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.title24-room-table td input {
+  width: 100%;
+  font-size: 12px;
+  padding: 0.35rem 0.45rem;
+}
+
+.title24-room-actions-cell {
+  width: 52px;
+}
+
+.title24-room-remove {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  background: var(--danger-bg);
+  color: var(--danger);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.title24-room-remove:hover {
+  background: var(--danger);
+  color: #fff;
+  border-color: var(--danger);
+}
+
+.title24-room-empty-row {
+  text-align: center;
+}
+
+.title24-page-placeholder {
+  padding: 1rem;
+  border: 1px dashed var(--glass-border);
+  border-radius: var(--radius);
+  background: var(--bg-tertiary);
+}
+
+.title24-placeholder-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-bottom: 0.35rem;
+}
+
+@media (max-width: 720px) {
+  .title24-page-shell-nav {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .title24-room-panel-actions {
+    width: 100%;
+  }
+
+  .title24-room-panel-actions .btn {
+    flex: 1;
+  }
+}
+
 /* Modals */
 dialog {
   background: var(--modal-bg);

@@ -502,6 +502,20 @@ def _resolve_lighting_schedule_sync_path(dwg_path):
     return normalized_dwg, sync_path
 
 
+def _normalize_t24_output_json_path(json_path):
+    raw = str(json_path or "").strip().strip('"').strip("'")
+    if not raw:
+        raise ValueError("JSON path is required.")
+    normalized = os.path.normpath(raw)
+    if not os.path.isabs(normalized):
+        raise ValueError("JSON path must be an absolute path.")
+    if os.path.splitext(normalized)[1].lower() != ".json":
+        raise ValueError("JSON path must end with .json.")
+    if os.path.basename(normalized).lower() != "t24output.json":
+        raise ValueError("Expected file name: T24Output.json.")
+    return normalized
+
+
 def _read_json_file_strict(path):
     try:
         with open(path, "r", encoding="utf-8-sig") as f:
@@ -1684,6 +1698,68 @@ Return ONLY the JSON object.
         except Exception as e:
             logging.error(f"Error saving lighting schedule sync: {e}")
             return {'status': 'error', 'message': str(e)}
+
+    def read_t24_output_json(self, json_path):
+        """Read and validate TXTSUMEXPORT output (T24Output.json)."""
+        try:
+            normalized_path = _normalize_t24_output_json_path(json_path)
+            if not os.path.isfile(normalized_path):
+                raise FileNotFoundError(
+                    f"T24Output.json was not found at: {normalized_path}")
+
+            payload = _read_json_file_strict(normalized_path)
+            if not isinstance(payload, list):
+                raise ValueError(
+                    "T24Output.json must contain a JSON array of room entries.")
+
+            rows = []
+            for idx, item in enumerate(payload, start=1):
+                if not isinstance(item, dict):
+                    raise ValueError(
+                        f"Entry #{idx} must be a JSON object with RoomType and SquareFeet.")
+
+                room_type = str(item.get("RoomType", "")).strip()
+                if not room_type:
+                    raise ValueError(f"Entry #{idx} is missing RoomType.")
+
+                square_feet_raw = item.get("SquareFeet", None)
+                try:
+                    square_feet = float(square_feet_raw)
+                except (TypeError, ValueError):
+                    raise ValueError(
+                        f"Entry #{idx} has invalid SquareFeet value: {square_feet_raw!r}.")
+
+                if not math.isfinite(square_feet) or square_feet < 0:
+                    raise ValueError(
+                        f"Entry #{idx} has non-finite or negative SquareFeet: {square_feet_raw!r}.")
+
+                rows.append({
+                    "roomType": room_type,
+                    "squareFeet": round(square_feet, 4)
+                })
+
+            total_square_feet = round(
+                sum(row["squareFeet"] for row in rows), 4)
+            mtime = os.path.getmtime(normalized_path)
+            modified = datetime.datetime.fromtimestamp(mtime).isoformat()
+
+            return {
+                "status": "success",
+                "path": normalized_path,
+                "modified": modified,
+                "data": {
+                    "rows": rows,
+                    "totalSquareFeet": total_square_feet
+                }
+            }
+        except FileNotFoundError as e:
+            return {"status": "error", "message": str(e)}
+        except ValueError as e:
+            logging.warning(f"T24Output.json validation failed: {e}")
+            return {"status": "error", "message": str(e)}
+        except Exception as e:
+            logging.error(f"Error reading T24Output.json: {e}")
+            return {"status": "error", "message": str(e)}
 
     def get_notes(self):
         """Reads and returns the content of notes.json."""

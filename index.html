@@ -545,6 +545,24 @@
                             </div>
                             <div class="tool-card-status"></div>
                         </div>
+                        <div id="toolTitle24Compliance" class="tool-card" role="button" tabindex="0">
+                            <div class="tool-card-content">
+                                <div class="tool-icon">
+                                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                        stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <path d="M9 12h6"></path>
+                                        <path d="M9 16h6"></path>
+                                        <path d="M9 8h6"></path>
+                                        <rect x="4" y="3" width="16" height="18" rx="2"></rect>
+                                    </svg>
+                                </div>
+                                <div class="tool-card-header">Title 24 Compliance</div>
+                                <div class="tool-card-body">
+                                    Build Project Scope and room-area data for Indoor Lighting Compliance forms.
+                                </div>
+                            </div>
+                            <div class="tool-card-status"></div>
+                        </div>
                     </div>
             </section>
         </div>
@@ -1981,6 +1999,135 @@
                             </tr>
                         </tfoot>
                     </table>
+                </div>
+            </div>
+        </div>
+    </dialog>
+
+    <dialog id="title24ComplianceDlg" class="title24-compliance-dialog">
+        <div class="title24-compliance-shell">
+            <div class="title24-compliance-header">
+                <div class="title24-compliance-title">
+                    <div class="title">Title 24 Compliance</div>
+                    <p class="tiny muted">Indoor Lighting Compliance workspace by project.</p>
+                </div>
+                <button class="icon-btn" id="title24ComplianceCloseBtn" aria-label="Close Title 24 Compliance"
+                    title="Close">X</button>
+            </div>
+            <div class="title24-compliance-body">
+                <div class="title24-compliance-controls">
+                    <div class="title24-compliance-select">
+                        <label class="label" for="title24ProjectSearch">Search Projects</label>
+                        <input id="title24ProjectSearch" type="search" placeholder="Search by project ID or name" />
+                    </div>
+                    <div class="title24-compliance-select">
+                        <label class="label" for="title24ProjectSelect">Project</label>
+                        <select id="title24ProjectSelect"></select>
+                    </div>
+                </div>
+
+                <div id="title24ComplianceEmptyState" class="title24-compliance-empty" hidden></div>
+
+                <div id="title24ComplianceContent" class="title24-compliance-content" hidden>
+                    <div class="title24-page-shell">
+                        <div class="title24-page-shell-header">
+                            <div class="title24-page-shell-title-wrap">
+                                <div id="title24PageTitle" class="title24-page-shell-title">Project Scope</div>
+                                <div id="title24PageIndicator" class="tiny muted">Page 1 of 4</div>
+                            </div>
+                            <div class="title24-page-shell-nav">
+                                <button class="btn tiny ghost" id="title24PrevPageBtn" type="button">Previous</button>
+                                <button class="btn tiny" id="title24NextPageBtn" type="button">Next</button>
+                            </div>
+                        </div>
+
+                        <section id="title24Page1" class="title24-page-section">
+                            <div id="title24ScopeBlockedNotice" class="title24-scope-blocking tiny muted" hidden>
+                            </div>
+                            <div class="modal-grid">
+                                <div class="col-6">
+                                    <label class="label" for="title24OccupancyTypeSelect">What occupancy type?</label>
+                                    <select id="title24OccupancyTypeSelect"></select>
+                                </div>
+                                <div class="col-6">
+                                    <label class="label" for="title24ProjectScopeTypeSelect">Which of the following
+                                        describes your project's scope?</label>
+                                    <select id="title24ProjectScopeTypeSelect"></select>
+                                </div>
+                                <div class="col-6">
+                                    <label class="label" for="title24LightingSystemTypeSelect">What type of lighting
+                                        system will be installed?</label>
+                                    <select id="title24LightingSystemTypeSelect"></select>
+                                </div>
+                                <div class="col-6">
+                                    <label class="label" for="title24AboveGradeStoriesInput">How many above grade
+                                        stories are on this project?</label>
+                                    <input id="title24AboveGradeStoriesInput" type="number" min="1" step="1"
+                                        placeholder="e.g. 1" />
+                                </div>
+                            </div>
+
+                            <div class="title24-room-panel">
+                                <div class="title24-room-panel-header">
+                                    <div class="title24-room-panel-title-wrap">
+                                        <div class="title24-room-panel-title">Room Areas</div>
+                                        <div class="tiny muted">Import and edit room type totals from
+                                            <code>T24Output.json</code>.
+                                        </div>
+                                    </div>
+                                    <div class="title24-room-panel-actions">
+                                        <button class="btn tiny" id="title24ImportRoomAreasBtn" type="button">Import
+                                            T24Output.json</button>
+                                        <button class="btn tiny ghost" id="title24RoomAreasAddRow" type="button">Add
+                                            Row</button>
+                                    </div>
+                                </div>
+
+                                <div class="title24-room-meta">
+                                    <div><span class="tiny muted">Source:</span> <span
+                                            id="title24RoomAreasSourcePath"></span></div>
+                                    <div><span class="tiny muted">Imported:</span> <span
+                                            id="title24RoomAreasImportedAt"></span></div>
+                                    <div><span class="tiny muted">Total:</span> <span
+                                            id="title24RoomAreasTotalSqFt"></span></div>
+                                </div>
+
+                                <div class="title24-room-table-wrap">
+                                    <table class="title24-room-table" aria-label="Title 24 room areas">
+                                        <thead>
+                                            <tr>
+                                                <th>ROOM TYPE</th>
+                                                <th>SQUARE FEET</th>
+                                                <th></th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="title24RoomAreasRows"></tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </section>
+
+                        <section id="title24Page2" class="title24-page-section" hidden>
+                            <div class="title24-page-placeholder">
+                                <div class="title24-placeholder-title">Lighting Systems</div>
+                                <div class="tiny muted">Coming soon.</div>
+                            </div>
+                        </section>
+
+                        <section id="title24Page3" class="title24-page-section" hidden>
+                            <div class="title24-page-placeholder">
+                                <div class="title24-placeholder-title">Controls</div>
+                                <div class="tiny muted">Coming soon.</div>
+                            </div>
+                        </section>
+
+                        <section id="title24Page4" class="title24-page-section" hidden>
+                            <div class="title24-page-placeholder">
+                                <div class="title24-placeholder-title">Review</div>
+                                <div class="tiny muted">Coming soon.</div>
+                            </div>
+                        </section>
+                    </div>
                 </div>
             </div>
         </div>

@@ -6432,12 +6432,61 @@ input.input-warning {
 
 .workroom-main-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  grid-template-rows: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
   gap: 0.5rem;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+}
+
+.workroom-left-column {
+  display: flex;
+  flex-direction: column;
+  gap: 0.32rem;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workroom-left-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.24rem;
+  min-width: 0;
+}
+
+.workroom-left-tab {
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 0.67rem;
+  letter-spacing: 0.04em;
+  line-height: 1.1;
+  text-transform: uppercase;
+  min-height: 24px;
+  padding: 0.22rem 0.3rem;
+  cursor: pointer;
+}
+
+.workroom-left-tab:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.workroom-left-tab.active {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+.workroom-left-pane {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.workroom-left-pane[hidden] {
+  display: none;
 }
 
 .workroom-tools-column {
@@ -6493,26 +6542,15 @@ input.input-warning {
   overflow: hidden;
 }
 
-.workroom-checklist-panel {
-  grid-column: 1;
-  grid-row: 1;
-}
-
-.workroom-tasks-panel {
-  grid-column: 2;
-  grid-row: 1;
-}
-
+.workroom-checklist-panel,
+.workroom-tasks-panel,
 .workroom-deliverable-notes-panel {
-  grid-column: 1;
-  grid-row: 2;
+  flex: 1 1 auto;
 }
 
 .workroom-general-notes-panel {
-  grid-column: 2;
-  grid-row: 2;
   display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr) minmax(88px, 0.55fr);
+  grid-template-rows: auto auto auto minmax(0, 0.95fr) minmax(110px, 1.05fr);
   min-height: 0;
   overflow: hidden;
 }
@@ -6599,8 +6637,20 @@ input.input-warning {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.8rem;
+  width: 14px;
+  height: 14px;
+  color: var(--text);
+  font-size: 0.72rem;
   line-height: 1;
+  flex-shrink: 0;
+}
+
+.workroom-tool-icon svg,
+.workroom-tool-icon img {
+  width: 14px;
+  height: 14px;
+  display: block;
+  flex-shrink: 0;
 }
 
 .workroom-tool-text {
@@ -6981,8 +7031,7 @@ input.input-warning {
   }
 
   .workroom-main-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-template-rows: repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
 
   .workroom-tools-column {
@@ -7021,6 +7070,11 @@ input.input-warning {
   .workroom-main-grid {
     gap: 0.4rem;
   }
+
+  .workroom-left-tab {
+    font-size: 0.64rem;
+    padding: 0.2rem 0.24rem;
+  }
 }
 
 @container (max-width: 600px) {
@@ -7033,29 +7087,23 @@ input.input-warning {
 
   .workroom-main-grid {
     grid-template-columns: 1fr;
-    grid-template-rows: repeat(4, minmax(0, 1fr));
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1.1fr);
     gap: 0.35rem;
   }
 
-  .workroom-checklist-panel {
+  .workroom-left-column {
     grid-column: 1;
     grid-row: 1;
   }
 
-  .workroom-tasks-panel {
-    grid-column: 1;
-    grid-row: 2;
-  }
-
-  .workroom-deliverable-notes-panel {
-    grid-column: 1;
-    grid-row: 3;
+  .workroom-left-tabs {
+    gap: 0.18rem;
   }
 
   .workroom-general-notes-panel {
     grid-column: 1;
-    grid-row: 4;
-    grid-template-rows: auto auto auto minmax(0, 1fr) minmax(72px, 0.48fr);
+    grid-row: 2;
+    grid-template-rows: auto auto auto minmax(0, 0.95fr) minmax(86px, 1.05fr);
   }
 
   .workroom-tools-column {

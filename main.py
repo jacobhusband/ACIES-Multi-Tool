@@ -591,6 +591,15 @@ DEFAULT_TEMPLATES = [
         "description": "Plan check comments response table template"
     }
 ]
+TEMPLATE_KEY_BY_NAME = {
+    "narrative of changes": "narrative",
+    "plan check comments": "planCheck",
+    "plan check response letter": "planCheck",
+}
+TEMPLATE_DEFAULT_FILENAME_BY_KEY = {
+    "narrative": "Narrative of Changes",
+    "planCheck": "Plan Check Comments",
+}
 
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s')
@@ -1903,6 +1912,79 @@ Return ONLY the JSON object.
             logging.error(f"Error saving templates: {e}")
             return {'status': 'error', 'message': str(e)}
 
+    def _normalize_template_key(self, template_key):
+        raw = str(template_key or '').strip().lower()
+        compact = re.sub(r'[^a-z0-9]+', '', raw)
+        alias_map = {
+            'narrative': 'narrative',
+            'narrativeofchanges': 'narrative',
+            'plancheck': 'planCheck',
+            'plancheckcomments': 'planCheck',
+            'plancheckresponseletter': 'planCheck',
+            'pcc': 'planCheck',
+        }
+        if raw in TEMPLATE_KEY_BY_NAME:
+            return TEMPLATE_KEY_BY_NAME[raw]
+        if raw in alias_map:
+            return alias_map[raw]
+        return alias_map.get(compact, '')
+
+    def _infer_template_key(self, template):
+        if not isinstance(template, dict):
+            return ''
+        name_key = str(template.get('name') or '').strip().lower()
+        if name_key in TEMPLATE_KEY_BY_NAME:
+            return TEMPLATE_KEY_BY_NAME[name_key]
+        source_name = os.path.basename(str(template.get('sourcePath') or '')).lower()
+        if 'narrative of changes' in source_name:
+            return 'narrative'
+        if 'plan check' in source_name or 'pcc' in source_name:
+            return 'planCheck'
+        return ''
+
+    def _find_template_by_key(self, template_key):
+        normalized_key = self._normalize_template_key(template_key)
+        if not normalized_key:
+            return None, ''
+        templates_data = self.get_templates()
+        templates = templates_data.get('templates', []) if isinstance(
+            templates_data, dict) else []
+        for template in templates:
+            if self._infer_template_key(template) == normalized_key:
+                return template, normalized_key
+        return None, normalized_key
+
+    def _sanitize_template_filename_stem(self, value, fallback):
+        text = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", str(value or '').strip())
+        text = re.sub(r'\s+', ' ', text).strip().strip('.')
+        text = text[:120]
+        return text or fallback
+
+    def _resolve_template_destination_path(self, folder_path, base_name, extension, conflict_policy='timestamp'):
+        policy = str(conflict_policy or 'timestamp').strip().lower()
+        safe_base = self._sanitize_template_filename_stem(base_name, 'Template')
+        ext = str(extension or '').strip()
+        if ext and not ext.startswith('.'):
+            ext = f'.{ext}'
+        candidate_path = os.path.join(folder_path, f'{safe_base}{ext}')
+        if not os.path.exists(candidate_path):
+            return candidate_path, os.path.basename(candidate_path), False
+        if policy == 'overwrite':
+            return candidate_path, os.path.basename(candidate_path), False
+        if policy != 'timestamp':
+            return candidate_path, os.path.basename(candidate_path), True
+
+        timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H%M')
+        suffix_index = 0
+        while True:
+            suffix = f' - {timestamp}' if suffix_index == 0 else f' - {timestamp} ({suffix_index + 1})'
+            candidate_name = self._sanitize_template_filename_stem(
+                f'{safe_base}{suffix}', safe_base)
+            candidate_path = os.path.join(folder_path, f'{candidate_name}{ext}')
+            if not os.path.exists(candidate_path):
+                return candidate_path, os.path.basename(candidate_path), False
+            suffix_index += 1
+
     def add_template(self, name, discipline, source_path, description=''):
         """Adds a new template to the collection."""
         try:
@@ -2036,6 +2118,132 @@ Return ONLY the JSON object.
         except Exception as e:
             logging.error(f"Error copying template to path: {e}")
             return {'status': 'error', 'message': str(e)}
+
+    def create_template_for_workroom(self, template_key, launch_context=None, context=None, conflict_policy='timestamp'):
+        """Auto-create a template in the active Workroom project's saved path."""
+        try:
+            settings = self.get_user_settings()
+            workroom_context = self._resolve_workroom_context(settings, launch_context)
+            source = str(workroom_context.get('source') or '').strip().lower()
+            project_path = str(workroom_context.get('project_path') or '').strip()
+            if source != 'workroom':
+                logging.info(
+                    "create_template_for_workroom: fallback to manual save dialog "
+                    f"(source={source or 'none'})."
+                )
+                return {
+                    'status': 'fallback',
+                    'autoCreated': False,
+                    'fallbackUsed': True,
+                    'message': 'Template auto-create is only enabled for Workroom launches.',
+                }
+            if not project_path:
+                logging.info(
+                    "create_template_for_workroom: fallback to manual save dialog (missing project path)."
+                )
+                return {
+                    'status': 'fallback',
+                    'autoCreated': False,
+                    'fallbackUsed': True,
+                    'message': 'Saved project path is missing.',
+                }
+            if not os.path.isdir(project_path):
+                logging.info(
+                    "create_template_for_workroom: fallback to manual save dialog "
+                    f"(project path is not a directory: {project_path})."
+                )
+                return {
+                    'status': 'fallback',
+                    'autoCreated': False,
+                    'fallbackUsed': True,
+                    'message': 'Saved project path is invalid.',
+                }
+
+            template, normalized_key = self._find_template_by_key(template_key)
+            if not normalized_key:
+                return {
+                    'status': 'error',
+                    'autoCreated': False,
+                    'fallbackUsed': False,
+                    'message': f'Unsupported template key: {template_key}',
+                }
+            if not template:
+                return {
+                    'status': 'error',
+                    'autoCreated': False,
+                    'fallbackUsed': False,
+                    'message': f'Template not found for key: {normalized_key}',
+                }
+
+            source_path = str(template.get('sourcePath') or '').strip()
+            if not source_path or not os.path.exists(source_path):
+                return {
+                    'status': 'error',
+                    'autoCreated': False,
+                    'fallbackUsed': False,
+                    'message': f'Template file not found: {source_path or "<empty>"}',
+                }
+
+            extension = os.path.splitext(source_path)[1]
+            if not extension:
+                ext_hint = str(template.get('fileType') or '').strip().lstrip('.')
+                extension = f'.{ext_hint}' if ext_hint else ''
+            if not extension:
+                return {
+                    'status': 'error',
+                    'autoCreated': False,
+                    'fallbackUsed': False,
+                    'message': 'Template file extension could not be determined.',
+                }
+
+            default_name = TEMPLATE_DEFAULT_FILENAME_BY_KEY.get(
+                normalized_key,
+                str(template.get('name') or 'Template').strip() or 'Template',
+            )
+            destination_path, filename, has_conflict = self._resolve_template_destination_path(
+                project_path,
+                default_name,
+                extension,
+                conflict_policy=conflict_policy,
+            )
+            if has_conflict:
+                return {
+                    'status': 'error',
+                    'autoCreated': False,
+                    'fallbackUsed': False,
+                    'message': 'File already exists at destination.',
+                }
+
+            context_payload = dict(context or {}) if isinstance(context, dict) else {}
+            if 'projectName' not in context_payload:
+                context_payload['projectName'] = os.path.basename(
+                    project_path.rstrip("\\/"))
+            options_payload = {'templateKey': normalized_key}
+
+            shutil.copy2(source_path, destination_path)
+            _apply_template_context(
+                destination_path, context=context_payload, options=options_payload)
+
+            logging.info(
+                "create_template_for_workroom: auto-created template "
+                f"(key={normalized_key}, path={destination_path})."
+            )
+            return {
+                'status': 'success',
+                'path': destination_path,
+                'filename': filename,
+                'autoCreated': True,
+                'fallbackUsed': False,
+                'message': 'Template created.',
+            }
+        except Exception as e:
+            logging.error(f"create_template_for_workroom failed: {e}")
+            return {
+                'status': 'error',
+                'autoCreated': False,
+                'fallbackUsed': False,
+                'message': str(e),
+            }
 
     def select_folder(self):
         """Shows a folder selection dialog."""
@@ -3912,7 +4120,21 @@ TASK 3: LOAD TYPES
             'candidates': [item['path'] for item in candidate_entries],
         }
 
+    def _is_workroom_auto_select_tool_allowed(self, tool_name):
+        normalized_name = str(tool_name or '').strip()
+        if normalized_name.endswith('_test_mode'):
+            normalized_name = normalized_name[:-10]
+        return normalized_name in {
+            'run_publish_script',
+            'run_freeze_layers_script',
+            'run_thaw_layers_script',
+        }
+
     def _resolve_workroom_auto_file_selection(self, settings, launch_context, tool_name):
+        if not self._is_workroom_auto_select_tool_allowed(tool_name):
+            logging.info(
+                f"{tool_name}: Workroom DWG auto-select skipped (tool not allowlisted).")
+            return None
         if not self._is_workroom_auto_select_enabled(settings, launch_context):
             return None
         context = self._resolve_workroom_context(settings, launch_context)

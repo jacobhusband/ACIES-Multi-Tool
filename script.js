@@ -108,6 +108,7 @@ let checklistsDb = {
 let activeChecklistProject = null;
 let activeChecklistDeliverable = null;
 let activeChecklistTab = null;
+let activeWorkroomLeftTab = "tasks";
 let workroomToolStatusState = {
   toolId: "",
   label: "",
@@ -293,6 +294,14 @@ const WORKROOM_CAD_TOOL_IDS = new Set([
   "toolFreezeLayers",
   "toolThawLayers",
   "toolCleanXrefs",
+]);
+const WORKROOM_TEMPLATE_TOOL_IDS = new Set([
+  "toolCreateNarrativeTemplate",
+  "toolCreatePlanCheckTemplate",
+]);
+const WORKROOM_LAUNCH_CONTEXT_TOOL_IDS = new Set([
+  ...WORKROOM_CAD_TOOL_IDS,
+  ...WORKROOM_TEMPLATE_TOOL_IDS,
 ]);
 const WORKROOM_HIDDEN_TOOL_IDS = new Set([
   "toolLightingSchedule",
@@ -1232,7 +1241,38 @@ async function handleRemoveTemplate(templateId, templateName) {
   }
 }
 
-function getTemplateToolContext() {
+function getTemplateToolIdForKey(templateKey) {
+  if (templateKey === "narrative") return "toolCreateNarrativeTemplate";
+  if (templateKey === "planCheck") return "toolCreatePlanCheckTemplate";
+  return "";
+}
+
+function clearTemplateToolRunState(toolId) {
+  if (!toolId) return;
+  const card = document.getElementById(toolId);
+  if (!card) return;
+  card.classList.remove("running");
+  const statusEl = card.querySelector(".tool-card-status");
+  if (statusEl) statusEl.textContent = "";
+  const checklistModal = document.getElementById("checklistModal");
+  if (checklistModal?.open) resetWorkroomToolStatus();
+}
+
+function getTemplateToolContext(options = {}) {
+  const launchContext = options?.launchContext || null;
+  const launchSource = String(launchContext?.source || "").trim().toLowerCase();
+  if (launchSource === "workroom") {
+    const { project, deliverable } = getActiveWorkroomContext();
+    return {
+      projectPath: String(launchContext?.projectPath || project?.path || "").trim(),
+      projectName: String(
+        project?.name || project?.nick || project?.id || ""
+      ).trim(),
+      deliverableName: String(deliverable?.name || "").trim(),
+      source: "workroom",
+    };
+  }
+
   let projectPath = "";
   let projectName = "";
   const existingProject = editIndex >= 0 && db[editIndex] ? db[editIndex] : null;
@@ -1248,10 +1288,21 @@ function getTemplateToolContext() {
     projectName = document.getElementById("f_name")?.value.trim() || "";
   }
 
-  return { projectPath, projectName };
+  return { projectPath, projectName, deliverableName: "", source: "default" };
 }
 
-async function handleTemplateToolSave(templateKey, label) {
+async function handleTemplateToolSave(templateKey, label, options = {}) {
+  const launchContext = options?.launchContext || null;
+  const toolId = String(
+    options?.toolId || getTemplateToolIdForKey(templateKey)
+  ).trim();
+  const card = toolId ? document.getElementById(toolId) : null;
+  if (card?.classList.contains("running")) return;
+  if (card) {
+    card.classList.add("running");
+    window.updateToolStatus(toolId, "Initializing...");
+  }
+
   try {
     await loadTemplates();
   } catch (e) {
@@ -1260,49 +1311,113 @@ async function handleTemplateToolSave(templateKey, label) {
 
   const template = getTemplateByKey(templateKey);
   if (!template) {
+    if (toolId) {
+      window.updateToolStatus(
+        toolId,
+        `ERROR: Template "${label}" not found.`
+      );
+    }
     toast(`Template "${label}" not found.`);
     return;
   }
 
-  const { projectPath, projectName } = getTemplateToolContext();
+  const { projectPath, projectName, deliverableName } = getTemplateToolContext({
+    launchContext,
+  });
+  const context = {};
+  if (projectName) context.projectName = projectName;
+  if (deliverableName) context.deliverableName = deliverableName;
+  let manualDefaultDir = projectPath || null;
+
+  const isWorkroomLaunch =
+    String(launchContext?.source || "").trim().toLowerCase() === "workroom";
+  if (isWorkroomLaunch && window.pywebview?.api?.create_template_for_workroom) {
+    try {
+      const autoResult = await window.pywebview.api.create_template_for_workroom(
+        templateKey,
+        launchContext,
+        context,
+        "timestamp"
+      );
+      if (autoResult?.status === "success" && autoResult.path) {
+        if (toolId) window.updateToolStatus(toolId, "DONE");
+        toast("Template saved.");
+        return autoResult;
+      }
+      if (autoResult?.status && autoResult.status !== "fallback") {
+        const message =
+          autoResult?.message || "Failed to create template automatically.";
+        if (toolId) window.updateToolStatus(toolId, `ERROR: ${message}`);
+        toast(message);
+        return autoResult;
+      }
+      if (autoResult?.status === "fallback") {
+        manualDefaultDir = null;
+        console.info(
+          `Workroom template auto-create fallback (${templateKey}):`,
+          autoResult?.message || "manual save dialog"
+        );
+      }
+    } catch (e) {
+      const message = e?.message || "Failed to create template automatically.";
+      if (toolId) window.updateToolStatus(toolId, `ERROR: ${message}`);
+      toast(message);
+      return;
+    }
+  }
+
   const defaultName = String(label || template.name || "Template").trim() || "Template";
   let selection = null;
   try {
     selection = await window.pywebview.api.select_template_save_location(
-      projectPath || null,
+      manualDefaultDir,
       defaultName,
       template.fileType
     );
   } catch (e) {
+    if (toolId) window.updateToolStatus(toolId, "ERROR: Error selecting save location.");
     toast("Error selecting save location.");
     return;
   }
 
   if (!selection || selection.status === "cancelled") {
+    clearTemplateToolRunState(toolId);
     return;
   }
   if (selection.status !== "success" || !selection.path) {
+    if (toolId) {
+      window.updateToolStatus(
+        toolId,
+        `ERROR: ${selection.message || "Failed to select save location."}`
+      );
+    }
     toast(selection.message || "Failed to select save location.");
     return;
   }
 
-  const context = {};
-  if (projectName) context.projectName = projectName;
-  const options = { templateKey };
+  const templateOptions = { templateKey };
 
   try {
     const result = await window.pywebview.api.copy_template_to_path(
       template.id,
       selection.path,
       context,
-      options
+      templateOptions
     );
     if (result.status === "success") {
+      if (toolId) window.updateToolStatus(toolId, "DONE");
       toast("Template saved.");
     } else {
+      if (toolId) {
+        window.updateToolStatus(
+          toolId,
+          `ERROR: ${result.message || "Failed to save template."}`
+        );
+      }
       toast(result.message || "Failed to save template.");
     }
   } catch (e) {
+    if (toolId) window.updateToolStatus(toolId, "ERROR: Error saving template.");
     toast("Error saving template.");
   }
 }
@@ -8281,6 +8396,7 @@ function openChecklistModal(projectIndex) {
   activeChecklistDeliverable = null;
   checklistModalState.activeInstanceId = null;
   activeChecklistView = null;
+  activeWorkroomLeftTab = "tasks";
 
   populateChecklistDeliverableSelect(project);
   document.getElementById("checklistModal").showModal();
@@ -8323,7 +8439,44 @@ function populateChecklistDeliverableSelect(project) {
   renderProjectWorkroom();
 }
 
+function normalizeWorkroomLeftTab(tabName) {
+  const normalized = String(tabName || "").trim().toLowerCase();
+  if (normalized === "tasks" || normalized === "notes" || normalized === "checklist") {
+    return normalized;
+  }
+  return "tasks";
+}
+
+function renderWorkroomLeftTabs() {
+  const tabs = Array.from(document.querySelectorAll("[data-workroom-left-tab]"));
+  const panes = Array.from(document.querySelectorAll("[data-workroom-left-pane]"));
+  if (!tabs.length || !panes.length) return;
+
+  activeWorkroomLeftTab = normalizeWorkroomLeftTab(activeWorkroomLeftTab);
+
+  tabs.forEach((tabBtn) => {
+    const tabName = normalizeWorkroomLeftTab(tabBtn.dataset.workroomLeftTab);
+    const isActive = tabName === activeWorkroomLeftTab;
+    tabBtn.classList.toggle("active", isActive);
+    tabBtn.setAttribute("aria-selected", isActive ? "true" : "false");
+    tabBtn.setAttribute("tabindex", isActive ? "0" : "-1");
+    tabBtn.onclick = () => {
+      const nextTab = normalizeWorkroomLeftTab(tabBtn.dataset.workroomLeftTab);
+      if (nextTab === activeWorkroomLeftTab) return;
+      activeWorkroomLeftTab = nextTab;
+      renderWorkroomLeftTabs();
+    };
+  });
+
+  panes.forEach((pane) => {
+    const paneName = normalizeWorkroomLeftTab(pane.dataset.workroomLeftPane);
+    pane.hidden = paneName !== activeWorkroomLeftTab;
+    pane.setAttribute("aria-hidden", pane.hidden ? "true" : "false");
+  });
+}
+
 function renderProjectWorkroom() {
+  renderWorkroomLeftTabs();
   renderWorkroomChecklistPanel();
   renderWorkroomTasksPanel();
   renderWorkroomDeliverableNotesPanel();
@@ -8385,9 +8538,14 @@ function getWorkroomVisibleTools() {
     .map((card) => {
       const id = card.id;
       if (!id || WORKROOM_HIDDEN_TOOL_IDS.has(id)) return null;
+      const iconHost = card.querySelector(".tool-icon");
+      const iconMarkup = iconHost?.innerHTML?.trim() || "";
+      const hasGraphicIcon = !!iconHost?.querySelector("svg, img");
       return {
         id,
-        icon: card.querySelector(".tool-icon")?.textContent?.trim() || "TOOL",
+        iconMarkup,
+        hasGraphicIcon,
+        iconTextFallback: iconHost?.textContent?.trim() || "TOOL",
         title:
           card.querySelector(".tool-card-header")?.textContent?.trim() ||
           "Unnamed Tool",
@@ -8404,7 +8562,7 @@ function triggerWorkroomTool(toolId) {
     return;
   }
   pendingCadLaunchContext = null;
-  if (WORKROOM_CAD_TOOL_IDS.has(toolId)) {
+  if (WORKROOM_LAUNCH_CONTEXT_TOOL_IDS.has(toolId)) {
     pendingCadLaunchContext = buildWorkroomCadLaunchContext();
   }
   setWorkroomToolStatus({ toolId, message: "Starting...", phase: "running" });
@@ -8431,14 +8589,20 @@ function renderWorkroomToolsPanel() {
   }
 
   tools.forEach((tool) => {
-    const item = el("div", { className: "workroom-tool-item" });
-    item.appendChild(
-      el("span", {
-        className: "workroom-tool-icon",
-        textContent: tool.icon,
-        "aria-hidden": "true",
-      })
-    );
+    const item = el("div", {
+      className: "workroom-tool-item",
+      "data-tool-id": tool.id,
+    });
+    const iconEl = el("span", {
+      className: "workroom-tool-icon",
+      "aria-hidden": "true",
+    });
+    if (tool.hasGraphicIcon && tool.iconMarkup) {
+      iconEl.innerHTML = tool.iconMarkup;
+    } else {
+      iconEl.textContent = tool.iconTextFallback;
+    }
+    item.appendChild(iconEl);
     item.appendChild(
       el("span", {
         className: "workroom-tool-text",
@@ -8987,6 +9151,7 @@ document.getElementById("checklistModal")?.addEventListener("close", () => {
   activeChecklistProject = null;
   activeChecklistDeliverable = null;
   activeChecklistView = null;
+  activeWorkroomLeftTab = "tasks";
   checklistModalState.appliedTabs = [];
   checklistModalState.activeInstanceId = null;
   pendingCadLaunchContext = null;
@@ -12857,8 +13022,14 @@ function initEventListeners() {
     "toolCreateNarrativeTemplate"
   );
   if (narrativeTemplateBtn) {
-    const handler = () =>
-      handleTemplateToolSave("narrative", "Narrative of Changes");
+    const handler = async () => {
+      const launchContext = consumePendingCadLaunchContext();
+      console.debug("Workroom launch context (narrative template):", launchContext);
+      await handleTemplateToolSave("narrative", "Narrative of Changes", {
+        launchContext,
+        toolId: "toolCreateNarrativeTemplate",
+      });
+    };
     narrativeTemplateBtn.addEventListener("click", handler);
     narrativeTemplateBtn.addEventListener("keydown", (e) => {
       if (e.key === "Enter" || e.key === " ") {
@@ -12872,8 +13043,14 @@ function initEventListeners() {
     "toolCreatePlanCheckTemplate"
   );
   if (planCheckTemplateBtn) {
-    const handler = () =>
-      handleTemplateToolSave("planCheck", "Plan Check Comments");
+    const handler = async () => {
+      const launchContext = consumePendingCadLaunchContext();
+      console.debug("Workroom launch context (plan check template):", launchContext);
+      await handleTemplateToolSave("planCheck", "Plan Check Comments", {
+        launchContext,
+        toolId: "toolCreatePlanCheckTemplate",
+      });
+    };
     planCheckTemplateBtn.addEventListener("click", handler);
     planCheckTemplateBtn.addEventListener("keydown", (e) => {
       if (e.key === "Enter" || e.key === " ") {

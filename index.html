@@ -2157,54 +2157,69 @@
 
         <div class="workroom-body">
             <div class="workroom-main-grid">
-                <section class="workroom-panel workroom-checklist-panel">
-                    <div class="workroom-panel-header">
-                        <h3>Deliverable Checklist</h3>
+                <div class="workroom-left-column">
+                    <div class="workroom-left-tabs" role="tablist" aria-label="Deliverable panels">
+                        <button type="button" class="workroom-left-tab active" data-workroom-left-tab="tasks"
+                            role="tab" aria-selected="true" aria-controls="workroomLeftPaneTasks">Tasks</button>
+                        <button type="button" class="workroom-left-tab" data-workroom-left-tab="notes" role="tab"
+                            aria-selected="false" aria-controls="workroomLeftPaneNotes">Notes</button>
+                        <button type="button" class="workroom-left-tab" data-workroom-left-tab="checklist"
+                            role="tab" aria-selected="false" aria-controls="workroomLeftPaneChecklist">Checklist</button>
                     </div>
-                    <div class="workroom-checklist-controls">
-                        <div id="workroomChecklistTabs" class="workroom-checklist-tabs"></div>
-                        <div class="workroom-checklist-add">
-                            <select id="workroomChecklistAddSelect">
-                                <option value="">+ Add Checklist...</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="checklist-progress workroom-progress">
-                        <div class="checklist-progress-info">
-                            <span class="checklist-progress-count" id="workroomChecklistProgressCount">0/0</span>
-                            <span>completed</span>
-                        </div>
-                        <div class="checklist-progress-bar">
-                            <div class="checklist-progress-fill" id="workroomChecklistProgressFill"></div>
-                        </div>
-                    </div>
-                    <div id="workroomChecklistItems" class="workroom-checklist-items"></div>
-                </section>
 
-                <section class="workroom-panel workroom-tasks-panel">
-                    <div class="workroom-panel-header">
-                        <h3>Deliverable Tasks</h3>
-                        <button class="btn-accent tiny" id="workroomAddTaskBtn">+ Add Task</button>
-                    </div>
-                    <div class="checklist-progress workroom-progress">
-                        <div class="checklist-progress-info">
-                            <span class="checklist-progress-count" id="workroomTaskProgressCount">0/0</span>
-                            <span>completed</span>
+                    <section class="workroom-panel workroom-tasks-panel workroom-left-pane"
+                        data-workroom-left-pane="tasks" id="workroomLeftPaneTasks" role="tabpanel">
+                        <div class="workroom-panel-header">
+                            <h3>Deliverable Tasks</h3>
+                            <button class="btn-accent tiny" id="workroomAddTaskBtn">+ Add Task</button>
                         </div>
-                        <div class="checklist-progress-bar">
-                            <div class="checklist-progress-fill" id="workroomTaskProgressFill"></div>
+                        <div class="checklist-progress workroom-progress">
+                            <div class="checklist-progress-info">
+                                <span class="checklist-progress-count" id="workroomTaskProgressCount">0/0</span>
+                                <span>completed</span>
+                            </div>
+                            <div class="checklist-progress-bar">
+                                <div class="checklist-progress-fill" id="workroomTaskProgressFill"></div>
+                            </div>
                         </div>
-                    </div>
-                    <div id="workroomTasksContainer" class="workroom-tasks-container"></div>
-                </section>
+                        <div id="workroomTasksContainer" class="workroom-tasks-container"></div>
+                    </section>
 
-                <section class="workroom-panel workroom-deliverable-notes-panel">
-                    <div class="workroom-panel-header">
-                        <h3>Deliverable Notes</h3>
-                    </div>
-                    <textarea id="workroomDeliverableNotesTextarea" class="workroom-deliverable-notes-textarea"
-                        placeholder="Add notes for this deliverable..."></textarea>
-                </section>
+                    <section class="workroom-panel workroom-deliverable-notes-panel workroom-left-pane"
+                        data-workroom-left-pane="notes" id="workroomLeftPaneNotes" role="tabpanel" hidden>
+                        <div class="workroom-panel-header">
+                            <h3>Deliverable Notes</h3>
+                        </div>
+                        <textarea id="workroomDeliverableNotesTextarea" class="workroom-deliverable-notes-textarea"
+                            placeholder="Add notes for this deliverable..."></textarea>
+                    </section>
+
+                    <section class="workroom-panel workroom-checklist-panel workroom-left-pane"
+                        data-workroom-left-pane="checklist" id="workroomLeftPaneChecklist" role="tabpanel" hidden>
+                        <div class="workroom-panel-header">
+                            <h3>Deliverable Checklist</h3>
+                        </div>
+                        <div class="workroom-checklist-controls">
+                            <div id="workroomChecklistTabs" class="workroom-checklist-tabs"></div>
+                            <div class="workroom-checklist-add">
+                                <select id="workroomChecklistAddSelect">
+                                    <option value="">+ Add Checklist...</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="checklist-progress workroom-progress">
+                            <div class="checklist-progress-info">
+                                <span class="checklist-progress-count" id="workroomChecklistProgressCount">0/0</span>
+                                <span>completed</span>
+                            </div>
+                            <div class="checklist-progress-bar">
+                                <div class="checklist-progress-fill" id="workroomChecklistProgressFill"></div>
+                            </div>
+                        </div>
+                        <div id="workroomChecklistItems" class="workroom-checklist-items"></div>
+                    </section>
+                </div>
+
                 <section class="workroom-panel workroom-general-notes-panel">
                     <div class="workroom-panel-header">
                         <h3>General Notes</h3>

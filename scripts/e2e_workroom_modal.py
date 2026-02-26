@@ -23,11 +23,15 @@ os.environ.setdefault("ACIES_TEST_MODE", "1")
 from main import Api, BASE_DIR, SETTINGS_FILE, TASKS_FILE  # noqa: E402
 
 
-TOOL_IDS = [
+TEST_MODE_TOOL_IDS = [
     "toolPublishDwgs",
     "toolFreezeLayers",
     "toolThawLayers",
     "toolCleanXrefs",
+]
+WORKROOM_TOOL_IDS = TEST_MODE_TOOL_IDS + [
+    "toolCreateNarrativeTemplate",
+    "toolCreatePlanCheckTemplate",
 ]
 
 
@@ -178,7 +182,28 @@ def wait_for_tool_phase(window, tool_id, timeout_seconds):
     return wait_for(_poll, timeout_seconds)
 
 
-def run_automation(window, api, artifacts_dir, timeout_seconds, result_holder):
+def collect_workroom_icon_state(window, tool_ids):
+    serialized_tool_ids = json.dumps(tool_ids)
+    return parse_js_json(
+        window,
+        f"""(() => {{
+            const ids = {serialized_tool_ids};
+            return ids.map((toolId) => {{
+                const row = document.querySelector(`#workroomToolsList .workroom-tool-item[data-tool-id="${{toolId}}"]`);
+                const icon = row ? row.querySelector(".workroom-tool-icon") : null;
+                return {{
+                    toolId,
+                    rowFound: !!row,
+                    hasIcon: !!icon,
+                    hasSvg: !!icon?.querySelector("svg"),
+                    iconText: (icon?.textContent || "").trim(),
+                }};
+            }});
+        }})()""",
+    ) or []
+
+
+def run_automation(window, api, artifacts_dir, project_root, timeout_seconds, result_holder):
     screenshots = []
     tool_results = []
     try:
@@ -200,8 +225,29 @@ def run_automation(window, api, artifacts_dir, timeout_seconds, result_holder):
         screenshots.append(
             capture_window_screenshot(window, artifacts_dir / "01-workroom-open.png")
         )
+        workroom_icon_state = collect_workroom_icon_state(window, WORKROOM_TOOL_IDS)
+        missing_workroom_rows = [
+            entry.get("toolId")
+            for entry in workroom_icon_state
+            if not entry.get("rowFound") or not entry.get("hasIcon")
+        ]
+        if missing_workroom_rows:
+            raise RuntimeError(
+                "Missing workroom tool rows/icons for: "
+                + ", ".join(missing_workroom_rows)
+            )
+        missing_svg_icons = [
+            entry.get("toolId")
+            for entry in workroom_icon_state
+            if not entry.get("hasSvg")
+        ]
+        if missing_svg_icons:
+            raise RuntimeError(
+                "Workroom tools rendered without SVG icons: "
+                + ", ".join(missing_svg_icons)
+            )
 
-        for index, tool_id in enumerate(TOOL_IDS, start=2):
+        for index, tool_id in enumerate(WORKROOM_TOOL_IDS, start=2):
             parse_js_json(window, f"window.__aciesAutomation.runWorkroomTool('{tool_id}')")
             state = wait_for_tool_phase(window, tool_id, timeout_seconds=timeout_seconds)
             shot_path = artifacts_dir / f"{index:02d}-{tool_id}.png"
@@ -212,6 +258,17 @@ def run_automation(window, api, artifacts_dir, timeout_seconds, result_holder):
                     f"{tool_id} failed during automation. status={state.get('statusText')}"
                 )
 
+        narrative_outputs = sorted(project_root.glob("Narrative of Changes*.docx"))
+        if not narrative_outputs:
+            raise RuntimeError(
+                "Narrative template was not auto-created in the project root."
+            )
+        plan_check_outputs = sorted(project_root.glob("Plan Check Comments*.doc"))
+        if not plan_check_outputs:
+            raise RuntimeError(
+                "Plan Check template was not auto-created in the project root."
+            )
+
         test_records = api.get_test_mode_records()
         record_list = test_records.get("records", [])
         successful_tools = {
@@ -219,7 +276,9 @@ def run_automation(window, api, artifacts_dir, timeout_seconds, result_holder):
             for record in record_list
             if record.get("status") == "success"
         }
-        missing = [tool_id for tool_id in TOOL_IDS if tool_id not in successful_tools]
+        missing = [
+            tool_id for tool_id in TEST_MODE_TOOL_IDS if tool_id not in successful_tools
+        ]
         if missing:
             raise RuntimeError(
                 f"Missing successful backend test records for: {', '.join(missing)}"
@@ -247,9 +306,14 @@ def run_automation(window, api, artifacts_dir, timeout_seconds, result_holder):
 
         result_holder["status"] = "success"
         result_holder["workroom_state"] = workroom_state
+        result_holder["workroom_icons"] = workroom_icon_state
         result_holder["tools"] = tool_results
         result_holder["screenshots"] = screenshots
         result_holder["test_records"] = test_records
+        result_holder["template_outputs"] = {
+            "narrative": [str(path) for path in narrative_outputs],
+            "planCheck": [str(path) for path in plan_check_outputs],
+        }
     except Exception as exc:
         result_holder["status"] = "error"
         result_holder["message"] = str(exc)
@@ -322,6 +386,7 @@ def main():
             window,
             api,
             artifacts_dir,
+            project_root,
             args.timeout,
             run_result,
         )

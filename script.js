@@ -8193,6 +8193,7 @@ let checklistModalState = {
   appliedTabs: [], // { instanceId, checklistId, instanceIndex }
   activeInstanceId: null,
 };
+let workroomCadFilesRequestId = 0;
 
 function getActiveWorkroomContext() {
   const project = db[activeChecklistProject];
@@ -8204,6 +8205,55 @@ function getActiveWorkroomContext() {
       ? deliverables[deliverableIndex] || null
       : null;
   return { project, deliverables, deliverable };
+}
+
+function getWorkroomProjectHeaderText(project) {
+  const projectId = String(project?.id || "").trim();
+  const projectName = String(project?.name || "").trim();
+  if (projectId && projectName) return `${projectId} - ${projectName}`;
+  if (projectId) return projectId;
+  if (projectName) return projectName;
+  return "Unnamed Project";
+}
+
+function renderWorkroomProjectHeader() {
+  const projectLink = document.getElementById("workroomProjectLink");
+  if (!projectLink) return;
+
+  const { project } = getActiveWorkroomContext();
+  if (!project) {
+    projectLink.textContent = "Project Workroom";
+    projectLink.title = "Project Workroom";
+    projectLink.disabled = true;
+    projectLink.classList.add("is-disabled");
+    projectLink.onclick = null;
+    return;
+  }
+
+  const projectPath = String(project.path || "").trim();
+  const clickablePath = convertPath(projectPath);
+  projectLink.textContent = getWorkroomProjectHeaderText(project);
+  projectLink.title = projectPath ? `Open: ${clickablePath}` : "Project folder path is not set.";
+  projectLink.disabled = !projectPath;
+  projectLink.classList.toggle("is-disabled", !projectPath);
+
+  if (!projectPath) {
+    projectLink.onclick = null;
+    return;
+  }
+
+  projectLink.onclick = async () => {
+    try {
+      const res = await window.pywebview.api.open_path(clickablePath);
+      if (res?.status !== "success") {
+        throw new Error(res?.message || "Failed to open project folder.");
+      }
+      toast("Opening folder...");
+    } catch (e) {
+      console.warn("Failed to open project folder from Workroom header:", e);
+      toast("Couldn't open project folder.");
+    }
+  };
 }
 
 function getWorkroomDeliverableKeywordCorpus(deliverable) {
@@ -8314,6 +8364,7 @@ function renderWorkroomCadRoutingControl() {
           deliverable.workroomCadDiscipline = discipline;
           save();
           renderWorkroomCadRoutingControl();
+          renderWorkroomCadFilesPanel();
         },
       })
     );
@@ -8333,10 +8384,119 @@ function buildWorkroomCadLaunchContext() {
   };
 }
 
+function setWorkroomCadFilesStatus(message, { isError = false } = {}) {
+  const statusEl = document.getElementById("workroomCadFilesStatus");
+  if (!statusEl) return;
+  statusEl.textContent = String(message || "").trim() || "Ready.";
+  statusEl.classList.toggle("is-error", !!isError);
+}
+
+async function renderWorkroomCadFilesPanel() {
+  const listEl = document.getElementById("workroomCadFilesList");
+  if (!listEl) return;
+
+  listEl.innerHTML = "";
+  const { project } = getActiveWorkroomContext();
+  if (!project) {
+    setWorkroomCadFilesStatus("Select a project to view CAD files.");
+    return;
+  }
+
+  const projectPath = String(project.path || "").trim();
+  if (!projectPath) {
+    setWorkroomCadFilesStatus("Project folder path is not set.", { isError: true });
+    return;
+  }
+
+  const launchContext = buildWorkroomCadLaunchContext();
+  const selectedDiscipline = String(launchContext?.discipline || "").trim() || "Electrical";
+  const requestId = ++workroomCadFilesRequestId;
+  setWorkroomCadFilesStatus(`Loading ${selectedDiscipline} CAD files...`);
+
+  try {
+    if (!window.pywebview?.api?.get_workroom_cad_files) {
+      throw new Error("CAD files API is unavailable.");
+    }
+    const response = await window.pywebview.api.get_workroom_cad_files(launchContext);
+    if (requestId !== workroomCadFilesRequestId) return;
+
+    if (response?.status !== "success") {
+      throw new Error(response?.message || "Unable to load CAD files.");
+    }
+
+    const folderPath = String(response.folderPath || "").trim();
+    const discipline = String(response.discipline || selectedDiscipline).trim() || selectedDiscipline;
+    const files = Array.isArray(response.files) ? response.files : [];
+
+    if (!folderPath) {
+      const missingMessage = String(response.message || "").trim();
+      setWorkroomCadFilesStatus(
+        missingMessage || `${discipline} folder was not found for this project.`,
+        { isError: true }
+      );
+      return;
+    }
+
+    if (!files.length) {
+      setWorkroomCadFilesStatus(`No DWG files found in ${discipline}.`);
+      return;
+    }
+
+    files.forEach((file) => {
+      const filePath = String(file?.path || "").trim();
+      if (!filePath) return;
+      const fileName = String(file?.name || "").trim() || getFileNameFromPath(filePath);
+      listEl.appendChild(
+        el("button", {
+          type: "button",
+          className: "workroom-cad-file-link",
+          textContent: fileName || "DWG file",
+          title: filePath,
+          onclick: async () => {
+            try {
+              const res = await window.pywebview.api.open_path(filePath);
+              if (res?.status !== "success") {
+                throw new Error(res?.message || "Failed to open CAD file.");
+              }
+              toast("Opening file...");
+            } catch (e) {
+              console.warn(`Failed to open CAD file (${filePath}):`, e);
+              toast("Couldn't open CAD file.");
+            }
+          },
+        })
+      );
+    });
+
+    setWorkroomCadFilesStatus(
+      `${files.length} DWG file${files.length === 1 ? "" : "s"} in ${discipline}.`
+    );
+  } catch (e) {
+    if (requestId !== workroomCadFilesRequestId) return;
+    console.warn("Failed to render Workroom CAD files panel:", e);
+    setWorkroomCadFilesStatus(e?.message || "Unable to load CAD files.", {
+      isError: true,
+    });
+  }
+}
+
 function consumePendingCadLaunchContext() {
   const context = pendingCadLaunchContext;
   pendingCadLaunchContext = null;
   return context;
+}
+
+function resolveCadLaunchContextForTool() {
+  const pendingContext = consumePendingCadLaunchContext();
+  if (pendingContext) return pendingContext;
+
+  const checklistModal = document.getElementById("checklistModal");
+  if (!checklistModal?.open) return null;
+
+  const { project, deliverable } = getActiveWorkroomContext();
+  if (!project || !deliverable) return null;
+
+  return buildWorkroomCadLaunchContext();
 }
 
 function initChecklistModalTabs(project, deliverableIndex) {
@@ -8476,12 +8636,14 @@ function renderWorkroomLeftTabs() {
 }
 
 function renderProjectWorkroom() {
+  renderWorkroomProjectHeader();
   renderWorkroomLeftTabs();
   renderWorkroomChecklistPanel();
   renderWorkroomTasksPanel();
   renderWorkroomDeliverableNotesPanel();
   renderWorkroomGeneralNotesPanel();
   renderWorkroomToolsPanel();
+  renderWorkroomCadFilesPanel();
 }
 
 function getToolTitle(toolId) {
@@ -9152,6 +9314,7 @@ document.getElementById("checklistModal")?.addEventListener("close", () => {
   activeChecklistDeliverable = null;
   activeChecklistView = null;
   activeWorkroomLeftTab = "tasks";
+  workroomCadFilesRequestId += 1;
   checklistModalState.appliedTabs = [];
   checklistModalState.activeInstanceId = null;
   pendingCadLaunchContext = null;
@@ -12946,7 +13109,7 @@ function initEventListeners() {
   document
     .getElementById("toolPublishDwgs")
     .addEventListener("click", async (e) => {
-      const launchContext = consumePendingCadLaunchContext();
+      const launchContext = resolveCadLaunchContextForTool();
       console.debug("Workroom CAD launch context (publish):", launchContext);
       if (e.currentTarget.classList.contains("running")) return;
       if (!userSettings.autocadPath) {
@@ -12965,7 +13128,7 @@ function initEventListeners() {
   document
     .getElementById("toolFreezeLayers")
     .addEventListener("click", async (e) => {
-      const launchContext = consumePendingCadLaunchContext();
+      const launchContext = resolveCadLaunchContextForTool();
       console.debug("Workroom CAD launch context (freeze):", launchContext);
       if (e.currentTarget.classList.contains("running")) return;
       if (!userSettings.autocadPath) {
@@ -12984,7 +13147,7 @@ function initEventListeners() {
   document
     .getElementById("toolThawLayers")
     .addEventListener("click", async (e) => {
-      const launchContext = consumePendingCadLaunchContext();
+      const launchContext = resolveCadLaunchContextForTool();
       console.debug("Workroom CAD launch context (thaw):", launchContext);
       if (e.currentTarget.classList.contains("running")) return;
       if (!userSettings.autocadPath) {
@@ -13003,7 +13166,7 @@ function initEventListeners() {
   document
     .getElementById("toolCleanXrefs")
     .addEventListener("click", async (e) => {
-      const launchContext = consumePendingCadLaunchContext();
+      const launchContext = resolveCadLaunchContextForTool();
       if (e.currentTarget.classList.contains("running")) return;
       if (!userSettings.autocadPath) {
         await showAutocadSelectModal();
@@ -13023,7 +13186,7 @@ function initEventListeners() {
   );
   if (narrativeTemplateBtn) {
     const handler = async () => {
-      const launchContext = consumePendingCadLaunchContext();
+      const launchContext = resolveCadLaunchContextForTool();
       console.debug("Workroom launch context (narrative template):", launchContext);
       await handleTemplateToolSave("narrative", "Narrative of Changes", {
         launchContext,
@@ -13044,7 +13207,7 @@ function initEventListeners() {
   );
   if (planCheckTemplateBtn) {
     const handler = async () => {
-      const launchContext = consumePendingCadLaunchContext();
+      const launchContext = resolveCadLaunchContextForTool();
       console.debug("Workroom launch context (plan check template):", launchContext);
       await handleTemplateToolSave("planCheck", "Plan Check Comments", {
         launchContext,

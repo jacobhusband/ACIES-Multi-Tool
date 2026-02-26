@@ -4197,6 +4197,79 @@ TASK 3: LOAD TYPES
                 f"Checked: {'; '.join(candidates)}")
         return ''
 
+    def get_workroom_cad_files(self, launch_context=None):
+        try:
+            settings = self.get_user_settings()
+            context = self._resolve_workroom_context(settings, launch_context)
+            project_path = context.get('project_path') or ''
+            discipline = context.get('discipline') or self._primary_discipline_from_settings(
+                settings)
+
+            if not project_path:
+                return {
+                    'status': 'success',
+                    'projectPath': '',
+                    'discipline': discipline,
+                    'folderPath': '',
+                    'resolutionMode': 'missing_project_path',
+                    'files': [],
+                    'message': 'Project folder path is missing.',
+                }
+
+            folder_resolution = self._resolve_workroom_discipline_folder(
+                project_path, discipline)
+            resolved_discipline = folder_resolution.get(
+                'discipline') or discipline
+            folder_path = folder_resolution.get('resolved_folder') or ''
+            resolution_mode = folder_resolution.get('mode') or ''
+
+            if not folder_path:
+                candidates = folder_resolution.get('candidates') or []
+                if candidates:
+                    logging.info(
+                        "get_workroom_cad_files: Discipline folder not found "
+                        f"(project_path={project_path}; discipline={resolved_discipline}; "
+                        f"checked={'; '.join(candidates)})."
+                    )
+                else:
+                    logging.info(
+                        "get_workroom_cad_files: Discipline folder not found "
+                        f"(project_path={project_path}; discipline={resolved_discipline})."
+                    )
+                return {
+                    'status': 'success',
+                    'projectPath': project_path,
+                    'discipline': resolved_discipline,
+                    'folderPath': '',
+                    'resolutionMode': resolution_mode or 'not_found',
+                    'files': [],
+                    'message': f'{resolved_discipline} folder not found.',
+                }
+
+            dwg_paths = self._list_base_level_dwgs(folder_path)
+            files = [
+                {
+                    'name': os.path.basename(path),
+                    'path': path,
+                }
+                for path in dwg_paths
+            ]
+
+            return {
+                'status': 'success',
+                'projectPath': project_path,
+                'discipline': resolved_discipline,
+                'folderPath': folder_path,
+                'resolutionMode': resolution_mode,
+                'files': files,
+                'message': (
+                    f'Found {len(files)} DWG file{"s" if len(files) != 1 else ""}.'
+                ),
+            }
+        except Exception as e:
+            logging.error(f"get_workroom_cad_files failed: {e}")
+            return {'status': 'error', 'message': str(e), 'files': []}
+
     def _notify_tool_status(self, tool_id, message):
         try:
             if not webview.windows:

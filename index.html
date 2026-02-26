@@ -2140,7 +2140,12 @@
         <header class="workroom-header">
             <div class="workroom-title-group">
                 <div class="workroom-modal-title">
-                    <h2 class="title">Project Workroom</h2>
+                    <h2 class="title">
+                        <button type="button" id="workroomProjectLink" class="workroom-project-link"
+                            aria-label="Open project folder">
+                            Project Workroom
+                        </button>
+                    </h2>
                 </div>
                 <div class="workroom-select-wrapper">
                     <select id="checklistDeliverableSelect"></select>
@@ -2259,6 +2264,15 @@
                     <div id="workroomCadRouting" class="workroom-cad-routing" hidden></div>
                     <div id="workroomToolsList" class="workroom-tools-list"></div>
                     <div id="workroomToolStatus" class="workroom-tool-status" aria-live="polite">Ready.</div>
+                </section>
+                <section class="workroom-panel workroom-cad-files-panel">
+                    <div class="workroom-panel-header">
+                        <h3>CAD Files</h3>
+                    </div>
+                    <div id="workroomCadFilesStatus" class="workroom-cad-files-status" aria-live="polite">
+                        Select a deliverable to load CAD files.
+                    </div>
+                    <div id="workroomCadFilesList" class="workroom-cad-files-list"></div>
                 </section>
             </div>
         </div>

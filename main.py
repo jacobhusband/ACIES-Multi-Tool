@@ -3083,6 +3083,55 @@ Return ONLY the JSON object.
             logging.error(f"Error opening path: {e}")
             return {'status': 'error', 'message': str(e)}
 
+    def open_directory_strict(self, path):
+        """Opens an existing directory without falling back to parent paths."""
+        try:
+            raw_path = str(path or '').strip()
+            if not raw_path:
+                return {'status': 'error', 'message': 'Path is required.'}
+
+            directory_path = os.path.normpath(raw_path)
+            if not os.path.exists(directory_path):
+                return {'status': 'error', 'message': 'Directory does not exist.'}
+            if not os.path.isdir(directory_path):
+                return {'status': 'error', 'message': 'Expected a directory path.'}
+
+            if sys.platform == "win32":
+                os.startfile(directory_path)
+            else:
+                subprocess.run(
+                    ['open', directory_path] if sys.platform == "darwin" else ['xdg-open', directory_path]
+                )
+            return {'status': 'success'}
+        except Exception as e:
+            logging.error(f"Error opening directory: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def get_local_project_copy_info(self, server_project_path):
+        """Returns the expected local copy path for a server project and whether it exists."""
+        try:
+            normalized_server_path = os.path.normpath(str(server_project_path or '').strip())
+            if not normalized_server_path:
+                return {'status': 'error', 'message': 'Server project path is required.'}
+
+            project_name = os.path.basename(normalized_server_path.rstrip('\\/'))
+            if not project_name:
+                return {'status': 'error', 'message': 'Invalid server project path.'}
+
+            local_root = os.path.join(_get_windows_documents_dir(), 'Local Projects')
+            local_project_path = os.path.normpath(os.path.join(local_root, project_name))
+            exists = os.path.isdir(self._to_windows_extended_path(local_project_path))
+            return {
+                'status': 'success',
+                'serverProjectPath': normalized_server_path,
+                'projectName': project_name,
+                'path': local_project_path,
+                'exists': exists,
+            }
+        except Exception as e:
+            logging.error(f"Error reading local project copy info: {e}")
+            return {'status': 'error', 'message': str(e)}
+
     def open_timesheets_folder(self):
         """Opens the folder where timesheets.json is stored."""
         try:
@@ -3358,9 +3407,22 @@ Return ONLY the JSON object.
             local_project_copy_path = self._to_windows_extended_path(local_project_path)
 
             if os.path.exists(local_project_copy_path):
+                if os.path.isdir(local_project_copy_path):
+                    return {
+                        'status': 'error',
+                        'code': 'local_project_exists',
+                        'message': f'Local project already exists: {local_project_path}',
+                        'serverProjectPath': normalized_server_path,
+                        'resolvedServerProjectPath': normalized_server_path,
+                        'resolvedFromWorkroom': resolved_from_workroom,
+                        'resolutionMode': resolution_mode or 'manual_selection',
+                        'workroomProjectPath': workroom_project_path,
+                        'localProjectPath': local_project_path,
+                        'projectName': project_name,
+                    }
                 return {
                     'status': 'error',
-                    'message': f'Local project already exists: {local_project_path}'
+                    'message': f'Local project path is unavailable: {local_project_path}'
                 }
 
             disciplines = self._get_copy_project_disciplines(settings)

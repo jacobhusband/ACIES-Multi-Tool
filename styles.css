@@ -6429,14 +6429,15 @@ input.input-warning {
 }
 
 .workroom-root-folder-controls {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  display: flex;
+  flex-wrap: wrap;
   gap: 0.32rem;
   align-items: center;
 }
 
 .workroom-root-folder-input {
   width: 100%;
+  flex: 1 1 320px;
   padding: 0.24rem 0.48rem;
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-sm);
@@ -7144,11 +7145,11 @@ input.input-warning {
   }
 
   .workroom-root-folder-controls {
-    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: stretch;
   }
 
-  .workroom-root-folder-controls #workroomOpenRootFolderBtn {
-    grid-column: 2;
+  .workroom-root-folder-input {
+    flex-basis: 100%;
   }
 }
 
@@ -7171,11 +7172,13 @@ input.input-warning {
   }
 
   .workroom-root-folder-controls {
-    grid-template-columns: 1fr;
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .workroom-root-folder-controls #workroomSelectRootFolderBtn,
-  .workroom-root-folder-controls #workroomOpenRootFolderBtn {
+  .workroom-root-folder-controls #workroomOpenLocalProjectBtn,
+  .workroom-root-folder-controls #workroomOpenServerProjectBtn {
     width: 100%;
   }
 

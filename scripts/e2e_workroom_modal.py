@@ -341,6 +341,14 @@ def run_automation(
         ) or {}
         if not workroom_state.get("modalOpen"):
             raise RuntimeError("Failed to open Project Workroom modal for automation.")
+        open_local_button = workroom_state.get("openLocalProjectButton") or {}
+        if not open_local_button.get("exists"):
+            raise RuntimeError("Workroom Open Local Project button is missing.")
+        open_server_button = workroom_state.get("openServerProjectButton") or {}
+        if not open_server_button.get("exists"):
+            raise RuntimeError("Workroom Open Server Project button is missing.")
+        if open_server_button.get("disabled"):
+            raise RuntimeError("Workroom Open Server Project button should be enabled.")
 
         screenshots.append(
             capture_window_screenshot(window, artifacts_dir / "01-workroom-open.png")

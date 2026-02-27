@@ -5221,6 +5221,9 @@ function mergeProjects(base, incoming) {
   if (!base.name && incoming.name) base.name = incoming.name;
   if (!base.nick && incoming.nick) base.nick = incoming.nick;
   if (!base.path && incoming.path) base.path = incoming.path;
+  if (!base.localProjectPath && incoming.localProjectPath) {
+    base.localProjectPath = incoming.localProjectPath;
+  }
   if (!base.workroomRootPath && incoming.workroomRootPath) {
     base.workroomRootPath = incoming.workroomRootPath;
   }
@@ -5251,6 +5254,7 @@ function convertLegacyProject(legacy) {
     name: String(legacy?.name || "").trim(),
     nick: String(legacy?.nick || "").trim(),
     path: String(legacy?.path || "").trim(),
+    localProjectPath: "",
     workroomRootPath: "",
     notes: "",
     refs: Array.isArray(legacy?.refs)
@@ -5274,6 +5278,7 @@ function normalizeProject(project) {
     name: String(project.name || "").trim(),
     nick: String(project.nick || "").trim(),
     path: String(project.path || "").trim(),
+    localProjectPath: String(project.localProjectPath || "").trim(),
     workroomRootPath: String(project.workroomRootPath || "").trim(),
     notes: project.notes || "",
     refs: Array.isArray(project.refs)
@@ -7440,6 +7445,7 @@ function createBlankProject() {
     name: "",
     nick: "",
     path: "",
+    localProjectPath: "",
     workroomRootPath: "",
     notes: "",
     refs: [],
@@ -7756,6 +7762,7 @@ function readForm() {
     nick: val("f_nick"),
     notes: val("f_notes"),
     path: val("f_path"),
+    localProjectPath: String(existingProject?.localProjectPath || "").trim(),
     workroomRootPath: String(existingProject?.workroomRootPath || "").trim(),
     refs: [],
     deliverables: [],
@@ -8577,6 +8584,12 @@ function getWorkroomRootFolderPath(project) {
   return getDefaultWorkroomRootFolderPath(project);
 }
 
+function getWorkroomServerProjectPath(project) {
+  const projectPath = normalizeWorkroomFolderPath(project?.path || "");
+  if (!projectPath) return "";
+  return findWorkroomProjectRootById(projectPath);
+}
+
 function setWorkroomRootFolderOverride(project, nextPath, { saveNow = true } = {}) {
   if (!project) return false;
   const normalizedNext = normalizeWorkroomFolderPath(nextPath);
@@ -8588,18 +8601,95 @@ function setWorkroomRootFolderOverride(project, nextPath, { saveNow = true } = {
   return true;
 }
 
+async function setWorkroomLocalProjectPath(project, nextPath, { saveNow = true } = {}) {
+  if (!project) return false;
+  const normalizedNext = normalizeWorkroomFolderPath(nextPath);
+  const normalizedCurrent = normalizeWorkroomFolderPath(project.localProjectPath || "");
+  if (!normalizedNext || normalizedCurrent === normalizedNext) return false;
+  project.localProjectPath = normalizedNext;
+  if (saveNow) await save();
+  else debouncedSave();
+  return true;
+}
+
+async function maybeLinkExistingLocalProject(project) {
+  if (!project || !window.pywebview?.api?.get_local_project_copy_info) return "";
+  const serverPath = getWorkroomServerProjectPath(project);
+  if (!serverPath) return "";
+  try {
+    const response = await window.pywebview.api.get_local_project_copy_info(
+      convertPath(serverPath)
+    );
+    if (response?.status !== "success" || !response.exists || !response.path) {
+      return "";
+    }
+    const changed = await setWorkroomLocalProjectPath(project, response.path, {
+      saveNow: true,
+    });
+    if (changed) {
+      renderWorkroomProjectHeader();
+    }
+    return normalizeWorkroomFolderPath(response.path);
+  } catch (e) {
+    console.warn("Failed to link existing local project copy:", e);
+    return "";
+  }
+}
+
+async function openWorkroomDirectory(
+  path,
+  {
+    missingMessage = "Folder path is not set.",
+    failureMessage = "Couldn't open folder.",
+  } = {}
+) {
+  const normalizedPath = normalizeWorkroomFolderPath(path);
+  if (!normalizedPath) {
+    toast(missingMessage);
+    return false;
+  }
+  if (!window.pywebview?.api?.open_directory_strict) {
+    toast("Folder opening is unavailable.");
+    return false;
+  }
+  try {
+    const res = await window.pywebview.api.open_directory_strict(
+      convertPath(normalizedPath)
+    );
+    if (res?.status !== "success") {
+      throw new Error(res?.message || failureMessage);
+    }
+    toast("Opening folder...");
+    return true;
+  } catch (e) {
+    console.warn("Failed to open Workroom directory:", e);
+    toast(e?.message || failureMessage);
+    return false;
+  }
+}
+
 function renderWorkroomProjectHeader() {
   const projectLabel = document.getElementById("workroomProjectLabel");
   const rootInput = document.getElementById("workroomRootFolderInput");
   const selectBtn = document.getElementById("workroomSelectRootFolderBtn");
-  const openBtn = document.getElementById("workroomOpenRootFolderBtn");
-  if (!projectLabel || !rootInput || !selectBtn || !openBtn) return;
+  const openLocalBtn = document.getElementById("workroomOpenLocalProjectBtn");
+  const openServerBtn = document.getElementById("workroomOpenServerProjectBtn");
+  if (!projectLabel || !rootInput || !selectBtn || !openLocalBtn || !openServerBtn) {
+    return;
+  }
 
   const { project } = getActiveWorkroomContext();
-  const syncOpenButtonState = () => {
-    const pathValue = normalizeWorkroomFolderPath(rootInput.value);
-    openBtn.disabled = !pathValue;
-    openBtn.title = pathValue ? `Open: ${pathValue}` : "Root project folder path is not set.";
+  const syncFolderButtonState = () => {
+    const serverPath = getWorkroomServerProjectPath(project);
+    const localPath = normalizeWorkroomFolderPath(project?.localProjectPath || "");
+    openLocalBtn.disabled = false;
+    openLocalBtn.title = localPath
+      ? `Open: ${localPath}`
+      : "No local project folder saved yet. Existing expected local copies will be linked automatically.";
+    openServerBtn.disabled = !serverPath;
+    openServerBtn.title = serverPath
+      ? `Open: ${serverPath}`
+      : "No server project folder could be resolved from the saved project path.";
   };
 
   if (!project) {
@@ -8613,9 +8703,12 @@ function renderWorkroomProjectHeader() {
     rootInput.onkeydown = null;
     selectBtn.disabled = true;
     selectBtn.onclick = null;
-    openBtn.disabled = true;
-    openBtn.title = "Root project folder path is not set.";
-    openBtn.onclick = null;
+    openLocalBtn.disabled = true;
+    openLocalBtn.title = "Select a project to open its local folder.";
+    openLocalBtn.onclick = null;
+    openServerBtn.disabled = true;
+    openServerBtn.title = "Select a project to open its server folder.";
+    openServerBtn.onclick = null;
     return;
   }
 
@@ -8636,14 +8729,14 @@ function renderWorkroomProjectHeader() {
     });
     rootInput.value = getWorkroomRootFolderPath(project);
     rootInput.title = rootInput.value;
-    syncOpenButtonState();
+    syncFolderButtonState();
     if (changed) {
       renderWorkroomCadFilesPanel();
     }
   };
 
   rootInput.oninput = () => {
-    syncOpenButtonState();
+    rootInput.title = rootInput.value;
   };
   rootInput.onblur = () => {
     commitRootInput();
@@ -8670,7 +8763,7 @@ function renderWorkroomProjectHeader() {
       });
       rootInput.value = getWorkroomRootFolderPath(project);
       rootInput.title = rootInput.value;
-      syncOpenButtonState();
+      syncFolderButtonState();
       if (changed) {
         renderWorkroomCadFilesPanel();
       }
@@ -8680,20 +8773,24 @@ function renderWorkroomProjectHeader() {
     }
   };
 
-  syncOpenButtonState();
-  openBtn.onclick = async () => {
-    const rootPath = normalizeWorkroomFolderPath(rootInput.value);
-    if (!rootPath) return;
-    try {
-      const res = await window.pywebview.api.open_path(convertPath(rootPath));
-      if (res?.status !== "success") {
-        throw new Error(res?.message || "Failed to open root project folder.");
-      }
-      toast("Opening folder...");
-    } catch (e) {
-      console.warn("Failed to open root project folder from Workroom header:", e);
-      toast("Couldn't open root project folder.");
+  syncFolderButtonState();
+  openLocalBtn.onclick = async () => {
+    let localPath = normalizeWorkroomFolderPath(project.localProjectPath || "");
+    if (!localPath) {
+      localPath = await maybeLinkExistingLocalProject(project);
     }
+    await openWorkroomDirectory(localPath, {
+      missingMessage:
+        "No local project folder exists yet. Use Copy Project Locally first.",
+      failureMessage: "Couldn't open local project folder.",
+    });
+  };
+  openServerBtn.onclick = async () => {
+    await openWorkroomDirectory(getWorkroomServerProjectPath(project), {
+      missingMessage:
+        "No server project folder could be resolved from the saved project path.",
+      failureMessage: "Couldn't open server project folder.",
+    });
   };
 }
 
@@ -9782,11 +9879,29 @@ window.__aciesAutomation = {
   getWorkroomState() {
     const modal = document.getElementById("checklistModal");
     const deliverableSelect = document.getElementById("checklistDeliverableSelect");
+    const project =
+      Number.isInteger(activeChecklistProject) && activeChecklistProject >= 0
+        ? db[activeChecklistProject] || null
+        : null;
+    const openLocalBtn = document.getElementById("workroomOpenLocalProjectBtn");
+    const openServerBtn = document.getElementById("workroomOpenServerProjectBtn");
     return {
       modalOpen: !!modal?.open,
       activeProjectIndex: activeChecklistProject,
       activeDeliverableIndex: activeChecklistDeliverable,
       deliverableOptions: deliverableSelect?.options?.length || 0,
+      localProjectPath: normalizeWorkroomFolderPath(project?.localProjectPath || ""),
+      serverProjectPath: getWorkroomServerProjectPath(project),
+      openLocalProjectButton: {
+        exists: !!openLocalBtn,
+        disabled: !!openLocalBtn?.disabled,
+        title: openLocalBtn?.title || "",
+      },
+      openServerProjectButton: {
+        exists: !!openServerBtn,
+        disabled: !!openServerBtn?.disabled,
+        title: openServerBtn?.title || "",
+      },
     };
   },
   getToolState(toolId) {
@@ -13733,7 +13848,27 @@ function initEventListeners() {
           return;
         }
 
+        const resultCode = String(result?.code || "").trim().toLowerCase();
         if (result?.status !== "success") {
+          if (resultCode === "local_project_exists" && result?.localProjectPath) {
+            if (launchSource === "workroom") {
+              const activeProject = db[activeChecklistProject];
+              if (activeProject) {
+                const changed = await setWorkroomLocalProjectPath(
+                  activeProject,
+                  result.localProjectPath,
+                  { saveNow: true }
+                );
+                if (changed) {
+                  renderWorkroomProjectHeader();
+                }
+              }
+            }
+            window.updateToolStatus("toolCopyProjectLocally", "DONE");
+            toast("Local project already exists. Linked existing copy.");
+            await window.pywebview.api.open_path(result.localProjectPath);
+            return;
+          }
           throw new Error(result?.message || "Failed to copy project locally.");
         }
 
@@ -13752,6 +13887,20 @@ function initEventListeners() {
               } failed).`
             : "Project copied locally."
         );
+
+        if (launchSource === "workroom" && result?.localProjectPath) {
+          const activeProject = db[activeChecklistProject];
+          if (activeProject) {
+            const changed = await setWorkroomLocalProjectPath(
+              activeProject,
+              result.localProjectPath,
+              { saveNow: true }
+            );
+            if (changed) {
+              renderWorkroomProjectHeader();
+            }
+          }
+        }
 
         if (hasWarnings && failedFiles.length) {
           const failedPreview = failedFiles

@@ -6382,12 +6382,19 @@ input.input-warning {
 
 .workroom-header {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  align-items: flex-start;
   gap: 0.85rem;
   padding: 0.5rem 0.75rem;
   background: var(--header-bg);
   border-bottom: 1px solid var(--glass-border);
+}
+
+.workroom-header-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 0;
+  flex: 1;
 }
 
 .workroom-title-group {
@@ -6405,40 +6412,10 @@ input.input-warning {
   white-space: nowrap;
 }
 
-.workroom-project-link {
-  background: transparent;
-  border: none;
-  color: var(--accent);
-  cursor: pointer;
-  font: inherit;
-  letter-spacing: inherit;
-  line-height: 1;
-  margin: 0;
-  padding: 0;
-  text-decoration: none;
-  text-transform: inherit;
-}
-
-.workroom-project-link:hover {
-  color: var(--accent-hover);
-  text-decoration: underline;
-}
-
-.workroom-project-link:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-  border-radius: 2px;
-}
-
-.workroom-project-link.is-disabled {
-  color: var(--muted);
-  cursor: default;
-  text-decoration: none;
-}
-
 .workroom-select-wrapper {
   min-width: 300px;
   max-width: 560px;
+  flex: 1 1 auto;
 }
 
 .workroom-select-wrapper select {
@@ -6449,6 +6426,28 @@ input.input-warning {
   background: var(--bg-secondary);
   color: var(--text);
   font-size: 0.78rem;
+}
+
+.workroom-root-folder-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 0.32rem;
+  align-items: center;
+}
+
+.workroom-root-folder-input {
+  width: 100%;
+  padding: 0.24rem 0.48rem;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text);
+  font-size: 0.76rem;
+  min-width: 0;
+}
+
+.workroom-root-folder-input:focus {
+  border-color: var(--accent);
 }
 
 .workroom-body {
@@ -7097,6 +7096,10 @@ input.input-warning {
     font-size: 0.76rem;
   }
 
+  .workroom-root-folder-input {
+    padding: 0.22rem 0.42rem;
+  }
+
   .workroom-body {
     gap: 0.5rem;
     padding: 0.5rem;
@@ -7129,11 +7132,20 @@ input.input-warning {
     min-width: 220px;
     max-width: 100%;
   }
+
+  .workroom-root-folder-controls {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .workroom-root-folder-controls #workroomOpenRootFolderBtn {
+    grid-column: 2;
+  }
 }
 
 @container (max-width: 900px) {
   .workroom-header {
     padding: 0.4rem 0.6rem;
+    align-items: stretch;
   }
 
   .workroom-title-group {
@@ -7146,6 +7158,15 @@ input.input-warning {
     min-width: 0;
     width: 100%;
     max-width: 100%;
+  }
+
+  .workroom-root-folder-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .workroom-root-folder-controls #workroomSelectRootFolderBtn,
+  .workroom-root-folder-controls #workroomOpenRootFolderBtn {
+    width: 100%;
   }
 
   .workroom-body {
@@ -7327,6 +7348,13 @@ input:checked+.slider:before {
   gap: 0.5rem;
 }
 
+.checklists-sidebar-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
 .checklists-nav-list .inner-tab-btn {
   width: 100%;
   justify-content: space-between;
@@ -7349,13 +7377,39 @@ input:checked+.slider:before {
   box-shadow: none;
 }
 
-.checklists-nav-list .add-tab-btn {
+.checklists-nav-list .add-tab-btn,
+.checklists-sidebar-actions .add-tab-btn {
   width: 100%;
   height: auto;
   border-radius: var(--radius);
   padding: 0.75rem;
   margin-top: 0.5rem;
   font-size: 13px;
+}
+
+.checklist-template-select {
+  width: 100%;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  padding: 0.6rem 0.7rem;
+  font-size: 12px;
+}
+
+.checklist-template-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.checklist-template-select:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.checklist-template-empty {
+  margin: 0;
+  line-height: 1.35;
 }
 
 .checklist-header {

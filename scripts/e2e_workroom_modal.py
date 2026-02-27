@@ -32,7 +32,20 @@ TEST_MODE_TOOL_IDS = [
 WORKROOM_TOOL_IDS = TEST_MODE_TOOL_IDS + [
     "toolCreateNarrativeTemplate",
     "toolCreatePlanCheckTemplate",
+    "toolLightingSchedule",
+    "toolTitle24Compliance",
 ]
+DIRECT_CARD_LAUNCH_TOOL_IDS = {"toolPublishDwgs"}
+WORKROOM_PROJECT_MODAL_TOOL_IDS = {
+    "toolLightingSchedule": {
+        "dialog_id": "lightingScheduleDlg",
+        "select_id": "lightingScheduleProjectSelect",
+    },
+    "toolTitle24Compliance": {
+        "dialog_id": "title24ComplianceDlg",
+        "select_id": "title24ProjectSelect",
+    },
+}
 
 
 class BackupFile:
@@ -98,7 +111,7 @@ def build_fixture_settings(existing=None):
     return settings
 
 
-def build_fixture_tasks(project_root):
+def build_fixture_tasks(saved_project_path):
     deliverable_id = "dlv_e2e_workroom"
     return [
         {
@@ -106,7 +119,7 @@ def build_fixture_tasks(project_root):
             "name": "E2E Workroom Validation Project",
             "nick": "",
             "notes": "",
-            "path": str(project_root),
+            "path": str(saved_project_path),
             "refs": [],
             "deliverables": [
                 {
@@ -149,6 +162,21 @@ def wait_for(predicate, timeout_seconds, interval_seconds=0.2):
             return last_value
         time.sleep(interval_seconds)
     raise TimeoutError(f"Timed out after {timeout_seconds}s")
+
+
+def normalize_path_for_compare(path):
+    return os.path.normcase(os.path.normpath(str(path or "")))
+
+
+def is_subpath_or_equal(path, root):
+    normalized_path = normalize_path_for_compare(path).rstrip("\\/")
+    normalized_root = normalize_path_for_compare(root).rstrip("\\/")
+    if not normalized_path or not normalized_root:
+        return False
+    return (
+        normalized_path == normalized_root
+        or normalized_path.startswith(normalized_root + os.sep)
+    )
 
 
 def capture_window_screenshot(window, output_path):
@@ -202,11 +230,79 @@ def collect_workroom_icon_state(window, tool_ids):
         }})()""",
     ) or []
 
+def run_tool_from_direct_card_click(window, tool_id):
+    return parse_js_json(
+        window,
+        f"""(() => {{
+            const card = document.getElementById("{tool_id}");
+            if (!card) {{
+                return {{ toolId: "{tool_id}", exists: false }};
+            }}
+            card.click();
+            return {{
+                toolId: "{tool_id}",
+                exists: true,
+                state: window.__aciesAutomation?.getToolState("{tool_id}") || null,
+            }};
+        }})()""",
+    ) or {}
 
-def run_automation(window, api, artifacts_dir, project_root, timeout_seconds, result_holder):
+
+def wait_for_workroom_project_modal(window, tool_id, timeout_seconds):
+    modal_config = WORKROOM_PROJECT_MODAL_TOOL_IDS.get(tool_id)
+    if not modal_config:
+        return None
+    dialog_id = modal_config["dialog_id"]
+    select_id = modal_config["select_id"]
+
+    def _poll():
+        state = parse_js_json(
+            window,
+            f"""(() => {{
+                const dlg = document.getElementById("{dialog_id}");
+                const select = document.getElementById("{select_id}");
+                return {{
+                    open: !!dlg?.open,
+                    selected: select?.value ?? "",
+                }};
+            }})()""",
+        )
+        if isinstance(state, dict) and state.get("open"):
+            return state
+        return None
+
+    return wait_for(_poll, timeout_seconds)
+
+
+def close_modal_by_id(window, dialog_id):
+    parse_js_json(
+        window,
+        f"""(() => {{
+            const dlg = document.getElementById("{dialog_id}");
+            if (dlg?.open) dlg.close();
+            return {{ open: !!dlg?.open }};
+        }})()""",
+    )
+
+
+def run_automation(
+    window,
+    api,
+    artifacts_dir,
+    project_root,
+    saved_project_path,
+    timeout_seconds,
+    result_holder,
+):
     screenshots = []
     tool_results = []
     try:
+        expected_saved_project_path = normalize_path_for_compare(saved_project_path)
+        expected_electrical_folder = normalize_path_for_compare(
+            project_root / "Electrical"
+        )
+        expected_arch_folder = normalize_path_for_compare(project_root / "Arch")
+
         wait_for(
             lambda: parse_js_json(
                 window,
@@ -248,25 +344,51 @@ def run_automation(window, api, artifacts_dir, project_root, timeout_seconds, re
             )
 
         for index, tool_id in enumerate(WORKROOM_TOOL_IDS, start=2):
-            parse_js_json(window, f"window.__aciesAutomation.runWorkroomTool('{tool_id}')")
-            state = wait_for_tool_phase(window, tool_id, timeout_seconds=timeout_seconds)
+            if tool_id in DIRECT_CARD_LAUNCH_TOOL_IDS:
+                direct_run_state = run_tool_from_direct_card_click(window, tool_id)
+                if not direct_run_state.get("exists"):
+                    raise RuntimeError(f"Missing source tool card for direct launch: {tool_id}")
+            else:
+                parse_js_json(window, f"window.__aciesAutomation.runWorkroomTool('{tool_id}')")
+            if tool_id in WORKROOM_PROJECT_MODAL_TOOL_IDS:
+                modal_state = wait_for_workroom_project_modal(
+                    window, tool_id, timeout_seconds=timeout_seconds
+                )
+                selected_project = str(modal_state.get("selected") or "").strip()
+                if selected_project != "0":
+                    raise RuntimeError(
+                        f"{tool_id} did not auto-select the active Workroom project "
+                        f"(selected={selected_project or '<empty>'})."
+                    )
+                dialog_id = WORKROOM_PROJECT_MODAL_TOOL_IDS[tool_id]["dialog_id"]
+                close_modal_by_id(window, dialog_id)
+                state = {
+                    "toolId": tool_id,
+                    "exists": True,
+                    "running": False,
+                    "phase": "done",
+                    "statusText": "DONE",
+                }
+            else:
+                state = wait_for_tool_phase(window, tool_id, timeout_seconds=timeout_seconds)
             shot_path = artifacts_dir / f"{index:02d}-{tool_id}.png"
             screenshots.append(capture_window_screenshot(window, shot_path))
-            tool_results.append(state)
+            launch_mode = "direct_card_click" if tool_id in DIRECT_CARD_LAUNCH_TOOL_IDS else "workroom_run_button"
+            tool_results.append({**state, "launchMode": launch_mode})
             if state.get("phase") != "done":
                 raise RuntimeError(
                     f"{tool_id} failed during automation. status={state.get('statusText')}"
                 )
 
-        narrative_outputs = sorted(project_root.glob("Narrative of Changes*.docx"))
+        narrative_outputs = sorted(saved_project_path.glob("Narrative of Changes*.docx"))
         if not narrative_outputs:
             raise RuntimeError(
-                "Narrative template was not auto-created in the project root."
+                "Narrative template was not auto-created in the saved project path."
             )
-        plan_check_outputs = sorted(project_root.glob("Plan Check Comments*.doc"))
+        plan_check_outputs = sorted(saved_project_path.glob("Plan Check Comments*.doc"))
         if not plan_check_outputs:
             raise RuntimeError(
-                "Plan Check template was not auto-created in the project root."
+                "Plan Check template was not auto-created in the saved project path."
             )
 
         test_records = api.get_test_mode_records()
@@ -283,6 +405,44 @@ def run_automation(window, api, artifacts_dir, project_root, timeout_seconds, re
             raise RuntimeError(
                 f"Missing successful backend test records for: {', '.join(missing)}"
             )
+
+        for cad_tool_id in ("toolPublishDwgs", "toolFreezeLayers", "toolThawLayers"):
+            record = next(
+                (
+                    item
+                    for item in reversed(record_list)
+                    if item.get("tool_id") == cad_tool_id and item.get("status") == "success"
+                ),
+                None,
+            )
+            if not record:
+                raise RuntimeError(f"Missing successful backend test record for {cad_tool_id}.")
+            source = str(record.get("source") or "").strip().lower()
+            if source != "workroom":
+                raise RuntimeError(
+                    f"{cad_tool_id} test record did not keep workroom launch source (source={source or '<empty>'})."
+                )
+            project_path = normalize_path_for_compare(record.get("project_path"))
+            if project_path != expected_saved_project_path:
+                raise RuntimeError(
+                    f"{cad_tool_id} did not keep the nested saved project path in launch context "
+                    f"(project_path={record.get('project_path') or '<empty>'})."
+                )
+            if int(record.get("count") or 0) <= 0:
+                raise RuntimeError(
+                    f"{cad_tool_id} did not report auto-selected DWGs in workroom test mode."
+                )
+            folder_path = normalize_path_for_compare(record.get("folder_path"))
+            if folder_path != expected_electrical_folder:
+                raise RuntimeError(
+                    f"{cad_tool_id} resolved DWGs from an unexpected folder "
+                    f"(folder_path={record.get('folder_path') or '<empty>'})."
+                )
+            if is_subpath_or_equal(folder_path, saved_project_path):
+                raise RuntimeError(
+                    f"{cad_tool_id} incorrectly resolved DWGs inside the nested saved path "
+                    f"(folder_path={record.get('folder_path') or '<empty>'})."
+                )
 
         clean_record = next(
             (
@@ -302,6 +462,16 @@ def run_automation(window, api, artifacts_dir, project_root, timeout_seconds, re
         if not clean_record.get("arch_folder"):
             raise RuntimeError(
                 "toolCleanXrefs did not resolve an Arch folder for workroom manual selection."
+            )
+        clean_project_path = normalize_path_for_compare(clean_record.get("project_path"))
+        if clean_project_path != expected_saved_project_path:
+            raise RuntimeError(
+                "toolCleanXrefs did not keep the nested saved project path in launch context."
+            )
+        clean_arch_folder = normalize_path_for_compare(clean_record.get("arch_folder"))
+        if clean_arch_folder != expected_arch_folder:
+            raise RuntimeError(
+                "toolCleanXrefs did not resolve the Arch folder from the 6-digit project root."
             )
 
         result_holder["status"] = "success"
@@ -347,9 +517,11 @@ def main():
     artifacts_dir.mkdir(parents=True, exist_ok=True)
 
     fixture_root = Path(tempfile.mkdtemp(prefix="acies-workroom-e2e-"))
-    project_root = fixture_root / "E2E Project"
+    project_root = fixture_root / "Nelson" / "BAC" / "2025" / "250439 E2E Project"
+    saved_project_path = project_root / "Arch" / "2025-08-18 DD90"
     electrical_dir = project_root / "Electrical"
     arch_dir = project_root / "Arch"
+    saved_project_path.mkdir(parents=True, exist_ok=True)
     electrical_dir.mkdir(parents=True, exist_ok=True)
     arch_dir.mkdir(parents=True, exist_ok=True)
     (electrical_dir / "E2E-001.dwg").write_text("", encoding="utf-8")
@@ -358,7 +530,7 @@ def main():
 
     existing_settings = read_json_or_default(SETTINGS_FILE, {})
     fixture_settings = build_fixture_settings(existing_settings)
-    fixture_tasks = build_fixture_tasks(project_root)
+    fixture_tasks = build_fixture_tasks(saved_project_path)
 
     run_result = {}
 
@@ -387,6 +559,7 @@ def main():
             api,
             artifacts_dir,
             project_root,
+            saved_project_path,
             args.timeout,
             run_result,
         )

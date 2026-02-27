@@ -3184,25 +3184,168 @@ Return ONLY the JSON object.
 
         return result or ['Electrical']
 
-    def _copy_folder_contents(self, source_folder, destination_folder):
-        """Copy all direct children from source folder into destination folder."""
-        for name in os.listdir(source_folder):
-            source_path = os.path.join(source_folder, name)
-            destination_path = os.path.join(destination_folder, name)
-            if os.path.isdir(source_path):
-                shutil.copytree(source_path, destination_path)
-            else:
-                shutil.copy2(source_path, destination_path)
+    def _to_windows_extended_path(self, path):
+        """Prefix Windows absolute paths so copy operations can exceed MAX_PATH."""
+        normalized = os.path.normpath(str(path or ''))
+        if sys.platform != "win32" or not normalized:
+            return normalized
+        if normalized.startswith('\\\\?\\'):
+            return normalized
+        if normalized.startswith('\\\\'):
+            return f"\\\\?\\UNC\\{normalized.lstrip('\\')}"
+        if re.match(r'^[A-Za-z]:\\', normalized):
+            return f"\\\\?\\{normalized}"
+        return normalized
 
-    def copy_project_locally(self, server_project_path):
+    def _copy_folder_contents(self, source_folder, destination_folder):
+        """Recursively copy a folder with per-file failure tracking."""
+        source_display_root = os.path.normpath(source_folder)
+        destination_display_root = os.path.normpath(destination_folder)
+        source_copy_root = self._to_windows_extended_path(source_display_root)
+        destination_copy_root = self._to_windows_extended_path(destination_display_root)
+
+        copied_file_count = 0
+        failed_files = []
+
+        os.makedirs(destination_copy_root, exist_ok=True)
+
+        for current_root, child_dirs, child_files in os.walk(source_copy_root):
+            relative_root = os.path.relpath(current_root, source_copy_root)
+            if relative_root in ('.', os.curdir):
+                relative_root = ''
+
+            destination_root = destination_copy_root if not relative_root else os.path.join(
+                destination_copy_root, relative_root
+            )
+            source_display = source_display_root if not relative_root else os.path.join(
+                source_display_root, relative_root
+            )
+            destination_display = destination_display_root if not relative_root else os.path.join(
+                destination_display_root, relative_root
+            )
+
+            try:
+                os.makedirs(destination_root, exist_ok=True)
+            except Exception as e:
+                failed_files.append({
+                    'source': source_display,
+                    'destination': destination_display,
+                    'error': str(e),
+                })
+                continue
+
+            for child_dir in child_dirs:
+                source_dir = os.path.join(source_display, child_dir)
+                destination_dir = os.path.join(destination_display, child_dir)
+                try:
+                    os.makedirs(os.path.join(destination_root, child_dir), exist_ok=True)
+                except Exception as e:
+                    failed_files.append({
+                        'source': source_dir,
+                        'destination': destination_dir,
+                        'error': str(e),
+                    })
+
+            for child_file in child_files:
+                source_path = os.path.join(current_root, child_file)
+                destination_path = os.path.join(destination_root, child_file)
+                source_display_path = os.path.join(source_display, child_file)
+                destination_display_path = os.path.join(destination_display, child_file)
+                try:
+                    shutil.copy2(source_path, destination_path)
+                    copied_file_count += 1
+                except Exception as e:
+                    failed_files.append({
+                        'source': source_display_path,
+                        'destination': destination_display_path,
+                        'error': str(e),
+                    })
+
+        return {
+            'copiedFileCount': copied_file_count,
+            'failedFiles': failed_files,
+        }
+
+    def _resolve_copy_project_source_path(self, server_project_path, launch_context, settings):
+        raw_server_path = str(server_project_path or '').strip()
+        if raw_server_path:
+            return {
+                'status': 'success',
+                'path': os.path.normpath(raw_server_path),
+                'resolvedFromWorkroom': False,
+                'resolutionMode': 'manual_selection',
+                'workroomProjectPath': '',
+            }
+
+        context = self._resolve_workroom_context(settings, launch_context)
+        source = str(context.get('source') or '').strip().lower()
+        workroom_project_path = str(context.get('project_path') or '').strip()
+
+        if source != 'workroom':
+            return {
+                'status': 'error',
+                'code': 'server_project_path_required',
+                'message': 'Server project path is required.',
+                'resolvedFromWorkroom': False,
+                'resolutionMode': 'missing_server_path',
+                'workroomProjectPath': '',
+            }
+
+        if not workroom_project_path:
+            return {
+                'status': 'error',
+                'code': 'manual_selection_required',
+                'message': 'Could not auto-resolve project folder from Project Workroom. Please select it manually.',
+                'resolvedFromWorkroom': True,
+                'resolutionMode': 'workroom_missing_project_path',
+                'workroomProjectPath': '',
+            }
+
+        resolved_root = self._find_workroom_project_root_by_id(workroom_project_path)
+        if not resolved_root:
+            return {
+                'status': 'error',
+                'code': 'manual_selection_required',
+                'message': 'Could not auto-resolve project folder from Project Workroom. Please select it manually.',
+                'resolvedFromWorkroom': True,
+                'resolutionMode': 'project_id_ancestor_not_found',
+                'workroomProjectPath': workroom_project_path,
+            }
+
+        return {
+            'status': 'success',
+            'path': os.path.normpath(resolved_root),
+            'resolvedFromWorkroom': True,
+            'resolutionMode': 'project_id_ancestor',
+            'workroomProjectPath': workroom_project_path,
+        }
+
+    def copy_project_locally(self, server_project_path=None, launch_context=None):
         """Copy key project folders from server to local Documents\\Local Projects."""
         try:
-            raw_server_path = str(server_project_path or '').strip()
-            if not raw_server_path:
-                return {'status': 'error', 'message': 'Server project path is required.'}
+            settings = self.get_user_settings()
+            source_resolution = self._resolve_copy_project_source_path(
+                server_project_path, launch_context, settings
+            )
+            if source_resolution.get('status') != 'success':
+                return source_resolution
 
-            normalized_server_path = os.path.normpath(raw_server_path)
-            if not os.path.isdir(normalized_server_path):
+            normalized_server_path = source_resolution.get('path') or ''
+            resolved_from_workroom = bool(source_resolution.get('resolvedFromWorkroom'))
+            resolution_mode = str(source_resolution.get('resolutionMode') or '').strip()
+            workroom_project_path = str(source_resolution.get('workroomProjectPath') or '').strip()
+
+            if not os.path.isdir(self._to_windows_extended_path(normalized_server_path)):
+                if resolved_from_workroom:
+                    return {
+                        'status': 'error',
+                        'code': 'manual_selection_required',
+                        'message': 'Could not auto-resolve project folder from Project Workroom. Please select it manually.',
+                        'resolvedFromWorkroom': True,
+                        'resolvedServerProjectPath': normalized_server_path,
+                        'resolutionMode': 'project_id_ancestor_not_accessible',
+                        'workroomProjectPath': workroom_project_path,
+                    }
                 return {'status': 'error', 'message': 'Server project path does not exist.'}
 
             project_name = os.path.basename(normalized_server_path.rstrip('\\/'))
@@ -3210,16 +3353,16 @@ Return ONLY the JSON object.
                 return {'status': 'error', 'message': 'Invalid server project path.'}
 
             local_root = os.path.join(_get_windows_documents_dir(), 'Local Projects')
-            os.makedirs(local_root, exist_ok=True)
+            os.makedirs(self._to_windows_extended_path(local_root), exist_ok=True)
             local_project_path = os.path.normpath(os.path.join(local_root, project_name))
+            local_project_copy_path = self._to_windows_extended_path(local_project_path)
 
-            if os.path.exists(local_project_path):
+            if os.path.exists(local_project_copy_path):
                 return {
                     'status': 'error',
                     'message': f'Local project already exists: {local_project_path}'
                 }
 
-            settings = self.get_user_settings()
             disciplines = self._get_copy_project_disciplines(settings)
 
             required_folders = []
@@ -3234,29 +3377,50 @@ Return ONLY the JSON object.
                 seen_required.add(key)
                 required_folders.append(clean_name)
 
-            os.makedirs(local_project_path, exist_ok=False)
+            os.makedirs(local_project_copy_path, exist_ok=False)
             for folder_name in required_folders:
-                os.makedirs(os.path.join(local_project_path, folder_name), exist_ok=True)
+                folder_path = os.path.join(local_project_path, folder_name)
+                os.makedirs(self._to_windows_extended_path(folder_path), exist_ok=True)
 
             copied_folders = []
             missing_server_folders = []
+            copied_file_count = 0
+            failed_files = []
             for folder_name in required_folders:
                 source_folder = os.path.join(normalized_server_path, folder_name)
                 destination_folder = os.path.join(local_project_path, folder_name)
-                if os.path.isdir(source_folder):
-                    self._copy_folder_contents(source_folder, destination_folder)
+                if os.path.isdir(self._to_windows_extended_path(source_folder)):
+                    copy_result = self._copy_folder_contents(source_folder, destination_folder)
                     copied_folders.append(folder_name)
+                    copied_file_count += int(copy_result.get('copiedFileCount', 0) or 0)
+                    failed_files.extend(copy_result.get('failedFiles', []))
                 else:
                     missing_server_folders.append(folder_name)
 
+            failed_file_count = len(failed_files)
+            copy_warnings = []
+            message = 'Project copied locally.'
+            if failed_file_count:
+                message = f'Project copied locally with warnings: {failed_file_count} file(s) failed.'
+                copy_warnings.append(message)
+
             return {
                 'status': 'success',
+                'message': message,
                 'serverProjectPath': normalized_server_path,
+                'resolvedServerProjectPath': normalized_server_path,
+                'resolvedFromWorkroom': resolved_from_workroom,
+                'resolutionMode': resolution_mode or 'manual_selection',
+                'workroomProjectPath': workroom_project_path,
                 'localProjectPath': local_project_path,
                 'projectName': project_name,
                 'disciplines': disciplines,
                 'copiedFolders': copied_folders,
                 'missingServerFolders': missing_server_folders,
+                'copyWarnings': copy_warnings,
+                'copiedFileCount': copied_file_count,
+                'failedFileCount': failed_file_count,
+                'failedFiles': failed_files,
             }
         except Exception as e:
             logging.error(f"Error copying project locally: {e}")
@@ -3990,17 +4154,21 @@ TASK 3: LOAD TYPES
         context = self._normalize_launch_context(launch_context)
         source = str(context.get('source') or '').strip().lower()
         project_path = str(context.get('projectPath') or '').strip()
+        root_project_path = str(context.get('rootProjectPath') or '').strip()
+        effective_project_path = root_project_path or project_path
         if source == 'workroom':
             discipline, discipline_source = self._resolve_workroom_discipline(
                 settings, launch_context)
         else:
             discipline = self._primary_discipline_from_settings(settings)
             discipline_source = 'settings_primary'
-        normalized_project_path = os.path.normpath(project_path) if project_path else ''
+        normalized_project_path = os.path.normpath(
+            effective_project_path) if effective_project_path else ''
         logging.info(
             f"_resolve_workroom_context: source={source or 'none'} "
             f"discipline={discipline} discipline_source={discipline_source} "
-            f"project_path={normalized_project_path or '<empty>'}")
+            f"project_path={normalized_project_path or '<empty>'} "
+            f"(projectPath={project_path or '<empty>'}, rootProjectPath={root_project_path or '<empty>'})")
         return {
             'source': source,
             'project_path': normalized_project_path,
@@ -4050,6 +4218,34 @@ TASK 3: LOAD TYPES
         temp_file.close()
         return temp_file.name
 
+    def _find_workroom_project_root_by_id(self, project_path):
+        normalized_project_path = os.path.normpath(project_path) if project_path else ''
+        if not normalized_project_path:
+            return ''
+
+        current = normalized_project_path.rstrip("\\/")
+        if not current:
+            return ''
+
+        while current:
+            folder_name = os.path.basename(current).strip()
+            if re.match(r'^\d{6}(?!\d)', folder_name):
+                logging.info(
+                    "_find_workroom_project_root_by_id: matched %s from %s",
+                    current,
+                    normalized_project_path,
+                )
+                return current
+
+            parent = os.path.dirname(current)
+            if not parent:
+                break
+            if os.path.normcase(parent) == os.path.normcase(current):
+                break
+            current = parent.rstrip("\\/") or parent
+
+        return ''
+
     def _resolve_workroom_discipline_folder(self, project_path, discipline):
         requested_discipline = str(discipline or '').strip() or 'Electrical'
         discipline_map = {
@@ -4083,6 +4279,14 @@ TASK 3: LOAD TYPES
         project_base = os.path.basename(
             normalized_project_path.rstrip("\\/")
         ).strip() if normalized_project_path else ''
+        project_root_by_id = self._find_workroom_project_root_by_id(
+            normalized_project_path)
+
+        if project_root_by_id:
+            _add_candidate(
+                os.path.join(project_root_by_id, resolved_discipline),
+                'project_id_ancestor_child_folder',
+            )
 
         if normalized_project_path:
             if project_base.lower() == resolved_discipline.lower():

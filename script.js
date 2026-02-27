@@ -130,61 +130,257 @@ function generateChecklistInstanceId() {
   return "instance_" + Math.random().toString(36).substr(2, 9);
 }
 
-// Default checklist factory - Electrical Plan Check Checklist
-function getDefaultChecklist() {
+const CHECKLIST_TEMPLATE_KEYS = {
+  PRE_FLIGHT_ELECTRICAL: "pre_flight_electrical",
+  ELECTRICAL_GENERAL: "electrical_general",
+};
+const PRE_FLIGHT_ELECTRICAL_CHECKLIST_NAME = "Pre-flight Electrical Checklist";
+const ELECTRICAL_GENERAL_CHECKLIST_NAME = "Electrical General Checklist";
+const LEGACY_DEFAULT_CHECKLIST_ID = "checklist_default";
+
+const PRE_FLIGHT_ELECTRICAL_TEMPLATE_ITEMS = [
+  "Check relevant codes that apply to the project based on local city, state, and national codes. (CEC 90.2, 90.4)",
+  "Check if the tenant space has existing mechanical units on the roof that are not powered from tenant electrical panels. (CEC 430.102, 440.14)",
+  "Check for unmentioned items that could need power (interior signage). (CEC 600.6)",
+  "Check for occ sensor on ceiling instead of wall in storage room. (Title 24, Part 6 Section 130.1(c)1)",
+  "Check for dedicated service receptacle within 25ft of electrical panels. (CEC 210.63(B)(2), 110.26(E))",
+  "Check for junction box indicated as wall mount for hand dryers. (CEC 314.23, 314.29)",
+  "Check for adequate space for electrical panels, relocate to BOH corridors as necessary, avoid storage rooms, IT server racks. (CEC 110.26(A), 110.26(E))",
+  "Check for food waste disposer for all sinks with outlet under counter and switch above (confirm with plumbing as it is not a requirement). (CEC 422.16(B)(1), 422.31(B))",
+  "Check for furniture systems and include note to verify point of connection for furniture systems. (CEC 605)",
+  "Check for controlled receptacles in office, lobby, kitchen, printer/copy room, conference room, meeting room. Modular furniture workstations need at least one controlled receptacle per workstation. (Title 24, Part 6 Section 130.5(d))",
+  "Check for tamper proof receptacles in areas where children may be present: business offices, lobbies, waiting areas, theaters, auditoriums, gyms, bowling alleys, bus stations, airports, train stations. (CEC 406.12)",
+  "Check for rooftop mechanical units shown on RCP, ensure they are dashed in appearance and noted to go on the roof along with rooftop receptacle. (CEC 210.63(A), 440.14)",
+  "Check for return or supply air system over 2000CFM for duct smoke requirement. Any mechanical units 2000CFM or over should get duct smoke. (Title 24, Part 2 CBC Section 907.2.12.1.2)",
+  "Check for hand dryer specification, if not add note to confirm exact breaker size with manufacturer. (CEC 110.3(B))",
+  "Check for kAIC rating shown on single line main switchboard. (CEC 110.9, 110.10)",
+  "Check for >4000W in space needing demand response. Provide necessary software and device(s) to automatically reducing the lighting power by at least 15% upon receiving a demand response signal. (Title 24, Part 6 Section 110.12)",
+  "Check for GFCI protection at required nonresidential receptacle locations (kitchens, outdoor, rooftops, within 6 ft of sinks, etc.). (CEC 210.8(B))",
+  "Check meeting rooms for required receptacle outlets, including floor outlets when room size thresholds are met. (CEC 210.65)",
+  "Check voltage drop requirements and calculations for feeders and branch circuits (<=5% combined). (Title 24, Part 6 Section 130.5(c))",
+  "Check AIC ratings for panels and transformers on single line. (CEC 110.9, 110.10)",
+  "Check for daylight harvesting in daylit zones. Provide daylight sensor & room controller for automatic dimming of light fixtures. (Title 24, Part 6 Section 130.1(d))",
+  "Check for dimming in all rooms that are BOTH >100sqft AND >0.5W/sqft.",
+  "Check for occupancy sensors which are required in offices, conference & meeting rooms, classrooms, restrooms, multipurpose rooms, warehouses, library aisles, corridors & stairwells.",
+  "Check for time-switch controls which are allowed in lobbies, retail sales floors, commercial kitchens, auditoriums & theaters, and large multipurpose rooms.",
+  "Check for 2-hour bypass switch in each room controlled by automatic time controlled on/off. Provide 1 bypass switch per 5000sqft of room size.",
+  "Check for timeclock to indoor light fixtures that has manual override up to 2-hours, battery or internal memory capable of storing schedule for at least 7 days if power goes out.",
+  "Check for astronomical timeclock, photosensor located on the roof, and contactors with signage, exterior / outdoor lights, pole lights, etc. (Section 130.2(c)2.B)",
+  "Check for spaces that don't require multilevel controls such as: rooms under 100sqft, restrooms, rooms with only one luminaire.",
+];
+
+const ELECTRICAL_GENERAL_TEMPLATE_ITEMS = [
+  "Reference Manager",
+  "\"cleanup\" command",
+  "XREF BGs",
+  "Sheet layout & Titleblock",
+  "Scope of work",
+  "Specification sheet (CA or other state-specific)",
+  "Sheet Index",
+  "MSB / panelboards / meter",
+  "SLD",
+  "Panel schedules",
+  "EV chargers",
+  "Solar",
+  "Arch RCP notes",
+  "Title 24",
+  "Light fixture schedule (check site photos of existing lights and compare to archived bank standard)",
+  "Light control schedule",
+  "Out-of-scope",
+  "Daylight zones",
+  "Timeclock",
+  "EM lights",
+  "Symbol list",
+  "Light power, controls, notes",
+  "Arch power notes",
+  "Out-of-scope",
+  "Equipment schedule",
+  "IG/GFI/WP/Controlled/General power outlets",
+  "Symbol list",
+  "Solar equipment",
+  "Solar meter",
+  "HVAC equipment",
+  "Roof outlets",
+  "Solar zone",
+  "Solar stub",
+  "Heaters",
+  "Pumps",
+  "Lights",
+  "Signs",
+  "EV chargers",
+  "Equipment",
+  "Photometric",
+];
+
+const CHECKLIST_TEMPLATES = [
+  {
+    key: CHECKLIST_TEMPLATE_KEYS.PRE_FLIGHT_ELECTRICAL,
+    name: PRE_FLIGHT_ELECTRICAL_CHECKLIST_NAME,
+    discipline: "Electrical",
+    items: PRE_FLIGHT_ELECTRICAL_TEMPLATE_ITEMS,
+  },
+  {
+    key: CHECKLIST_TEMPLATE_KEYS.ELECTRICAL_GENERAL,
+    name: ELECTRICAL_GENERAL_CHECKLIST_NAME,
+    discipline: "Electrical",
+    items: ELECTRICAL_GENERAL_TEMPLATE_ITEMS,
+  },
+];
+
+function getChecklistTemplateByKey(templateKey) {
+  if (!templateKey) return null;
+  return (
+    CHECKLIST_TEMPLATES.find(
+      (template) => template.key === String(templateKey).trim()
+    ) || null
+  );
+}
+
+function getChecklistTemplatesForCurrentDisciplines() {
+  const selectedDisciplines = new Set(
+    normalizeDisciplineList(userSettings?.discipline).map((discipline) =>
+      String(discipline || "").trim().toLowerCase()
+    )
+  );
+  return CHECKLIST_TEMPLATES.filter((template) =>
+    selectedDisciplines.has(String(template.discipline || "").toLowerCase())
+  );
+}
+
+function createChecklistItemsFromTexts(texts = []) {
+  return texts.map((text, order) => ({
+    id: generateChecklistItemId(),
+    text: String(text ?? ""),
+    order,
+  }));
+}
+
+function normalizeChecklistItem(item, order) {
+  const base =
+    item && typeof item === "object" && !Array.isArray(item) ? { ...item } : {};
+  const id =
+    typeof base.id === "string" && base.id.trim()
+      ? base.id.trim()
+      : generateChecklistItemId();
+  const text = typeof item === "string" ? item : base.text;
   return {
-    id: "checklist_default",
-    name: "Default",
-    isDefault: true,
-    isLocked: true,
-    items: [
-      { id: generateChecklistItemId(), text: "Check relevant codes that apply to the project based on local city, state, and national codes. (CEC 90.2, 90.4)", order: 0, isDefault: true },
-      { id: generateChecklistItemId(), text: "Check if the tenant space has existing mechanical units on the roof that are not powered from tenant electrical panels. (CEC 430.102, 440.14)", order: 1, isDefault: true },
-      { id: generateChecklistItemId(), text: "Check for unmentioned items that could need power (interior signage). (CEC 600.6)", order: 2, isDefault: true },
-      { id: generateChecklistItemId(), text: "Check for occ sensor on ceiling instead of wall in storage room. (Title 24, Part 6 Section 130.1(c)1)", order: 3, isDefault: true },
-      { id: generateChecklistItemId(), text: "Check for dedicated service receptacle within 25ft of electrical panels. (CEC 210.63(B)(2), 110.26(E))", order: 4, isDefault: true },
-      { id: generateChecklistItemId(), text: "Check for junction box indicated as wall mount for hand dryers. (CEC 314.23, 314.29)", order: 5, isDefault: true },
-      { id: generateChecklistItemId(), text: "Check for adequate space for electrical panels, relocate to BOH corridors as necessary, avoid storage rooms, IT server racks. (CEC 110.26(A), 110.26(E))", order: 6, isDefault: true },
-      { id: generateChecklistItemId(), text: "Check for food waste disposer for all sinks with outlet under counter and switch above (confirm with plumbing as it is not a requirement). (CEC 422.16(B)(1), 422.31(B))", order: 7, isDefault: true },
-      { id: generateChecklistItemId(), text: "Check for furniture systems and include note to verify point of connection for furniture systems. (CEC 605)", order: 8, isDefault: true },
-      { id: generateChecklistItemId(), text: "Check for controlled receptacles in office, lobby, kitchen, printer/copy room, conference room, meeting room. Modular furniture workstations need at least one controlled receptacle per workstation. (Title 24, Part 6 Section 130.5(d))", order: 9, isDefault: true },
-      { id: generateChecklistItemId(), text: "Check for tamper proof receptacles in areas where children may be present: business offices, lobbies, waiting areas, theaters, auditoriums, gyms, bowling alleys, bus stations, airports, train stations. (CEC 406.12)", order: 10, isDefault: true },
-      { id: generateChecklistItemId(), text: "Check for rooftop mechanical units shown on RCP, ensure they are dashed in appearance and noted to go on the roof along with rooftop receptacle. (CEC 210.63(A), 440.14)", order: 11, isDefault: true },
-      { id: generateChecklistItemId(), text: "Check for return or supply air system over 2000CFM for duct smoke requirement. Any mechanical units 2000CFM or over should get duct smoke. (Title 24, Part 2 CBC Section 907.2.12.1.2)", order: 12, isDefault: true },
-      { id: generateChecklistItemId(), text: "Check for hand dryer specification, if not add note to confirm exact breaker size with manufacturer. (CEC 110.3(B))", order: 13, isDefault: true },
-      { id: generateChecklistItemId(), text: "Check for kAIC rating shown on single line main switchboard. (CEC 110.9, 110.10)", order: 14, isDefault: true },
-      { id: generateChecklistItemId(), text: "Check for >4000W in space needing demand response. Provide necessary software and device(s) to automatically reducing the lighting power by at least 15% upon receiving a demand response signal. (Title 24, Part 6 Section 110.12)", order: 15, isDefault: true },
-      { id: generateChecklistItemId(), text: "Check for GFCI protection at required nonresidential receptacle locations (kitchens, outdoor, rooftops, within 6 ft of sinks, etc.). (CEC 210.8(B))", order: 16, isDefault: true },
-      { id: generateChecklistItemId(), text: "Check meeting rooms for required receptacle outlets, including floor outlets when room size thresholds are met. (CEC 210.65)", order: 17, isDefault: true },
-      { id: generateChecklistItemId(), text: "Check voltage drop requirements and calculations for feeders and branch circuits (<=5% combined). (Title 24, Part 6 Section 130.5(c))", order: 18, isDefault: true },
-      { id: generateChecklistItemId(), text: "Check AIC ratings for panels and transformers on single line. (CEC 110.9, 110.10)", order: 19, isDefault: true },
-      { id: generateChecklistItemId(), text: "Check for daylight harvesting in daylit zones. Provide daylight sensor & room controller for automatic dimming of light fixtures. (Title 24, Part 6 Section 130.1(d))", order: 20, isDefault: true },
-      { id: generateChecklistItemId(), text: "Check for dimming in all rooms that are BOTH >100sqft AND >0.5W/sqft.", order: 21, isDefault: true },
-      { id: generateChecklistItemId(), text: "Check for occupancy sensors which are required in offices, conference & meeting rooms, classrooms, restrooms, multipurpose rooms, warehouses, library aisles, corridors & stairwells.", order: 22, isDefault: true },
-      { id: generateChecklistItemId(), text: "Check for time-switch controls which are allowed in lobbies, retail sales floors, commercial kitchens, auditoriums & theaters, and large multipurpose rooms.", order: 23, isDefault: true },
-      { id: generateChecklistItemId(), text: "Check for 2-hour bypass switch in each room controlled by automatic time controlled on/off. Provide 1 bypass switch per 5000sqft of room size.", order: 24, isDefault: true },
-      { id: generateChecklistItemId(), text: "Check for timeclock to indoor light fixtures that has manual override up to 2-hours, battery or internal memory capable of storing schedule for at least 7 days if power goes out.", order: 25, isDefault: true },
-      { id: generateChecklistItemId(), text: "Check for astronomical timeclock, photosensor located on the roof, and contactors with signage, exterior / outdoor lights, pole lights, etc. (Section 130.2(c)2.B)", order: 26, isDefault: true },
-      { id: generateChecklistItemId(), text: "Check for spaces that don't require multilevel controls such as: rooms under 100sqft, restrooms, rooms with only one luminaire.", order: 27, isDefault: true }
-    ]
+    ...base,
+    id,
+    text: String(text ?? ""),
+    order,
+  };
+}
+
+function isLegacyDefaultChecklistName(name) {
+  const normalized = String(name || "").trim().toLowerCase();
+  return normalized === "" || normalized === "default" || normalized === "default electrical";
+}
+
+function normalizeChecklistRecord(rawChecklist, index) {
+  let changed = false;
+  const source =
+    rawChecklist && typeof rawChecklist === "object" && !Array.isArray(rawChecklist)
+      ? rawChecklist
+      : {};
+  if (source !== rawChecklist) changed = true;
+
+  let id = typeof source.id === "string" ? source.id.trim() : "";
+  if (!id) {
+    id = generateChecklistId();
+    changed = true;
+  }
+
+  let name = typeof source.name === "string" ? source.name.trim() : "";
+  if (!name) {
+    name = `Checklist ${index + 1}`;
+    changed = true;
+  }
+
+  if (!Array.isArray(source.items)) changed = true;
+  const items = (Array.isArray(source.items) ? source.items : []).map((item, itemIndex) =>
+    normalizeChecklistItem(item, itemIndex)
+  );
+
+  let templateKey =
+    typeof source.templateKey === "string" ? source.templateKey.trim() : "";
+  if (templateKey && !getChecklistTemplateByKey(templateKey)) {
+    templateKey = "";
+    changed = true;
+  }
+
+  const isLegacyDefault =
+    id === LEGACY_DEFAULT_CHECKLIST_ID || source.isDefault === true;
+  if (isLegacyDefault) {
+    if (!templateKey) {
+      templateKey = CHECKLIST_TEMPLATE_KEYS.PRE_FLIGHT_ELECTRICAL;
+      changed = true;
+    }
+    if (isLegacyDefaultChecklistName(name)) {
+      if (name !== PRE_FLIGHT_ELECTRICAL_CHECKLIST_NAME) changed = true;
+      name = PRE_FLIGHT_ELECTRICAL_CHECKLIST_NAME;
+    }
+    if (source.isDefault === true || source.isLocked === true) changed = true;
+  }
+
+  return {
+    changed,
+    checklist: {
+      ...source,
+      id,
+      name,
+      templateKey: templateKey || null,
+      items,
+      isDefault: false,
+      isLocked: false,
+    },
+  };
+}
+
+function normalizeChecklistsDb(rawDb) {
+  let changed = false;
+  const source =
+    rawDb && typeof rawDb === "object" && !Array.isArray(rawDb) ? rawDb : {};
+  if (source !== rawDb) changed = true;
+
+  const rawChecklists = Array.isArray(source.checklists) ? source.checklists : [];
+  if (!Array.isArray(source.checklists)) changed = true;
+
+  const usedIds = new Set();
+  const normalizedChecklists = [];
+  rawChecklists.forEach((rawChecklist, index) => {
+    const normalized = normalizeChecklistRecord(rawChecklist, index);
+    changed = changed || normalized.changed;
+    let nextChecklist = normalized.checklist;
+    if (usedIds.has(nextChecklist.id)) {
+      nextChecklist = { ...nextChecklist, id: generateChecklistId() };
+      changed = true;
+    }
+    usedIds.add(nextChecklist.id);
+    normalizedChecklists.push(nextChecklist);
+  });
+
+  return {
+    changed,
+    data: {
+      checklists: normalizedChecklists,
+      lastModified:
+        typeof source.lastModified === "string" ? source.lastModified : null,
+    },
   };
 }
 
 async function loadChecklists() {
   try {
-    const data = await window.pywebview.api.get_checklists();
-    checklistsDb = data || { checklists: [], lastModified: null };
-
-    // Ensure default checklist exists
-    if (!checklistsDb.checklists.find(c => c.isDefault)) {
-      checklistsDb.checklists.unshift(getDefaultChecklist());
+    const rawData = await window.pywebview.api.get_checklists();
+    const normalized = normalizeChecklistsDb(rawData || {});
+    checklistsDb = normalized.data;
+    if (normalized.changed) {
+      await saveChecklists();
     }
-
     return checklistsDb;
   } catch (e) {
     console.warn("Failed to load checklists:", e);
-    // Initialize with default if load fails
-    checklistsDb = { checklists: [getDefaultChecklist()], lastModified: null };
+    checklistsDb = { checklists: [], lastModified: null };
     return checklistsDb;
   }
 }
@@ -201,26 +397,74 @@ async function saveChecklists() {
 }
 
 function getChecklistById(id) {
-  return checklistsDb.checklists.find(c => c.id === id);
+  return checklistsDb.checklists.find((c) => c.id === id);
 }
 
-function createChecklist(name) {
+function createChecklist(name, options = {}) {
+  const template =
+    typeof options.templateKey === "string"
+      ? getChecklistTemplateByKey(options.templateKey)
+      : null;
+  const normalizedItems = (Array.isArray(options.items) ? options.items : []).map(
+    (item, index) => normalizeChecklistItem(item, index)
+  );
   const newChecklist = {
-    id: generateChecklistId(),
-    name: name,
+    id:
+      typeof options.id === "string" && options.id.trim()
+        ? options.id.trim()
+        : generateChecklistId(),
+    name:
+      String(name || "").trim() || `Checklist ${checklistsDb.checklists.length + 1}`,
+    templateKey: template?.key || null,
     isDefault: false,
     isLocked: false,
-    items: []
+    items: normalizedItems,
   };
   checklistsDb.checklists.push(newChecklist);
-  saveChecklists();
+  if (options.saveNow !== false) {
+    saveChecklists();
+  }
   return newChecklist;
 }
 
+function createChecklistFromTemplate(templateKey) {
+  const template = getChecklistTemplateByKey(templateKey);
+  if (!template) return null;
+  return createChecklist(template.name, {
+    templateKey: template.key,
+    items: createChecklistItemsFromTexts(template.items),
+  });
+}
+
+function removeChecklistFromAllDeliverables(checklistId) {
+  let changed = false;
+  if (!Array.isArray(db) || !checklistId) return changed;
+
+  db.forEach((project) => {
+    const deliverables = getProjectDeliverables(project);
+    if (!Array.isArray(deliverables)) return;
+    deliverables.forEach((deliverable) => {
+      if (!Array.isArray(deliverable.appliedChecklists)) return;
+      const originalCount = deliverable.appliedChecklists.length;
+      deliverable.appliedChecklists = deliverable.appliedChecklists.filter(
+        (instance) => instance?.checklistId !== checklistId
+      );
+      if (deliverable.appliedChecklists.length !== originalCount) {
+        changed = true;
+      }
+    });
+  });
+
+  return changed;
+}
+
 function deleteChecklist(id) {
-  const idx = checklistsDb.checklists.findIndex(c => c.id === id);
-  if (idx > -1 && !checklistsDb.checklists[idx].isLocked) {
+  const idx = checklistsDb.checklists.findIndex((c) => c.id === id);
+  if (idx > -1) {
     checklistsDb.checklists.splice(idx, 1);
+    if (removeChecklistFromAllDeliverables(id)) {
+      save();
+    }
     saveChecklists();
     return true;
   }
@@ -234,7 +478,6 @@ function addChecklistItem(checklistId, text) {
       id: generateChecklistItemId(),
       text: text,
       order: checklist.items.length,
-      isDefault: false
     };
     checklist.items.push(newItem);
     saveChecklists();
@@ -261,7 +504,7 @@ function removeChecklistItem(checklistId, itemId) {
 function updateChecklistItem(checklistId, itemId, text) {
   const checklist = getChecklistById(checklistId);
   if (checklist) {
-    const item = checklist.items.find(i => i.id === itemId);
+    const item = checklist.items.find((i) => i.id === itemId);
     if (item) {
       item.text = text;
       saveChecklists();
@@ -273,9 +516,9 @@ function updateChecklistItem(checklistId, itemId, text) {
 
 function resetChecklistToDefault(checklistId) {
   const checklist = getChecklistById(checklistId);
-  if (checklist && checklist.isDefault) {
-    const defaultChecklist = getDefaultChecklist();
-    checklist.items = defaultChecklist.items.map(item => ({ ...item }));
+  const template = getChecklistTemplateByKey(checklist?.templateKey);
+  if (checklist && template) {
+    checklist.items = createChecklistItemsFromTexts(template.items);
     saveChecklists();
     return true;
   }
@@ -303,10 +546,7 @@ const WORKROOM_LAUNCH_CONTEXT_TOOL_IDS = new Set([
   ...WORKROOM_CAD_TOOL_IDS,
   ...WORKROOM_TEMPLATE_TOOL_IDS,
 ]);
-const WORKROOM_HIDDEN_TOOL_IDS = new Set([
-  "toolLightingSchedule",
-  "toolTitle24Compliance",
-]);
+const WORKROOM_HIDDEN_TOOL_IDS = new Set([]);
 const WORKROOM_DISCIPLINE_KEYWORDS = {
   Electrical: [
     /\belectrical\b/gi,
@@ -1264,7 +1504,11 @@ function getTemplateToolContext(options = {}) {
   if (launchSource === "workroom") {
     const { project, deliverable } = getActiveWorkroomContext();
     return {
-      projectPath: String(launchContext?.projectPath || project?.path || "").trim(),
+      projectPath: normalizeWorkroomFolderPath(
+        launchContext?.rootProjectPath ||
+        launchContext?.projectPath ||
+        getWorkroomRootFolderPath(project)
+      ),
       projectName: String(
         project?.name || project?.nick || project?.id || ""
       ).trim(),
@@ -4994,6 +5238,9 @@ function mergeProjects(base, incoming) {
   if (!base.name && incoming.name) base.name = incoming.name;
   if (!base.nick && incoming.nick) base.nick = incoming.nick;
   if (!base.path && incoming.path) base.path = incoming.path;
+  if (!base.workroomRootPath && incoming.workroomRootPath) {
+    base.workroomRootPath = incoming.workroomRootPath;
+  }
   if (!base.notes && incoming.notes) base.notes = incoming.notes;
   base.refs = mergeRefs(base.refs || [], incoming.refs || []);
   if (!base.lightingSchedule && incoming.lightingSchedule)
@@ -5021,6 +5268,7 @@ function convertLegacyProject(legacy) {
     name: String(legacy?.name || "").trim(),
     nick: String(legacy?.nick || "").trim(),
     path: String(legacy?.path || "").trim(),
+    workroomRootPath: "",
     notes: "",
     refs: Array.isArray(legacy?.refs)
       ? legacy.refs.map(normalizeRef).filter(Boolean)
@@ -5043,6 +5291,7 @@ function normalizeProject(project) {
     name: String(project.name || "").trim(),
     nick: String(project.nick || "").trim(),
     path: String(project.path || "").trim(),
+    workroomRootPath: String(project.workroomRootPath || "").trim(),
     notes: project.notes || "",
     refs: Array.isArray(project.refs)
       ? project.refs.map(normalizeRef).filter(Boolean)
@@ -7208,6 +7457,7 @@ function createBlankProject() {
     name: "",
     nick: "",
     path: "",
+    workroomRootPath: "",
     notes: "",
     refs: [],
     deliverables: [deliverable],
@@ -7523,6 +7773,7 @@ function readForm() {
     nick: val("f_nick"),
     notes: val("f_notes"),
     path: val("f_path"),
+    workroomRootPath: String(existingProject?.workroomRootPath || "").trim(),
     refs: [],
     deliverables: [],
     overviewDeliverableId: "",
@@ -8016,7 +8267,13 @@ const debouncedSaveChecklists = debounce(saveChecklists, 500);
 
 function renderChecklistTabs() {
   const container = document.getElementById("checklistsTabsContainer");
+  const actionsContainer = document.getElementById("checklistsSidebarActions");
+  if (!container) return;
+
   container.innerHTML = "";
+  if (actionsContainer) {
+    actionsContainer.innerHTML = "";
+  }
 
   checklistsDb.checklists.forEach((checklist) => {
     const btn = el("button", {
@@ -8029,34 +8286,36 @@ function renderChecklistTabs() {
       },
     });
 
-    // Add remove icon for non-locked checklists
-    if (!checklist.isLocked) {
-      const delIcon = el("span", {
-        className: "tab-delete-icon",
-        textContent: "×",
-        title: "Delete Checklist",
-        onclick: (e) => {
-          e.stopPropagation();
-          if (confirm(`Permanently delete checklist "${checklist.name}"?`)) {
-            deleteChecklist(checklist.id);
-            if (activeChecklistTabId === checklist.id) {
-              activeChecklistTabId = checklistsDb.checklists[0]?.id || null;
-            }
-            renderChecklistTabs();
-            renderChecklistItems();
+    // Add remove icon
+    const delIcon = el("span", {
+      className: "tab-delete-icon",
+      textContent: "x",
+      title: "Delete Checklist",
+      onclick: (e) => {
+        e.stopPropagation();
+        if (confirm(`Permanently delete checklist "${checklist.name}"?`)) {
+          deleteChecklist(checklist.id);
+          if (activeChecklistTabId === checklist.id) {
+            activeChecklistTabId = checklistsDb.checklists[0]?.id || null;
           }
-        },
-      });
-      btn.appendChild(delIcon);
-    }
+          renderChecklistTabs();
+          renderChecklistItems();
+        }
+      },
+    });
+    btn.appendChild(delIcon);
 
     container.appendChild(btn);
   });
 
-  // Add new checklist button
+  if (activeChecklistTabId && !getChecklistById(activeChecklistTabId)) {
+    activeChecklistTabId = checklistsDb.checklists[0]?.id || null;
+  }
+
+  const sidebarActionsTarget = actionsContainer || container;
   const addBtn = el("button", {
     className: "add-tab-btn",
-    textContent: "+",
+    textContent: "+ New Blank Checklist",
     title: "Create New Checklist",
     onclick: () => {
       const name = prompt("Enter name for new checklist:");
@@ -8068,7 +8327,58 @@ function renderChecklistTabs() {
       }
     },
   });
-  container.appendChild(addBtn);
+  sidebarActionsTarget.appendChild(addBtn);
+
+  const templates = getChecklistTemplatesForCurrentDisciplines();
+  const templateSelect = el("select", {
+    className: "checklist-template-select",
+    "aria-label": "Add checklist from template",
+    title: "Add checklist from template",
+    onchange: (e) => {
+      const templateKey = String(e.target.value || "").trim();
+      if (!templateKey) return;
+      const newChecklist = createChecklistFromTemplate(templateKey);
+      if (!newChecklist) {
+        toast("Template not found.");
+        e.target.value = "";
+        return;
+      }
+      activeChecklistTabId = newChecklist.id;
+      e.target.value = "";
+      renderChecklistTabs();
+      renderChecklistItems();
+    },
+  });
+  templateSelect.appendChild(
+    el("option", {
+      value: "",
+      textContent: "+ Add From Template...",
+    })
+  );
+  templates.forEach((template) => {
+    templateSelect.appendChild(
+      el("option", {
+        value: template.key,
+        textContent: template.name,
+      })
+    );
+  });
+  if (!templates.length) {
+    templateSelect.disabled = true;
+    templateSelect.options[0].textContent =
+      "No templates for selected discipline";
+  }
+  sidebarActionsTarget.appendChild(templateSelect);
+
+  if (!templates.length) {
+    sidebarActionsTarget.appendChild(
+      el("p", {
+        className: "tiny muted checklist-template-empty",
+        textContent:
+          "Recommended templates are currently available for Electrical discipline only.",
+      })
+    );
+  }
 
   renderChecklistItems();
 }
@@ -8095,9 +8405,11 @@ function renderChecklistItems() {
   }
 
   nameInput.value = checklist.name;
-  nameInput.disabled = checklist.isLocked;
-  resetBtn.style.display = checklist.isDefault ? "inline-flex" : "none";
-  deleteBtn.style.display = checklist.isLocked ? "none" : "inline-flex";
+  nameInput.disabled = false;
+  resetBtn.style.display = getChecklistTemplateByKey(checklist.templateKey)
+    ? "inline-flex"
+    : "none";
+  deleteBtn.style.display = "inline-flex";
   addItemBtn.disabled = false;
 
   // Render items
@@ -8145,7 +8457,7 @@ function renderChecklistItems() {
 // Event listeners for checklist tab
 document.getElementById("checklistName")?.addEventListener("input", (e) => {
   const checklist = getChecklistById(activeChecklistTabId);
-  if (checklist && !checklist.isLocked) {
+  if (checklist) {
     checklist.name = e.target.value;
     debouncedSaveChecklists();
     renderChecklistTabs();
@@ -8153,7 +8465,17 @@ document.getElementById("checklistName")?.addEventListener("input", (e) => {
 });
 
 document.getElementById("resetChecklistBtn")?.addEventListener("click", () => {
-  if (confirm("Reset this checklist to default items? This will remove any custom items.")) {
+  const checklist = getChecklistById(activeChecklistTabId);
+  const template = getChecklistTemplateByKey(checklist?.templateKey);
+  if (!checklist || !template) {
+    toast("This checklist does not have template defaults.");
+    return;
+  }
+  if (
+    confirm(
+      `Reset this checklist to "${template.name}" defaults? This will remove custom items.`
+    )
+  ) {
     resetChecklistToDefault(activeChecklistTabId);
     renderChecklistItems();
   }
@@ -8216,42 +8538,178 @@ function getWorkroomProjectHeaderText(project) {
   return "Unnamed Project";
 }
 
+function normalizeWorkroomFolderPath(rawPath) {
+  let normalized = String(rawPath || "").trim().replace(/\//g, "\\");
+  if (!normalized) return "";
+  if (/^[A-Za-z]:\\?$/.test(normalized)) {
+    return `${normalized.slice(0, 2)}\\`;
+  }
+  normalized = normalized.replace(/\\+$/, "");
+  return normalized;
+}
+
+function getWorkroomPathFolderName(rawPath) {
+  const normalized = normalizeWorkroomFolderPath(rawPath);
+  if (!normalized) return "";
+  const parts = normalized.split("\\");
+  return parts[parts.length - 1] || "";
+}
+
+function getWorkroomPathParent(rawPath) {
+  const normalized = normalizeWorkroomFolderPath(rawPath);
+  if (!normalized) return "";
+  if (/^[A-Za-z]:\\$/.test(normalized)) return "";
+  if (/^\\\\[^\\]+\\[^\\]+$/.test(normalized)) return "";
+  const idx = normalized.lastIndexOf("\\");
+  if (idx <= 0) return "";
+  return normalized.slice(0, idx);
+}
+
+function findWorkroomProjectRootById(projectPath) {
+  let current = normalizeWorkroomFolderPath(projectPath);
+  if (!current) return "";
+  while (current) {
+    const folderName = getWorkroomPathFolderName(current);
+    if (/^\d{6}(?!\d)/.test(folderName)) {
+      return current;
+    }
+    const parent = getWorkroomPathParent(current);
+    if (!parent) break;
+    if (parent.toLowerCase() === current.toLowerCase()) break;
+    current = parent;
+  }
+  return "";
+}
+
+function getDefaultWorkroomRootFolderPath(project) {
+  const projectPath = normalizeWorkroomFolderPath(project?.path || "");
+  if (!projectPath) return "";
+  const rootFromId = findWorkroomProjectRootById(projectPath);
+  return rootFromId || projectPath;
+}
+
+function getWorkroomRootFolderPath(project) {
+  const overridePath = normalizeWorkroomFolderPath(project?.workroomRootPath || "");
+  if (overridePath) return overridePath;
+  return getDefaultWorkroomRootFolderPath(project);
+}
+
+function setWorkroomRootFolderOverride(project, nextPath, { saveNow = true } = {}) {
+  if (!project) return false;
+  const normalizedNext = normalizeWorkroomFolderPath(nextPath);
+  const normalizedCurrent = normalizeWorkroomFolderPath(project.workroomRootPath || "");
+  if (normalizedCurrent === normalizedNext) return false;
+  project.workroomRootPath = normalizedNext;
+  if (saveNow) save();
+  else debouncedSave();
+  return true;
+}
+
 function renderWorkroomProjectHeader() {
-  const projectLink = document.getElementById("workroomProjectLink");
-  if (!projectLink) return;
+  const projectLabel = document.getElementById("workroomProjectLabel");
+  const rootInput = document.getElementById("workroomRootFolderInput");
+  const selectBtn = document.getElementById("workroomSelectRootFolderBtn");
+  const openBtn = document.getElementById("workroomOpenRootFolderBtn");
+  if (!projectLabel || !rootInput || !selectBtn || !openBtn) return;
 
   const { project } = getActiveWorkroomContext();
+  const syncOpenButtonState = () => {
+    const pathValue = normalizeWorkroomFolderPath(rootInput.value);
+    openBtn.disabled = !pathValue;
+    openBtn.title = pathValue ? `Open: ${pathValue}` : "Root project folder path is not set.";
+  };
+
   if (!project) {
-    projectLink.textContent = "Project Workroom";
-    projectLink.title = "Project Workroom";
-    projectLink.disabled = true;
-    projectLink.classList.add("is-disabled");
-    projectLink.onclick = null;
+    projectLabel.textContent = "Project Workroom";
+    projectLabel.title = "Project Workroom";
+    rootInput.value = "";
+    rootInput.placeholder = "Select a project to set root folder...";
+    rootInput.disabled = true;
+    rootInput.oninput = null;
+    rootInput.onblur = null;
+    rootInput.onkeydown = null;
+    selectBtn.disabled = true;
+    selectBtn.onclick = null;
+    openBtn.disabled = true;
+    openBtn.title = "Root project folder path is not set.";
+    openBtn.onclick = null;
     return;
   }
 
-  const projectPath = String(project.path || "").trim();
-  const clickablePath = convertPath(projectPath);
-  projectLink.textContent = getWorkroomProjectHeaderText(project);
-  projectLink.title = projectPath ? `Open: ${clickablePath}` : "Project folder path is not set.";
-  projectLink.disabled = !projectPath;
-  projectLink.classList.toggle("is-disabled", !projectPath);
+  const projectHeaderText = getWorkroomProjectHeaderText(project);
+  projectLabel.textContent = "Project Workroom";
+  projectLabel.title = projectHeaderText;
 
-  if (!projectPath) {
-    projectLink.onclick = null;
-    return;
-  }
+  const activeRootPath = getWorkroomRootFolderPath(project);
+  rootInput.disabled = false;
+  rootInput.placeholder = "Root project folder path...";
+  rootInput.value = activeRootPath;
+  rootInput.title = activeRootPath;
 
-  projectLink.onclick = async () => {
+  const commitRootInput = () => {
+    if (!project) return;
+    const changed = setWorkroomRootFolderOverride(project, rootInput.value, {
+      saveNow: true,
+    });
+    rootInput.value = getWorkroomRootFolderPath(project);
+    rootInput.title = rootInput.value;
+    syncOpenButtonState();
+    if (changed) {
+      renderWorkroomCadFilesPanel();
+    }
+  };
+
+  rootInput.oninput = () => {
+    syncOpenButtonState();
+  };
+  rootInput.onblur = () => {
+    commitRootInput();
+  };
+  rootInput.onkeydown = (e) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    commitRootInput();
+  };
+
+  selectBtn.disabled = !window.pywebview?.api?.select_folder;
+  selectBtn.onclick = async () => {
+    if (!window.pywebview?.api?.select_folder) {
+      toast("Folder picker is unavailable.");
+      return;
+    }
     try {
-      const res = await window.pywebview.api.open_path(clickablePath);
+      const selection = await window.pywebview.api.select_folder();
+      if (selection?.status !== "success" || !selection.path) {
+        return;
+      }
+      const changed = setWorkroomRootFolderOverride(project, selection.path, {
+        saveNow: true,
+      });
+      rootInput.value = getWorkroomRootFolderPath(project);
+      rootInput.title = rootInput.value;
+      syncOpenButtonState();
+      if (changed) {
+        renderWorkroomCadFilesPanel();
+      }
+    } catch (e) {
+      console.warn("Failed to select workroom root folder:", e);
+      toast("Couldn't select root project folder.");
+    }
+  };
+
+  syncOpenButtonState();
+  openBtn.onclick = async () => {
+    const rootPath = normalizeWorkroomFolderPath(rootInput.value);
+    if (!rootPath) return;
+    try {
+      const res = await window.pywebview.api.open_path(convertPath(rootPath));
       if (res?.status !== "success") {
-        throw new Error(res?.message || "Failed to open project folder.");
+        throw new Error(res?.message || "Failed to open root project folder.");
       }
       toast("Opening folder...");
     } catch (e) {
-      console.warn("Failed to open project folder from Workroom header:", e);
-      toast("Couldn't open project folder.");
+      console.warn("Failed to open root project folder from Workroom header:", e);
+      toast("Couldn't open root project folder.");
     }
   };
 }
@@ -8377,9 +8835,12 @@ function buildWorkroomCadLaunchContext() {
   const { project, deliverable } = getActiveWorkroomContext();
   const disciplines = getWorkroomAvailableDisciplines();
   const activeDiscipline = ensureWorkroomCadDiscipline(deliverable, disciplines);
+  const projectPath = normalizeWorkroomFolderPath(project?.path || "");
+  const rootProjectPath = getWorkroomRootFolderPath(project);
   return {
     source: "workroom",
-    projectPath: String(project?.path || "").trim(),
+    projectPath,
+    rootProjectPath,
     discipline: activeDiscipline || disciplines[0] || "Electrical",
   };
 }
@@ -8402,9 +8863,11 @@ async function renderWorkroomCadFilesPanel() {
     return;
   }
 
-  const projectPath = String(project.path || "").trim();
-  if (!projectPath) {
-    setWorkroomCadFilesStatus("Project folder path is not set.", { isError: true });
+  const rootProjectPath = getWorkroomRootFolderPath(project);
+  if (!rootProjectPath) {
+    setWorkroomCadFilesStatus("Root project folder path is not set.", {
+      isError: true,
+    });
     return;
   }
 
@@ -8517,18 +8980,12 @@ function initChecklistModalTabs(project, deliverableIndex) {
     deliverable.appliedChecklists = [];
   }
 
-  if (deliverable.appliedChecklists.length === 0) {
-    const defaultChecklist =
-      checklistsDb.checklists.find((c) => c.isDefault) || checklistsDb.checklists[0];
-    if (defaultChecklist) {
-      deliverable.appliedChecklists.push({
-        instanceId: generateChecklistInstanceId(),
-        checklistId: defaultChecklist.id,
-        completedItems: [],
-        itemNotes: {},
-      });
-      save();
-    }
+  const originalInstanceCount = deliverable.appliedChecklists.length;
+  deliverable.appliedChecklists = deliverable.appliedChecklists.filter(
+    (instance) => !!getChecklistById(instance?.checklistId)
+  );
+  if (deliverable.appliedChecklists.length !== originalInstanceCount) {
+    save();
   }
 
   checklistModalState.appliedTabs = deliverable.appliedChecklists.map(
@@ -8889,8 +9346,8 @@ function renderWorkroomChecklistTabs() {
     tabsContainer.appendChild(tabBtn);
   });
 
-  populateWorkroomChecklistAddSelect();
-  addSelect.disabled = false;
+  const availableCount = populateWorkroomChecklistAddSelect();
+  addSelect.disabled = availableCount === 0;
   addSelect.onchange = (e) => {
     const checklistId = e.target.value;
     if (!checklistId) return;
@@ -8901,13 +9358,15 @@ function renderWorkroomChecklistTabs() {
 
 function populateWorkroomChecklistAddSelect() {
   const select = document.getElementById("workroomChecklistAddSelect");
-  if (!select) return;
+  if (!select) return 0;
 
   const currentIds = checklistModalState.appliedTabs.map((tab) => tab.checklistId);
   select.innerHTML = '<option value="">+ Add Checklist...</option>';
+  let availableCount = 0;
 
   checklistsDb.checklists.forEach((checklist) => {
     if (currentIds.includes(checklist.id)) return;
+    availableCount += 1;
     select.appendChild(
       el("option", {
         value: checklist.id,
@@ -8915,6 +9374,7 @@ function populateWorkroomChecklistAddSelect() {
       })
     );
   });
+  return availableCount;
 }
 
 function addWorkroomChecklistInstance(checklistId) {
@@ -11596,6 +12056,20 @@ function removeLightingScheduleRow(rowIndex) {
   debouncedSaveLightingSchedule();
 }
 
+function openLightingScheduleFromWorkroom() {
+  const checklistModal = document.getElementById("checklistModal");
+  const projectIndex = Number(activeChecklistProject);
+  if (
+    checklistModal?.open &&
+    Number.isInteger(projectIndex) &&
+    projectIndex >= 0 &&
+    !!db[projectIndex]
+  ) {
+    setLightingScheduleProject(projectIndex);
+  }
+  openLightingSchedule();
+}
+
 function openLightingSchedule() {
   const dlg = document.getElementById("lightingScheduleDlg");
   if (!dlg) return;
@@ -11619,6 +12093,20 @@ function closeLightingSchedule() {
   const dlg = document.getElementById("lightingScheduleDlg");
   if (dlg?.open) dlg.close();
   save();
+}
+
+async function openTitle24ComplianceFromWorkroom() {
+  const checklistModal = document.getElementById("checklistModal");
+  const projectIndex = Number(activeChecklistProject);
+  if (
+    checklistModal?.open &&
+    Number.isInteger(projectIndex) &&
+    projectIndex >= 0 &&
+    !!db[projectIndex]
+  ) {
+    setTitle24Project(projectIndex);
+  }
+  await openTitle24Compliance();
 }
 
 function getActiveTitle24Project() {
@@ -13228,28 +13716,95 @@ function initEventListeners() {
     const handler = async () => {
       if (copyProjectLocallyBtn.classList.contains("running")) return;
       copyProjectLocallyBtn.classList.add("running");
-      window.updateToolStatus("toolCopyProjectLocally", "Select server project folder...");
+      const launchContext = resolveCadLaunchContextForTool();
+      const launchSource = String(launchContext?.source || "").trim().toLowerCase();
 
       try {
-        const selection = await window.pywebview.api.select_folder();
-        if (selection?.status === "error") {
-          throw new Error(selection.message || "Failed to choose a folder.");
+        const selectServerProjectFolder = async () => {
+          window.updateToolStatus("toolCopyProjectLocally", "Select server project folder...");
+          const selection = await window.pywebview.api.select_folder();
+          if (selection?.status === "error") {
+            throw new Error(selection.message || "Failed to choose a folder.");
+          }
+          if (!selection || selection.status === "cancelled" || !selection.path) {
+            return "";
+          }
+          return String(selection.path || "").trim();
+        };
+
+        let result = null;
+        let selectedServerPath = "";
+
+        if (launchSource === "workroom") {
+          window.updateToolStatus("toolCopyProjectLocally", "Resolving project folder...");
+          result = await window.pywebview.api.copy_project_locally(null, launchContext);
+
+          const needsManualSelection =
+            result?.status !== "success" &&
+            String(result?.code || "").trim().toLowerCase() === "manual_selection_required";
+
+          if (needsManualSelection) {
+            toast("Could not auto-resolve project folder; please select it manually.", 6000);
+            selectedServerPath = await selectServerProjectFolder();
+            if (!selectedServerPath) {
+              result = null;
+            }
+          }
+        } else {
+          selectedServerPath = await selectServerProjectFolder();
         }
-        if (!selection || selection.status === "cancelled" || !selection.path) {
+
+        if (selectedServerPath) {
+          window.updateToolStatus("toolCopyProjectLocally", "Copying project...");
+          result = await window.pywebview.api.copy_project_locally(
+            selectedServerPath,
+            launchContext
+          );
+        }
+
+        if (!result && !selectedServerPath) {
           const statusEl = copyProjectLocallyBtn.querySelector(".tool-card-status");
           if (statusEl) statusEl.textContent = "";
           copyProjectLocallyBtn.classList.remove("running");
           return;
         }
 
-        window.updateToolStatus("toolCopyProjectLocally", "Copying project...");
-        const result = await window.pywebview.api.copy_project_locally(selection.path);
         if (result?.status !== "success") {
           throw new Error(result?.message || "Failed to copy project locally.");
         }
 
+        const failedFiles = Array.isArray(result?.failedFiles) ? result.failedFiles : [];
+        const failedFileCount =
+          Number.isFinite(Number(result?.failedFileCount))
+            ? Number(result.failedFileCount)
+            : failedFiles.length;
+        const hasWarnings = failedFileCount > 0;
+
         window.updateToolStatus("toolCopyProjectLocally", "DONE");
-        toast("Project copied locally.");
+        toast(
+          hasWarnings
+            ? `Project copied locally with warnings (${failedFileCount} file${
+                failedFileCount === 1 ? "" : "s"
+              } failed).`
+            : "Project copied locally."
+        );
+
+        if (hasWarnings && failedFiles.length) {
+          const failedPreview = failedFiles
+            .slice(0, 3)
+            .map((entry) => {
+              const sourcePath = String(entry?.source || "");
+              if (!sourcePath) return "";
+              const parts = sourcePath.split(/[\\/]/);
+              return parts[parts.length - 1] || sourcePath;
+            })
+            .filter(Boolean);
+          if (failedPreview.length) {
+            const remainingCount = Math.max(0, failedFileCount - failedPreview.length);
+            const suffix = remainingCount ? ` (+${remainingCount} more)` : "";
+            toast(`Failed files: ${failedPreview.join(", ")}${suffix}`, 9000);
+          }
+        }
 
         const missingFolders = Array.isArray(result?.missingServerFolders)
           ? result.missingServerFolders
@@ -13462,11 +14017,19 @@ function initEventListeners() {
 
   const lightingScheduleBtn = document.getElementById("toolLightingSchedule");
   if (lightingScheduleBtn) {
-    lightingScheduleBtn.addEventListener("click", openLightingSchedule);
+    const openLightingScheduleHandler = () => {
+      const checklistModal = document.getElementById("checklistModal");
+      if (checklistModal?.open) {
+        openLightingScheduleFromWorkroom();
+      } else {
+        openLightingSchedule();
+      }
+    };
+    lightingScheduleBtn.addEventListener("click", openLightingScheduleHandler);
     lightingScheduleBtn.addEventListener("keydown", (e) => {
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
-        openLightingSchedule();
+        openLightingScheduleHandler();
       }
     });
   }
@@ -13590,11 +14153,21 @@ function initEventListeners() {
 
   const title24ComplianceBtn = document.getElementById("toolTitle24Compliance");
   if (title24ComplianceBtn) {
-    title24ComplianceBtn.addEventListener("click", openTitle24Compliance);
+    const openTitle24ComplianceHandler = async () => {
+      const checklistModal = document.getElementById("checklistModal");
+      if (checklistModal?.open) {
+        await openTitle24ComplianceFromWorkroom();
+      } else {
+        await openTitle24Compliance();
+      }
+    };
+    title24ComplianceBtn.addEventListener("click", () => {
+      openTitle24ComplianceHandler();
+    });
     title24ComplianceBtn.addEventListener("keydown", (e) => {
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
-        openTitle24Compliance();
+        openTitle24ComplianceHandler();
       }
     });
   }

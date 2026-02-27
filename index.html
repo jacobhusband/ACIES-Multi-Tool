@@ -288,6 +288,7 @@
                 <div class="checklists-layout">
                     <div class="checklists-sidebar">
                         <nav class="inner-tabs checklists-nav-list" id="checklistsTabsContainer"></nav>
+                        <div class="checklists-sidebar-actions" id="checklistsSidebarActions"></div>
                     </div>
                     <div class="checklist-editor">
                         <div class="checklist-header">
@@ -2138,17 +2139,20 @@
     <!-- Project Workroom Modal -->
     <dialog id="checklistModal" class="checklist-modal workroom-modal">
         <header class="workroom-header">
-            <div class="workroom-title-group">
-                <div class="workroom-modal-title">
-                    <h2 class="title">
-                        <button type="button" id="workroomProjectLink" class="workroom-project-link"
-                            aria-label="Open project folder">
-                            Project Workroom
-                        </button>
-                    </h2>
+            <div class="workroom-header-content">
+                <div class="workroom-title-group">
+                    <div class="workroom-modal-title">
+                        <h2 class="title" id="workroomProjectLabel">Project Workroom</h2>
+                    </div>
+                    <div class="workroom-select-wrapper">
+                        <select id="checklistDeliverableSelect"></select>
+                    </div>
                 </div>
-                <div class="workroom-select-wrapper">
-                    <select id="checklistDeliverableSelect"></select>
+                <div class="workroom-root-folder-controls">
+                    <input id="workroomRootFolderInput" class="workroom-root-folder-input" type="text"
+                        placeholder="Root project folder path..." aria-label="Root project folder path" />
+                    <button type="button" class="btn tiny" id="workroomSelectRootFolderBtn">Select Root Folder</button>
+                    <button type="button" class="btn tiny ghost" id="workroomOpenRootFolderBtn">Open Root Folder</button>
                 </div>
             </div>
             <button class="icon-btn" id="checklistModalCloseBtn" aria-label="Close">

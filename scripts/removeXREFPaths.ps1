@@ -134,6 +134,150 @@ function Get-CleanFileName([string]$name) {
   return $clean
 }
 
+function Expand-ZipToTempFolder {
+  param([Parameter(Mandatory = $true)][string]$ZipPath)
+
+  $fullZipPath = [IO.Path]::GetFullPath($ZipPath)
+  if (-not (Test-Path -LiteralPath $fullZipPath)) {
+    throw "ZIP file not found: $fullZipPath"
+  }
+
+  $tempFolder = Join-Path -Path ([IO.Path]::GetTempPath()) -ChildPath ("removeXrefPaths_zip_{0}" -f ([guid]::NewGuid().ToString("N")))
+  New-Item -Path $tempFolder -ItemType Directory -Force | Out-Null
+
+  try {
+    Expand-Archive -LiteralPath $fullZipPath -DestinationPath $tempFolder -Force -ErrorAction Stop
+  }
+  catch {
+    try {
+      Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
+      [System.IO.Compression.ZipFile]::ExtractToDirectory($fullZipPath, $tempFolder)
+    }
+    catch {
+      Remove-TempExtractionFolderSafely -FolderPath $tempFolder
+      throw "Unable to extract ZIP '$fullZipPath'. $($_.Exception.Message)"
+    }
+  }
+
+  return $tempFolder
+}
+
+function Get-DwgFilesUnderFolder {
+  param([string]$RootPath)
+
+  if ([string]::IsNullOrWhiteSpace($RootPath) -or -not (Test-Path -LiteralPath $RootPath)) {
+    return @()
+  }
+
+  return @(
+    Get-ChildItem -LiteralPath $RootPath -Recurse -File -Filter "*.dwg" -ErrorAction SilentlyContinue |
+      ForEach-Object { $_.FullName }
+  )
+}
+
+function Remove-TempExtractionFolderSafely {
+  param([string]$FolderPath)
+
+  if ([string]::IsNullOrWhiteSpace($FolderPath)) { return }
+
+  try {
+    if (Test-Path -LiteralPath $FolderPath) {
+      Remove-Item -LiteralPath $FolderPath -Recurse -Force -ErrorAction Stop
+      Write-Host "PROGRESS: Removed temporary extraction folder: $FolderPath"
+    }
+  }
+  catch {
+    Write-Host "PROGRESS: WARNING: Failed to remove temporary extraction folder '$FolderPath'. $($_.Exception.Message)"
+  }
+}
+
+function Show-SourceFileSelectionPrompt {
+  param([string]$InitialDirectory = "")
+
+  $promptForm = New-Object System.Windows.Forms.Form
+  $promptForm.Text = "Select ZIP or DWG source file(s)"
+  $promptForm.StartPosition = "CenterScreen"
+  $promptForm.Size = New-Object System.Drawing.Size(600, 210)
+  $promptForm.MinimumSize = New-Object System.Drawing.Size(600, 210)
+  $promptForm.MaximumSize = New-Object System.Drawing.Size(600, 210)
+  $promptForm.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
+  $promptForm.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::Font
+  $promptForm.MaximizeBox = $false
+  $promptForm.MinimizeBox = $false
+  $promptForm.TopMost = $true
+  $promptForm.ShowInTaskbar = $true
+
+  $lblPrompt = New-Object System.Windows.Forms.Label
+  $lblPrompt.Text = "Choose exactly one ZIP file or one or more DWG files. Mixed ZIP + DWG selection is not allowed."
+  $lblPrompt.Location = New-Object System.Drawing.Point(16, 16)
+  $lblPrompt.Size = New-Object System.Drawing.Size(560, 52)
+  $lblPrompt.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+  $promptForm.Controls.Add($lblPrompt)
+
+  $btnSelectFiles = New-Object System.Windows.Forms.Button
+  $btnSelectFiles.Text = "Select ZIP or DWG Files..."
+  $btnSelectFiles.Size = New-Object System.Drawing.Size(250, 44)
+  $btnSelectFiles.Location = New-Object System.Drawing.Point(222, 106)
+  $btnSelectFiles.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Right
+  $btnSelectFiles.Font = New-Object System.Drawing.Font("Segoe UI", 9.5, [System.Drawing.FontStyle]::Bold)
+  $btnSelectFiles.FlatStyle = [System.Windows.Forms.FlatStyle]::System
+  $promptForm.Controls.Add($btnSelectFiles)
+
+  $btnExitPrompt = New-Object System.Windows.Forms.Button
+  $btnExitPrompt.Text = "Exit"
+  $btnExitPrompt.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+  $btnExitPrompt.Size = New-Object System.Drawing.Size(110, 44)
+  $btnExitPrompt.Location = New-Object System.Drawing.Point(474, 106)
+  $btnExitPrompt.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Right
+  $btnExitPrompt.Font = New-Object System.Drawing.Font("Segoe UI", 10)
+  $btnExitPrompt.FlatStyle = [System.Windows.Forms.FlatStyle]::System
+  $promptForm.Controls.Add($btnExitPrompt)
+
+  $promptForm.CancelButton = $btnExitPrompt
+  $promptForm.AcceptButton = $btnSelectFiles
+
+  $dlg = New-Object System.Windows.Forms.OpenFileDialog
+  $dlg.Title = "Select ZIP or DWG file(s)"
+  $dlg.Filter = "CAD inputs (*.zip;*.dwg)|*.zip;*.dwg|ZIP files (*.zip)|*.zip|DWG files (*.dwg)|*.dwg"
+  $dlg.Multiselect = $true
+  $dlg.CheckFileExists = $true
+  $dlg.CheckPathExists = $true
+  $dlg.RestoreDirectory = $true
+  if ($InitialDirectory -and (Test-Path $InitialDirectory)) {
+    $dlg.InitialDirectory = $InitialDirectory
+  }
+
+  $btnSelectFiles.add_Click({
+      $promptForm.TopMost = $true
+      $promptForm.Activate()
+      $result = $dlg.ShowDialog($promptForm)
+      if ($result -eq [System.Windows.Forms.DialogResult]::OK -and $dlg.FileNames.Count -gt 0) {
+        $promptForm.Tag = [string[]]$dlg.FileNames
+        $promptForm.DialogResult = [System.Windows.Forms.DialogResult]::OK
+        $promptForm.Close()
+        return
+      }
+      $promptForm.TopMost = $true
+      $promptForm.Activate()
+      $promptForm.BringToFront()
+    })
+
+  $promptForm.add_Shown({
+      $promptForm.Activate()
+      $promptForm.BringToFront()
+      $btnSelectFiles.PerformClick()
+    })
+
+  $promptResult = $promptForm.ShowDialog()
+  if ($promptResult -eq [System.Windows.Forms.DialogResult]::OK) {
+    $selectedFiles = @($promptForm.Tag)
+    if ($selectedFiles.Count -gt 0) {
+      return $selectedFiles
+    }
+  }
+  return $null
+}
+
 function Show-DwgFileSelectionPrompt {
   param([string]$InitialDirectory = "")
 
@@ -344,146 +488,290 @@ Set-Content -Encoding ASCII -Path $script -Value $scriptContent
 
 # Resolve files: prefer preselected list, otherwise open custom picker.
 $files = @()
-if (-not [string]::IsNullOrWhiteSpace($FilesListPath) -and (Test-Path $FilesListPath)) {
-  $files = @(
-    Get-Content -Path $FilesListPath -Encoding UTF8 |
-      Where-Object { $_ -and $_.Trim() -and (Test-Path $_.Trim()) } |
-      ForEach-Object { $_.Trim() }
-  )
-  if ($files.Count -gt 0) {
-    Write-Host "PROGRESS: Using $($files.Count) DWG file(s) from auto-selected project folder."
-  }
-  else {
-    Write-Host "PROGRESS: Provided files list was empty. Opening file picker..."
-  }
-}
-elseif (-not [string]::IsNullOrWhiteSpace($FilesListPath)) {
-  Write-Host "PROGRESS: Provided files list path not found. Opening file picker..."
-}
+$zipSelected = $false
+$zipOutputRoot = ""
+$tempExtractionFolders = @()
+$cancelled = $false
 
-if (-not $files -or $files.Count -eq 0) {
-  $files = Show-DwgFileSelectionPrompt -InitialDirectory $DefaultDirectory
-  if (-not $files -or $files.Count -eq 0) {
-    Write-Host "PROGRESS: Cancelled. No files selected."
-    exit 0
-  }
-}
-
-# Normalize to string array for single-file selection consistency.
-$files = @($files)
-Write-Host "PROGRESS: Processing $($files.Count) file(s)..."
-
-$disciplineShort = Get-DisciplineShort $DisciplineShort
-$failed = @()
-$i = 0
-foreach ($dwg in $files) {
-  $i++
-  $name = [IO.Path]::GetFileName($dwg)
-  Write-Host "PROGRESS: Preparing $i of $($files.Count): $name"
-
-  try {
-    $fullPath = [IO.Path]::GetFullPath($dwg)
-    $parts = $fullPath -split '[\\/]'
-    $xrefIndex = Find-FolderIndex $parts 'Xrefs'
-    if ($xrefIndex -lt 0) { $xrefIndex = Find-FolderIndex $parts 'Xref' }
-    $archIndex = Find-FolderIndex $parts 'Arch'
-
-    $sourcePath = $fullPath
-    $workingPath = $fullPath
-    $targetDir = Split-Path -Parent $fullPath
-    $copiedFromArch = $false
-    if ($xrefIndex -ge 0) {
-      # Already in Xrefs/Xref folder - use as-is
-      $workingPath = $fullPath
-    }
-    elseif ($archIndex -ge 0) {
-      # In Arch folder - copy to Xrefs folder (directly, no subfolders)
-      if ($archIndex -le 0) {
-        $projectRoot = $parts[0]
-      }
-      else {
-        $projectRoot = Join-PathParts $parts[0..($archIndex - 1)]
-      }
-      # Put files directly in Xrefs folder (no subfolder preservation)
-      $targetDir = Join-Path -Path $projectRoot -ChildPath "Xrefs"
-      if (-not (Test-Path $targetDir)) {
-        # Only create if it doesn't exist
-        New-Item -Path $targetDir -ItemType Directory -Force | Out-Null
-        Write-Host "PROGRESS: Created Xrefs folder at $targetDir"
-      }
-      $copiedFromArch = $true
-      Write-Host "PROGRESS: Preparing Arch source for Xrefs transfer: $name"
-    }
-
-    $baseName = [IO.Path]::GetFileNameWithoutExtension($sourcePath)
-    $sheetId = Get-SheetIdFromName $baseName
-    if ($sheetId) {
-      $targetBase = Get-CleanFileName $sheetId
+try {
+  if (-not [string]::IsNullOrWhiteSpace($FilesListPath) -and (Test-Path $FilesListPath)) {
+    $files = @(
+      Get-Content -Path $FilesListPath -Encoding UTF8 |
+        Where-Object { $_ -and $_.Trim() -and (Test-Path $_.Trim()) } |
+        ForEach-Object { [IO.Path]::GetFullPath($_.Trim()) }
+    )
+    if ($files.Count -gt 0) {
+      Write-Host "PROGRESS: Using $($files.Count) DWG file(s) from auto-selected project folder."
     }
     else {
-      $targetBase = Get-CleanFileName $baseName
+      Write-Host "PROGRESS: Provided files list was empty. Opening file picker..."
     }
-    $targetName = "{0} ({1})" -f $targetBase, $disciplineShort
-    $targetPath = Join-Path -Path $targetDir -ChildPath "$targetName.dwg"
+  }
+  elseif (-not [string]::IsNullOrWhiteSpace($FilesListPath)) {
+    Write-Host "PROGRESS: Provided files list path not found. Opening file picker..."
+  }
 
-    if ($copiedFromArch) {
-      $incomingName = "__incoming__{0}.dwg" -f ([guid]::NewGuid().ToString('N'))
-      $incomingPath = Join-Path -Path $targetDir -ChildPath $incomingName
-      Copy-Item -LiteralPath $sourcePath -Destination $incomingPath -Force
-      $workingPath = $incomingPath
-      Write-Host "PROGRESS: Staged Arch source in Xrefs as $incomingName"
-      Write-Host "PROGRESS: Final target in Xrefs: $([IO.Path]::GetFileName($targetPath))"
-    }
+  if (-not $files -or $files.Count -eq 0) {
+    while ($true) {
+      $sourceSelections = Show-SourceFileSelectionPrompt -InitialDirectory $DefaultDirectory
+      if (-not $sourceSelections -or @($sourceSelections).Count -eq 0) {
+        Write-Host "PROGRESS: Cancelled. No files selected."
+        $cancelled = $true
+        break
+      }
 
-    $existing = Get-ChildItem -LiteralPath $targetDir -File |
-      Where-Object { $_.BaseName -ieq $targetName }
-    Write-Host "PROGRESS: Checking exact target-name collisions for '$targetName' in $targetDir"
-    foreach ($item in $existing) {
-      if ($item.FullName -ne $workingPath) {
-        # Archive the existing file instead of deleting it
-        $archiveDir = Join-Path -Path $targetDir -ChildPath "Archive"
-        if (-not (Test-Path $archiveDir)) {
-          New-Item -Path $archiveDir -ItemType Directory -Force | Out-Null
-          Write-Host "PROGRESS: Created Archive folder at $archiveDir"
+      $resolvedSelections = @(
+        @($sourceSelections) |
+          ForEach-Object { $_.ToString().Trim() } |
+          Where-Object { $_ -and (Test-Path -LiteralPath $_) } |
+          ForEach-Object { [IO.Path]::GetFullPath($_) }
+      )
+      if ($resolvedSelections.Count -eq 0) {
+        Write-Host "PROGRESS: No valid files selected. Choose one ZIP or DWG file(s)."
+        continue
+      }
+
+      $zipSelections = @(
+        $resolvedSelections | Where-Object { [IO.Path]::GetExtension($_) -ieq ".zip" }
+      )
+      $dwgSelections = @(
+        $resolvedSelections | Where-Object { [IO.Path]::GetExtension($_) -ieq ".dwg" }
+      )
+      $unsupportedSelectionCount = $resolvedSelections.Count - ($zipSelections.Count + $dwgSelections.Count)
+      if ($unsupportedSelectionCount -gt 0) {
+        Write-Host "PROGRESS: ERROR: Only ZIP and DWG files are supported. Select one ZIP file or DWG files only."
+        continue
+      }
+
+      if ($zipSelections.Count -gt 0 -and $dwgSelections.Count -gt 0) {
+        Write-Host "PROGRESS: ERROR: Mixed selection is not allowed. Select exactly one ZIP file or one or more DWG files."
+        continue
+      }
+
+      if ($zipSelections.Count -gt 1) {
+        Write-Host "PROGRESS: ERROR: Select only one ZIP file at a time, or select DWG files directly."
+        continue
+      }
+
+      if ($zipSelections.Count -eq 1) {
+        $zipPath = $zipSelections[0]
+        Write-Host "PROGRESS: ZIP source selected. Extracting archive..."
+
+        try {
+          $zipExtractRoot = Expand-ZipToTempFolder -ZipPath $zipPath
+          $tempExtractionFolders += $zipExtractRoot
+          Write-Host "PROGRESS: Extracted ZIP to temporary folder: $zipExtractRoot"
         }
-        $timestamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
-        $archiveName = "{0}_{1}{2}" -f $item.BaseName, $timestamp, $item.Extension
-        $archivePath = Join-Path -Path $archiveDir -ChildPath $archiveName
-        Move-Item -LiteralPath $item.FullName -Destination $archivePath -Force
-        Write-Host "PROGRESS: Archived existing file to $archiveName"
+        catch {
+          Write-Host "PROGRESS: ERROR: Failed to extract ZIP file. $($_.Exception.Message)"
+          continue
+        }
+
+        $zipDwgs = Get-DwgFilesUnderFolder -RootPath $zipExtractRoot
+        if ($zipDwgs.Count -eq 0) {
+          Write-Host "PROGRESS: No DWG files were found inside the selected ZIP. Choose another ZIP or select DWGs directly."
+          Remove-TempExtractionFolderSafely -FolderPath $zipExtractRoot
+          continue
+        }
+
+        Write-Host "PROGRESS: Found $($zipDwgs.Count) DWG file(s) in extracted ZIP. Select DWG file(s) to process."
+        $selectedFromZip = Show-DwgFileSelectionPrompt -InitialDirectory $zipExtractRoot
+        if (-not $selectedFromZip -or @($selectedFromZip).Count -eq 0) {
+          Write-Host "PROGRESS: Cancelled. No files selected."
+          $cancelled = $true
+          break
+        }
+
+        $zipRootPrefix = [IO.Path]::GetFullPath($zipExtractRoot).TrimEnd('\') + '\'
+        $selectedZipDwgs = @(
+          @($selectedFromZip) |
+            ForEach-Object { $_.ToString().Trim() } |
+            Where-Object {
+              $_ -and
+              (Test-Path -LiteralPath $_) -and
+              ([IO.Path]::GetExtension($_) -ieq ".dwg")
+            } |
+            ForEach-Object { [IO.Path]::GetFullPath($_) } |
+            Where-Object { $_.StartsWith($zipRootPrefix, [System.StringComparison]::OrdinalIgnoreCase) }
+        )
+
+        if ($selectedZipDwgs.Count -eq 0) {
+          Write-Host "PROGRESS: No DWG files from the extracted ZIP were selected. Choose source files again."
+          Remove-TempExtractionFolderSafely -FolderPath $zipExtractRoot
+          continue
+        }
+        if ($selectedZipDwgs.Count -ne @($selectedFromZip).Count) {
+          Write-Host "PROGRESS: Some selected files were outside the extracted ZIP folder and were ignored."
+        }
+
+        $zipSelected = $true
+        $zipBaseName = [IO.Path]::GetFileNameWithoutExtension($zipPath)
+        $zipParentFolder = Split-Path -Parent $zipPath
+        $zipOutputRoot = Join-Path -Path $zipParentFolder -ChildPath ("{0}_Prepared" -f $zipBaseName)
+        if (-not (Test-Path -LiteralPath $zipOutputRoot)) {
+          New-Item -Path $zipOutputRoot -ItemType Directory -Force | Out-Null
+          Write-Host "PROGRESS: Created ZIP output folder at $zipOutputRoot"
+        }
+        Write-Host "PROGRESS: ZIP output folder: $zipOutputRoot"
+
+        $files = @($selectedZipDwgs)
+        break
+      }
+
+      if ($dwgSelections.Count -gt 0) {
+        $files = @($dwgSelections)
+        break
+      }
+
+      Write-Host "PROGRESS: ERROR: Select exactly one ZIP file or one or more DWG files."
+    }
+  }
+
+  if ($cancelled) {
+    return
+  }
+
+  if (-not $files -or $files.Count -eq 0) {
+    Write-Host "PROGRESS: Cancelled. No files selected."
+    return
+  }
+
+  # Normalize to string array for single-file selection consistency.
+  $files = @($files)
+  Write-Host "PROGRESS: Processing $($files.Count) file(s)..."
+
+  $disciplineShort = Get-DisciplineShort $DisciplineShort
+  $failed = @()
+  $i = 0
+  foreach ($dwg in $files) {
+    $i++
+    $name = [IO.Path]::GetFileName($dwg)
+    Write-Host "PROGRESS: Preparing $i of $($files.Count): $name"
+
+    try {
+      $fullPath = [IO.Path]::GetFullPath($dwg)
+      $parts = $fullPath -split '[\\/]'
+
+      $sourcePath = $fullPath
+      $workingPath = $fullPath
+      $targetDir = Split-Path -Parent $fullPath
+      $copiedFromArch = $false
+
+      if ($zipSelected) {
+        $targetDir = $zipOutputRoot
+        if (-not (Test-Path -LiteralPath $targetDir)) {
+          New-Item -Path $targetDir -ItemType Directory -Force | Out-Null
+        }
+      }
+      else {
+        $xrefIndex = Find-FolderIndex $parts 'Xrefs'
+        if ($xrefIndex -lt 0) { $xrefIndex = Find-FolderIndex $parts 'Xref' }
+        $archIndex = Find-FolderIndex $parts 'Arch'
+
+        if ($xrefIndex -ge 0) {
+          # Already in Xrefs/Xref folder - use as-is
+          $workingPath = $fullPath
+        }
+        elseif ($archIndex -ge 0) {
+          # In Arch folder - copy to Xrefs folder (directly, no subfolders)
+          if ($archIndex -le 0) {
+            $projectRoot = $parts[0]
+          }
+          else {
+            $projectRoot = Join-PathParts $parts[0..($archIndex - 1)]
+          }
+          # Put files directly in Xrefs folder (no subfolder preservation)
+          $targetDir = Join-Path -Path $projectRoot -ChildPath "Xrefs"
+          if (-not (Test-Path $targetDir)) {
+            # Only create if it doesn't exist
+            New-Item -Path $targetDir -ItemType Directory -Force | Out-Null
+            Write-Host "PROGRESS: Created Xrefs folder at $targetDir"
+          }
+          $copiedFromArch = $true
+          Write-Host "PROGRESS: Preparing Arch source for Xrefs transfer: $name"
+        }
+      }
+
+      $baseName = [IO.Path]::GetFileNameWithoutExtension($sourcePath)
+      $sheetId = Get-SheetIdFromName $baseName
+      if ($sheetId) {
+        $targetBase = Get-CleanFileName $sheetId
+      }
+      else {
+        $targetBase = Get-CleanFileName $baseName
+      }
+      $targetName = "{0} ({1})" -f $targetBase, $disciplineShort
+      $targetPath = Join-Path -Path $targetDir -ChildPath "$targetName.dwg"
+
+      if ($copiedFromArch) {
+        $incomingName = "__incoming__{0}.dwg" -f ([guid]::NewGuid().ToString('N'))
+        $incomingPath = Join-Path -Path $targetDir -ChildPath $incomingName
+        Copy-Item -LiteralPath $sourcePath -Destination $incomingPath -Force
+        $workingPath = $incomingPath
+        Write-Host "PROGRESS: Staged Arch source in Xrefs as $incomingName"
+        Write-Host "PROGRESS: Final target in Xrefs: $([IO.Path]::GetFileName($targetPath))"
+      }
+
+      $existing = Get-ChildItem -LiteralPath $targetDir -File |
+        Where-Object { $_.BaseName -ieq $targetName }
+      Write-Host "PROGRESS: Checking exact target-name collisions for '$targetName' in $targetDir"
+      foreach ($item in $existing) {
+        if ($item.FullName -ne $workingPath) {
+          # Archive the existing file instead of deleting it
+          $archiveDir = Join-Path -Path $targetDir -ChildPath "Archive"
+          if (-not (Test-Path $archiveDir)) {
+            New-Item -Path $archiveDir -ItemType Directory -Force | Out-Null
+            Write-Host "PROGRESS: Created Archive folder at $archiveDir"
+          }
+          $timestamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
+          $archiveName = "{0}_{1}{2}" -f $item.BaseName, $timestamp, $item.Extension
+          $archivePath = Join-Path -Path $archiveDir -ChildPath $archiveName
+          Move-Item -LiteralPath $item.FullName -Destination $archivePath -Force
+          Write-Host "PROGRESS: Archived existing file to $archiveName"
+        }
+      }
+
+      if ($workingPath -ne $targetPath) {
+        Move-Item -LiteralPath $workingPath -Destination $targetPath -Force
+        $workingPath = $targetPath
       }
     }
-
-    if ($workingPath -ne $targetPath) {
-      Move-Item -LiteralPath $workingPath -Destination $targetPath -Force
-      $workingPath = $targetPath
+    catch {
+      Write-Host "PROGRESS: ERROR: Failed to prepare $name - $_"
+      $failed += $dwg
+      continue
     }
-  }
-  catch {
-    Write-Host "PROGRESS: ERROR: Failed to prepare $name - $_"
-    $failed += $dwg
-    continue
+
+    Write-Host "PROGRESS: Processing $i of $($files.Count): $([IO.Path]::GetFileName($workingPath))"
+
+    if ($SkipAcad) {
+      Write-Host "PROGRESS: SkipAcad enabled. Skipping accoreconsole execution for $([IO.Path]::GetFileName($workingPath))."
+      continue
+    }
+
+    # IMPORTANT: no /ld here; we NETLOAD via the .scr
+    # The 2>&1 redirects stderr to stdout, so the Python wrapper can catch errors.
+    & $acadCore /i "$workingPath" /s "$script" 2>&1
+    $code = $LASTEXITCODE
+    if ($code -ne 0) { $failed += $workingPath }
   }
 
-  Write-Host "PROGRESS: Processing $i of $($files.Count): $([IO.Path]::GetFileName($workingPath))"
+  Write-Progress -Activity "Processing DWGs" -Completed
 
-  if ($SkipAcad) {
-    Write-Host "PROGRESS: SkipAcad enabled. Skipping accoreconsole execution for $([IO.Path]::GetFileName($workingPath))."
-    continue
+  if ($failed.Count) {
+    Write-Host "PROGRESS: ERROR: $($failed.Count) of $($files.Count) file(s) failed to process."
   }
-
-  # IMPORTANT: no /ld here; we NETLOAD via the .scr
-  # The 2>&1 redirects stderr to stdout, so the Python wrapper can catch errors.
-  & $acadCore /i "$workingPath" /s "$script" 2>&1
-  $code = $LASTEXITCODE
-  if ($code -ne 0) { $failed += $workingPath }
+  else {
+    Write-Host "PROGRESS: Successfully processed $($files.Count) drawing(s)."
+  }
 }
-
-Write-Progress -Activity "Processing DWGs" -Completed
-
-if ($failed.Count) {
-  Write-Host "PROGRESS: ERROR: $($failed.Count) of $($files.Count) file(s) failed to process."
-}
-else {
-  Write-Host "PROGRESS: Successfully processed $($files.Count) drawing(s)."
+finally {
+  $uniqueTempExtractionFolders = @(
+    $tempExtractionFolders |
+      Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+      Sort-Object -Unique
+  )
+  foreach ($tempFolder in $uniqueTempExtractionFolders) {
+    Remove-TempExtractionFolderSafely -FolderPath $tempFolder
+  }
 }

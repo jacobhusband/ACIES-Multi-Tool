@@ -533,10 +533,9 @@
                                 <div class="tool-icon">
                                     <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                         stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <path d="M9 18a5 5 0 0 1 5-5h1"></path>
-                                        <path d="M14 6h1a5 5 0 0 1 5 5v1"></path>
-                                        <rect x="4" y="18" width="6" height="4" rx="1"></rect>
-                                        <rect x="14" y="2" width="6" height="4" rx="1"></rect>
+                                        <path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1.3.5 2.6 1.5 3.5.8.8 1.3 1.5 1.5 2.5"></path>
+                                        <path d="M9 18h6"></path>
+                                        <path d="M10 22h4"></path>
                                     </svg>
                                 </div>
                                 <div class="tool-card-header">Light Fixture Scheduler</div>
@@ -2154,6 +2153,7 @@
                     <button type="button" class="btn tiny" id="workroomSelectRootFolderBtn">Select Root Folder</button>
                     <button type="button" class="btn tiny ghost" id="workroomOpenRootFolderBtn">Open Root Folder</button>
                 </div>
+                <div id="workroomCadRouting" class="workroom-cad-routing" hidden></div>
             </div>
             <button class="icon-btn" id="checklistModalCloseBtn" aria-label="Close">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -2265,7 +2265,6 @@
                             </svg>
                         </button>
                     </div>
-                    <div id="workroomCadRouting" class="workroom-cad-routing" hidden></div>
                     <div id="workroomToolsList" class="workroom-tools-list"></div>
                     <div id="workroomToolStatus" class="workroom-tool-status" aria-live="polite">Ready.</div>
                 </section>

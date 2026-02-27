@@ -230,6 +230,30 @@ def collect_workroom_icon_state(window, tool_ids):
         }})()""",
     ) or []
 
+
+def collect_workroom_discipline_state(window):
+    return parse_js_json(
+        window,
+        """(() => {
+            const container = document.getElementById("workroomCadRouting");
+            if (!container) {
+                return { exists: false, hidden: true, options: [] };
+            }
+            const options = Array.from(
+                container.querySelectorAll('input[name="workroomCadDiscipline"]')
+            ).map((input) => ({
+                value: String(input.value || ""),
+                checked: !!input.checked,
+            }));
+            return {
+                exists: true,
+                hidden: !!container.hidden,
+                options,
+            };
+        })()""",
+    ) or {"exists": False, "hidden": True, "options": []}
+
+
 def run_tool_from_direct_card_click(window, tool_id):
     return parse_js_json(
         window,
@@ -298,8 +322,8 @@ def run_automation(
     tool_results = []
     try:
         expected_saved_project_path = normalize_path_for_compare(saved_project_path)
-        expected_electrical_folder = normalize_path_for_compare(
-            project_root / "Electrical"
+        expected_mechanical_folder = normalize_path_for_compare(
+            project_root / "Mechanical"
         )
         expected_arch_folder = normalize_path_for_compare(project_root / "Arch")
 
@@ -322,6 +346,53 @@ def run_automation(
             capture_window_screenshot(window, artifacts_dir / "01-workroom-open.png")
         )
         workroom_icon_state = collect_workroom_icon_state(window, WORKROOM_TOOL_IDS)
+        discipline_state = collect_workroom_discipline_state(window)
+        if not discipline_state.get("exists") or discipline_state.get("hidden"):
+            raise RuntimeError("Workroom discipline selector is missing or hidden.")
+        discipline_options = discipline_state.get("options") or []
+        if not discipline_options:
+            raise RuntimeError("Workroom discipline selector rendered without options.")
+        checked_values = [
+            entry.get("value")
+            for entry in discipline_options
+            if entry.get("checked")
+        ]
+        if checked_values != ["Electrical"]:
+            raise RuntimeError(
+                "Workroom discipline selector did not default to Electrical in single-discipline mode "
+                f"(checked={checked_values})."
+            )
+        selected_discipline_state = parse_js_json(
+            window,
+            """(() => {
+                const target = document.querySelector(
+                    'input[name="workroomCadDiscipline"][value="Mechanical"]'
+                );
+                if (!target) {
+                    return { exists: false, selected: "" };
+                }
+                target.click();
+                return {
+                    exists: true,
+                    selected: target.checked ? "Mechanical" : "",
+                };
+            })()""",
+        ) or {}
+        if not selected_discipline_state.get("exists"):
+            raise RuntimeError(
+                "Workroom discipline selector is missing the Mechanical option."
+            )
+        discipline_state = collect_workroom_discipline_state(window)
+        selected_checked_values = [
+            entry.get("value")
+            for entry in (discipline_state.get("options") or [])
+            if entry.get("checked")
+        ]
+        if selected_checked_values != ["Mechanical"]:
+            raise RuntimeError(
+                "Workroom discipline selector did not persist Mechanical selection "
+                f"(checked={selected_checked_values})."
+            )
         missing_workroom_rows = [
             entry.get("toolId")
             for entry in workroom_icon_state
@@ -432,8 +503,14 @@ def run_automation(
                 raise RuntimeError(
                     f"{cad_tool_id} did not report auto-selected DWGs in workroom test mode."
                 )
+            resolved_discipline = str(record.get("discipline") or "").strip()
+            if resolved_discipline != "Mechanical":
+                raise RuntimeError(
+                    f"{cad_tool_id} did not keep the selected Mechanical discipline "
+                    f"(discipline={resolved_discipline or '<empty>'})."
+                )
             folder_path = normalize_path_for_compare(record.get("folder_path"))
-            if folder_path != expected_electrical_folder:
+            if folder_path != expected_mechanical_folder:
                 raise RuntimeError(
                     f"{cad_tool_id} resolved DWGs from an unexpected folder "
                     f"(folder_path={record.get('folder_path') or '<empty>'})."
@@ -477,6 +554,7 @@ def run_automation(
         result_holder["status"] = "success"
         result_holder["workroom_state"] = workroom_state
         result_holder["workroom_icons"] = workroom_icon_state
+        result_holder["discipline_state"] = discipline_state
         result_holder["tools"] = tool_results
         result_holder["screenshots"] = screenshots
         result_holder["test_records"] = test_records
@@ -520,12 +598,16 @@ def main():
     project_root = fixture_root / "Nelson" / "BAC" / "2025" / "250439 E2E Project"
     saved_project_path = project_root / "Arch" / "2025-08-18 DD90"
     electrical_dir = project_root / "Electrical"
+    mechanical_dir = project_root / "Mechanical"
     arch_dir = project_root / "Arch"
     saved_project_path.mkdir(parents=True, exist_ok=True)
     electrical_dir.mkdir(parents=True, exist_ok=True)
+    mechanical_dir.mkdir(parents=True, exist_ok=True)
     arch_dir.mkdir(parents=True, exist_ok=True)
     (electrical_dir / "E2E-001.dwg").write_text("", encoding="utf-8")
     (electrical_dir / "E2E-002.dwg").write_text("", encoding="utf-8")
+    (mechanical_dir / "M-001.dwg").write_text("", encoding="utf-8")
+    (mechanical_dir / "M-002.dwg").write_text("", encoding="utf-8")
     (arch_dir / "A-001.dwg").write_text("", encoding="utf-8")
 
     existing_settings = read_json_or_default(SETTINGS_FILE, {})

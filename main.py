@@ -4136,9 +4136,6 @@ TASK 3: LOAD TYPES
 
     def _resolve_workroom_discipline(self, settings, launch_context):
         settings_disciplines = self._get_settings_workroom_disciplines(settings)
-        if len(settings_disciplines) == 1:
-            return settings_disciplines[0], 'settings_single'
-
         context = self._normalize_launch_context(launch_context)
         requested = str(context.get('discipline') or '').strip().lower()
         mapped_requested = {
@@ -4146,8 +4143,11 @@ TASK 3: LOAD TYPES
             'mechanical': 'Mechanical',
             'plumbing': 'Plumbing',
         }.get(requested)
-        if mapped_requested and mapped_requested in settings_disciplines:
+        # Workroom selection should drive CAD routing when explicitly provided.
+        if mapped_requested:
             return mapped_requested, 'launch_context'
+        if len(settings_disciplines) == 1:
+            return settings_disciplines[0], 'settings_single'
         return settings_disciplines[0], 'settings_fallback'
 
     def _resolve_workroom_context(self, settings, launch_context):

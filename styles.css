@@ -6602,14 +6602,13 @@ input.input-warning {
 .workroom-cad-routing {
   display: flex;
   flex-direction: column;
-  gap: 0.22rem;
-  padding: 0.08rem 0.05rem 0.24rem;
-  border-bottom: 1px solid var(--glass-border);
+  gap: 0.24rem;
+  padding: 0;
 }
 
 .workroom-cad-routing-label {
   margin: 0;
-  font-size: 0.58rem;
+  font-size: 0.62rem;
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -6618,29 +6617,40 @@ input.input-warning {
 .workroom-cad-routing-group {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.18rem;
+  gap: 0.32rem;
+  align-items: center;
 }
 
-.workroom-cad-routing-btn {
-  border: 1px solid var(--glass-border);
-  border-radius: 999px;
-  background: var(--surface);
+.workroom-cad-routing-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.22rem;
+  min-height: 20px;
+}
+
+.workroom-cad-routing-radio {
+  margin: 0;
+  accent-color: var(--accent);
+  width: 0.85rem;
+  height: 0.85rem;
+}
+
+.workroom-cad-routing-radio-label {
   color: var(--text-secondary);
-  font-size: 0.6rem;
+  font-size: 0.72rem;
   line-height: 1;
-  padding: 0.18rem 0.42rem;
   cursor: pointer;
+  user-select: none;
 }
 
-.workroom-cad-routing-btn:hover {
-  border-color: var(--accent);
+.workroom-cad-routing-radio:checked + .workroom-cad-routing-radio-label {
   color: var(--text);
+  font-weight: 600;
 }
 
-.workroom-cad-routing-btn.active {
-  border-color: var(--accent);
-  background: var(--accent-dim);
-  color: var(--text);
+.workroom-cad-routing-help {
+  margin: 0;
+  line-height: 1.3;
 }
 
 .workroom-tools-list {
@@ -7167,6 +7177,10 @@ input.input-warning {
   .workroom-root-folder-controls #workroomSelectRootFolderBtn,
   .workroom-root-folder-controls #workroomOpenRootFolderBtn {
     width: 100%;
+  }
+
+  .workroom-cad-routing-group {
+    gap: 0.24rem;
   }
 
   .workroom-body {

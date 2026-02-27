@@ -109,6 +109,7 @@ let activeChecklistProject = null;
 let activeChecklistDeliverable = null;
 let activeChecklistTab = null;
 let activeWorkroomLeftTab = "tasks";
+let workroomDisciplineNoticeShown = false;
 let workroomToolStatusState = {
   toolId: "",
   label: "",
@@ -547,43 +548,6 @@ const WORKROOM_LAUNCH_CONTEXT_TOOL_IDS = new Set([
   ...WORKROOM_TEMPLATE_TOOL_IDS,
 ]);
 const WORKROOM_HIDDEN_TOOL_IDS = new Set([]);
-const WORKROOM_DISCIPLINE_KEYWORDS = {
-  Electrical: [
-    /\belectrical\b/gi,
-    /\bpanel\b/gi,
-    /\blighting\b/gi,
-    /\bcircuit\b/gi,
-    /\breceptacle\b/gi,
-    /\bswitchgear\b/gi,
-    /\btransformer\b/gi,
-    /\bbreaker\b/gi,
-  ],
-  Mechanical: [
-    /\bmechanical\b/gi,
-    /\bhvac\b/gi,
-    /\ba\/c\b/gi,
-    /\bac\b/gi,
-    /\brtu\b/gi,
-    /\bahu\b/gi,
-    /\bair handler\b/gi,
-    /\bduct\b/gi,
-    /\bsupply air\b/gi,
-    /\breturn air\b/gi,
-    /\bexhaust\b/gi,
-  ],
-  Plumbing: [
-    /\bplumbing\b/gi,
-    /\bplumb\b/gi,
-    /\bpipe\b/gi,
-    /\bpiping\b/gi,
-    /\bwater\b/gi,
-    /\bsanitary\b/gi,
-    /\bsewer\b/gi,
-    /\bwaste\b/gi,
-    /\bdrain\b/gi,
-    /\bvent\b/gi,
-  ],
-};
 const MAX_HOURS_PER_DAY = 8;
 const WFH_SUFFIX = " - WFH";
 const TIMESHEET_SUMMARY_DELIVERABLE_ID = "__summary__";
@@ -686,11 +650,30 @@ function normalizeDisciplineList(value) {
   return ["Electrical"];
 }
 
+function getWorkroomConfiguredDisciplines() {
+  const resolved = [];
+  const seen = new Set();
+  normalizeDisciplineList(userSettings.discipline).forEach((discipline) => {
+    const normalized = normalizeWorkroomCadDiscipline(discipline, "");
+    if (!normalized || !WORKROOM_CAD_DISCIPLINES.includes(normalized)) return;
+    if (seen.has(normalized)) return;
+    seen.add(normalized);
+    resolved.push(normalized);
+  });
+  return resolved;
+}
+
 function getWorkroomAvailableDisciplines() {
-  const disciplines = normalizeDisciplineList(userSettings.discipline).filter((discipline) =>
-    WORKROOM_CAD_DISCIPLINES.includes(discipline)
-  );
-  return disciplines.length ? disciplines : ["Electrical"];
+  const configured = getWorkroomConfiguredDisciplines();
+  if (!configured.length) return [...WORKROOM_CAD_DISCIPLINES];
+  if (configured.length === 1) {
+    const primary = configured[0];
+    return [
+      primary,
+      ...WORKROOM_CAD_DISCIPLINES.filter((discipline) => discipline !== primary),
+    ];
+  }
+  return configured;
 }
 
 function getDisciplineFunction() {
@@ -8714,53 +8697,13 @@ function renderWorkroomProjectHeader() {
   };
 }
 
-function getWorkroomDeliverableKeywordCorpus(deliverable) {
-  if (!deliverable) return "";
-  const taskText = Array.isArray(deliverable.tasks)
-    ? deliverable.tasks
-      .map((task) => {
-        if (!task) return "";
-        if (typeof task === "string") return task;
-        return task.text || "";
-      })
-      .join(" ")
-    : "";
-  return [deliverable.name || "", deliverable.notes || "", taskText]
-    .join(" ")
-    .toLowerCase();
-}
-
-function inferWorkroomCadDiscipline(deliverable, candidates = []) {
-  const options = candidates.filter((discipline) =>
-    WORKROOM_CAD_DISCIPLINES.includes(discipline)
+function maybeShowWorkroomDisciplineNotice(configuredDisciplines = []) {
+  if (configuredDisciplines.length <= 1 || workroomDisciplineNoticeShown) return;
+  workroomDisciplineNoticeShown = true;
+  toast(
+    "Multiple disciplines detected. Select the correct discipline for this deliverable before running CAD tools.",
+    7000
   );
-  if (!options.length) return "Electrical";
-  if (options.length === 1) return options[0];
-
-  const corpus = getWorkroomDeliverableKeywordCorpus(deliverable);
-  if (!corpus) return options[0];
-
-  let bestDiscipline = options[0];
-  let bestScore = -1;
-  let tie = false;
-
-  options.forEach((discipline) => {
-    const patterns = WORKROOM_DISCIPLINE_KEYWORDS[discipline] || [];
-    const score = patterns.reduce((total, pattern) => {
-      const matches = corpus.match(pattern);
-      return total + (matches ? matches.length : 0);
-    }, 0);
-    if (score > bestScore) {
-      bestScore = score;
-      bestDiscipline = discipline;
-      tie = false;
-    } else if (score === bestScore) {
-      tie = true;
-    }
-  });
-
-  if (bestScore <= 0 || tie) return options[0];
-  return bestDiscipline;
 }
 
 function ensureWorkroomCadDiscipline(deliverable, disciplines = []) {
@@ -8771,12 +8714,12 @@ function ensureWorkroomCadDiscipline(deliverable, disciplines = []) {
   const existing = normalizeWorkroomCadDiscipline(deliverable.workroomCadDiscipline, "");
   if (existing && options.includes(existing)) return existing;
 
-  const inferred = inferWorkroomCadDiscipline(deliverable, options);
-  if (deliverable.workroomCadDiscipline !== inferred) {
-    deliverable.workroomCadDiscipline = inferred;
+  const fallbackDiscipline = options[0];
+  if (deliverable.workroomCadDiscipline !== fallbackDiscipline) {
+    deliverable.workroomCadDiscipline = fallbackDiscipline;
     debouncedSave();
   }
-  return inferred;
+  return fallbackDiscipline;
 }
 
 function renderWorkroomCadRoutingControl() {
@@ -8784,14 +8727,15 @@ function renderWorkroomCadRoutingControl() {
   if (!container) return;
 
   const { deliverable } = getActiveWorkroomContext();
+  const configuredDisciplines = getWorkroomConfiguredDisciplines();
   const disciplines = getWorkroomAvailableDisciplines();
-
-  if (!deliverable || disciplines.length <= 1) {
+  if (!deliverable || !disciplines.length) {
     container.hidden = true;
     container.innerHTML = "";
     return;
   }
 
+  maybeShowWorkroomDisciplineNotice(configuredDisciplines);
   const activeDiscipline = ensureWorkroomCadDiscipline(deliverable, disciplines);
   container.hidden = false;
   container.innerHTML = "";
@@ -8799,36 +8743,54 @@ function renderWorkroomCadRoutingControl() {
   container.appendChild(
     el("p", {
       className: "workroom-cad-routing-label",
-      textContent: "CAD Folder Discipline",
+      textContent: "Deliverable Discipline",
     })
   );
 
   const group = el("div", {
     className: "workroom-cad-routing-group",
     role: "group",
-    "aria-label": "CAD folder discipline",
+    "aria-label": "Deliverable discipline",
   });
 
-  disciplines.forEach((discipline) => {
-    group.appendChild(
-      el("button", {
-        type: "button",
-        className: `workroom-cad-routing-btn ${discipline === activeDiscipline ? "active" : ""}`,
-        textContent: discipline,
-        title: `Route Workroom CAD tools to ${discipline} folder`,
-        "aria-pressed": String(discipline === activeDiscipline),
-        onclick: () => {
-          if (deliverable.workroomCadDiscipline === discipline) return;
-          deliverable.workroomCadDiscipline = discipline;
-          save();
-          renderWorkroomCadRoutingControl();
-          renderWorkroomCadFilesPanel();
-        },
-      })
-    );
+  disciplines.forEach((discipline, index) => {
+    const inputId = `workroomCadDiscipline_${index}`;
+    const wrapper = el("div", { className: "workroom-cad-routing-option" });
+    const input = el("input", {
+      type: "radio",
+      id: inputId,
+      name: "workroomCadDiscipline",
+      className: "workroom-cad-routing-radio",
+      value: discipline,
+      checked: discipline === activeDiscipline,
+      onchange: () => {
+        if (!input.checked || deliverable.workroomCadDiscipline === discipline) return;
+        deliverable.workroomCadDiscipline = discipline;
+        save();
+        renderWorkroomCadRoutingControl();
+        renderWorkroomCadFilesPanel();
+      },
+    });
+    const label = el("label", {
+      htmlFor: inputId,
+      className: "workroom-cad-routing-radio-label",
+      textContent: discipline,
+      title: `Route Workroom CAD tools to ${discipline} folder`,
+    });
+    wrapper.append(input, label);
+    group.appendChild(wrapper);
   });
 
   container.appendChild(group);
+  if (configuredDisciplines.length > 1) {
+    container.appendChild(
+      el("p", {
+        className: "workroom-cad-routing-help tiny muted",
+        textContent:
+          "Select the correct discipline for the current deliverable so CAD tools scan the right folder.",
+      })
+    );
+  }
 }
 
 function buildWorkroomCadLaunchContext() {
@@ -9014,6 +8976,7 @@ function openChecklistModal(projectIndex) {
   checklistModalState.activeInstanceId = null;
   activeChecklistView = null;
   activeWorkroomLeftTab = "tasks";
+  workroomDisciplineNoticeShown = false;
 
   populateChecklistDeliverableSelect(project);
   document.getElementById("checklistModal").showModal();
@@ -9094,6 +9057,7 @@ function renderWorkroomLeftTabs() {
 
 function renderProjectWorkroom() {
   renderWorkroomProjectHeader();
+  renderWorkroomCadRoutingControl();
   renderWorkroomLeftTabs();
   renderWorkroomChecklistPanel();
   renderWorkroomTasksPanel();
@@ -9191,7 +9155,6 @@ function triggerWorkroomTool(toolId) {
 function renderWorkroomToolsPanel() {
   const toolsList = document.getElementById("workroomToolsList");
   if (!toolsList) return;
-  renderWorkroomCadRoutingControl();
 
   const tools = getWorkroomVisibleTools();
   toolsList.innerHTML = "";
@@ -9774,6 +9737,7 @@ document.getElementById("checklistModal")?.addEventListener("close", () => {
   activeChecklistDeliverable = null;
   activeChecklistView = null;
   activeWorkroomLeftTab = "tasks";
+  workroomDisciplineNoticeShown = false;
   workroomCadFilesRequestId += 1;
   checklistModalState.appliedTabs = [];
   checklistModalState.activeInstanceId = null;

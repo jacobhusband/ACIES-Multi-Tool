@@ -121,6 +121,7 @@ _ensure_pydantic_stub()
 _ensure_pil_stub()
 _ensure_openpyxl_stub()
 
+import main as main_module
 from main import Api
 
 
@@ -191,6 +192,40 @@ class WorkroomCadLaunchCommandTests(unittest.TestCase):
         self.api = Api.__new__(Api)
         self.api.test_mode = False
         self.api._workroom_cad_file_cache = {}
+
+    def test_cad_auto_select_trace_round_trip(self):
+        with tempfile.TemporaryDirectory(prefix="acies-cad-trace-") as temp_dir:
+            trace_path = Path(temp_dir) / "cad_auto_select_trace.log"
+            with patch.object(main_module, "CAD_AUTO_SELECT_TRACE_FILE", str(trace_path)):
+                clear_result = self.api.clear_cad_auto_select_trace()
+                self.assertEqual("success", clear_result["status"])
+
+                frontend_result = self.api.trace_cad_auto_select_event(
+                    "frontend_probe",
+                    {"toolId": "toolPublishDwgs"},
+                )
+                self.assertEqual("success", frontend_result["status"])
+
+                self.api._trace_cad_auto_select(
+                    "backend_probe",
+                    count=2,
+                    file_paths=[r"C:\Projects\123456\Electrical\one.dwg"],
+                )
+
+                trace_result = self.api.get_cad_auto_select_trace(20)
+
+            self.assertEqual("success", trace_result["status"])
+            self.assertEqual(str(trace_path), trace_result["path"])
+            self.assertEqual(2, trace_result["lineCount"])
+            self.assertEqual("frontend_probe", trace_result["entries"][0]["event"])
+            self.assertEqual("frontend", trace_result["entries"][0]["trace_source"])
+            self.assertEqual("toolPublishDwgs", trace_result["entries"][0]["toolId"])
+            self.assertEqual("backend_probe", trace_result["entries"][1]["event"])
+            self.assertEqual(2, trace_result["entries"][1]["count"])
+            self.assertEqual(
+                [r"C:\Projects\123456\Electrical\one.dwg"],
+                trace_result["entries"][1]["file_paths"],
+            )
 
     def _run_tool(self, case, auto_selection, auto_select_enabled=True):
         captured = []

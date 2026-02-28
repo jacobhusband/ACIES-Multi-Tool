@@ -27,6 +27,17 @@ function Ensure-WinFormsAssemblies {
   Add-Type -AssemblyName System.Drawing
 }
 
+function Move-FormToPrimaryScreen {
+  param([System.Windows.Forms.Form]$TargetForm)
+
+  if ($null -eq $TargetForm) { return }
+  $workingArea = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+  $x = $workingArea.Left + [Math]::Max(0, [int](($workingArea.Width - $TargetForm.Width) / 2))
+  $y = $workingArea.Top + [Math]::Max(0, [int](($workingArea.Height - $TargetForm.Height) / 2))
+  $TargetForm.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
+  $TargetForm.Location = New-Object System.Drawing.Point($x, $y)
+}
+
 function Convert-ToLispPath {
   param([string]$PathValue)
   if ([string]::IsNullOrWhiteSpace($PathValue)) { return "" }
@@ -157,15 +168,18 @@ Ensure-WinFormsAssemblies
 $files = @()
 $filesListWasProvided = $PSBoundParameters.ContainsKey('FilesListPath')
 $hasFilesListPath = $filesListWasProvided -and -not [string]::IsNullOrWhiteSpace($FilesListPath)
+Write-Host "PROGRESS: TRACE files_list_param_bound=$([int]$filesListWasProvided) path=$FilesListPath"
 if ($filesListWasProvided) {
   if ($hasFilesListPath) {
     Write-Host "PROGRESS: Received auto-selected files list: $FilesListPath"
     if (Test-Path $FilesListPath) {
+      Write-Host "PROGRESS: TRACE files_list_path_exists=1"
       $files = @(
         Get-Content -Path $FilesListPath -Encoding UTF8 |
           Where-Object { $_ -and $_.Trim() -and (Test-Path $_.Trim()) } |
           ForEach-Object { $_.Trim() }
       )
+      Write-Host "PROGRESS: TRACE files_list_valid_count=$($files.Count)"
       if ($files.Count -gt 0) {
         Write-Host "PROGRESS: Using $($files.Count) DWG file(s) from auto-selected project folder."
       }
@@ -174,15 +188,22 @@ if ($filesListWasProvided) {
       }
     }
     else {
+      Write-Host "PROGRESS: TRACE files_list_path_exists=0"
       Write-Host "PROGRESS: Provided files list path was not found. Opening file picker..."
     }
   }
   else {
+    Write-Host "PROGRESS: TRACE files_list_param_empty=1"
     Write-Host "PROGRESS: Files list parameter was provided without a path. Opening file picker..."
   }
 }
 
+if ($files -and $files.Count -gt 0) {
+  Write-Host "PROGRESS: TRACE branch=auto_selected_files count=$($files.Count)"
+}
+
 if (-not $files -or $files.Count -eq 0) {
+  Write-Host "PROGRESS: TRACE branch=manual_picker"
   Write-Host "PROGRESS: Waiting for user input..."
   [System.Windows.Forms.Application]::EnableVisualStyles()
 
@@ -249,7 +270,13 @@ else {
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "Select Paper Size"
 $form.Size = New-Object System.Drawing.Size(450, 200)
-$form.StartPosition = "CenterScreen"
+$form.StartPosition = "Manual"
+$form.TopMost = $true
+$form.ShowInTaskbar = $true
+$form.MaximizeBox = $false
+$form.MinimizeBox = $false
+$form.WindowState = [System.Windows.Forms.FormWindowState]::Normal
+Move-FormToPrimaryScreen $form
 
 # Status label to show detection result
 $statusLabel = New-Object System.Windows.Forms.Label
@@ -323,7 +350,27 @@ $okButton.DialogResult = [System.Windows.Forms.DialogResult]::OK
 $form.AcceptButton = $okButton
 $form.Controls.Add($okButton)
 
-$form.Topmost = $true
+$form.add_Shown({
+    $form.TopMost = $true
+    $form.WindowState = [System.Windows.Forms.FormWindowState]::Normal
+    Move-FormToPrimaryScreen $form
+    $form.Activate()
+    $form.BringToFront()
+    $comboBox.Focus()
+  })
+
+$form.add_Resize({
+    if ($form.WindowState -eq [System.Windows.Forms.FormWindowState]::Minimized) {
+      $form.WindowState = [System.Windows.Forms.FormWindowState]::Normal
+      Move-FormToPrimaryScreen $form
+      $form.Activate()
+      $form.BringToFront()
+    }
+  })
+
+Write-Host "PROGRESS: Waiting for paper size confirmation..."
+Write-Host "PROGRESS: Paper size dialog should be visible on the primary display."
+Write-Host "PROGRESS: TRACE branch=paper_size_dialog"
 $result = $form.ShowDialog()
 
 if ($result -ne [System.Windows.Forms.DialogResult]::OK) {

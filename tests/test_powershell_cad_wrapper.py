@@ -8,6 +8,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+MAIN_PY_PATH = REPO_ROOT / "main.py"
 SCRIPT_JS_PATH = REPO_ROOT / "script.js"
 CAD_SCRIPT_PATHS = (
     REPO_ROOT / "scripts" / "PlotDWGs.ps1",
@@ -17,6 +18,12 @@ CAD_SCRIPT_PATHS = (
 
 
 class PowerShellCadWrapperTests(unittest.TestCase):
+    def test_backend_trace_messages_are_logged_but_not_forwarded_to_ui(self):
+        text = MAIN_PY_PATH.read_text(encoding="utf-8")
+        self.assertIn('if message.startswith("TRACE"):', text)
+        self.assertIn("'script_trace'", text)
+        self.assertIn("continue", text)
+
     def test_workroom_launch_context_uses_cached_cad_file_paths(self):
         text = SCRIPT_JS_PATH.read_text(encoding="utf-8")
         self.assertIn("let workroomCadFilesLoading = false;", text)
@@ -24,13 +31,21 @@ class PowerShellCadWrapperTests(unittest.TestCase):
         self.assertIn("let workroomDiscoveredCadFilePaths = [];", text)
         self.assertIn("function setWorkroomDiscoveredCadFilePaths(paths = []) {", text)
         self.assertIn("function setWorkroomCadFilesLoading(isLoading) {", text)
+        self.assertIn("async function traceCadAutoSelect(eventName, fields = {}) {", text)
+        self.assertIn("window.pywebview?.api?.trace_cad_auto_select_event", text)
         self.assertIn("cadFilePaths: [...workroomDiscoveredCadFilePaths],", text)
         self.assertIn("setWorkroomDiscoveredCadFilePaths(discoveredPaths);", text)
         self.assertIn("setWorkroomDiscoveredCadFilePaths();", text)
+        self.assertIn('await traceCadAutoSelect("frontend_cad_files_panel_request", {', text)
+        self.assertIn('await traceCadAutoSelect("frontend_tool_launch", {', text)
         self.assertIn("async function triggerWorkroomTool(toolId) {", text)
         self.assertIn('message: "Waiting for CAD files..."', text)
         self.assertIn("await workroomCadFilesLoadPromise;", text)
         self.assertIn("disabled: isCadToolWaitingForLoad,", text)
+        self.assertIn("async getCadAutoSelectTrace(lineLimit = 200) {", text)
+        self.assertIn("async clearCadAutoSelectTrace() {", text)
+        self.assertIn("window.pywebview?.api?.get_cad_auto_select_trace", text)
+        self.assertIn("window.pywebview?.api?.clear_cad_auto_select_trace", text)
         self.assertIn("cadFilesLoading: workroomCadFilesLoading,", text)
         self.assertIn("discoveredCadFileCount: workroomDiscoveredCadFilePaths.length,", text)
 
@@ -38,6 +53,8 @@ class PowerShellCadWrapperTests(unittest.TestCase):
         for script_path in CAD_SCRIPT_PATHS:
             with self.subTest(script=script_path.name):
                 text = script_path.read_text(encoding="utf-8")
+                self.assertIn("function Move-FormToPrimaryScreen {", text)
+                self.assertIn("[System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea", text)
                 self.assertNotIn('`"$PSCommandPath`"', text)
                 self.assertNotIn('`"$FilesListPath`"', text)
                 self.assertNotIn('`"$AcadCore`"', text)
@@ -50,6 +67,63 @@ class PowerShellCadWrapperTests(unittest.TestCase):
                     'Write-Host "PROGRESS: Received auto-selected files list: $FilesListPath"',
                     text,
                 )
+                self.assertIn(
+                    'Write-Host "PROGRESS: TRACE files_list_param_bound=$([int]$filesListWasProvided) path=$FilesListPath"',
+                    text,
+                )
+                self.assertIn(
+                    'Write-Host "PROGRESS: TRACE branch=auto_selected_files count=$($files.Count)"',
+                    text,
+                )
+                self.assertIn(
+                    'Write-Host "PROGRESS: TRACE branch=manual_picker"',
+                    text,
+                )
+                if script_path.name == "PlotDWGs.ps1":
+                    self.assertIn('$form.StartPosition = "Manual"', text)
+                    self.assertIn('$form.TopMost = $true', text)
+                    self.assertIn('$form.ShowInTaskbar = $true', text)
+                    self.assertIn(
+                        '$form.WindowState = [System.Windows.Forms.FormWindowState]::Normal',
+                        text,
+                    )
+                    self.assertIn("Move-FormToPrimaryScreen $form", text)
+                    self.assertIn('$form.BringToFront()', text)
+                    self.assertIn(
+                        'Write-Host "PROGRESS: Waiting for paper size confirmation..."',
+                        text,
+                    )
+                    self.assertIn(
+                        'Write-Host "PROGRESS: Paper size dialog should be visible on the primary display."',
+                        text,
+                    )
+                    self.assertIn(
+                        'Write-Host "PROGRESS: TRACE branch=paper_size_dialog"',
+                        text,
+                    )
+                else:
+                    self.assertIn('$form.StartPosition = "Manual"', text)
+                    self.assertIn("Move-FormToPrimaryScreen $form", text)
+                    self.assertIn(
+                        '$form.WindowState = [System.Windows.Forms.FormWindowState]::Normal',
+                        text,
+                    )
+                    self.assertIn('Write-Host "PROGRESS: Reading extracted data..."', text)
+                    self.assertIn('$form.TopMost = $true', text)
+                    self.assertIn('$form.ShowInTaskbar = $true', text)
+                    self.assertIn('$form.BringToFront()', text)
+                    self.assertIn(
+                        'Write-Host "PROGRESS: Waiting for layer selection..."',
+                        text,
+                    )
+                    self.assertIn(
+                        'Write-Host "PROGRESS: Layer selection dialog should be visible on the primary display."',
+                        text,
+                    )
+                    self.assertIn(
+                        'Write-Host "PROGRESS: TRACE branch=layer_selection_dialog"',
+                        text,
+                    )
 
     @unittest.skipUnless(sys.platform == "win32", "PowerShell STA relaunch is Windows-only")
     def test_sta_relaunch_preserves_files_list_path(self):

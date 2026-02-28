@@ -158,18 +158,32 @@ function Show-DwgFileSelectionPrompt {
   return $null
 }
 
+function Move-FormToPrimaryScreen {
+  param([System.Windows.Forms.Form]$TargetForm)
+
+  if ($null -eq $TargetForm) { return }
+  $workingArea = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+  $x = $workingArea.Left + [Math]::Max(0, [int](($workingArea.Width - $TargetForm.Width) / 2))
+  $y = $workingArea.Top + [Math]::Max(0, [int](($workingArea.Height - $TargetForm.Height) / 2))
+  $TargetForm.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
+  $TargetForm.Location = New-Object System.Drawing.Point($x, $y)
+}
+
 $files = @()
 $filesListWasProvided = $PSBoundParameters.ContainsKey('FilesListPath')
 $hasFilesListPath = $filesListWasProvided -and -not [string]::IsNullOrWhiteSpace($FilesListPath)
+Write-Host "PROGRESS: TRACE files_list_param_bound=$([int]$filesListWasProvided) path=$FilesListPath"
 if ($filesListWasProvided) {
   if ($hasFilesListPath) {
     Write-Host "PROGRESS: Received auto-selected files list: $FilesListPath"
     if (Test-Path $FilesListPath) {
+      Write-Host "PROGRESS: TRACE files_list_path_exists=1"
       $files = @(
         Get-Content -Path $FilesListPath -Encoding UTF8 |
           Where-Object { $_ -and $_.Trim() -and (Test-Path $_.Trim()) } |
           ForEach-Object { $_.Trim() }
       )
+      Write-Host "PROGRESS: TRACE files_list_valid_count=$($files.Count)"
       if ($files.Count -gt 0) {
         Write-Host "PROGRESS: Using $($files.Count) DWG file(s) from auto-selected project folder."
       }
@@ -178,15 +192,22 @@ if ($filesListWasProvided) {
       }
     }
     else {
+      Write-Host "PROGRESS: TRACE files_list_path_exists=0"
       Write-Host "PROGRESS: Provided files list path was not found. Opening file picker..."
     }
   }
   else {
+    Write-Host "PROGRESS: TRACE files_list_param_empty=1"
     Write-Host "PROGRESS: Files list parameter was provided without a path. Opening file picker..."
   }
 }
 
+if ($files -and $files.Count -gt 0) {
+  Write-Host "PROGRESS: TRACE branch=auto_selected_files count=$($files.Count)"
+}
+
 if (-not $files -or $files.Count -eq 0) {
+  Write-Host "PROGRESS: TRACE branch=manual_picker"
   Write-Host "PROGRESS: Waiting for user input..."
   $files = Show-DwgFileSelectionPrompt
   if (-not $files -or $files.Count -eq 0) { exit }
@@ -422,7 +443,7 @@ $scanTimeoutSeconds = $ProcessTimeoutSeconds * $filesToScan.Count
 $r = Invoke-AcadCore -DwgPath $filesToScan[0] -ScriptPath $extractScr -OutLog $outLog -ErrLog $errLog -TimeoutSeconds $scanTimeoutSeconds
 if ($r.TimedOut) { Write-Host "Layer scan timed out." -ForegroundColor Red }
 
-Write-Host "Reading extracted data..."
+Write-Host "PROGRESS: Reading extracted data..."
 
 if (-not (Test-Path $layerDumpFile)) {
   Write-Warning "No layer dump file was created. Check logs in: $ToolDir"
@@ -447,10 +468,16 @@ $layersToFreezeSet = New-Object 'System.Collections.Generic.HashSet[string]' ([S
 
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "Select Layers to FREEZE"
-$form.StartPosition = "CenterScreen"
+$form.StartPosition = "Manual"
 $form.Size = New-Object System.Drawing.Size(940, 680)
 $form.MinimumSize = New-Object System.Drawing.Size(940, 680)
 $form.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::Font
+$form.TopMost = $true
+$form.ShowInTaskbar = $true
+$form.MaximizeBox = $false
+$form.MinimizeBox = $false
+$form.WindowState = [System.Windows.Forms.FormWindowState]::Normal
+Move-FormToPrimaryScreen $form
 
 $lbl = New-Object System.Windows.Forms.Label
 $lbl.Location = New-Object System.Drawing.Point(12, 12)
@@ -563,8 +590,20 @@ $form.Controls.Add($btnCancel)
 $form.CancelButton = $btnCancel
 
 $form.add_Shown({
+    $form.TopMost = $true
+    $form.WindowState = [System.Windows.Forms.FormWindowState]::Normal
+    Move-FormToPrimaryScreen $form
     $form.Activate()
+    $form.BringToFront()
     $listAvailable.Focus()
+  })
+
+$form.add_Resize({
+    if ($form.WindowState -eq [System.Windows.Forms.FormWindowState]::Minimized) {
+      $form.WindowState = [System.Windows.Forms.FormWindowState]::Normal
+      $form.Activate()
+      $form.BringToFront()
+    }
   })
 
 function Update-MoveButtons {
@@ -688,6 +727,9 @@ $listToFreeze.add_KeyDown({
 
 Refresh-LayerLists ""
 
+Write-Host "PROGRESS: Waiting for layer selection..."
+Write-Host "PROGRESS: Layer selection dialog should be visible on the primary display."
+Write-Host "PROGRESS: TRACE branch=layer_selection_dialog"
 if ($form.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { exit }
 
 $layersToFreeze = @($layersToFreezeSet | Sort-Object)

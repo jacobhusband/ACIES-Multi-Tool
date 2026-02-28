@@ -476,6 +476,7 @@ NOTES_FILE = get_app_data_path("notes.json")
 SETTINGS_FILE = get_app_data_path("settings.json")
 TIMESHEETS_FILE = get_app_data_path("timesheets.json")
 TEMPLATES_FILE = get_app_data_path("templates.json")
+CAD_AUTO_SELECT_TRACE_FILE = get_app_data_path("cad_auto_select_trace.log")
 CHECKLISTS_FILE = get_app_data_path("checklists.json")
 LIGHTING_SCHEDULE_SYNC_FILE = "T24LightingFixtureSchedule.sync.json"
 
@@ -1287,6 +1288,12 @@ class Api:
                         errors='replace',
                         startupinfo=startupinfo
                     )
+                    self._trace_cad_auto_select(
+                        'script_subprocess_spawn',
+                        tool_id=tool_id,
+                        command_type='argv',
+                        command=command,
+                    )
                 else:
                     process = subprocess.Popen(
                         command,
@@ -1298,6 +1305,12 @@ class Api:
                         shell=True,
                         startupinfo=startupinfo
                     )
+                    self._trace_cad_auto_select(
+                        'script_subprocess_spawn',
+                        tool_id=tool_id,
+                        command_type='shell_string',
+                        command=command,
+                    )
 
                 print(f"DEBUG THREAD: Process started, reading output...")
                 for line in iter(process.stdout.readline, ''):
@@ -1305,6 +1318,13 @@ class Api:
                     print(f"DEBUG THREAD OUTPUT: {line}")
                     if line.startswith("PROGRESS:"):
                         message = line[len("PROGRESS:"):].strip()
+                        if message.startswith("TRACE"):
+                            self._trace_cad_auto_select(
+                                'script_trace',
+                                tool_id=tool_id,
+                                message=message,
+                            )
+                            continue
                         js_message = json.dumps(message)
                         window.evaluate_js(
                             f'window.updateToolStatus("{tool_id}", {js_message})')
@@ -1312,6 +1332,11 @@ class Api:
                 process.stdout.close()
                 return_code = process.wait()
                 print(f"DEBUG THREAD: Process finished with return code {return_code}")
+                self._trace_cad_auto_select(
+                    'script_subprocess_exit',
+                    tool_id=tool_id,
+                    return_code=return_code,
+                )
 
                 if return_code == 0:
                     window.evaluate_js(
@@ -4295,6 +4320,92 @@ TASK 3: LOAD TYPES
         temp_file.close()
         return temp_file.name
 
+    def _trace_cad_auto_select(self, event, **fields):
+        try:
+            payload = {
+                'timestamp': datetime.datetime.now(
+                    datetime.timezone.utc).isoformat().replace('+00:00', 'Z'),
+                'event': str(event or '').strip() or 'unknown',
+            }
+            for key, value in (fields or {}).items():
+                payload[str(key)] = value
+            with open(CAD_AUTO_SELECT_TRACE_FILE, 'a', encoding='utf-8') as trace_file:
+                trace_file.write(
+                    json.dumps(payload, ensure_ascii=True, default=str) + '\n')
+        except Exception:
+            pass
+
+    def trace_cad_auto_select_event(self, event, payload=None):
+        payload_data = dict(payload) if isinstance(payload, dict) else {
+            'value': payload,
+        }
+        payload_data.setdefault('trace_source', 'frontend')
+        self._trace_cad_auto_select(
+            str(event or '').strip() or 'trace_event',
+            **payload_data,
+        )
+        return {'status': 'success'}
+
+    def clear_cad_auto_select_trace(self):
+        try:
+            with open(CAD_AUTO_SELECT_TRACE_FILE, 'w', encoding='utf-8'):
+                pass
+            return {
+                'status': 'success',
+                'path': CAD_AUTO_SELECT_TRACE_FILE,
+            }
+        except Exception as e:
+            logging.error(f"clear_cad_auto_select_trace failed: {e}")
+            return {
+                'status': 'error',
+                'message': str(e),
+                'path': CAD_AUTO_SELECT_TRACE_FILE,
+            }
+
+    def get_cad_auto_select_trace(self, line_limit=200):
+        try:
+            try:
+                limit = int(line_limit)
+            except (TypeError, ValueError):
+                limit = 200
+            limit = max(1, min(limit, 1000))
+
+            if not os.path.exists(CAD_AUTO_SELECT_TRACE_FILE):
+                return {
+                    'status': 'success',
+                    'path': CAD_AUTO_SELECT_TRACE_FILE,
+                    'entries': [],
+                    'lines': [],
+                    'lineCount': 0,
+                }
+
+            with open(CAD_AUTO_SELECT_TRACE_FILE, 'r', encoding='utf-8') as trace_file:
+                lines = trace_file.read().splitlines()
+            selected_lines = lines[-limit:]
+            entries = []
+            for line in selected_lines:
+                try:
+                    entries.append(json.loads(line))
+                except json.JSONDecodeError:
+                    entries.append({'raw': line})
+            return {
+                'status': 'success',
+                'path': CAD_AUTO_SELECT_TRACE_FILE,
+                'entries': entries,
+                'lines': selected_lines,
+                'lineCount': len(selected_lines),
+            }
+        except Exception as e:
+            logging.error(f"get_cad_auto_select_trace failed: {e}")
+            return {
+                'status': 'error',
+                'message': str(e),
+                'path': CAD_AUTO_SELECT_TRACE_FILE,
+                'entries': [],
+                'lines': [],
+                'lineCount': 0,
+            }
+
     def _normalize_dwg_file_paths(self, file_paths, require_exists=True):
         if not isinstance(file_paths, (list, tuple, set)):
             return []
@@ -4502,13 +4613,31 @@ TASK 3: LOAD TYPES
         if not self._is_workroom_auto_select_tool_allowed(tool_name):
             logging.info(
                 f"{tool_name}: Workroom DWG auto-select skipped (tool not allowlisted).")
+            self._trace_cad_auto_select(
+                'auto_select_skipped_tool_not_allowed',
+                tool_name=tool_name,
+            )
             return None
         if not self._is_workroom_auto_select_enabled(settings, launch_context):
+            self._trace_cad_auto_select(
+                'auto_select_skipped_disabled',
+                tool_name=tool_name,
+                launch_context=self._normalize_launch_context(launch_context),
+            )
             return None
         context = self._resolve_workroom_context(settings, launch_context)
         launch_payload = self._normalize_launch_context(launch_context)
         project_path = context.get('project_path') or ''
         discipline = context.get('discipline') or 'Electrical'
+        self._trace_cad_auto_select(
+            'auto_select_request',
+            tool_name=tool_name,
+            source=context.get('source') or '',
+            project_path=project_path,
+            discipline=discipline,
+            discipline_source=context.get('discipline_source') or '',
+            launch_context=launch_payload,
+        )
         cached_entry = self._get_workroom_cad_file_cache_entry(
             project_path, discipline)
         if cached_entry:
@@ -4522,6 +4651,18 @@ TASK 3: LOAD TYPES
                 logging.info(
                     f"{tool_name}: Auto-selected {len(cached_dwg_files)} DWG(s) from cached Workroom detection "
                     f"(folder={folder_path or '<multiple>'}; cached_mode={cached_entry.get('resolution_mode') or 'unknown'}).")
+                self._trace_cad_auto_select(
+                    'auto_select_selected',
+                    tool_name=tool_name,
+                    selection_source='workroom_cached_detection',
+                    project_path=project_path,
+                    discipline=str(cached_entry.get('discipline') or discipline),
+                    folder_path=folder_path,
+                    files_list_path=files_list_path,
+                    count=len(cached_dwg_files),
+                    file_paths=cached_dwg_files,
+                    cached_resolution_mode=cached_entry.get('resolution_mode') or '',
+                )
                 return {
                     'files_list_path': files_list_path,
                     'project_path': project_path,
@@ -4535,10 +4676,24 @@ TASK 3: LOAD TYPES
                 logging.info(
                     f"{tool_name}: Cached Workroom detection had {cached_file_count} DWG(s), but none still exist. "
                     "Falling back.")
+                self._trace_cad_auto_select(
+                    'auto_select_cached_stale',
+                    tool_name=tool_name,
+                    project_path=project_path,
+                    discipline=discipline,
+                    cached_file_count=cached_file_count,
+                    cached_files=cached_entry.get('files') or [],
+                )
             else:
                 logging.info(
                     f"{tool_name}: Cached Workroom detection is empty for project_path={project_path} "
                     f"discipline={discipline}. Falling back.")
+                self._trace_cad_auto_select(
+                    'auto_select_cached_empty',
+                    tool_name=tool_name,
+                    project_path=project_path,
+                    discipline=discipline,
+                )
         explicit_dwg_files = self._get_launch_context_cad_file_paths(launch_context)
         if explicit_dwg_files:
             files_list_path = self._write_files_list_temp(explicit_dwg_files)
@@ -4546,6 +4701,17 @@ TASK 3: LOAD TYPES
             logging.info(
                 f"{tool_name}: Auto-selected {len(explicit_dwg_files)} explicit DWG(s) from launch context "
                 f"(folder={shared_parent or '<multiple>'}).")
+            self._trace_cad_auto_select(
+                'auto_select_selected',
+                tool_name=tool_name,
+                selection_source='launch_context_explicit_files',
+                project_path=project_path,
+                discipline=discipline,
+                folder_path=shared_parent,
+                files_list_path=files_list_path,
+                count=len(explicit_dwg_files),
+                file_paths=explicit_dwg_files,
+            )
             return {
                 'files_list_path': files_list_path,
                 'project_path': project_path,
@@ -4558,9 +4724,22 @@ TASK 3: LOAD TYPES
             logging.info(
                 f"{tool_name}: Launch context cadFilePaths were provided but no valid DWG files remained. "
                 "Falling back to folder scan.")
+            self._trace_cad_auto_select(
+                'auto_select_explicit_invalid',
+                tool_name=tool_name,
+                project_path=project_path,
+                discipline=discipline,
+                cad_file_paths=launch_payload.get('cadFilePaths'),
+            )
         if not project_path:
             logging.info(
                 f"{tool_name}: Workroom auto-select fallback to manual file picker (missing project path).")
+            self._trace_cad_auto_select(
+                'auto_select_fallback_manual',
+                tool_name=tool_name,
+                reason='missing_project_path',
+                discipline=discipline,
+            )
             return None
         folder_resolution = self._resolve_workroom_discipline_folder(
             project_path, discipline)
@@ -4571,16 +4750,43 @@ TASK 3: LOAD TYPES
             logging.info(
                 f"{tool_name}: Workroom auto-select fallback to manual file picker "
                 f"(project_path={project_path}; discipline={discipline}; checked={candidate_text}).")
+            self._trace_cad_auto_select(
+                'auto_select_fallback_manual',
+                tool_name=tool_name,
+                reason='discipline_folder_not_found',
+                project_path=project_path,
+                discipline=discipline,
+                checked=candidates,
+            )
             return None
         dwg_files = self._list_base_level_dwgs(discipline_folder)
         if not dwg_files:
             logging.info(
                 f"{tool_name}: Workroom auto-select fallback to manual file picker (no DWGs in {discipline_folder}).")
+            self._trace_cad_auto_select(
+                'auto_select_fallback_manual',
+                tool_name=tool_name,
+                reason='no_dwgs_in_folder',
+                project_path=project_path,
+                discipline=discipline,
+                folder_path=discipline_folder,
+            )
             return None
         files_list_path = self._write_files_list_temp(dwg_files)
         logging.info(
             f"{tool_name}: Auto-selected {len(dwg_files)} DWG(s) from {discipline_folder} "
             f"(mode={folder_resolution.get('mode')}).")
+        self._trace_cad_auto_select(
+            'auto_select_selected',
+            tool_name=tool_name,
+            selection_source=folder_resolution.get('mode', '') or 'folder_scan',
+            project_path=project_path,
+            discipline=folder_resolution.get('discipline') or discipline,
+            folder_path=discipline_folder,
+            files_list_path=files_list_path,
+            count=len(dwg_files),
+            file_paths=dwg_files,
+        )
         return {
             'files_list_path': files_list_path,
             'project_path': project_path,
@@ -4622,8 +4828,22 @@ TASK 3: LOAD TYPES
             project_path = context.get('project_path') or ''
             discipline = context.get('discipline') or self._primary_discipline_from_settings(
                 settings)
+            normalized_launch_context = self._normalize_launch_context(launch_context)
+            self._trace_cad_auto_select(
+                'get_workroom_cad_files_request',
+                project_path=project_path,
+                discipline=discipline,
+                source=context.get('source') or '',
+                discipline_source=context.get('discipline_source') or '',
+                launch_context=normalized_launch_context,
+            )
 
             if not project_path:
+                self._trace_cad_auto_select(
+                    'get_workroom_cad_files_missing_project_path',
+                    discipline=discipline,
+                    launch_context=normalized_launch_context,
+                )
                 return {
                     'status': 'success',
                     'projectPath': '',
@@ -4661,6 +4881,16 @@ TASK 3: LOAD TYPES
                     [],
                     resolution_mode or 'not_found',
                 )
+                self._trace_cad_auto_select(
+                    'get_workroom_cad_files_result',
+                    project_path=project_path,
+                    discipline=resolved_discipline,
+                    resolution_mode=resolution_mode or 'not_found',
+                    folder_path='',
+                    candidate_paths=candidates,
+                    count=0,
+                    file_paths=[],
+                )
                 return {
                     'status': 'success',
                     'projectPath': project_path,
@@ -4686,6 +4916,15 @@ TASK 3: LOAD TYPES
                 dwg_paths,
                 resolution_mode,
             )
+            self._trace_cad_auto_select(
+                'get_workroom_cad_files_result',
+                project_path=project_path,
+                discipline=resolved_discipline,
+                resolution_mode=resolution_mode,
+                folder_path=folder_path,
+                count=len(dwg_paths),
+                file_paths=dwg_paths,
+            )
 
             return {
                 'status': 'success',
@@ -4700,6 +4939,11 @@ TASK 3: LOAD TYPES
             }
         except Exception as e:
             logging.error(f"get_workroom_cad_files failed: {e}")
+            self._trace_cad_auto_select(
+                'get_workroom_cad_files_error',
+                error=str(e),
+                launch_context=self._normalize_launch_context(launch_context),
+            )
             return {'status': 'error', 'message': str(e), 'files': []}
 
     def _notify_tool_status(self, tool_id, message):
@@ -4926,6 +5170,15 @@ TASK 3: LOAD TYPES
                 'toolPublishDwgs',
                 "Workroom auto-select unavailable. Opening file picker...",
             )
+            self._trace_cad_auto_select(
+                'tool_manual_fallback',
+                tool_id='toolPublishDwgs',
+                tool_name='run_publish_script',
+                reason='auto_selection_unavailable',
+                source=fallback_context.get('source') or 'none',
+                project_path=fallback_context.get('project_path') or '',
+                discipline=fallback_context.get('discipline') or '',
+            )
         command = self._build_powershell_script_command(
             script_path,
             '-AcadCore',
@@ -4940,6 +5193,22 @@ TASK 3: LOAD TYPES
                 '-FilesListPath',
                 auto_selection['files_list_path'],
             ])
+            selected_count = auto_selection.get('count')
+            if isinstance(selected_count, int) and selected_count > 0:
+                self._notify_tool_status(
+                    'toolPublishDwgs',
+                    f"Using auto-selected DWGs ({selected_count}) via {auto_selection.get('resolution_mode') or 'workroom'}...",
+                )
+        self._trace_cad_auto_select(
+            'tool_command_launch',
+            tool_id='toolPublishDwgs',
+            tool_name='run_publish_script',
+            command=command,
+            command_type='argv',
+            has_files_list_path='-FilesListPath' in command,
+            files_list_path=auto_selection.get('files_list_path') if auto_selection else '',
+            auto_selection=auto_selection,
+        )
         self._run_script_with_progress(command, 'toolPublishDwgs')
         return {'status': 'success'}
 
@@ -4981,6 +5250,15 @@ TASK 3: LOAD TYPES
                 'toolFreezeLayers',
                 "Workroom auto-select unavailable. Opening file picker...",
             )
+            self._trace_cad_auto_select(
+                'tool_manual_fallback',
+                tool_id='toolFreezeLayers',
+                tool_name='run_freeze_layers_script',
+                reason='auto_selection_unavailable',
+                source=fallback_context.get('source') or 'none',
+                project_path=fallback_context.get('project_path') or '',
+                discipline=fallback_context.get('discipline') or '',
+            )
         command = self._build_powershell_script_command(
             script_path,
             '-AcadCore',
@@ -4993,6 +5271,22 @@ TASK 3: LOAD TYPES
                 '-FilesListPath',
                 auto_selection['files_list_path'],
             ])
+            selected_count = auto_selection.get('count')
+            if isinstance(selected_count, int) and selected_count > 0:
+                self._notify_tool_status(
+                    'toolFreezeLayers',
+                    f"Using auto-selected DWGs ({selected_count}) via {auto_selection.get('resolution_mode') or 'workroom'}...",
+                )
+        self._trace_cad_auto_select(
+            'tool_command_launch',
+            tool_id='toolFreezeLayers',
+            tool_name='run_freeze_layers_script',
+            command=command,
+            command_type='argv',
+            has_files_list_path='-FilesListPath' in command,
+            files_list_path=auto_selection.get('files_list_path') if auto_selection else '',
+            auto_selection=auto_selection,
+        )
         self._run_script_with_progress(command, 'toolFreezeLayers')
         return {'status': 'success'}
 
@@ -5034,6 +5328,15 @@ TASK 3: LOAD TYPES
                 'toolThawLayers',
                 "Workroom auto-select unavailable. Opening file picker...",
             )
+            self._trace_cad_auto_select(
+                'tool_manual_fallback',
+                tool_id='toolThawLayers',
+                tool_name='run_thaw_layers_script',
+                reason='auto_selection_unavailable',
+                source=fallback_context.get('source') or 'none',
+                project_path=fallback_context.get('project_path') or '',
+                discipline=fallback_context.get('discipline') or '',
+            )
         command = self._build_powershell_script_command(
             script_path,
             '-AcadCore',
@@ -5046,6 +5349,22 @@ TASK 3: LOAD TYPES
                 '-FilesListPath',
                 auto_selection['files_list_path'],
             ])
+            selected_count = auto_selection.get('count')
+            if isinstance(selected_count, int) and selected_count > 0:
+                self._notify_tool_status(
+                    'toolThawLayers',
+                    f"Using auto-selected DWGs ({selected_count}) via {auto_selection.get('resolution_mode') or 'workroom'}...",
+                )
+        self._trace_cad_auto_select(
+            'tool_command_launch',
+            tool_id='toolThawLayers',
+            tool_name='run_thaw_layers_script',
+            command=command,
+            command_type='argv',
+            has_files_list_path='-FilesListPath' in command,
+            files_list_path=auto_selection.get('files_list_path') if auto_selection else '',
+            auto_selection=auto_selection,
+        )
         self._run_script_with_progress(command, 'toolThawLayers')
         return {'status': 'success'}
 

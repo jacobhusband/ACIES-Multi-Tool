@@ -8568,6 +8568,15 @@ function setWorkroomCadFilesLoading(isLoading) {
   }
 }
 
+async function traceCadAutoSelect(eventName, fields = {}) {
+  if (!window.pywebview?.api?.trace_cad_auto_select_event) return;
+  try {
+    await window.pywebview.api.trace_cad_auto_select_event(eventName, fields);
+  } catch (e) {
+    console.debug("CAD auto-select trace failed:", e);
+  }
+}
+
 function getWorkroomPathFolderName(rawPath) {
   const normalized = normalizeWorkroomFolderPath(rawPath);
   if (!normalized) return "";
@@ -8954,6 +8963,10 @@ async function renderWorkroomCadFilesPanel() {
     const { project } = getActiveWorkroomContext();
     if (!project) {
       setWorkroomCadFilesStatus("Select a project to view CAD files.");
+      await traceCadAutoSelect("frontend_cad_files_panel_skipped", {
+        requestId,
+        reason: "no_project",
+      });
       return;
     }
 
@@ -8962,12 +8975,21 @@ async function renderWorkroomCadFilesPanel() {
       setWorkroomCadFilesStatus("Root project folder path is not set.", {
         isError: true,
       });
+      await traceCadAutoSelect("frontend_cad_files_panel_skipped", {
+        requestId,
+        reason: "missing_root_project_path",
+      });
       return;
     }
 
     const launchContext = buildWorkroomCadLaunchContext();
     const selectedDiscipline = String(launchContext?.discipline || "").trim() || "Electrical";
     setWorkroomCadFilesStatus(`Loading ${selectedDiscipline} CAD files...`);
+    await traceCadAutoSelect("frontend_cad_files_panel_request", {
+      requestId,
+      selectedDiscipline,
+      launchContext,
+    });
 
     try {
       if (!window.pywebview?.api?.get_workroom_cad_files) {
@@ -8986,6 +9008,15 @@ async function renderWorkroomCadFilesPanel() {
 
       if (!folderPath) {
         const missingMessage = String(response.message || "").trim();
+        await traceCadAutoSelect("frontend_cad_files_panel_result", {
+          requestId,
+          status: "missing_folder",
+          discipline,
+          folderPath,
+          count: 0,
+          filePaths: [],
+          message: missingMessage,
+        });
         setWorkroomCadFilesStatus(
           missingMessage || `${discipline} folder was not found for this project.`,
           { isError: true }
@@ -8994,6 +9025,15 @@ async function renderWorkroomCadFilesPanel() {
       }
 
       if (!files.length) {
+        await traceCadAutoSelect("frontend_cad_files_panel_result", {
+          requestId,
+          status: "empty",
+          discipline,
+          folderPath,
+          count: 0,
+          filePaths: [],
+          message: String(response.message || "").trim(),
+        });
         setWorkroomCadFilesStatus(`No DWG files found in ${discipline}.`);
         return;
       }
@@ -9028,10 +9068,26 @@ async function renderWorkroomCadFilesPanel() {
 
       setWorkroomDiscoveredCadFilePaths(discoveredPaths);
       if (!workroomDiscoveredCadFilePaths.length) {
+        await traceCadAutoSelect("frontend_cad_files_panel_result", {
+          requestId,
+          status: "normalized_empty",
+          discipline,
+          folderPath,
+          count: 0,
+          filePaths: [],
+        });
         setWorkroomCadFilesStatus(`No DWG files found in ${discipline}.`);
         return;
       }
 
+      await traceCadAutoSelect("frontend_cad_files_panel_result", {
+        requestId,
+        status: "success",
+        discipline,
+        folderPath,
+        count: workroomDiscoveredCadFilePaths.length,
+        filePaths: [...workroomDiscoveredCadFilePaths],
+      });
       setWorkroomCadFilesStatus(
         `${workroomDiscoveredCadFilePaths.length} DWG file${
           workroomDiscoveredCadFilePaths.length === 1 ? "" : "s"
@@ -9041,6 +9097,10 @@ async function renderWorkroomCadFilesPanel() {
       if (requestId !== workroomCadFilesRequestId) return;
       console.warn("Failed to render Workroom CAD files panel:", e);
       setWorkroomDiscoveredCadFilePaths();
+      await traceCadAutoSelect("frontend_cad_files_panel_error", {
+        requestId,
+        message: e?.message || "Unable to load CAD files.",
+      });
       setWorkroomCadFilesStatus(e?.message || "Unable to load CAD files.", {
         isError: true,
       });
@@ -9301,18 +9361,39 @@ async function triggerWorkroomTool(toolId) {
       message: "Waiting for CAD files...",
       phase: "running",
     });
+    await traceCadAutoSelect("frontend_tool_waiting_for_cad_files", {
+      toolId,
+      cadFilesLoading: workroomCadFilesLoading,
+      discoveredCadFileCount: workroomDiscoveredCadFilePaths.length,
+      cadFilesStatus:
+        document.getElementById("workroomCadFilesStatus")?.textContent?.trim() || "",
+    });
     try {
       await workroomCadFilesLoadPromise;
     } catch (e) {
       console.warn("Failed while waiting for Workroom CAD files:", e);
     }
     const checklistModal = document.getElementById("checklistModal");
-    if (!checklistModal?.open) return;
+    if (!checklistModal?.open) {
+      await traceCadAutoSelect("frontend_tool_launch_cancelled", {
+        toolId,
+        reason: "workroom_closed_while_waiting",
+      });
+      return;
+    }
   }
   pendingCadLaunchContext = null;
   if (WORKROOM_LAUNCH_CONTEXT_TOOL_IDS.has(toolId)) {
     pendingCadLaunchContext = buildWorkroomCadLaunchContext();
   }
+  await traceCadAutoSelect("frontend_tool_launch", {
+    toolId,
+    cadFilesLoading: workroomCadFilesLoading,
+    discoveredCadFileCount: workroomDiscoveredCadFilePaths.length,
+    cadFilesStatus:
+      document.getElementById("workroomCadFilesStatus")?.textContent?.trim() || "",
+    launchContext: pendingCadLaunchContext,
+  });
   setWorkroomToolStatus({ toolId, message: "Starting...", phase: "running" });
   sourceCard.click();
 }
@@ -9953,6 +10034,18 @@ window.__aciesAutomation = {
   async runWorkroomTool(toolId) {
     await triggerWorkroomTool(toolId);
     return this.getToolState(toolId);
+  },
+  async getCadAutoSelectTrace(lineLimit = 200) {
+    if (!window.pywebview?.api?.get_cad_auto_select_trace) {
+      return { status: "error", message: "CAD auto-select trace API is unavailable." };
+    }
+    return window.pywebview.api.get_cad_auto_select_trace(lineLimit);
+  },
+  async clearCadAutoSelectTrace() {
+    if (!window.pywebview?.api?.clear_cad_auto_select_trace) {
+      return { status: "error", message: "CAD auto-select trace API is unavailable." };
+    }
+    return window.pywebview.api.clear_cad_auto_select_trace();
   },
   getWorkroomState() {
     const modal = document.getElementById("checklistModal");

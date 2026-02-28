@@ -533,10 +533,13 @@ const DISCIPLINE_TO_FUNCTION = {
   Plumbing: "P",
 };
 const WORKROOM_CAD_DISCIPLINES = ["Electrical", "Mechanical", "Plumbing"];
-const WORKROOM_CAD_TOOL_IDS = new Set([
+const WORKROOM_AUTO_SELECT_CAD_TOOL_IDS = new Set([
   "toolPublishDwgs",
   "toolFreezeLayers",
   "toolThawLayers",
+]);
+const WORKROOM_CAD_TOOL_IDS = new Set([
+  ...WORKROOM_AUTO_SELECT_CAD_TOOL_IDS,
   "toolCleanXrefs",
 ]);
 const WORKROOM_TEMPLATE_TOOL_IDS = new Set([
@@ -8506,6 +8509,9 @@ let checklistModalState = {
   activeInstanceId: null,
 };
 let workroomCadFilesRequestId = 0;
+let workroomCadFilesLoading = false;
+let workroomCadFilesLoadPromise = Promise.resolve();
+let workroomDiscoveredCadFilePaths = [];
 
 function getActiveWorkroomContext() {
   const project = db[activeChecklistProject];
@@ -8536,6 +8542,30 @@ function normalizeWorkroomFolderPath(rawPath) {
   }
   normalized = normalized.replace(/\\+$/, "");
   return normalized;
+}
+
+function setWorkroomDiscoveredCadFilePaths(paths = []) {
+  const nextPaths = [];
+  const seen = new Set();
+  (Array.isArray(paths) ? paths : []).forEach((pathValue) => {
+    const normalized = normalizeWorkroomFolderPath(pathValue);
+    if (!normalized) return;
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    nextPaths.push(normalized);
+  });
+  workroomDiscoveredCadFilePaths = nextPaths;
+}
+
+function setWorkroomCadFilesLoading(isLoading) {
+  const nextValue = !!isLoading;
+  if (workroomCadFilesLoading === nextValue) return;
+  workroomCadFilesLoading = nextValue;
+  const checklistModal = document.getElementById("checklistModal");
+  if (checklistModal?.open) {
+    renderWorkroomToolsPanel();
+  }
 }
 
 function getWorkroomPathFolderName(rawPath) {
@@ -8901,6 +8931,7 @@ function buildWorkroomCadLaunchContext() {
     projectPath,
     rootProjectPath,
     discipline: activeDiscipline || disciplines[0] || "Electrical",
+    cadFilePaths: [...workroomDiscoveredCadFilePaths],
   };
 }
 
@@ -8912,93 +8943,116 @@ function setWorkroomCadFilesStatus(message, { isError = false } = {}) {
 }
 
 async function renderWorkroomCadFilesPanel() {
-  const listEl = document.getElementById("workroomCadFilesList");
-  if (!listEl) return;
-
-  listEl.innerHTML = "";
-  const { project } = getActiveWorkroomContext();
-  if (!project) {
-    setWorkroomCadFilesStatus("Select a project to view CAD files.");
-    return;
-  }
-
-  const rootProjectPath = getWorkroomRootFolderPath(project);
-  if (!rootProjectPath) {
-    setWorkroomCadFilesStatus("Root project folder path is not set.", {
-      isError: true,
-    });
-    return;
-  }
-
-  const launchContext = buildWorkroomCadLaunchContext();
-  const selectedDiscipline = String(launchContext?.discipline || "").trim() || "Electrical";
   const requestId = ++workroomCadFilesRequestId;
-  setWorkroomCadFilesStatus(`Loading ${selectedDiscipline} CAD files...`);
+  setWorkroomCadFilesLoading(true);
+  const loadPromise = (async () => {
+    const listEl = document.getElementById("workroomCadFilesList");
+    if (!listEl) return;
 
-  try {
-    if (!window.pywebview?.api?.get_workroom_cad_files) {
-      throw new Error("CAD files API is unavailable.");
-    }
-    const response = await window.pywebview.api.get_workroom_cad_files(launchContext);
-    if (requestId !== workroomCadFilesRequestId) return;
-
-    if (response?.status !== "success") {
-      throw new Error(response?.message || "Unable to load CAD files.");
-    }
-
-    const folderPath = String(response.folderPath || "").trim();
-    const discipline = String(response.discipline || selectedDiscipline).trim() || selectedDiscipline;
-    const files = Array.isArray(response.files) ? response.files : [];
-
-    if (!folderPath) {
-      const missingMessage = String(response.message || "").trim();
-      setWorkroomCadFilesStatus(
-        missingMessage || `${discipline} folder was not found for this project.`,
-        { isError: true }
-      );
+    listEl.innerHTML = "";
+    setWorkroomDiscoveredCadFilePaths();
+    const { project } = getActiveWorkroomContext();
+    if (!project) {
+      setWorkroomCadFilesStatus("Select a project to view CAD files.");
       return;
     }
 
-    if (!files.length) {
-      setWorkroomCadFilesStatus(`No DWG files found in ${discipline}.`);
+    const rootProjectPath = getWorkroomRootFolderPath(project);
+    if (!rootProjectPath) {
+      setWorkroomCadFilesStatus("Root project folder path is not set.", {
+        isError: true,
+      });
       return;
     }
 
-    files.forEach((file) => {
-      const filePath = String(file?.path || "").trim();
-      if (!filePath) return;
-      const fileName = String(file?.name || "").trim() || getFileNameFromPath(filePath);
-      listEl.appendChild(
-        el("button", {
-          type: "button",
-          className: "workroom-cad-file-link",
-          textContent: fileName || "DWG file",
-          title: filePath,
-          onclick: async () => {
-            try {
-              const res = await window.pywebview.api.open_path(filePath);
-              if (res?.status !== "success") {
-                throw new Error(res?.message || "Failed to open CAD file.");
+    const launchContext = buildWorkroomCadLaunchContext();
+    const selectedDiscipline = String(launchContext?.discipline || "").trim() || "Electrical";
+    setWorkroomCadFilesStatus(`Loading ${selectedDiscipline} CAD files...`);
+
+    try {
+      if (!window.pywebview?.api?.get_workroom_cad_files) {
+        throw new Error("CAD files API is unavailable.");
+      }
+      const response = await window.pywebview.api.get_workroom_cad_files(launchContext);
+      if (requestId !== workroomCadFilesRequestId) return;
+
+      if (response?.status !== "success") {
+        throw new Error(response?.message || "Unable to load CAD files.");
+      }
+
+      const folderPath = String(response.folderPath || "").trim();
+      const discipline = String(response.discipline || selectedDiscipline).trim() || selectedDiscipline;
+      const files = Array.isArray(response.files) ? response.files : [];
+
+      if (!folderPath) {
+        const missingMessage = String(response.message || "").trim();
+        setWorkroomCadFilesStatus(
+          missingMessage || `${discipline} folder was not found for this project.`,
+          { isError: true }
+        );
+        return;
+      }
+
+      if (!files.length) {
+        setWorkroomCadFilesStatus(`No DWG files found in ${discipline}.`);
+        return;
+      }
+
+      const discoveredPaths = [];
+      files.forEach((file) => {
+        const filePath = normalizeWorkroomFolderPath(file?.path || "");
+        if (!filePath) return;
+        discoveredPaths.push(filePath);
+        const fileName = String(file?.name || "").trim() || getFileNameFromPath(filePath);
+        listEl.appendChild(
+          el("button", {
+            type: "button",
+            className: "workroom-cad-file-link",
+            textContent: fileName || "DWG file",
+            title: filePath,
+            onclick: async () => {
+              try {
+                const res = await window.pywebview.api.open_path(filePath);
+                if (res?.status !== "success") {
+                  throw new Error(res?.message || "Failed to open CAD file.");
+                }
+                toast("Opening file...");
+              } catch (e) {
+                console.warn(`Failed to open CAD file (${filePath}):`, e);
+                toast("Couldn't open CAD file.");
               }
-              toast("Opening file...");
-            } catch (e) {
-              console.warn(`Failed to open CAD file (${filePath}):`, e);
-              toast("Couldn't open CAD file.");
-            }
-          },
-        })
-      );
-    });
+            },
+          })
+        );
+      });
 
-    setWorkroomCadFilesStatus(
-      `${files.length} DWG file${files.length === 1 ? "" : "s"} in ${discipline}.`
-    );
-  } catch (e) {
-    if (requestId !== workroomCadFilesRequestId) return;
-    console.warn("Failed to render Workroom CAD files panel:", e);
-    setWorkroomCadFilesStatus(e?.message || "Unable to load CAD files.", {
-      isError: true,
-    });
+      setWorkroomDiscoveredCadFilePaths(discoveredPaths);
+      if (!workroomDiscoveredCadFilePaths.length) {
+        setWorkroomCadFilesStatus(`No DWG files found in ${discipline}.`);
+        return;
+      }
+
+      setWorkroomCadFilesStatus(
+        `${workroomDiscoveredCadFilePaths.length} DWG file${
+          workroomDiscoveredCadFilePaths.length === 1 ? "" : "s"
+        } in ${discipline}.`
+      );
+    } catch (e) {
+      if (requestId !== workroomCadFilesRequestId) return;
+      console.warn("Failed to render Workroom CAD files panel:", e);
+      setWorkroomDiscoveredCadFilePaths();
+      setWorkroomCadFilesStatus(e?.message || "Unable to load CAD files.", {
+        isError: true,
+      });
+    }
+  })();
+  workroomCadFilesLoadPromise = loadPromise;
+  try {
+    return await loadPromise;
+  } finally {
+    if (requestId === workroomCadFilesRequestId) {
+      setWorkroomCadFilesLoading(false);
+    }
   }
 }
 
@@ -9234,12 +9288,26 @@ function getWorkroomVisibleTools() {
     .filter(Boolean);
 }
 
-function triggerWorkroomTool(toolId) {
+async function triggerWorkroomTool(toolId) {
   if (!toolId) return;
   const sourceCard = document.getElementById(toolId);
   if (!sourceCard || sourceCard.hidden) {
     toast("Selected tool is unavailable.");
     return;
+  }
+  if (WORKROOM_AUTO_SELECT_CAD_TOOL_IDS.has(toolId) && workroomCadFilesLoading) {
+    setWorkroomToolStatus({
+      toolId,
+      message: "Waiting for CAD files...",
+      phase: "running",
+    });
+    try {
+      await workroomCadFilesLoadPromise;
+    } catch (e) {
+      console.warn("Failed while waiting for Workroom CAD files:", e);
+    }
+    const checklistModal = document.getElementById("checklistModal");
+    if (!checklistModal?.open) return;
   }
   pendingCadLaunchContext = null;
   if (WORKROOM_LAUNCH_CONTEXT_TOOL_IDS.has(toolId)) {
@@ -9268,6 +9336,8 @@ function renderWorkroomToolsPanel() {
   }
 
   tools.forEach((tool) => {
+    const isCadToolWaitingForLoad =
+      WORKROOM_AUTO_SELECT_CAD_TOOL_IDS.has(tool.id) && workroomCadFilesLoading;
     const item = el("div", {
       className: "workroom-tool-item",
       "data-tool-id": tool.id,
@@ -9293,12 +9363,17 @@ function renderWorkroomToolsPanel() {
       el("button", {
         className: "btn tiny workroom-tool-run-btn",
         type: "button",
-        textContent: "Run",
-        title: `Run ${tool.title}`,
-        "aria-label": `Run ${tool.title}`,
-        onclick: (e) => {
+        textContent: isCadToolWaitingForLoad ? "Loading..." : "Run",
+        title: isCadToolWaitingForLoad
+          ? "Waiting for CAD files to finish loading"
+          : `Run ${tool.title}`,
+        "aria-label": isCadToolWaitingForLoad
+          ? `Waiting for CAD files to finish loading for ${tool.title}`
+          : `Run ${tool.title}`,
+        disabled: isCadToolWaitingForLoad,
+        onclick: async (e) => {
           e.stopPropagation();
-          triggerWorkroomTool(tool.id);
+          await triggerWorkroomTool(tool.id);
         },
       })
     );
@@ -9836,6 +9911,9 @@ document.getElementById("checklistModal")?.addEventListener("close", () => {
   activeWorkroomLeftTab = "tasks";
   workroomDisciplineNoticeShown = false;
   workroomCadFilesRequestId += 1;
+  workroomCadFilesLoadPromise = Promise.resolve();
+  setWorkroomCadFilesLoading(false);
+  setWorkroomDiscoveredCadFilePaths();
   checklistModalState.appliedTabs = [];
   checklistModalState.activeInstanceId = null;
   pendingCadLaunchContext = null;
@@ -9872,13 +9950,14 @@ window.__aciesAutomation = {
     if (modal?.open) modal.close();
     return this.getWorkroomState();
   },
-  runWorkroomTool(toolId) {
-    triggerWorkroomTool(toolId);
+  async runWorkroomTool(toolId) {
+    await triggerWorkroomTool(toolId);
     return this.getToolState(toolId);
   },
   getWorkroomState() {
     const modal = document.getElementById("checklistModal");
     const deliverableSelect = document.getElementById("checklistDeliverableSelect");
+    const cadFilesStatusEl = document.getElementById("workroomCadFilesStatus");
     const project =
       Number.isInteger(activeChecklistProject) && activeChecklistProject >= 0
         ? db[activeChecklistProject] || null
@@ -9890,6 +9969,9 @@ window.__aciesAutomation = {
       activeProjectIndex: activeChecklistProject,
       activeDeliverableIndex: activeChecklistDeliverable,
       deliverableOptions: deliverableSelect?.options?.length || 0,
+      cadFilesLoading: workroomCadFilesLoading,
+      discoveredCadFileCount: workroomDiscoveredCadFilePaths.length,
+      cadFilesStatus: (cadFilesStatusEl?.textContent || "").trim(),
       localProjectPath: normalizeWorkroomFolderPath(project?.localProjectPath || ""),
       serverProjectPath: getWorkroomServerProjectPath(project),
       openLocalProjectButton: {

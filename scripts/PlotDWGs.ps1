@@ -98,19 +98,19 @@ if (-not $pythonCheck) {
 # Relaunch in STA mode for the file picker dialog to work correctly
 if ([System.Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') {
   $ps = (Get-Process -Id $PID).Path
-  $argsList = @("-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"")
-  if ($AcadCore) { $argsList += @("-AcadCore", "`"$AcadCore`"") }
+  $argsList = @("-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-File", $PSCommandPath)
+  if ($AcadCore) { $argsList += @("-AcadCore", $AcadCore) }
   if ($PSBoundParameters.ContainsKey('AutoDetectPaperSize')) {
     $argsList += @("-AutoDetectPaperSize", $AutoDetectPaperSize)
   }
   if ($PSBoundParameters.ContainsKey('ShrinkPercent')) {
     $argsList += @("-ShrinkPercent", $ShrinkPercent)
   }
-  if ($PSBoundParameters.ContainsKey('FilesListPath') -and $FilesListPath) {
-    $argsList += @("-FilesListPath", "`"$FilesListPath`"")
+  if ($PSBoundParameters.ContainsKey('FilesListPath') -and -not [string]::IsNullOrWhiteSpace($FilesListPath)) {
+    $argsList += @("-FilesListPath", $FilesListPath)
   }
-  Start-Process -FilePath $ps -ArgumentList $argsList -Wait
-  exit
+  $child = Start-Process -FilePath $ps -ArgumentList $argsList -Wait -PassThru
+  exit $child.ExitCode
 }
 # Validate that accoreconsole.exe exists
 if ([string]::IsNullOrEmpty($acadCore) -or -not (Test-Path $acadCore)) {
@@ -155,17 +155,30 @@ Ensure-WinFormsAssemblies
 
 # --- Resolve DWG files: prefer preselected list, otherwise prompt ---
 $files = @()
-if (-not [string]::IsNullOrWhiteSpace($FilesListPath) -and (Test-Path $FilesListPath)) {
-  $files = @(
-    Get-Content -Path $FilesListPath -Encoding UTF8 |
-      Where-Object { $_ -and $_.Trim() -and (Test-Path $_.Trim()) } |
-      ForEach-Object { $_.Trim() }
-  )
-  if ($files.Count -gt 0) {
-    Write-Host "PROGRESS: Using $($files.Count) DWG file(s) from auto-selected project folder."
+$filesListWasProvided = $PSBoundParameters.ContainsKey('FilesListPath')
+$hasFilesListPath = $filesListWasProvided -and -not [string]::IsNullOrWhiteSpace($FilesListPath)
+if ($filesListWasProvided) {
+  if ($hasFilesListPath) {
+    Write-Host "PROGRESS: Received auto-selected files list: $FilesListPath"
+    if (Test-Path $FilesListPath) {
+      $files = @(
+        Get-Content -Path $FilesListPath -Encoding UTF8 |
+          Where-Object { $_ -and $_.Trim() -and (Test-Path $_.Trim()) } |
+          ForEach-Object { $_.Trim() }
+      )
+      if ($files.Count -gt 0) {
+        Write-Host "PROGRESS: Using $($files.Count) DWG file(s) from auto-selected project folder."
+      }
+      else {
+        Write-Host "PROGRESS: Provided files list was empty. Opening file picker..."
+      }
+    }
+    else {
+      Write-Host "PROGRESS: Provided files list path was not found. Opening file picker..."
+    }
   }
   else {
-    Write-Host "PROGRESS: Provided files list was empty. Opening file picker..."
+    Write-Host "PROGRESS: Files list parameter was provided without a path. Opening file picker..."
   }
 }
 

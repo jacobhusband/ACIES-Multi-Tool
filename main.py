@@ -888,6 +888,7 @@ class Api:
         test_mode_raw = str(os.getenv('ACIES_TEST_MODE', '')).strip().lower()
         self.test_mode = test_mode_raw in ('1', 'true', 'yes', 'on')
         self._test_mode_records = []
+        self._workroom_cad_file_cache = {}
         if self.test_mode:
             logging.info(
                 "Api initialized in ACIES_TEST_MODE. CAD tools run in deterministic validation mode.")
@@ -1332,6 +1333,20 @@ class Api:
 
         thread = threading.Thread(target=script_runner)
         thread.start()
+
+    def _build_powershell_script_command(self, script_path, *args):
+        command = [
+            'powershell.exe',
+            '-ExecutionPolicy',
+            'Bypass',
+            '-File',
+            str(script_path),
+        ]
+        for arg in args:
+            if arg is None:
+                continue
+            command.append(str(arg))
+        return command
 
     def get_user_settings(self):
         """Reads and returns user settings from settings.json."""
@@ -4280,6 +4295,93 @@ TASK 3: LOAD TYPES
         temp_file.close()
         return temp_file.name
 
+    def _normalize_dwg_file_paths(self, file_paths, require_exists=True):
+        if not isinstance(file_paths, (list, tuple, set)):
+            return []
+
+        resolved_paths = []
+        seen = set()
+        for raw_path in file_paths:
+            raw_text = str(raw_path or '').strip()
+            if not raw_text:
+                continue
+            normalized = os.path.normpath(raw_text)
+            if os.path.splitext(normalized)[1].lower() != '.dwg':
+                continue
+            if require_exists and not os.path.isfile(normalized):
+                continue
+            key = os.path.normcase(normalized)
+            if key in seen:
+                continue
+            seen.add(key)
+            resolved_paths.append(normalized)
+        return resolved_paths
+
+    def _get_workroom_cad_file_cache_store(self):
+        cache = getattr(self, '_workroom_cad_file_cache', None)
+        if not isinstance(cache, dict):
+            cache = {}
+            self._workroom_cad_file_cache = cache
+        return cache
+
+    def _get_workroom_cad_file_cache_key(self, project_path, discipline):
+        normalized_project_path = os.path.normpath(
+            str(project_path or '').strip()) if project_path else ''
+        normalized_discipline = str(discipline or '').strip()
+        if not normalized_project_path or not normalized_discipline:
+            return None
+        return (os.path.normcase(normalized_project_path), normalized_discipline.lower())
+
+    def _set_workroom_cad_file_cache_entry(self, project_path, discipline, folder_path, file_paths, resolution_mode=''):
+        cache_key = self._get_workroom_cad_file_cache_key(project_path, discipline)
+        if cache_key is None:
+            return None
+
+        normalized_project_path = os.path.normpath(str(project_path or '').strip())
+        normalized_discipline = str(discipline or '').strip()
+        normalized_folder_path = os.path.normpath(
+            str(folder_path or '').strip()) if folder_path else ''
+        normalized_files = self._normalize_dwg_file_paths(
+            file_paths, require_exists=False)
+
+        entry = {
+            'project_path': normalized_project_path,
+            'discipline': normalized_discipline,
+            'folder_path': normalized_folder_path,
+            'files': normalized_files,
+            'resolution_mode': str(resolution_mode or '').strip(),
+        }
+        self._get_workroom_cad_file_cache_store()[cache_key] = entry
+        return entry
+
+    def _get_workroom_cad_file_cache_entry(self, project_path, discipline):
+        cache_key = self._get_workroom_cad_file_cache_key(project_path, discipline)
+        if cache_key is None:
+            return None
+        entry = self._get_workroom_cad_file_cache_store().get(cache_key)
+        return entry if isinstance(entry, dict) else None
+
+    def _get_launch_context_cad_file_paths(self, launch_context):
+        context = self._normalize_launch_context(launch_context)
+        return self._normalize_dwg_file_paths(
+            context.get('cadFilePaths'), require_exists=True)
+
+    def _get_shared_parent_folder(self, file_paths):
+        parent_dirs = []
+        seen = set()
+        for path in file_paths:
+            parent = os.path.dirname(os.path.normpath(str(path or '').strip()))
+            if not parent:
+                continue
+            key = os.path.normcase(parent)
+            if key in seen:
+                continue
+            seen.add(key)
+            parent_dirs.append(parent)
+        if len(parent_dirs) == 1:
+            return parent_dirs[0]
+        return ''
+
     def _find_workroom_project_root_by_id(self, project_path):
         normalized_project_path = os.path.normpath(project_path) if project_path else ''
         if not normalized_project_path:
@@ -4404,8 +4506,58 @@ TASK 3: LOAD TYPES
         if not self._is_workroom_auto_select_enabled(settings, launch_context):
             return None
         context = self._resolve_workroom_context(settings, launch_context)
+        launch_payload = self._normalize_launch_context(launch_context)
         project_path = context.get('project_path') or ''
         discipline = context.get('discipline') or 'Electrical'
+        cached_entry = self._get_workroom_cad_file_cache_entry(
+            project_path, discipline)
+        if cached_entry:
+            cached_dwg_files = self._normalize_dwg_file_paths(
+                cached_entry.get('files'), require_exists=True)
+            if cached_dwg_files:
+                files_list_path = self._write_files_list_temp(cached_dwg_files)
+                cached_folder_path = str(cached_entry.get('folder_path') or '').strip()
+                folder_path = cached_folder_path or self._get_shared_parent_folder(
+                    cached_dwg_files)
+                logging.info(
+                    f"{tool_name}: Auto-selected {len(cached_dwg_files)} DWG(s) from cached Workroom detection "
+                    f"(folder={folder_path or '<multiple>'}; cached_mode={cached_entry.get('resolution_mode') or 'unknown'}).")
+                return {
+                    'files_list_path': files_list_path,
+                    'project_path': project_path,
+                    'discipline': str(cached_entry.get('discipline') or discipline),
+                    'folder_path': folder_path,
+                    'count': len(cached_dwg_files),
+                    'resolution_mode': 'workroom_cached_detection',
+                }
+            cached_file_count = len(cached_entry.get('files') or [])
+            if cached_file_count:
+                logging.info(
+                    f"{tool_name}: Cached Workroom detection had {cached_file_count} DWG(s), but none still exist. "
+                    "Falling back.")
+            else:
+                logging.info(
+                    f"{tool_name}: Cached Workroom detection is empty for project_path={project_path} "
+                    f"discipline={discipline}. Falling back.")
+        explicit_dwg_files = self._get_launch_context_cad_file_paths(launch_context)
+        if explicit_dwg_files:
+            files_list_path = self._write_files_list_temp(explicit_dwg_files)
+            shared_parent = self._get_shared_parent_folder(explicit_dwg_files)
+            logging.info(
+                f"{tool_name}: Auto-selected {len(explicit_dwg_files)} explicit DWG(s) from launch context "
+                f"(folder={shared_parent or '<multiple>'}).")
+            return {
+                'files_list_path': files_list_path,
+                'project_path': project_path,
+                'discipline': discipline,
+                'folder_path': shared_parent,
+                'count': len(explicit_dwg_files),
+                'resolution_mode': 'launch_context_explicit_files',
+            }
+        if 'cadFilePaths' in launch_payload:
+            logging.info(
+                f"{tool_name}: Launch context cadFilePaths were provided but no valid DWG files remained. "
+                "Falling back to folder scan.")
         if not project_path:
             logging.info(
                 f"{tool_name}: Workroom auto-select fallback to manual file picker (missing project path).")
@@ -4502,6 +4654,13 @@ TASK 3: LOAD TYPES
                         "get_workroom_cad_files: Discipline folder not found "
                         f"(project_path={project_path}; discipline={resolved_discipline})."
                     )
+                self._set_workroom_cad_file_cache_entry(
+                    project_path,
+                    resolved_discipline,
+                    '',
+                    [],
+                    resolution_mode or 'not_found',
+                )
                 return {
                     'status': 'success',
                     'projectPath': project_path,
@@ -4520,6 +4679,13 @@ TASK 3: LOAD TYPES
                 }
                 for path in dwg_paths
             ]
+            self._set_workroom_cad_file_cache_entry(
+                project_path,
+                resolved_discipline,
+                folder_path,
+                dwg_paths,
+                resolution_mode,
+            )
 
             return {
                 'status': 'success',
@@ -4760,14 +4926,20 @@ TASK 3: LOAD TYPES
                 'toolPublishDwgs',
                 "Workroom auto-select unavailable. Opening file picker...",
             )
-        command = (
-            f'powershell.exe -ExecutionPolicy Bypass -File "{script_path}" '
-            f'-AcadCore "{acad_path}" '
-            f'-AutoDetectPaperSize {_ps_bool(auto_detect)} '
-            f'-ShrinkPercent {shrink_percent}'
+        command = self._build_powershell_script_command(
+            script_path,
+            '-AcadCore',
+            acad_path,
+            '-AutoDetectPaperSize',
+            _ps_bool(auto_detect),
+            '-ShrinkPercent',
+            shrink_percent,
         )
         if auto_selection:
-            command += f' -FilesListPath "{auto_selection["files_list_path"]}"'
+            command.extend([
+                '-FilesListPath',
+                auto_selection['files_list_path'],
+            ])
         self._run_script_with_progress(command, 'toolPublishDwgs')
         return {'status': 'success'}
 
@@ -4809,13 +4981,18 @@ TASK 3: LOAD TYPES
                 'toolFreezeLayers',
                 "Workroom auto-select unavailable. Opening file picker...",
             )
-        command = (
-            f'powershell.exe -ExecutionPolicy Bypass -File "{script_path}" '
-            f'-AcadCore "{acad_path}" '
-            f'-ScanAllLayers {_ps_bool(scan_all)}'
+        command = self._build_powershell_script_command(
+            script_path,
+            '-AcadCore',
+            acad_path,
+            '-ScanAllLayers',
+            _ps_bool(scan_all),
         )
         if auto_selection:
-            command += f' -FilesListPath "{auto_selection["files_list_path"]}"'
+            command.extend([
+                '-FilesListPath',
+                auto_selection['files_list_path'],
+            ])
         self._run_script_with_progress(command, 'toolFreezeLayers')
         return {'status': 'success'}
 
@@ -4857,13 +5034,18 @@ TASK 3: LOAD TYPES
                 'toolThawLayers',
                 "Workroom auto-select unavailable. Opening file picker...",
             )
-        command = (
-            f'powershell.exe -ExecutionPolicy Bypass -File "{script_path}" '
-            f'-AcadCore "{acad_path}" '
-            f'-ScanAllLayers {_ps_bool(scan_all)}'
+        command = self._build_powershell_script_command(
+            script_path,
+            '-AcadCore',
+            acad_path,
+            '-ScanAllLayers',
+            _ps_bool(scan_all),
         )
         if auto_selection:
-            command += f' -FilesListPath "{auto_selection["files_list_path"]}"'
+            command.extend([
+                '-FilesListPath',
+                auto_selection['files_list_path'],
+            ])
         self._run_script_with_progress(command, 'toolThawLayers')
         return {'status': 'success'}
 

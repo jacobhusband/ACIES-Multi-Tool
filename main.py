@@ -117,6 +117,16 @@ KEY_TO_LABEL = {v: k for k, v in LABEL_TO_KEY.items()}
 APP_UPDATE_REPO = "jacobhusband/ACIES-Multi-Tool"
 APP_INSTALLER_NAME = "acies-scheduler-setup.exe"
 GITHUB_API_BASE = "https://api.github.com"
+KNOWN_PLUGIN_BUNDLES = [
+    "ElectricalCommands.AutoLispCommands.bundle",
+    "ElectricalCommands.CleanCADCommands.bundle",
+    "ElectricalCommands.GeneralCommands.bundle",
+    "ElectricalCommands.GetAttributesCommands.bundle",
+    "ElectricalCommands.PlotCommands.bundle",
+    "ElectricalCommands.T24Commands.bundle",
+    "ElectricalCommands.LFSCommands.bundle",
+    "ElectricalCommands.TextCommands.bundle",
+]
 
 
 def load_app_version():
@@ -150,6 +160,15 @@ def _version_tuple(raw):
 
 def _is_remote_newer(remote, current):
     return _version_tuple(remote) > _version_tuple(current)
+
+
+def _bundle_name_from_asset_name(asset_name, release_tag):
+    bundle_name = str(asset_name or "")
+    if release_tag:
+        bundle_name = bundle_name.replace(f"-{release_tag}.zip", ".bundle")
+    if bundle_name.endswith(".zip"):
+        bundle_name = bundle_name[:-4] + ".bundle"
+    return bundle_name
 
 
 def parse_due_str(s):
@@ -1633,67 +1652,77 @@ class Api:
         """
         logging.info("Fetching bundle statuses...")
         try:
-            # 1. Get local bundles
-            local_bundles = os.listdir(self.app_plugins_folder)
+            local_bundles = {
+                name for name in os.listdir(self.app_plugins_folder)
+                if str(name).endswith('.bundle')
+            }
 
-            # 2. Resolve the latest AutoCAD plugin release/tag from its repo
-            release_info = self._fetch_latest_bundle_release()
-            self.release_tag = release_info.get('tag') or BUNDLE_RELEASE_TAG
-            release_tag = self.release_tag
+            release_tag = BUNDLE_RELEASE_TAG
+            assets = []
+            try:
+                release_info = self._fetch_latest_bundle_release()
+                self.release_tag = release_info.get('tag') or BUNDLE_RELEASE_TAG
+                release_tag = self.release_tag
+                assets = release_info.get('assets', []) or []
+                if not assets and release_tag:
+                    api_url = f"{GITHUB_API_BASE}/repos/{self.github_repo}/releases/tags/{release_tag}"
+                    tag_response = requests.get(api_url, timeout=10)
+                    if tag_response.status_code != 404:
+                        tag_response.raise_for_status()
+                        assets = tag_response.json().get('assets', [])
+            except Exception as e:
+                self.release_tag = release_tag
+                logging.warning(
+                    f"Could not refresh plugin release assets; falling back to known bundle catalog: {e}"
+                )
 
-            # Fetch assets either from the release payload or via the tag endpoint
-            assets = release_info.get('assets', []) or []
-            if not assets and release_tag:
-                api_url = f"{GITHUB_API_BASE}/repos/{self.github_repo}/releases/tags/{release_tag}"
-                tag_response = requests.get(api_url, timeout=10)
-                tag_response.raise_for_status()
-                assets = tag_response.json().get('assets', [])
-
-            if not release_tag:
-                raise Exception("Latest AutoCAD plugin release tag is empty.")
-            if not assets:
-                raise Exception(
-                    f"No assets found for AutoCAD plugin release/tag '{release_tag}'. Publish bundle zip assets.")
-
-            statuses = []
+            asset_by_bundle = {}
             for asset in assets:
                 asset_name = asset.get('name')
                 if not asset_name or 'Source code' in asset_name or not asset_name.endswith('.zip'):
                     continue
+                bundle_name = _bundle_name_from_asset_name(asset_name, release_tag)
+                if bundle_name:
+                    asset_by_bundle[bundle_name] = asset
 
-                bundle_name = asset_name.replace(
-                    f"-{release_tag}.zip", ".bundle")
-                if bundle_name == asset_name:
-                    bundle_name = asset_name.replace(".zip", ".bundle")
-                bundle_path = os.path.join(
-                    self.app_plugins_folder, bundle_name)
+            bundle_names = list(KNOWN_PLUGIN_BUNDLES)
+            for bundle_name in sorted(asset_by_bundle):
+                if bundle_name not in bundle_names:
+                    bundle_names.append(bundle_name)
+            for bundle_name in sorted(local_bundles):
+                if bundle_name not in bundle_names:
+                    bundle_names.append(bundle_name)
 
+            statuses = []
+            for bundle_name in bundle_names:
+                bundle_path = os.path.join(self.app_plugins_folder, bundle_name)
                 is_installed = bundle_name in local_bundles
                 local_version = None
+                asset = asset_by_bundle.get(bundle_name)
 
-                # Check for version.txt to determine if update is needed
                 if is_installed:
                     version_file = os.path.join(bundle_path, 'version.txt')
                     if os.path.exists(version_file):
                         with open(version_file, 'r') as f:
                             local_version = f.read().strip()
 
-                # Determine Status
-                if not is_installed:
-                    state = 'not_installed'
-                elif local_version != release_tag:
-                    # Installed, but version mismatch (or missing version file) -> Update
-                    state = 'update_available'
+                if asset:
+                    if not is_installed:
+                        state = 'not_installed'
+                    elif local_version != release_tag:
+                        state = 'update_available'
+                    else:
+                        state = 'installed'
                 else:
-                    state = 'installed'
+                    state = 'installed' if is_installed else 'not_published'
 
                 status = {
                     'name': bundle_name.replace('.bundle', ''),
                     'bundle_name': bundle_name,
-                    'state': state,  # 'installed', 'not_installed', 'update_available'
+                    'state': state,
                     'local_version': local_version or 'unknown',
                     'remote_version': release_tag,
-                    'asset': asset
+                    'asset': asset,
                 }
                 statuses.append(status)
 
@@ -3869,7 +3898,8 @@ Return ONLY the JSON object.
         if normalized.startswith('\\\\?\\'):
             return normalized
         if normalized.startswith('\\\\'):
-            return f"\\\\?\\UNC\\{normalized.lstrip('\\')}"
+            unc_path = normalized.lstrip('\\')
+            return f"\\\\?\\UNC\\{unc_path}"
         if re.match(r'^[A-Za-z]:\\', normalized):
             return f"\\\\?\\{normalized}"
         return normalized

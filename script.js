@@ -10257,12 +10257,289 @@ window.__aciesAutomation = {
 };
 // ===================== BUNDLE / PLUGIN MANAGER =====================
 
+function normalizeBundleCoreName(bundleName) {
+  return String(bundleName || "")
+    .replace("ElectricalCommands.", "")
+    .replace(".bundle", "");
+}
+
+function buildPluginDocUrl(title, pageId) {
+  return `https://brainy-seahorse-3c5.notion.site/${title}-${pageId}`;
+}
+
+// Keep the desktop app aligned with the current Notion command pages while
+// the upstream bundle metadata catches up.
+const PLUGIN_DOC_OVERRIDES = {
+  AutoLispCommands: {
+    replace: true,
+    order: ["CLEANUP", "REV", "SUMLENGTHS"],
+    commands: {
+      CLEANUP:
+        "Runs SETBYLAYER on all objects, PURGE ALL, and AUDIT with fixes to clean the current drawing.",
+      REV:
+        "Draws a revision cloud and inserts a delta triangle with the corresponding revision value.",
+      SUMLENGTHS:
+        "Calculates the total length of selected lines, arcs, and polylines and reports the result in the command line.",
+    },
+    links: {
+      CLEANUP: buildPluginDocUrl(
+        "AutoLispCommands",
+        "2b13fdbb662c80479711de7b33eb2737"
+      ),
+      REV: buildPluginDocUrl(
+        "AutoLispCommands",
+        "2b13fdbb662c80479711de7b33eb2737"
+      ),
+      SUMLENGTHS: buildPluginDocUrl(
+        "AutoLispCommands",
+        "2b13fdbb662c80479711de7b33eb2737"
+      ),
+    },
+  },
+  CleanCADCommands: {
+    replace: true,
+    order: ["EMBEDIMAGES", "EMBEDPDFS", "CLEANTBLK", "CLEANCAD"],
+    commands: {
+      EMBEDIMAGES:
+        "Embeds raster images from XREFs into the drawing by converting them to OLE objects using PowerPoint, preserving orientation.",
+      EMBEDPDFS:
+        "Embeds PDF underlays into the drawing by converting them to PNG and then OLE objects using PowerPoint.",
+      CLEANTBLK:
+        "Cleans the title block by exploding blocks, keeping only the title block, detaching XREFs, and embedding images.",
+      CLEANCAD:
+        "Cleans the entire sheet by embedding XREFs and performing cleanup operations.",
+    },
+    links: {
+      EMBEDIMAGES: buildPluginDocUrl(
+        "EMBEDIMAGES",
+        "2b03fdbb662c80a08954db8d05ac745f"
+      ),
+      EMBEDPDFS: buildPluginDocUrl(
+        "EMBEDPDFS",
+        "2b03fdbb662c806b9716fcd761700898"
+      ),
+      CLEANTBLK: buildPluginDocUrl(
+        "CLEANTBLK",
+        "2b03fdbb662c80eb89add09ae9cd99df"
+      ),
+      CLEANCAD: buildPluginDocUrl(
+        "CLEANCAD",
+        "2b03fdbb662c805b9df9c80b6ad26900"
+      ),
+    },
+  },
+  GeneralCommands: {
+    replace: true,
+    order: ["OBJMASK", "VPFROMREG", "LAYRED", "LAYGREEN", "AREALABEL"],
+    commands: {
+      OBJMASK:
+        "Creates wipeout objects behind selected text, MText, tables, or polylines to mask the background.",
+      VPFROMREG:
+        "Creates a viewport in paperspace from a selected region in modelspace, with automatic scaling options.",
+      LAYRED:
+        "Sets selected layer, region entities, or XREF-related layers to red based on the chosen mode.",
+      LAYGREEN: "Sets all layers belonging to a selected XREF to green.",
+      AREALABEL:
+        "Calculates the area of selected closed polylines and places square-foot labels at their centers.",
+    },
+    links: {
+      OBJMASK: buildPluginDocUrl(
+        "OBJMASK",
+        "2b13fdbb662c802fb082e4095528ec06"
+      ),
+      VPFROMREG: buildPluginDocUrl(
+        "VPFROMREG",
+        "2b13fdbb662c805c963acf926dc03684"
+      ),
+      LAYRED: buildPluginDocUrl(
+        "LAYRED",
+        "3e8ae8f68ef04512b3c693c8b94d7503"
+      ),
+      LAYGREEN: buildPluginDocUrl(
+        "LAYGREEN",
+        "0401b0c14e7a4581b27371fdc7c635e7"
+      ),
+      AREALABEL: buildPluginDocUrl(
+        "AREALABEL",
+        "2b13fdbb662c80dca341f5624feaa488"
+      ),
+    },
+  },
+  T24Commands: {
+    replace: true,
+    order: ["T24", "PDFSHEETS", "IMGSHEETS"],
+    commands: {
+      T24: "Inserts a T24 PDF form and automatically adds embedded text and images on the final page.",
+      PDFSHEETS:
+        "Inserts all pages of a selected multi-page PDF as underlays in a grid layout.",
+      IMGSHEETS:
+        "Inserts all PNG pages from a selected folder into paper space in a grid layout.",
+    },
+    links: {
+      T24: buildPluginDocUrl("T24", "2f53fdbb662c808c881ffd0bd69dc5b1"),
+      PDFSHEETS: buildPluginDocUrl(
+        "PDFSHEETS",
+        "2b13fdbb662c80468573df2164539808"
+      ),
+      IMGSHEETS: buildPluginDocUrl(
+        "IMGSHEETS",
+        "67335a8b3ec741e297b5025dd0c413ee"
+      ),
+    },
+  },
+  TextCommands: {
+    replace: true,
+    order: [
+      "TEXTCOUNT",
+      "TEXTSELECT",
+      "TEXTSUM",
+      "TEXTSUMEXPORT",
+      "TEXTREPLACE",
+      "TEXTINCREMENT",
+      "TEXTADD",
+    ],
+    commands: {
+      TEXTCOUNT:
+        "Counts selected TEXT, MTEXT, and ATTRIB values, groups identical strings, reports totals, and exports a timestamped text report.",
+      TEXTSELECT:
+        "Filters a mixed selection so only TEXT and MTEXT objects remain selected.",
+      TEXTSUM:
+        "Sums numeric values parsed from selected TEXT and MTEXT objects.",
+      TEXTSUMEXPORT:
+        "Finds room-type text near square-footage text and exports grouped totals to T24Output.json.",
+      TEXTREPLACE:
+        "Replaces the content of selected TEXT and MTEXT objects with a new user-specified value.",
+      TEXTINCREMENT:
+        "Renumbers selected TEXT and MTEXT objects using a prefix, start/end range, and odd/even filtering.",
+      TEXTADD:
+        "Adds a specified integer value to numbers found inside selected TEXT and MTEXT objects.",
+    },
+    links: {
+      TEXTCOUNT: buildPluginDocUrl(
+        "TEXTCOUNT",
+        "fe72b9787d2d4740a82e881a79cb785a"
+      ),
+      TEXTSELECT: buildPluginDocUrl(
+        "TEXTSELECT",
+        "5ed6ba4a1b2f4c2090673c79785b77aa"
+      ),
+      TEXTSUM: buildPluginDocUrl(
+        "TEXTSUM",
+        "2b13fdbb662c807aa0d6e00948b128d6"
+      ),
+      TEXTSUMEXPORT: buildPluginDocUrl(
+        "TEXTSUMEXPORT",
+        "2b13fdbb662c8098967edf32021a5f6c"
+      ),
+      TEXTREPLACE: buildPluginDocUrl(
+        "TEXTREPLACE",
+        "2b13fdbb662c80f19897c73b90801e7e"
+      ),
+      TEXTINCREMENT: buildPluginDocUrl(
+        "TEXTINCREMENT",
+        "2b13fdbb662c80d8b2f6ef30877488ca"
+      ),
+      TEXTADD: buildPluginDocUrl(
+        "TEXTADD",
+        "2b13fdbb662c808c9016dc9a230f7403"
+      ),
+    },
+  },
+  LFSCommands: {
+    replace: true,
+    order: ["TABLEANALYZE", "LFS", "LFSPULL", "LFSPUSH"],
+    commands: {
+      TABLEANALYZE:
+        "Captures a selected AutoCAD table at full fidelity and exports a reconstruction-ready JSON file.",
+      LFS:
+        "Inserts the built-in lighting fixture schedule table template and applies local sync data when available.",
+      LFSPULL:
+        "Exports selected lighting fixture schedule table data to T24LightingFixtureSchedule.sync.json in the active DWG folder.",
+      LFSPUSH:
+        "Loads T24LightingFixtureSchedule.sync.json from the active DWG folder and applies it to a selected lighting fixture schedule table.",
+    },
+    links: {
+      TABLEANALYZE: buildPluginDocUrl(
+        "TABLEANALYZE",
+        "5450f3570a694cc48844e5250b29679a"
+      ),
+      LFS: buildPluginDocUrl(
+        "LFS",
+        "0f3bd29ae7034574b8458136be3e598f"
+      ),
+      LFSPULL: buildPluginDocUrl(
+        "LFSPULL",
+        "a0aeb6ea06014611bce6265b926ec160"
+      ),
+      LFSPUSH: buildPluginDocUrl(
+        "LFSPUSH",
+        "cce3b9fe840349b7823c80c879794feb"
+      ),
+    },
+  },
+};
+
+function applyPluginDocOverrides(coreName, description) {
+  const override = PLUGIN_DOC_OVERRIDES[coreName];
+  if (!override) return description;
+
+  const baseDescription =
+    description && typeof description === "object" ? description : {};
+  const commands = {};
+  const links = {};
+  const renames = override.renames || {};
+
+  if (!override.replace) {
+    Object.entries(baseDescription.commands || {}).forEach(([command, summary]) => {
+      commands[renames[command] || command] = summary;
+    });
+    Object.entries(baseDescription.links || {}).forEach(([command, link]) => {
+      links[renames[command] || command] = link;
+    });
+  }
+
+  Object.assign(commands, override.commands || {});
+  Object.assign(links, override.links || {});
+
+  if (Object.keys(commands).length === 0 && Object.keys(links).length === 0) {
+    return description;
+  }
+
+  const order = Array.isArray(override.order) ? override.order : [];
+  if (order.length === 0) {
+    return {
+      ...baseDescription,
+      commands,
+      links,
+    };
+  }
+
+  const orderedCommands = {};
+  const orderedLinks = {};
+
+  order.forEach((command) => {
+    if (!(command in commands)) return;
+    orderedCommands[command] = commands[command];
+    if (links[command]) orderedLinks[command] = links[command];
+  });
+
+  Object.keys(commands).forEach((command) => {
+    if (command in orderedCommands) return;
+    orderedCommands[command] = commands[command];
+    if (links[command]) orderedLinks[command] = links[command];
+  });
+
+  return {
+    ...baseDescription,
+    commands: orderedCommands,
+    links: orderedLinks,
+  };
+}
+
 // Fetch description from specific GitHub RAW url based on bundle name
 async function fetchDescriptionForBundle(bundleName) {
   // Remove prefix/suffix to get core name. e.g., "ElectricalCommands.CleanCADCommands.bundle" -> "CleanCADCommands"
-  const coreName = bundleName
-    .replace("ElectricalCommands.", "")
-    .replace(".bundle", "");
+  const coreName = normalizeBundleCoreName(bundleName);
 
   // Check Cache
   if (DESCRIPTION_CACHE[coreName]) return DESCRIPTION_CACHE[coreName];
@@ -10274,10 +10551,16 @@ async function fetchDescriptionForBundle(bundleName) {
     const res = await fetch(url);
     if (!res.ok) throw new Error("Not found");
     const json = await res.json();
-    DESCRIPTION_CACHE[coreName] = json; // Cache it
-    return json;
+    const resolvedDescription = applyPluginDocOverrides(coreName, json);
+    DESCRIPTION_CACHE[coreName] = resolvedDescription; // Cache it
+    return resolvedDescription;
   } catch (e) {
     console.warn(`Could not fetch description for ${coreName}`, e);
+    const fallbackDescription = applyPluginDocOverrides(coreName, null);
+    if (fallbackDescription) {
+      DESCRIPTION_CACHE[coreName] = fallbackDescription;
+      return fallbackDescription;
+    }
     return null;
   }
 }
@@ -10341,9 +10624,7 @@ async function renderBundles(bundles) {
   // Process each bundle
   for (const bundle of bundles) {
     // Normalize name
-    const coreName = bundle.name
-      .replace("ElectricalCommands.", "")
-      .replace(".bundle", "");
+    const coreName = normalizeBundleCoreName(bundle.name);
 
     const card = el("div", { className: "release-card" });
     let statusClass, statusTitle, btnText, btnClass;
@@ -10358,6 +10639,11 @@ async function renderBundles(bundles) {
       statusTitle = `Update Available (v${bundle.remote_version})`;
       btnText = "Update";
       btnClass = "btn-accent";
+    } else if (bundle.state === "not_published") {
+      statusClass = "not-installed";
+      statusTitle = "Release asset not published yet";
+      btnText = "Unavailable";
+      btnClass = "";
     } else {
       statusClass = "not-installed";
       statusTitle = "Not Installed";
@@ -10381,11 +10667,16 @@ async function renderBundles(bundles) {
 
     const footer = el("div", { className: "release-card-footer" });
     const btn = el("button", {
-      className: `btn ${btnClass}`,
+      className: `btn ${btnClass}`.trim(),
       textContent: btnText,
     });
     btn.dataset.bundleName = bundle.bundle_name;
-    btn.dataset.actionType = btnText;
+    if (bundle.state === "not_published") {
+      btn.disabled = true;
+      btn.title = "This bundle is not yet available as a published release asset.";
+    } else {
+      btn.dataset.actionType = btnText;
+    }
 
     // Note: We rely on 'bundle.asset' from the backend for installation URL.
     // If backend doesn't provide it, we assume standard release naming.

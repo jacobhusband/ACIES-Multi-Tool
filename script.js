@@ -66,6 +66,7 @@ const LIGHTING_SCHEDULE_DEFAULT_NOTES = [
 ].join("\n");
 const LIGHTING_SCHEDULE_SYNC_SCHEMA_VERSION = "1.0.0";
 const LIGHTING_SCHEDULE_SYNC_FILE_NAME = "T24LightingFixtureSchedule.sync.json";
+const LIGHTING_PROJECT_SEGMENT_REGEX = /^(\d{5,})\s*(?:[-_]\s*)?(.+)$/;
 const TITLE24_SCHEMA_VERSION = "1.0.0";
 const TITLE24_SCOPE_OPTIONS_FILE_PATH =
   "assets/title24/energycodeace.indoor.page1.options.json";
@@ -81,6 +82,8 @@ const EYE_ICON_PATH =
   "M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5C21.27 7.61 17 4.5 12 4.5zm0 12.5a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-8a3 3 0 1 0 0 6 3 3 0 0 0 0-6z";
 const PIN_ICON_PATH =
   "M12 2C8.13 2 5 5.13 5 9c0 2.76 1.87 5.08 4.42 5.76L10 22l2-3 2 3-.42-7.24C16.13 14.08 18 11.76 18 9c0-3.87-3.13-7-7-7zm0 8.5A2.5 2.5 0 1 1 12 5a2.5 2.5 0 0 1 0 5z";
+const NOTE_ICON_PATH =
+  "M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm1 7V3.5L20.5 9H15zM8 13h8v2H8v-2zm0 4h8v2H8v-2zm0-8h5v2H8V9z";
 const PENCIL_ICON_PATH =
   "M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zm17.71-10.21c.39-.39.39-1.02 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z";
 const TRASH_ICON_PATH =
@@ -757,17 +760,13 @@ function parseDeliverableList(description) {
     .filter(Boolean);
 }
 
-function mergeDeliverableDescription(existingDescription, deliverableNames) {
-  const baseList = parseDeliverableList(existingDescription);
-  const seen = new Set(baseList.map((name) => name.toLowerCase()));
-  const merged = baseList.slice();
-  deliverableNames.forEach((name) => {
-    const key = String(name || "").toLowerCase();
-    if (seen.has(key)) return;
-    seen.add(key);
-    merged.push(name);
-  });
-  return merged.join(", ");
+function formatTimesheetProjectName(project) {
+  const name = String(project?.name || "").trim();
+  const nick = String(project?.nick || "").trim();
+  if (name && nick && name.toLowerCase() !== nick.toLowerCase()) {
+    return `${name} (${nick})`;
+  }
+  return name || nick || "";
 }
 
 function getMissingDeliverables(existingDescription, deliverableNames) {
@@ -791,8 +790,15 @@ function getTimesheetEntryMatchKey(entry) {
   const projectId = String(entry?.projectId || "").trim();
   if (projectId) return `id:${projectId.toLowerCase()}`;
   const projectName = String(entry?.projectName || "").trim();
-  if (projectName) return `name:${projectName.toLowerCase()}`;
-  return "";
+  if (!projectName) return "";
+
+  const trailingNickname = projectName.match(/\(([^()]+)\)\s*$/);
+  if (trailingNickname) {
+    const nick = String(trailingNickname[1] || "").trim();
+    if (nick) return `name:${nick.toLowerCase()}`;
+  }
+
+  return `name:${projectName.toLowerCase()}`;
 }
 
 function isProjectSummaryEntry(entry) {
@@ -2198,7 +2204,7 @@ function createSuggestionCard(
     card.appendChild(
       el("div", {
         className: "ts-suggestion-added",
-        textContent: "Click to append new deliverables",
+        textContent: "Click to add another entry",
       })
     );
   } else if (count > 0) {
@@ -2304,28 +2310,14 @@ function addProjectDeliverablesToTimesheet(project, deliverables) {
   );
 
   const projectId = project.id || "";
-  const projectName = project.nick || project.name || "";
-
-  const updateEntryDescription = (entry) => {
-    const currentDesc = getTimesheetEntryDescription(entry);
-    const isWfh = hasWfhSuffix(currentDesc);
-    const baseDesc = stripWfhSuffix(currentDesc);
-    const merged = mergeDeliverableDescription(baseDesc, deliverableNames);
-    if (merged !== baseDesc) {
-      const nextDesc = isWfh ? appendWfhSuffix(merged) : merged;
-      entry.serviceDescription = nextDesc;
-      entry.deliverableName = nextDesc;
-    }
-  };
-
-  if (summaryEntries.length) summaryEntries.forEach(updateEntryDescription);
+  const projectName = formatTimesheetProjectName(project);
 
   const referenceEntry = summaryEntries[0];
 
   entries.push(
     buildProjectSummaryEntry({
       projectId: referenceEntry?.projectId || projectId,
-      projectName: referenceEntry?.projectName || projectName,
+      projectName: projectName || referenceEntry?.projectName || "",
       pmInitials: referenceEntry?.pmInitials || getDefaultPmInitials(),
       functionName: referenceEntry?.function || getDisciplineFunction(),
       taskNumber: getTimesheetTaskNumberForDeliverable(baseDescription),
@@ -2357,8 +2349,8 @@ function addProjectToTimesheet(project, deliverable) {
     )
     : deliverable?.name || "";
   const serviceDescription = baseDescription;
-  const projectName =
-    referenceEntry?.projectName || project.nick || project.name || "";
+  const formattedProjectName = formatTimesheetProjectName(project);
+  const projectName = formattedProjectName || referenceEntry?.projectName || "";
   const deliverableName =
     deliverable?.name || referenceEntry?.deliverableName || "";
   const pmInitials = referenceEntry?.pmInitials || getDefaultPmInitials();
@@ -4400,6 +4392,9 @@ let lightingScheduleProjectIndex = null;
 let lightingScheduleProjectQuery = "";
 let lightingTemplateQuery = "";
 let lightingScheduleSyncStatusMessage = "";
+let lightingScheduleSyncPollTimer = null;
+let lightingScheduleSyncDirty = false;
+let lightingScheduleSyncSaving = false;
 let title24ProjectIndex = null;
 let title24ProjectQuery = "";
 let title24ScopeOptionsDataset = null;
@@ -5438,6 +5433,87 @@ async function pinUrgentDeliverables() {
       ? `Pinned ${projectsPinned} project${projectsPinned === 1 ? "" : "s"} with ${deliverablesMatched} urgent deliverable${deliverablesMatched === 1 ? "" : "s"}.`
       : `${deliverablesMatched} urgent deliverable${deliverablesMatched === 1 ? "" : "s"} already pinned.`
   );
+}
+
+function formatPinnedDeliverableField(value, fallback = "--") {
+  const normalized = String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return normalized || fallback;
+}
+
+function getDeliverableStatusText(deliverable) {
+  const statuses = Array.isArray(deliverable?.statuses)
+    ? deliverable.statuses
+      .map((status) => String(status || "").trim())
+      .filter(Boolean)
+    : [];
+  if (statuses.length) return [...new Set(statuses)].join(", ");
+
+  const singleStatus = String(deliverable?.status || "").trim();
+  return singleStatus || "None";
+}
+
+function buildPinnedDeliverablesNotepadText(projects = []) {
+  const pinnedProjects = Array.isArray(projects) ? projects.slice() : [];
+  sortProjectsByDueDesc(pinnedProjects);
+
+  const lines = [];
+  let deliverableCount = 0;
+
+  pinnedProjects.forEach((project) => {
+    const deliverable = getPrimaryDeliverable(project);
+    if (!deliverable) return;
+
+    deliverableCount += 1;
+    lines.push(
+      [
+        `Project ID: ${formatPinnedDeliverableField(project?.id)}`,
+        `Project Name: ${formatPinnedDeliverableField(project?.name)}`,
+        `Primary Deliverable: ${formatPinnedDeliverableField(deliverable?.name)}`,
+        `Status: ${getDeliverableStatusText(deliverable)}`,
+      ].join(" | ")
+    );
+  });
+
+  return {
+    text: lines.join("\r\n"),
+    deliverableCount,
+  };
+}
+
+async function openPinnedDeliverablesNotepad() {
+  const pinnedProjects = db.filter((project) => project?.pinned);
+  if (!pinnedProjects.length) {
+    toast("No pinned projects found.");
+    return;
+  }
+
+  const { text, deliverableCount } =
+    buildPinnedDeliverablesNotepadText(pinnedProjects);
+  if (!deliverableCount) {
+    toast("No deliverables found on pinned projects.");
+    return;
+  }
+
+  if (!window.pywebview?.api?.open_notepad_with_text) {
+    toast("Notepad export is unavailable.");
+    return;
+  }
+
+  try {
+    const response = await window.pywebview.api.open_notepad_with_text(text);
+    if (response?.status === "success") {
+      toast(
+        `Opened ${deliverableCount} pinned deliverable${deliverableCount === 1 ? "" : "s"} in Notepad.`
+      );
+      return;
+    }
+    toast(response?.message || "Failed to open pinned deliverables in Notepad.");
+  } catch (error) {
+    console.error("Failed to open pinned deliverables in Notepad:", error);
+    toast("Failed to open pinned deliverables in Notepad.");
+  }
 }
 
 function compareDeliverablesByDue(a, b) {
@@ -11247,7 +11323,10 @@ window.handlePanelScheduleResult = async function (payload) {
   }
 };
 
-const debouncedSaveLightingSchedule = debounce(() => save(), 400);
+const debouncedSaveLightingSchedule = debounce(
+  () => persistActiveLightingSchedule({ reason: "edit" }),
+  500
+);
 const debouncedSaveTitle24 = debounce(() => save(), 400);
 
 function autoResizeTextarea(textarea) {
@@ -11682,6 +11761,116 @@ function getLightingSchedulePathKey(rawPath) {
   return normalizeLightingSchedulePath(rawPath).toLowerCase();
 }
 
+function extractLightingScheduleProjectIdFromPath(rawPath) {
+  const path = normalizeLightingSchedulePath(rawPath);
+  if (!path) return "";
+  const segments = path.split("\\").filter(Boolean);
+  for (let i = segments.length - 1; i >= 0; i -= 1) {
+    const match = segments[i].trim().match(LIGHTING_PROJECT_SEGMENT_REGEX);
+    if (match) return String(match[1] || "").trim();
+  }
+  return "";
+}
+
+function getLightingScheduleProjectId(project, schedule = null) {
+  const explicitId = String(project?.id || "").trim();
+  if (explicitId) return explicitId;
+
+  const pathCandidates = [
+    project?.path,
+    project?.localProjectPath,
+    project?.workroomRootPath,
+    schedule?.targetDwgPath,
+  ];
+  for (const candidate of pathCandidates) {
+    const extracted = extractLightingScheduleProjectIdFromPath(candidate);
+    if (extracted) return extracted;
+  }
+
+  const displayName = String(project?.name || project?.nick || "").trim();
+  return displayName ? `name:${displayName.toLowerCase()}` : "";
+}
+
+function getLightingScheduleLoadedVersion(schedule) {
+  const value = Number(schedule?._storeVersion);
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+function applyLightingScheduleRecordToProject(project, record) {
+  if (!project || !record?.schedule) return null;
+  const schedule = ensureLightingSchedule(project).schedule;
+  const canonical = buildCanonicalLightingSchedule(record.schedule);
+  schedule.rows = canonical.rows.map((row) => createLightingScheduleRow(row));
+  schedule.generalNotes = canonical.generalNotes;
+  schedule.notes = canonical.notes;
+  schedule.targetDwgPath = normalizeLightingSchedulePath(record.targetDwgPath);
+  schedule._storeVersion = Number(record.version || 0);
+  schedule._storeUpdatedAtUtc = String(record.updatedAtUtc || "").trim();
+  schedule._storeUpdatedBy = String(record.updatedBy || "").trim();
+  schedule._tableHandle = String(record.tableHandle || "").trim();
+  return schedule;
+}
+
+async function loadLightingScheduleFromCentralStore(
+  project,
+  { quiet = false, preserveStatus = false } = {}
+) {
+  const schedule = project ? ensureLightingSchedule(project).schedule : null;
+  if (!project || !schedule) return null;
+  if (!window.pywebview?.api?.get_lighting_schedule_record) return schedule;
+
+  const projectId = getLightingScheduleProjectId(project, schedule);
+  if (!projectId) {
+    if (!quiet) {
+      setLightingScheduleSyncStatus(
+        "Lighting schedule sync needs a project ID or a project-number path before it can use the central store."
+      );
+    }
+    return schedule;
+  }
+
+  try {
+    const response = await window.pywebview.api.get_lighting_schedule_record(
+      projectId
+    );
+    if (response?.status !== "success") {
+      throw new Error(response?.message || "Could not load lighting schedule.");
+    }
+    if (!response.exists || !response.data) {
+      schedule._storeVersion = 0;
+      schedule._storeUpdatedAtUtc = "";
+      schedule._storeUpdatedBy = "";
+      if (!preserveStatus && !quiet) {
+        setLightingScheduleSyncStatus(
+          "Central store is ready. The first save from desktop or AutoCAD will create the linked schedule record."
+        );
+      }
+      renderLightingSchedule(schedule);
+      return schedule;
+    }
+
+    const applied = applyLightingScheduleRecordToProject(project, response.data);
+    if (applied) {
+      lightingScheduleSyncDirty = false;
+      renderLightingSchedule(applied);
+      if (!preserveStatus && !quiet) {
+        setLightingScheduleSyncStatus(
+          `Loaded central schedule version ${response.data.version} for ${projectId}.`
+        );
+      }
+    }
+    return applied;
+  } catch (error) {
+    reportClientError("Failed to load lighting schedule from central store", error);
+    if (!quiet) {
+      setLightingScheduleSyncStatus(
+        `Central store load failed: ${error?.message || "Unknown error"}.`
+      );
+    }
+    return schedule;
+  }
+}
+
 function getFileNameFromPath(rawPath) {
   const path = normalizeLightingSchedulePath(rawPath);
   if (!path) return "";
@@ -11714,24 +11903,34 @@ function formatLightingScheduleSyncTimestamp(rawValue) {
 
 function buildLightingScheduleSyncDefaultMessage(project, schedule) {
   if (!project || !schedule) {
-    return "Select a project and target DWG to enable sync.";
+    return "Select a project to load its centralized lighting fixture schedule.";
+  }
+  const projectId = getLightingScheduleProjectId(project, schedule);
+  if (!projectId) {
+    return "Add a project ID or use a project-number path so the lighting schedule can use the shared central store.";
   }
   const targetDwgPath = normalizeLightingSchedulePath(schedule.targetDwgPath);
-  if (!targetDwgPath) {
-    return "Choose Target DWG. Pull flow: run LFSPULL in AutoCAD and select table, then click Pull. Push flow: click Push, then run LFSPUSH in AutoCAD and select table.";
-  }
-
-  const syncPath = getLightingScheduleSyncFilePathFromDwg(targetDwgPath);
   const segments = [];
-  if (syncPath) segments.push(`Sync file: ${syncPath}`);
-  if (schedule.lastPulledAtUtc) {
-    segments.push(`Last pull: ${formatLightingScheduleSyncTimestamp(schedule.lastPulledAtUtc)}`);
+  segments.push(`Central key: ${projectId}`);
+  if (getLightingScheduleLoadedVersion(schedule) > 0) {
+    segments.push(`Version: ${getLightingScheduleLoadedVersion(schedule)}`);
   }
-  if (schedule.lastPushedAtUtc) {
-    segments.push(`Last push: ${formatLightingScheduleSyncTimestamp(schedule.lastPushedAtUtc)}`);
+  if (schedule._storeUpdatedAtUtc) {
+    segments.push(
+      `Last update: ${formatLightingScheduleSyncTimestamp(
+        schedule._storeUpdatedAtUtc
+      )}`
+    );
   }
-  segments.push("Pull: run LFSPULL in AutoCAD, then click Pull.");
-  segments.push("Push: click Push, then run LFSPUSH in AutoCAD.");
+  if (schedule._storeUpdatedBy) {
+    segments.push(`Updated by: ${schedule._storeUpdatedBy}`);
+  }
+  if (targetDwgPath) {
+    segments.push(`Target DWG: ${targetDwgPath}`);
+  } else {
+    segments.push("Choose Target DWG to bind a drawing for AutoCAD table updates.");
+  }
+  segments.push("Run LFSOPEN in AutoCAD to edit the same schedule inside AutoCAD.");
   return segments.join(" ");
 }
 
@@ -11763,8 +11962,16 @@ function renderLightingScheduleSyncControls(project, schedule) {
   }
   if (browseBtn) browseBtn.disabled = !hasProject;
   if (clearBtn) clearBtn.disabled = !hasProject || !targetPath;
-  if (pullBtn) pullBtn.disabled = !hasProject || !targetPath;
-  if (pushBtn) pushBtn.disabled = !hasProject || !targetPath;
+  if (pullBtn) {
+    pullBtn.disabled = !hasProject || lightingScheduleSyncSaving;
+    pullBtn.textContent = "Reload";
+    pullBtn.title = "Reload the schedule from the central store";
+  }
+  if (pushBtn) {
+    pushBtn.disabled = !hasProject || lightingScheduleSyncSaving;
+    pushBtn.textContent = "Save Now";
+    pushBtn.title = "Write the current schedule to the central store immediately";
+  }
 
   if (statusEl) {
     statusEl.textContent =
@@ -11780,6 +11987,129 @@ function updateLightingScheduleTargetDwgPath(project, schedule, dwgPath) {
   schedule.lastSyncFilePath = normalizedPath
     ? getLightingScheduleSyncFilePathFromDwg(normalizedPath)
     : "";
+}
+
+function stopLightingScheduleSyncWatcher() {
+  if (lightingScheduleSyncPollTimer) {
+    clearInterval(lightingScheduleSyncPollTimer);
+    lightingScheduleSyncPollTimer = null;
+  }
+}
+
+function startLightingScheduleSyncWatcher() {
+  stopLightingScheduleSyncWatcher();
+  if (!window.pywebview?.api?.get_lighting_schedule_version) return;
+  lightingScheduleSyncPollTimer = setInterval(() => {
+    pollLightingScheduleCentralStore();
+  }, 2500);
+}
+
+async function pollLightingScheduleCentralStore() {
+  const dlg = document.getElementById("lightingScheduleDlg");
+  if (!dlg?.open || lightingScheduleSyncDirty || lightingScheduleSyncSaving) {
+    return;
+  }
+
+  const project = getActiveLightingScheduleProject();
+  const schedule = getActiveLightingSchedule();
+  if (!project || !schedule) return;
+
+  const projectId = getLightingScheduleProjectId(project, schedule);
+  if (!projectId) return;
+
+  try {
+    const response = await window.pywebview.api.get_lighting_schedule_version(
+      projectId
+    );
+    if (response?.status !== "success") return;
+    const versionInfo = response.data || {};
+    const remoteVersion = Number(versionInfo.version || 0);
+    if (
+      !versionInfo.exists ||
+      remoteVersion <= getLightingScheduleLoadedVersion(schedule)
+    ) {
+      return;
+    }
+
+    await loadLightingScheduleFromCentralStore(project, {
+      quiet: true,
+      preserveStatus: true,
+    });
+    setLightingScheduleSyncStatus(
+      `Detected external lighting schedule update. Reloaded central version ${remoteVersion}.`
+    );
+  } catch (error) {
+    console.warn("Lighting schedule central-store poll failed:", error);
+  }
+}
+
+async function persistActiveLightingSchedule({
+  reason = "save",
+  showStatus = false,
+  showToast = false,
+} = {}) {
+  const project = getActiveLightingScheduleProject();
+  const schedule = getActiveLightingSchedule();
+  if (!project || !schedule) return null;
+  if (!window.pywebview?.api?.save_lighting_schedule_record) return schedule;
+
+  const projectId = getLightingScheduleProjectId(project, schedule);
+  if (!projectId) {
+    const message =
+      "Lighting schedule sync needs a project ID or a project-number path before it can save to the central store.";
+    setLightingScheduleSyncStatus(message);
+    if (showToast) toast(message);
+    return null;
+  }
+
+  try {
+    lightingScheduleSyncSaving = true;
+    renderLightingScheduleSyncControls(project, schedule);
+    const response = await window.pywebview.api.save_lighting_schedule_record(
+      projectId,
+      {
+        schedule: buildCanonicalLightingSchedule(schedule),
+        targetDwgPath: normalizeLightingSchedulePath(schedule.targetDwgPath),
+        tableHandle: String(schedule._tableHandle || "").trim(),
+        expectedVersion: getLightingScheduleLoadedVersion(schedule),
+        updatedBy: "desktop",
+      }
+    );
+    if (response?.status !== "success" || !response.data) {
+      throw new Error(response?.message || "Could not save lighting schedule.");
+    }
+
+    applyLightingScheduleRecordToProject(project, response.data);
+    lightingScheduleSyncDirty = false;
+    renderLightingSchedule(schedule);
+
+    if (showStatus) {
+      const conflictMessage = response.data.conflict
+        ? ` Central version ${response.data.previousVersion} was overwritten by this ${reason}.`
+        : "";
+      setLightingScheduleSyncStatus(
+        `Saved lighting schedule to the central store as version ${response.data.version}.${conflictMessage}`
+      );
+    }
+    if (showToast) {
+      toast("Lighting schedule saved.");
+    }
+    return response.data;
+  } catch (error) {
+    reportClientError("Failed to save lighting schedule to central store", error);
+    if (showStatus || showToast) {
+      setLightingScheduleSyncStatus(
+        `Lighting schedule save failed: ${error?.message || "Unknown error"}.`
+      );
+    }
+    if (showToast) {
+      toast("Lighting schedule save failed.");
+    }
+    return null;
+  } finally {
+    lightingScheduleSyncSaving = false;
+    renderLightingScheduleSyncControls(project, schedule);
+  }
 }
 
 function getLightingScheduleProjectMatchResult(project, syncProject, targetDwgPath) {
@@ -11896,21 +12226,27 @@ async function browseLightingScheduleTargetDwg() {
     updateLightingScheduleTargetDwgPath(project, schedule, result.paths[0]);
     lightingScheduleSyncStatusMessage = "";
     renderLightingScheduleSyncControls(project, schedule);
-    save();
+    await persistActiveLightingSchedule({
+      reason: "target DWG update",
+      showStatus: true,
+    });
   } catch (error) {
     reportClientError("Failed to browse target DWG", error);
     toast("Unable to select DWG path.");
   }
 }
 
-function clearLightingScheduleTargetDwg() {
+async function clearLightingScheduleTargetDwg() {
   const project = getActiveLightingScheduleProject();
   const schedule = getActiveLightingSchedule();
   if (!project || !schedule) return;
   updateLightingScheduleTargetDwgPath(project, schedule, "");
   lightingScheduleSyncStatusMessage = "";
   renderLightingScheduleSyncControls(project, schedule);
-  save();
+  await persistActiveLightingSchedule({
+    reason: "target DWG cleared",
+    showStatus: true,
+  });
 }
 
 async function pullLightingScheduleFromAutoCAD() {
@@ -11920,165 +12256,22 @@ async function pullLightingScheduleFromAutoCAD() {
     toast("Select a project first.");
     return;
   }
-  const targetDwgPath = normalizeLightingSchedulePath(schedule.targetDwgPath);
-  if (!targetDwgPath) {
-    toast("Select Target DWG before pulling.");
-    return;
-  }
-  if (!window.pywebview?.api?.get_lighting_schedule_sync) {
-    toast("Desktop backend is missing lighting schedule sync APIs.");
-    return;
-  }
-
-  const ready = confirm(
-    "In AutoCAD, run LFSPULL and select the target lighting fixture table.\n\nPress OK after LFSPULL has completed to import into the desktop schedule."
-  );
-  if (!ready) {
-    setLightingScheduleSyncStatus("Pull cancelled. Run LFSPULL first, then click Pull again.");
-    return;
-  }
-
-  try {
-    const response = await window.pywebview.api.get_lighting_schedule_sync(
-      targetDwgPath
+  if (lightingScheduleSyncDirty) {
+    const overwrite = confirm(
+      "You have unsaved desktop edits.\n\nPress OK to discard them and reload the central schedule."
     );
-    if (response?.status !== "success") {
-      throw new Error(response?.message || "Unable to read sync file.");
-    }
-    if (!response.exists) {
-      setLightingScheduleSyncStatus(
-        `No sync file found at ${response.path}. Run LFSPULL in AutoCAD and then click Pull again.`
-      );
-      toast("Sync file not found. Run LFSPULL first.");
-      return;
-    }
-
-    const payload = normalizeIncomingLightingSyncPayload(response.data);
-    if (!payload) {
-      throw new Error("Sync payload is empty or malformed.");
-    }
-    const incomingFingerprint =
-      String(payload?.metadata?.fingerprint || "").trim() ||
-      computeLightingScheduleFingerprint(payload.schedule);
-
-    const match = getLightingScheduleProjectMatchResult(
-      project,
-      payload.project,
-      targetDwgPath
-    );
-    if (!match.matched) {
-      const keepGoing = confirm(
-        `Project mismatch detected (${match.mode}).\nDesktop: ${match.desktopValue || "(unknown)"}\nSync file: ${match.syncValue || "(unknown)"}\n\nPress OK to continue importing anyway.`
-      );
-      if (!keepGoing) {
-        setLightingScheduleSyncStatus("Pull cancelled because project match validation failed.");
-        return;
-      }
-    }
-
-    const currentFingerprint = computeLightingScheduleFingerprint(schedule);
-    if (currentFingerprint !== incomingFingerprint) {
-      const overwrite = confirm(
-        "Desktop lighting schedule differs from AutoCAD sync data.\n\nPress OK to overwrite desktop schedule with pulled AutoCAD data."
-      );
-      if (!overwrite) {
-        setLightingScheduleSyncStatus("Pull cancelled. Desktop schedule was not overwritten.");
-        return;
-      }
-    }
-
-    schedule.rows = payload.schedule.rows.map((row) => createLightingScheduleRow(row));
-    schedule.generalNotes = payload.schedule.generalNotes;
-    schedule.notes = payload.schedule.notes;
-    schedule.lastSyncFilePath = String(response.path || "").trim();
-    schedule.lastPulledAtUtc = new Date().toISOString();
-    schedule.lastPulledFingerprint = incomingFingerprint;
-    schedule.lastSyncSource = "autocad";
-
-    lightingScheduleSyncStatusMessage = "";
-    renderLightingSchedule(schedule);
-    save();
-    setLightingScheduleSyncStatus(
-      `Pulled AutoCAD sync data from ${response.path}. Schedule is now updated in desktop for project ${project.id || project.name || "(unnamed)"}.`
-    );
-    toast("Lighting schedule pulled from AutoCAD sync file.");
-  } catch (error) {
-    reportClientError("Failed to pull lighting schedule sync", error);
-    setLightingScheduleSyncStatus(
-      `Pull failed: ${error?.message || "Unknown error"}.`
-    );
-    toast("Pull failed. See sync status for details.");
+    if (!overwrite) return;
   }
+  await loadLightingScheduleFromCentralStore(project, { quiet: false });
+  toast("Lighting schedule reloaded from the central store.");
 }
 
 async function pushLightingScheduleToAutoCAD() {
-  const project = getActiveLightingScheduleProject();
-  const schedule = getActiveLightingSchedule();
-  if (!project || !schedule) {
-    toast("Select a project first.");
-    return;
-  }
-  const targetDwgPath = normalizeLightingSchedulePath(schedule.targetDwgPath);
-  if (!targetDwgPath) {
-    toast("Select Target DWG before pushing.");
-    return;
-  }
-  if (!window.pywebview?.api?.save_lighting_schedule_sync) {
-    toast("Desktop backend is missing lighting schedule sync APIs.");
-    return;
-  }
-
-  try {
-    const payload = buildLightingScheduleSyncPayload(project, schedule);
-    const nextFingerprint = String(payload?.metadata?.fingerprint || "").trim();
-
-    if (window.pywebview?.api?.get_lighting_schedule_sync) {
-      const existing = await window.pywebview.api.get_lighting_schedule_sync(
-        targetDwgPath
-      );
-      if (existing?.status === "success" && existing.exists) {
-        const existingPayload = normalizeIncomingLightingSyncPayload(existing.data);
-        const existingFingerprint =
-          String(existingPayload?.metadata?.fingerprint || "").trim() ||
-          computeLightingScheduleFingerprint(existingPayload?.schedule || {});
-        if (existingFingerprint !== nextFingerprint) {
-          const overwrite = confirm(
-            "Existing AutoCAD sync file differs from desktop lighting schedule.\n\nPress OK to overwrite sync file with desktop data."
-          );
-          if (!overwrite) {
-            setLightingScheduleSyncStatus("Push cancelled. Existing sync file was kept.");
-            return;
-          }
-        }
-      }
-    }
-
-    const response = await window.pywebview.api.save_lighting_schedule_sync(
-      targetDwgPath,
-      payload
-    );
-    if (response?.status !== "success") {
-      throw new Error(response?.message || "Failed to write sync file.");
-    }
-
-    schedule.lastSyncFilePath = String(response.path || "").trim();
-    schedule.lastPushedAtUtc = new Date().toISOString();
-    schedule.lastPushedFingerprint = nextFingerprint;
-    schedule.lastSyncSource = "desktop";
-    lightingScheduleSyncStatusMessage = "";
-    renderLightingScheduleSyncControls(project, schedule);
-    save();
-    setLightingScheduleSyncStatus(
-      `Push complete. Run LFSPUSH in AutoCAD, then select the target table to apply ${response.path}.`
-    );
-    toast("Lighting schedule sync file written. Run LFSPUSH in AutoCAD.");
-  } catch (error) {
-    reportClientError("Failed to push lighting schedule sync", error);
-    setLightingScheduleSyncStatus(
-      `Push failed: ${error?.message || "Unknown error"}.`
-    );
-    toast("Push failed. See sync status for details.");
-  }
+  await persistActiveLightingSchedule({
+    reason: "manual save",
+    showStatus: true,
+    showToast: true,
+  });
 }
 
 function getLightingTemplates() {
@@ -12119,6 +12312,7 @@ function addLightingTemplateToSchedule(template) {
   if (!schedule) return;
   schedule.rows.push(createLightingScheduleRow(template));
   renderLightingScheduleRows(schedule);
+  lightingScheduleSyncDirty = true;
   debouncedSaveLightingSchedule();
 }
 
@@ -12191,6 +12385,7 @@ function renderLightingScheduleRows(schedule) {
       input.addEventListener("input", (e) => {
         row[field] = e.target.value;
         autoResizeTextarea(input);
+        lightingScheduleSyncDirty = true;
         debouncedSaveLightingSchedule();
       });
       requestAnimationFrame(() => autoResizeTextarea(input));
@@ -12274,20 +12469,23 @@ function renderLightingSchedule(
   renderLightingScheduleSyncControls(getActiveLightingScheduleProject(), schedule);
 }
 
-function setLightingScheduleProject(index) {
+async function setLightingScheduleProject(index) {
   if (!Number.isInteger(index) || !db[index]) {
     lightingScheduleProjectIndex = null;
     lightingScheduleSyncStatusMessage = "";
+    lightingScheduleSyncDirty = false;
     renderLightingSchedule(null);
     return;
   }
   lightingScheduleProjectIndex = index;
   lightingScheduleSyncStatusMessage = "";
+  lightingScheduleSyncDirty = false;
   const select = document.getElementById("lightingScheduleProjectSelect");
   if (select) select.value = String(index);
   const { schedule, created } = ensureLightingSchedule(db[index]);
   if (created) save();
   renderLightingSchedule(schedule);
+  await loadLightingScheduleFromCentralStore(db[index], { quiet: false });
 }
 
 function addLightingScheduleRow() {
@@ -12295,6 +12493,7 @@ function addLightingScheduleRow() {
   if (!schedule) return;
   schedule.rows.push(createLightingScheduleRow());
   renderLightingScheduleRows(schedule);
+  lightingScheduleSyncDirty = true;
   debouncedSaveLightingSchedule();
 }
 
@@ -12307,6 +12506,7 @@ function removeLightingScheduleRow(rowIndex) {
     schedule.rows.splice(rowIndex, 1);
   }
   renderLightingScheduleRows(schedule);
+  lightingScheduleSyncDirty = true;
   debouncedSaveLightingSchedule();
 }
 
@@ -12324,7 +12524,7 @@ function openLightingScheduleFromWorkroom() {
   openLightingSchedule();
 }
 
-function openLightingSchedule() {
+async function openLightingSchedule() {
   const dlg = document.getElementById("lightingScheduleDlg");
   if (!dlg) return;
   const projectSearch = document.getElementById(
@@ -12335,16 +12535,20 @@ function openLightingSchedule() {
   const activeProject = getActiveLightingScheduleProject();
   if (activeProject) {
     renderLightingSchedule(ensureLightingSchedule(activeProject).schedule);
+    await loadLightingScheduleFromCentralStore(activeProject, { quiet: true });
   }
 
   const templateSearch = document.getElementById("lightingTemplateSearch");
   if (templateSearch) templateSearch.value = lightingTemplateQuery;
   renderLightingTemplateList(lightingTemplateQuery);
   if (!dlg.open) dlg.showModal();
+  startLightingScheduleSyncWatcher();
 }
 
 function closeLightingSchedule() {
   const dlg = document.getElementById("lightingScheduleDlg");
+  persistActiveLightingSchedule({ reason: "dialog close" });
+  stopLightingScheduleSyncWatcher();
   if (dlg?.open) dlg.close();
   save();
 }
@@ -13582,6 +13786,15 @@ function initEventListeners() {
     pinUrgentDeliverablesBtn.appendChild(createIcon(PIN_ICON_PATH, 16));
     pinUrgentDeliverablesBtn.onclick = () => pinUrgentDeliverables();
   }
+  const openPinnedDeliverablesNotepadBtn = document.getElementById(
+    "openPinnedDeliverablesNotepadBtn"
+  );
+  if (openPinnedDeliverablesNotepadBtn) {
+    openPinnedDeliverablesNotepadBtn.textContent = "";
+    openPinnedDeliverablesNotepadBtn.appendChild(createIcon(NOTE_ICON_PATH, 16));
+    openPinnedDeliverablesNotepadBtn.onclick = () =>
+      openPinnedDeliverablesNotepad();
+  }
 
   document.querySelectorAll(".tool-card-settings").forEach((btn) => {
     btn.addEventListener("click", (e) => {
@@ -14332,6 +14545,7 @@ function initEventListeners() {
   const lightingScheduleDlg = document.getElementById("lightingScheduleDlg");
   if (lightingScheduleDlg) {
     lightingScheduleDlg.addEventListener("close", () => {
+      stopLightingScheduleSyncWatcher();
       save();
     });
   }
@@ -14422,6 +14636,7 @@ function initEventListeners() {
       if (!schedule) return;
       schedule.generalNotes = e.target.value;
       autoResizeTextarea(lightingScheduleGeneralNotes);
+      lightingScheduleSyncDirty = true;
       debouncedSaveLightingSchedule();
     });
   }
@@ -14435,6 +14650,7 @@ function initEventListeners() {
       if (!schedule) return;
       schedule.notes = e.target.value;
       autoResizeTextarea(lightingScheduleNotes);
+      lightingScheduleSyncDirty = true;
       debouncedSaveLightingSchedule();
     });
   }

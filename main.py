@@ -11,6 +11,7 @@ import io
 import logging
 import tempfile
 import time
+import sqlite3
 from pathlib import Path
 from dotenv import load_dotenv
 import datetime
@@ -441,10 +442,9 @@ def _apply_template_context(file_path, context=None, options=None):
 # --- Helper function to get the application data path ---
 
 
-def get_app_data_path(file_name="tasks.json"):
+def get_app_data_dir():
     """
-    Determines the correct, cross-platform path for storing user data
-    and returns the full path for the given file_name.
+    Determines the correct, cross-platform directory for storing user data.
 
     On Windows, we store data in the user's Documents folder to bypass
     Windows Store Python's file system virtualization, which redirects
@@ -452,19 +452,25 @@ def get_app_data_path(file_name="tasks.json"):
     """
     if sys.platform == "win32":
         _migrate_legacy_app_data()
-        # Use Documents folder - it is NOT virtualized by Windows Store Python
-        # This ensures both dev (python main.py) and packaged apps use the same location
         base_dir = _get_windows_documents_dir()
-    elif sys.platform == "darwin":  # macOS
+    elif sys.platform == "darwin":
         base_dir = os.path.join(os.path.expanduser(
             '~'), 'Library', 'Application Support')
-    else:  # Linux and other Unix-like systems
+    else:
         base_dir = os.path.join(os.path.expanduser('~'), '.local', 'share')
     if not base_dir:
         base_dir = os.path.expanduser('~')
     app_data_dir = os.path.join(base_dir, 'ProjectManagementApp')
     os.makedirs(app_data_dir, exist_ok=True)
-    return os.path.join(app_data_dir, file_name)
+    return app_data_dir
+
+
+def get_app_data_path(file_name="tasks.json"):
+    """
+    Determines the correct, cross-platform path for storing user data
+    and returns the full path for the given file_name.
+    """
+    return os.path.join(get_app_data_dir(), file_name)
 
 
 # --- Configuration ---
@@ -479,6 +485,29 @@ TEMPLATES_FILE = get_app_data_path("templates.json")
 CAD_AUTO_SELECT_TRACE_FILE = get_app_data_path("cad_auto_select_trace.log")
 CHECKLISTS_FILE = get_app_data_path("checklists.json")
 LIGHTING_SCHEDULE_SYNC_FILE = "T24LightingFixtureSchedule.sync.json"
+LIGHTING_SCHEDULE_DB_FILE = get_app_data_path("lighting_schedules.db")
+LIGHTING_SCHEDULE_FIELDS = [
+    "mark",
+    "description",
+    "manufacturer",
+    "modelNumber",
+    "mounting",
+    "volts",
+    "watts",
+    "notes",
+]
+LIGHTING_SCHEDULE_DEFAULT_GENERAL_NOTES = "\n".join([
+    "A.  VERIFY ALL CEILING TYPES PRIOR TO ORDERING FIXTURES.",
+    "B.  VERIFY ALL OPERATING VOLTAGE PRIOR TO ORDERING FIXTURES.",
+    "C.  COORDINATE THE HEIGHT OF ALL SUSPENDED FIXTURES WITH THE OWNER, ARCHITECT AND ENGINEER PRIOR TO INSTALLATION.",
+    "D.  ALL LAMPS SHALL HAVE A COLOR TEMPERATURE OF 3500 DEG. KELVIN AND A CRI OF 85 UNLESS SPECIFICALLY NOTED.",
+    'E.  FIXTURES DESIGNATED WITH A "1/2 SHADE" OR "FULL SHADE" AND ALL EXIT SIGNS SHALL BE CIRCUITED TO THE CENTRAL EMERGENCY BATTERY INVERTER OR PROVIDED WITH INTEGRAL BATTERY BACKUP AS REQUIRED. EM BACKUP POWER SHALL BE SUITABLE TO PROVIDE FULL POWER TO FIXTURES FOR A MINIMUM OF 90 MINUTES.',
+])
+LIGHTING_SCHEDULE_DEFAULT_NOTES = "\n".join([
+    "1.  CONFIRM THE DRIVER TYPE WITH VENDOR. LIGHT DRIVER SHALL BE COMPATIBLE WITH THE DIMMER. REFER TO THE SENSOR SCHEDULE FOR DETAILS.",
+    "2.  COORDINATE THE FINAL MANUFACTURER AND MODEL WITH ARCHITECT.",
+])
+LIGHTING_PROJECT_SEGMENT_REGEX = re.compile(r"^(\d{5,})\s*(?:[-_]\s*)?(.+)$")
 
 
 def _normalize_sync_dwg_path(dwg_path):
@@ -555,6 +584,482 @@ def _atomic_write_json_file(path, payload):
                 os.remove(temp_path)
             except OSError:
                 pass
+
+
+def _normalize_lighting_schedule_text(value):
+    return str(value or "").replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _create_default_lighting_schedule_row(seed=None):
+    seed = seed or {}
+    row = {}
+    for field in LIGHTING_SCHEDULE_FIELDS:
+        row[field] = _normalize_lighting_schedule_text(seed.get(field))
+    return row
+
+
+def _create_default_lighting_schedule():
+    return {
+        "rows": [_create_default_lighting_schedule_row()],
+        "generalNotes": LIGHTING_SCHEDULE_DEFAULT_GENERAL_NOTES,
+        "notes": LIGHTING_SCHEDULE_DEFAULT_NOTES,
+        "targetDwgPath": "",
+    }
+
+
+def _normalize_lighting_schedule_payload(schedule):
+    normalized = (
+        dict(schedule)
+        if isinstance(schedule, dict)
+        else _create_default_lighting_schedule()
+    )
+    rows = normalized.get("rows")
+    if not isinstance(rows, list) or not rows:
+        normalized["rows"] = [_create_default_lighting_schedule_row()]
+    else:
+        normalized["rows"] = [
+            _create_default_lighting_schedule_row(row)
+            for row in rows
+            if isinstance(row, dict)
+        ] or [_create_default_lighting_schedule_row()]
+
+    normalized["generalNotes"] = _normalize_lighting_schedule_text(
+        normalized.get("generalNotes")
+        if normalized.get("generalNotes") is not None
+        else LIGHTING_SCHEDULE_DEFAULT_GENERAL_NOTES
+    )
+    normalized["notes"] = _normalize_lighting_schedule_text(
+        normalized.get("notes")
+        if normalized.get("notes") is not None
+        else LIGHTING_SCHEDULE_DEFAULT_NOTES
+    )
+    normalized["targetDwgPath"] = os.path.normpath(
+        str(normalized.get("targetDwgPath") or "").strip()
+    ) if str(normalized.get("targetDwgPath") or "").strip() else ""
+    return normalized
+
+
+def _extract_lighting_schedule_project_id_from_path(raw_path):
+    normalized = str(raw_path or "").strip().replace("/", "\\")
+    if not normalized:
+        return ""
+
+    parts = [part.strip() for part in normalized.split("\\") if part.strip()]
+    for part in reversed(parts):
+        match = LIGHTING_PROJECT_SEGMENT_REGEX.match(part)
+        if match:
+            return match.group(1)
+    return ""
+
+
+def _resolve_lighting_schedule_project_id(project_like):
+    if isinstance(project_like, str):
+        value = str(project_like).strip()
+        return value
+
+    if not isinstance(project_like, dict):
+        return ""
+
+    explicit_id = str(project_like.get("id") or "").strip()
+    if explicit_id:
+        return explicit_id
+
+    for key in ("path", "localProjectPath", "workroomRootPath"):
+        candidate = _extract_lighting_schedule_project_id_from_path(
+            project_like.get(key)
+        )
+        if candidate:
+            return candidate
+
+    display_name = str(project_like.get("name") or project_like.get("nick") or "").strip()
+    if display_name:
+        return f"name:{display_name.lower()}"
+
+    return ""
+
+
+def _open_lighting_schedule_db():
+    conn = sqlite3.connect(LIGHTING_SCHEDULE_DB_FILE, timeout=5)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode = WAL;")
+    conn.execute("PRAGMA foreign_keys = ON;")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS lighting_schedule_projects (
+            project_id TEXT PRIMARY KEY,
+            schedule_json TEXT NOT NULL,
+            target_dwg_path TEXT NOT NULL DEFAULT '',
+            table_handle TEXT NOT NULL DEFAULT '',
+            version INTEGER NOT NULL DEFAULT 1,
+            updated_at_utc TEXT NOT NULL,
+            updated_by TEXT NOT NULL DEFAULT 'unknown'
+        );
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS lighting_schedule_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id TEXT NOT NULL,
+            dwg_path TEXT NOT NULL UNIQUE,
+            table_handle TEXT NOT NULL DEFAULT '',
+            last_applied_version INTEGER NOT NULL DEFAULT 0,
+            last_seen_at_utc TEXT NOT NULL DEFAULT '',
+            FOREIGN KEY(project_id) REFERENCES lighting_schedule_projects(project_id)
+                ON DELETE CASCADE
+        );
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_lighting_schedule_links_project_id
+        ON lighting_schedule_links(project_id);
+        """
+    )
+    return conn
+
+
+def _normalize_lighting_schedule_record(row):
+    if row is None:
+        return None
+
+    try:
+        schedule_payload = json.loads(row["schedule_json"])
+    except (TypeError, ValueError, KeyError):
+        schedule_payload = _create_default_lighting_schedule()
+
+    schedule = _normalize_lighting_schedule_payload(schedule_payload)
+    schedule["targetDwgPath"] = os.path.normpath(
+        str(row["target_dwg_path"] or "").strip()
+    ) if str(row["target_dwg_path"] or "").strip() else ""
+
+    return {
+        "projectId": str(row["project_id"] or "").strip(),
+        "version": int(row["version"] or 0),
+        "updatedAtUtc": str(row["updated_at_utc"] or "").strip(),
+        "updatedBy": str(row["updated_by"] or "").strip(),
+        "targetDwgPath": schedule["targetDwgPath"],
+        "tableHandle": str(row["table_handle"] or "").strip(),
+        "schedule": {
+            "rows": schedule["rows"],
+            "generalNotes": schedule["generalNotes"],
+            "notes": schedule["notes"],
+        },
+    }
+
+
+def _get_lighting_schedule_record(project_id):
+    resolved_id = _resolve_lighting_schedule_project_id(project_id)
+    if not resolved_id:
+        return None
+
+    with _open_lighting_schedule_db() as conn:
+        row = conn.execute(
+            """
+            SELECT project_id, schedule_json, target_dwg_path, table_handle, version,
+                   updated_at_utc, updated_by
+            FROM lighting_schedule_projects
+            WHERE project_id = ?
+            """,
+            (resolved_id,),
+        ).fetchone()
+        return _normalize_lighting_schedule_record(row)
+
+
+def _get_lighting_schedule_version(project_id):
+    record = _get_lighting_schedule_record(project_id)
+    if not record:
+        return {
+            "exists": False,
+            "projectId": _resolve_lighting_schedule_project_id(project_id),
+            "version": 0,
+            "updatedAtUtc": "",
+            "updatedBy": "",
+        }
+
+    return {
+        "exists": True,
+        "projectId": record["projectId"],
+        "version": record["version"],
+        "updatedAtUtc": record["updatedAtUtc"],
+        "updatedBy": record["updatedBy"],
+    }
+
+
+def _get_lighting_schedule_links(project_id):
+    resolved_id = _resolve_lighting_schedule_project_id(project_id)
+    if not resolved_id:
+        return []
+
+    with _open_lighting_schedule_db() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, project_id, dwg_path, table_handle, last_applied_version, last_seen_at_utc
+            FROM lighting_schedule_links
+            WHERE project_id = ?
+            ORDER BY dwg_path COLLATE NOCASE
+            """,
+            (resolved_id,),
+        ).fetchall()
+
+    links = []
+    for row in rows:
+        links.append(
+            {
+                "id": int(row["id"]),
+                "projectId": str(row["project_id"] or "").strip(),
+                "dwgPath": str(row["dwg_path"] or "").strip(),
+                "tableHandle": str(row["table_handle"] or "").strip(),
+                "lastAppliedVersion": int(row["last_applied_version"] or 0),
+                "lastSeenAtUtc": str(row["last_seen_at_utc"] or "").strip(),
+            }
+        )
+    return links
+
+
+def _upsert_lighting_schedule_link(
+    conn,
+    project_id,
+    dwg_path,
+    table_handle="",
+    last_applied_version=0,
+):
+    normalized_dwg = os.path.normpath(str(dwg_path or "").strip())
+    if not normalized_dwg:
+        return
+
+    now_iso = datetime.datetime.utcnow().isoformat()
+    existing = conn.execute(
+        """
+        SELECT table_handle, last_applied_version
+        FROM lighting_schedule_links
+        WHERE dwg_path = ?
+        """,
+        (normalized_dwg,),
+    ).fetchone()
+
+    next_table_handle = str(table_handle or "").strip()
+    if not next_table_handle and existing:
+        next_table_handle = str(existing["table_handle"] or "").strip()
+
+    next_applied_version = int(last_applied_version or 0)
+    if existing and next_applied_version <= 0:
+        next_applied_version = int(existing["last_applied_version"] or 0)
+
+    conn.execute(
+        """
+        INSERT INTO lighting_schedule_links (
+            project_id, dwg_path, table_handle, last_applied_version, last_seen_at_utc
+        )
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(dwg_path) DO UPDATE SET
+            project_id = excluded.project_id,
+            table_handle = excluded.table_handle,
+            last_applied_version = excluded.last_applied_version,
+            last_seen_at_utc = excluded.last_seen_at_utc
+        """,
+        (
+            project_id,
+            normalized_dwg,
+            next_table_handle,
+            next_applied_version,
+            now_iso,
+        ),
+    )
+
+
+def _save_lighting_schedule_record(
+    project_id,
+    payload,
+    updated_by="desktop",
+):
+    resolved_id = _resolve_lighting_schedule_project_id(project_id)
+    if not resolved_id:
+        raise ValueError("Lighting schedule project ID is required.")
+    if not isinstance(payload, dict):
+        raise ValueError("Lighting schedule payload must be a JSON object.")
+
+    normalized_schedule = _normalize_lighting_schedule_payload(payload.get("schedule"))
+    target_dwg_path = payload.get("targetDwgPath")
+    if target_dwg_path is None:
+        target_dwg_path = normalized_schedule.get("targetDwgPath")
+    normalized_target_dwg_path = (
+        os.path.normpath(str(target_dwg_path or "").strip())
+        if str(target_dwg_path or "").strip()
+        else ""
+    )
+    table_handle = str(payload.get("tableHandle") or "").strip()
+    expected_version = payload.get("expectedVersion", None)
+
+    now_iso = datetime.datetime.utcnow().isoformat()
+    canonical_schedule_json = json.dumps(
+        {
+            "rows": normalized_schedule["rows"],
+            "generalNotes": normalized_schedule["generalNotes"],
+            "notes": normalized_schedule["notes"],
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+    with _open_lighting_schedule_db() as conn:
+        existing = conn.execute(
+            """
+            SELECT project_id, schedule_json, target_dwg_path, table_handle, version
+            FROM lighting_schedule_projects
+            WHERE project_id = ?
+            """,
+            (resolved_id,),
+        ).fetchone()
+
+        previous_version = int(existing["version"] or 0) if existing else 0
+        next_version = previous_version + 1 if existing else 1
+        current_table_handle = table_handle
+        if existing and not current_table_handle:
+            current_table_handle = str(existing["table_handle"] or "").strip()
+
+        conn.execute(
+            """
+            INSERT INTO lighting_schedule_projects (
+                project_id, schedule_json, target_dwg_path, table_handle,
+                version, updated_at_utc, updated_by
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(project_id) DO UPDATE SET
+                schedule_json = excluded.schedule_json,
+                target_dwg_path = excluded.target_dwg_path,
+                table_handle = excluded.table_handle,
+                version = excluded.version,
+                updated_at_utc = excluded.updated_at_utc,
+                updated_by = excluded.updated_by
+            """,
+            (
+                resolved_id,
+                canonical_schedule_json,
+                normalized_target_dwg_path,
+                current_table_handle,
+                next_version,
+                now_iso,
+                str(updated_by or "desktop").strip() or "desktop",
+            ),
+        )
+
+        if normalized_target_dwg_path:
+            _upsert_lighting_schedule_link(
+                conn,
+                resolved_id,
+                normalized_target_dwg_path,
+                current_table_handle,
+                payload.get("lastAppliedVersion", 0),
+            )
+
+        conn.commit()
+
+    record = _get_lighting_schedule_record(resolved_id)
+    if record is None:
+        raise RuntimeError("Lighting schedule save completed but record could not be reloaded.")
+
+    record["conflict"] = (
+        expected_version is not None
+        and str(expected_version).strip() != ""
+        and int(expected_version) != previous_version
+    )
+    record["previousVersion"] = previous_version
+    return record
+
+
+def _migrate_project_lighting_schedules(projects):
+    if not isinstance(projects, list) or not projects:
+        return
+
+    with _open_lighting_schedule_db() as conn:
+        for project in projects:
+            if not isinstance(project, dict):
+                continue
+
+            project_id = _resolve_lighting_schedule_project_id(project)
+            if not project_id:
+                continue
+
+            existing = conn.execute(
+                "SELECT version FROM lighting_schedule_projects WHERE project_id = ?",
+                (project_id,),
+            ).fetchone()
+            if existing:
+                continue
+
+            legacy_schedule = _normalize_lighting_schedule_payload(
+                project.get("lightingSchedule")
+            )
+            target_dwg_path = legacy_schedule.get("targetDwgPath") or ""
+            now_iso = datetime.datetime.utcnow().isoformat()
+            conn.execute(
+                """
+                INSERT INTO lighting_schedule_projects (
+                    project_id, schedule_json, target_dwg_path, table_handle,
+                    version, updated_at_utc, updated_by
+                )
+                VALUES (?, ?, ?, '', 1, ?, 'migration')
+                ON CONFLICT(project_id) DO NOTHING
+                """,
+                (
+                    project_id,
+                    json.dumps(
+                        {
+                            "rows": legacy_schedule["rows"],
+                            "generalNotes": legacy_schedule["generalNotes"],
+                            "notes": legacy_schedule["notes"],
+                        },
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
+                    target_dwg_path,
+                    now_iso,
+                ),
+            )
+            if target_dwg_path:
+                _upsert_lighting_schedule_link(
+                    conn,
+                    project_id,
+                    target_dwg_path,
+                    "",
+                    0,
+                )
+        conn.commit()
+
+
+def _overlay_projects_with_lighting_schedule_records(projects):
+    if not isinstance(projects, list):
+        return projects
+
+    _migrate_project_lighting_schedules(projects)
+    for project in projects:
+        if not isinstance(project, dict):
+            continue
+
+        project_id = _resolve_lighting_schedule_project_id(project)
+        if not project_id:
+            continue
+
+        record = _get_lighting_schedule_record(project_id)
+        if not record:
+            continue
+
+        existing_schedule = _normalize_lighting_schedule_payload(
+            project.get("lightingSchedule")
+        )
+        project["lightingSchedule"] = {
+            **existing_schedule,
+            "rows": record["schedule"]["rows"],
+            "generalNotes": record["schedule"]["generalNotes"],
+            "notes": record["schedule"]["notes"],
+            "targetDwgPath": record["targetDwgPath"],
+            "_storeVersion": record["version"],
+            "_storeUpdatedAtUtc": record["updatedAtUtc"],
+            "_storeUpdatedBy": record["updatedBy"],
+            "_tableHandle": record["tableHandle"],
+        }
+    return projects
 
 
 def get_bundled_template_path(template_name: str) -> Path:
@@ -1671,7 +2176,8 @@ Return ONLY the JSON object.
         """Reads and returns the content of tasks.json."""
         try:
             with open(TASKS_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
+                payload = json.load(f)
+                return _overlay_projects_with_lighting_schedule_records(payload)
         except (FileNotFoundError, json.JSONDecodeError):
             return []
 
@@ -1746,6 +2252,61 @@ Return ONLY the JSON object.
             return {'status': 'error', 'message': str(e)}
         except Exception as e:
             logging.error(f"Error saving lighting schedule sync: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def get_lighting_schedule_record(self, project_id):
+        """Load the canonical lighting schedule record from SQLite."""
+        try:
+            record = _get_lighting_schedule_record(project_id)
+            return {
+                'status': 'success',
+                'exists': bool(record),
+                'projectId': _resolve_lighting_schedule_project_id(project_id),
+                'data': record,
+            }
+        except Exception as e:
+            logging.error(f"Error loading lighting schedule record: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def save_lighting_schedule_record(self, project_id, payload):
+        """Persist the canonical lighting schedule record to SQLite."""
+        try:
+            safe_payload = payload if isinstance(payload, dict) else {}
+            record = _save_lighting_schedule_record(
+                project_id,
+                safe_payload,
+                updated_by=safe_payload.get('updatedBy', 'desktop'),
+            )
+            return {
+                'status': 'success',
+                'projectId': record['projectId'],
+                'data': record,
+            }
+        except Exception as e:
+            logging.error(f"Error saving lighting schedule record: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def get_lighting_schedule_version(self, project_id):
+        """Return only the current version metadata for polling."""
+        try:
+            return {
+                'status': 'success',
+                'data': _get_lighting_schedule_version(project_id),
+            }
+        except Exception as e:
+            logging.error(f"Error loading lighting schedule version: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def get_lighting_schedule_links(self, project_id):
+        """Return linked DWG/table records for a project."""
+        try:
+            return {
+                'status': 'success',
+                'projectId': _resolve_lighting_schedule_project_id(project_id),
+                'data': _get_lighting_schedule_links(project_id),
+            }
+        except Exception as e:
+            logging.error(f"Error loading lighting schedule links: {e}")
             return {'status': 'error', 'message': str(e)}
 
     def read_t24_output_json(self, json_path):
@@ -2987,6 +3548,33 @@ Return ONLY the JSON object.
             return {'status': 'success'}
         except Exception as e:
             logging.error(f"Error opening URL: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def open_notepad_with_text(self, text):
+        """Writes text to a temp file and opens it in Notepad on Windows."""
+        try:
+            content = str(text or "")
+            if not content.strip():
+                return {'status': 'error', 'message': 'Text is required.'}
+
+            temp_dir = os.path.join(get_app_data_dir(), 'temp')
+            os.makedirs(temp_dir, exist_ok=True)
+
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            unique = uuid.uuid4().hex[:8]
+            output_path = os.path.join(
+                temp_dir, f"pinned_deliverables_{timestamp}_{unique}.txt")
+            with open(output_path, 'w', encoding='utf-8', newline='') as f:
+                f.write(content)
+
+            if sys.platform == "win32":
+                subprocess.Popen(["notepad.exe", output_path])
+            else:
+                self.open_path(output_path)
+
+            return {'status': 'success', 'path': output_path}
+        except Exception as e:
+            logging.error(f"Error opening Notepad text export: {e}")
             return {'status': 'error', 'message': str(e)}
 
     def save_dropped_email(self, upload, context=None):

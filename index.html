@@ -158,6 +158,9 @@
                         </button>
                         <button class="icon-btn" id="pinUrgentDeliverablesBtn" aria-label="Pin urgent deliverables"
                             title="Pin all overdue and due-today deliverables"></button>
+                        <button class="icon-btn" id="openPinnedDeliverablesNotepadBtn"
+                            aria-label="Open pinned deliverables in Notepad"
+                            title="Open pinned deliverables in Notepad"></button>
                         <button class="icon-btn" id="projectsHelpBtn" aria-label="Projects help" title="Projects help">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1944,13 +1947,11 @@
                         </div>
                     </div>
                     <div class="lighting-schedule-sync-actions">
-                        <button class="btn tiny" id="lightingSchedulePullBtn" type="button">Pull from AutoCAD
-                            Table</button>
-                        <button class="btn tiny" id="lightingSchedulePushBtn" type="button">Push to AutoCAD
-                            Table</button>
+                        <button class="btn tiny" id="lightingSchedulePullBtn" type="button">Reload</button>
+                        <button class="btn tiny" id="lightingSchedulePushBtn" type="button">Save Now</button>
                     </div>
                     <div id="lightingScheduleSyncStatus" class="lighting-schedule-sync-status tiny muted">
-                        Select a project and target DWG to enable sync.
+                        Select a project to load its centralized lighting fixture schedule.
                     </div>
                 </div>
                 <div class="lighting-template-panel">

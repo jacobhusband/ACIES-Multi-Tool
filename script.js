@@ -1807,23 +1807,6 @@ function createTimesheetRow(entry, index) {
     })
   );
 
-  // Mileage
-  const mileageCell = el("td");
-  const mileageInput = el("input", {
-    type: "number",
-    value: entry.mileage || "",
-    placeholder: "0",
-    min: "0",
-    style: "text-align: center",
-  });
-  mileageInput.oninput = (e) => {
-    entry.mileage = parseFloat(e.target.value) || 0;
-    saveTimesheets();
-    updateTimesheetTotals(getWeekEntries(formatWeekKey(currentTimesheetWeek)));
-  };
-  mileageCell.appendChild(mileageInput);
-  row.appendChild(mileageCell);
-
   // Remove button
   const actionsCell = el("td");
   const removeBtn = el("button", {
@@ -1980,7 +1963,7 @@ function calculateRowTotal(entry) {
 
 function updateTimesheetTotals(entries) {
   const dayOrder = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
-  const totals = { week: 0, mileage: 0 };
+  const totals = { week: 0 };
 
   dayOrder.forEach((day) => (totals[day] = 0));
 
@@ -1988,7 +1971,6 @@ function updateTimesheetTotals(entries) {
     dayOrder.forEach((day) => {
       totals[day] += entry.hours?.[day] || 0;
     });
-    totals.mileage += entry.mileage || 0;
   });
 
   totals.week = dayOrder.reduce((sum, day) => sum + totals[day], 0);
@@ -2004,9 +1986,6 @@ function updateTimesheetTotals(entries) {
   const weekCell = document.getElementById("totalWeek");
   if (weekCell)
     weekCell.textContent = totals.week > 0 ? totals.week.toFixed(1) : "0";
-
-  const mileageCell = document.getElementById("totalMileage");
-  if (mileageCell) mileageCell.textContent = totals.mileage || "0";
 
   const weeklyTotal = document.getElementById("weeklyTotalHours");
   if (weeklyTotal)
@@ -2233,7 +2212,6 @@ function buildProjectSummaryEntry({
     serviceDescription,
     function: functionName,
     hours: { sun: 0, mon: 0, tue: 0, wed: 0, thu: 0, fri: 0, sat: 0 },
-    mileage: 0,
     taskNumber,
     isProjectSummary: true,
   };
@@ -2263,7 +2241,6 @@ function addWeeklyMeetingToTimesheet() {
     serviceDescription: WEEKLY_MEETING_NAME,
     function: getDisciplineFunction(),
     hours,
-    mileage: 0,
     taskNumber,
   });
 
@@ -2357,7 +2334,6 @@ function addProjectToTimesheet(project, deliverable) {
     serviceDescription,
     function: functionName,
     hours: { sun: 0, mon: 0, tue: 0, wed: 0, thu: 0, fri: 0, sat: 0 },
-    mileage: 0,
     taskNumber,
   };
 
@@ -2382,7 +2358,6 @@ function addManualTimesheetEntry() {
     serviceDescription: "",
     function: getDisciplineFunction(),
     hours: { sun: 0, mon: 0, tue: 0, wed: 0, thu: 0, fri: 0, sat: 0 },
-    mileage: 0,
     taskNumber: "0.00",
   };
 
@@ -2464,12 +2439,11 @@ function goToCurrentWeek() {
 
 function calculateWeekTotals(entries) {
   const dayOrder = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
-  const totals = { mileage: 0 };
+  const totals = {};
   dayOrder.forEach((day) => (totals[day] = 0));
 
   entries.forEach((entry) => {
     dayOrder.forEach((day) => (totals[day] += entry.hours?.[day] || 0));
-    totals.mileage += entry.mileage || 0;
   });
 
   totals.week = dayOrder.reduce((sum, day) => sum + totals[day], 0);
@@ -6844,6 +6818,24 @@ function createStatusBadges(deliverable) {
   return container;
 }
 
+function setDeliverableStatusDropdownState(dropdown, isOpen) {
+  if (!dropdown) return;
+
+  const menu = dropdown.querySelector(".deliverable-status-menu");
+  const trigger = dropdown.querySelector(".deliverable-status-trigger");
+  const card = dropdown.closest(".deliverable-card-new");
+  const cell = dropdown.closest(".cell-deliverables");
+  const row = dropdown.closest(".row");
+
+  menu?.classList.toggle("open", isOpen);
+  trigger?.classList.toggle("open", isOpen);
+  trigger?.setAttribute("aria-expanded", String(isOpen));
+  dropdown.classList.toggle("open", isOpen);
+  card?.classList.toggle("deliverable-menu-open", isOpen);
+  cell?.classList.toggle("deliverable-menu-open", isOpen);
+  row?.classList.toggle("deliverable-menu-open", isOpen);
+}
+
 function createStatusDropdown(deliverable, project, card) {
   const availableStatuses = ["Waiting", "Working", "Pending Review", "Complete", "Delivered"];
   const dropdown = el("div", { className: "deliverable-status-dropdown" });
@@ -6851,8 +6843,10 @@ function createStatusDropdown(deliverable, project, card) {
   // Trigger button - compact ellipsis icon
   const trigger = el("button", {
     className: "deliverable-status-trigger",
+    type: "button",
     title: "Status options",
-    "aria-label": "Status options"
+    "aria-label": "Status options",
+    "aria-expanded": "false"
   });
 
   const dotsSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -6923,26 +6917,22 @@ function createStatusDropdown(deliverable, project, card) {
   // Toggle dropdown
   trigger.addEventListener("click", (e) => {
     e.stopPropagation();
-    const isOpen = menu.classList.toggle("open");
-    trigger.classList.toggle("open", isOpen);
-    card.classList.toggle("deliverable-menu-open", isOpen);
+    const isOpen = !dropdown.classList.contains("open");
 
     // Close other open dropdowns
-    document.querySelectorAll(".deliverable-status-menu.open").forEach(m => {
-      if (m !== menu) {
-        m.classList.remove("open");
-        m.previousElementSibling.classList.remove("open");
-        m.closest(".deliverable-card-new")?.classList.remove("deliverable-menu-open");
+    document.querySelectorAll(".deliverable-status-dropdown.open").forEach((openDropdown) => {
+      if (openDropdown !== dropdown) {
+        setDeliverableStatusDropdownState(openDropdown, false);
       }
     });
+
+    setDeliverableStatusDropdownState(dropdown, isOpen);
   });
 
   // Close dropdown when clicking outside
   document.addEventListener("click", (e) => {
     if (!dropdown.contains(e.target)) {
-      menu.classList.remove("open");
-      trigger.classList.remove("open");
-      card.classList.remove("deliverable-menu-open");
+      setDeliverableStatusDropdownState(dropdown, false);
     }
   });
 
@@ -10846,10 +10836,22 @@ window.__aciesAutomation = {
 };
 // ===================== BUNDLE / PLUGIN MANAGER =====================
 
+const HIDDEN_PLUGIN_BUNDLES = new Set([
+  "ElectricalCommands.GetAttributesCommands.bundle",
+]);
+
 function normalizeBundleCoreName(bundleName) {
   return String(bundleName || "")
     .replace("ElectricalCommands.", "")
     .replace(".bundle", "");
+}
+
+function isVisiblePluginBundle(bundle) {
+  const bundleName = String(bundle?.bundle_name || "");
+  if (HIDDEN_PLUGIN_BUNDLES.has(bundleName)) return false;
+
+  const name = String(bundle?.name || "");
+  return normalizeBundleCoreName(bundleName || name) !== "GetAttributesCommands";
 }
 
 function buildPluginDocUrl(title, pageId) {
@@ -11036,33 +11038,15 @@ const PLUGIN_DOC_OVERRIDES = {
   },
   LFSCommands: {
     replace: true,
-    order: ["TABLEANALYZE", "LFS", "LFSPULL", "LFSPUSH"],
+    order: ["LFS"],
     commands: {
-      TABLEANALYZE:
-        "Captures a selected AutoCAD table at full fidelity and exports a reconstruction-ready JSON file.",
       LFS:
         "Inserts the built-in lighting fixture schedule table template and applies local sync data when available.",
-      LFSPULL:
-        "Exports selected lighting fixture schedule table data to T24LightingFixtureSchedule.sync.json in the active DWG folder.",
-      LFSPUSH:
-        "Loads T24LightingFixtureSchedule.sync.json from the active DWG folder and applies it to a selected lighting fixture schedule table.",
     },
     links: {
-      TABLEANALYZE: buildPluginDocUrl(
-        "TABLEANALYZE",
-        "5450f3570a694cc48844e5250b29679a"
-      ),
       LFS: buildPluginDocUrl(
         "LFS",
         "0f3bd29ae7034574b8458136be3e598f"
-      ),
-      LFSPULL: buildPluginDocUrl(
-        "LFSPULL",
-        "a0aeb6ea06014611bce6265b926ec160"
-      ),
-      LFSPUSH: buildPluginDocUrl(
-        "LFSPUSH",
-        "cce3b9fe840349b7823c80c879794feb"
       ),
     },
   },
@@ -11174,7 +11158,9 @@ async function fetchBundleStatuses({ silent = false } = {}) {
   bundlesLoadingPromise = (async () => {
     const response = await window.pywebview.api.get_bundle_statuses();
     if (response.status !== "success") throw new Error(response.message);
-    const data = Array.isArray(response.data) ? response.data : [];
+    const data = Array.isArray(response.data)
+      ? response.data.filter(isVisiblePluginBundle)
+      : [];
     bundlesCache = data;
     bundlesCacheKey = computeBundleKey(data);
     bundlesLastCheckAt = Date.now();
@@ -11201,9 +11187,12 @@ function prefetchBundleDescriptions(bundles) {
 async function renderBundles(bundles) {
   const container = document.getElementById("commands-container");
   if (!container) return;
+  const visibleBundles = Array.isArray(bundles)
+    ? bundles.filter(isVisiblePluginBundle)
+    : [];
 
   container.innerHTML = "";
-  if (!Array.isArray(bundles) || bundles.length === 0) {
+  if (visibleBundles.length === 0) {
     container.textContent = "No command bundles found.";
     return;
   }
@@ -11211,7 +11200,7 @@ async function renderBundles(bundles) {
   const tagJobs = [];
 
   // Process each bundle
-  for (const bundle of bundles) {
+  for (const bundle of visibleBundles) {
     // Normalize name
     const coreName = normalizeBundleCoreName(bundle.name);
 

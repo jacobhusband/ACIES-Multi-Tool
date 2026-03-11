@@ -128,6 +128,9 @@ KNOWN_PLUGIN_BUNDLES = [
     "ElectricalCommands.LFSCommands.bundle",
     "ElectricalCommands.TextCommands.bundle",
 ]
+HIDDEN_PLUGIN_BUNDLES = {
+    "ElectricalCommands.GetAttributesCommands.bundle",
+}
 
 
 def load_app_version():
@@ -301,6 +304,92 @@ def build_timesheet_filename(user_name, week_key):
 
     return f"{initials}-TS-{monday.strftime('%m%d')}-{friday.strftime('%m%d%Y')}.xlsx"
 
+
+
+TIMESHEET_DAY_ORDER = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+
+
+def _coerce_float(value, default=0.0):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _get_timesheet_project_key(project_id="", project_name=""):
+    normalized_id = str(project_id or "").strip()
+    if normalized_id:
+        return f"id:{normalized_id.casefold()}"
+    normalized_name = str(project_name or "").strip()
+    if normalized_name:
+        return f"name:{normalized_name.casefold()}"
+    return ""
+
+
+def _get_timesheet_day_from_expense_date(value):
+    if not value:
+        return None
+    try:
+        return TIMESHEET_DAY_ORDER[datetime.date.fromisoformat(str(value)).weekday()]
+    except ValueError:
+        return None
+
+
+def _build_export_mileage_by_row(entries, expense_projects):
+    if not entries:
+        return []
+
+    mileage_by_row = [0.0] * len(entries)
+    if not expense_projects:
+        return mileage_by_row
+
+    day_rows = {day: [] for day in TIMESHEET_DAY_ORDER}
+    project_rows = {}
+    project_day_rows = {}
+    project_day_totals = {}
+
+    for row_index, entry in enumerate(entries):
+        project_key = _get_timesheet_project_key(
+            entry.get("projectId", ""),
+            entry.get("projectName", ""),
+        )
+        if project_key:
+            project_rows.setdefault(project_key, []).append(row_index)
+
+        hours = entry.get("hours") or {}
+        for day in TIMESHEET_DAY_ORDER:
+            if _coerce_float(hours.get(day, 0), 0.0) <= 0:
+                continue
+            day_rows[day].append(row_index)
+            if project_key:
+                project_day_rows.setdefault((project_key, day), []).append(row_index)
+
+    for project in expense_projects:
+        project_key = _get_timesheet_project_key(
+            project.get("projectId", ""),
+            project.get("projectName", ""),
+        )
+        for expense_entry in project.get("entries", []):
+            day = _get_timesheet_day_from_expense_date(expense_entry.get("date"))
+            mileage = _coerce_float(expense_entry.get("mileage", 0), 0.0)
+            if not day or mileage <= 0:
+                continue
+            bucket = (project_key, day)
+            project_day_totals[bucket] = project_day_totals.get(bucket, 0.0) + mileage
+
+    for (project_key, day), mileage in project_day_totals.items():
+        target_rows = []
+        if project_key:
+            target_rows = project_day_rows.get((project_key, day), [])
+        if not target_rows:
+            target_rows = day_rows.get(day, [])
+        if not target_rows and project_key:
+            target_rows = project_rows.get(project_key, [])
+        if not target_rows:
+            target_rows = [0]
+        mileage_by_row[target_rows[0]] += mileage
+
+    return mileage_by_row
 
 
 def _format_long_date(date_value=None):
@@ -1702,6 +1791,10 @@ class Api:
             for bundle_name in sorted(local_bundles):
                 if bundle_name not in bundle_names:
                     bundle_names.append(bundle_name)
+            bundle_names = [
+                bundle_name for bundle_name in bundle_names
+                if bundle_name not in HIDDEN_PLUGIN_BUNDLES
+            ]
 
             statuses = []
             for bundle_name in bundle_names:
@@ -3462,6 +3555,8 @@ Return ONLY the JSON object.
                 return {'status': 'error', 'message': 'Sheet "time log" not found in template'}
 
             ws = wb["time log"]
+            expense_data = data.get('expenses', {})
+            expense_projects = expense_data.get('projects', [])
 
             # Row 1: Employee name (column M = 13)
             ws.cell(row=1, column=13, value=data.get('userName', 'Employee'))
@@ -3471,7 +3566,8 @@ Return ONLY the JSON object.
 
             # Data rows start at row 5
             entries = data.get('entries', [])
-            day_order = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
+            day_order = TIMESHEET_DAY_ORDER
+            export_mileage_by_row = _build_export_mileage_by_row(entries, expense_projects)
 
             for row_idx, entry in enumerate(entries, 5):
                 # Column A (1): PROJECT #
@@ -3494,8 +3590,8 @@ Return ONLY the JSON object.
                     h = hours.get(day, 0)
                     ws.cell(row=row_idx, column=11 + day_idx, value=h if h else '')
 
-                # Column R (18): MILEAGE
-                mileage = entry.get('mileage', 0)
+                # Column R (18): MILEAGE derived from project expense dates.
+                mileage = export_mileage_by_row[row_idx - 5] if row_idx - 5 < len(export_mileage_by_row) else 0
                 ws.cell(row=row_idx, column=18, value=mileage if mileage else '')
 
             # Totals row (row 26 in template based on CSV)
@@ -3521,8 +3617,6 @@ Return ONLY the JSON object.
 
             # =============== EXPENSE SHEET EXPORT ===============
             # If expense data is provided, also populate the expense sheet
-            expense_data = data.get('expenses', {})
-            expense_projects = expense_data.get('projects', [])
             temp_files_to_cleanup = []
 
             if expense_projects:

@@ -641,6 +641,46 @@ class TimesheetExcelExportTests(unittest.TestCase):
         self.assertEqual("=SUM(Q5:Q25)", worksheet["Q26"].value)
         self.assertEqual("=SUM(R5:R25)", worksheet["R26"].value)
 
+    def test_time_log_mileage_comes_from_project_expense_dates(self):
+        entries = [
+            _make_timesheet_entry(
+                "5001",
+                "Alpha",
+                "10",
+                hours={"mon": 1.5},
+                mileage=99,
+            ),
+            _make_timesheet_entry(
+                "5001",
+                "Alpha",
+                "20",
+                hours={"wed": 2.0},
+                mileage=42,
+            ),
+        ]
+        projects = [
+            {
+                "projectName": "Alpha",
+                "projectId": "5001",
+                "entries": [
+                    {"date": "2026-03-09", "description": "Monday trip", "mileage": 8, "expense": 0},
+                    {"date": "2026-03-11", "description": "Wednesday trip", "mileage": 4, "expense": 0},
+                ],
+                "images": [],
+            }
+        ]
+
+        with tempfile.TemporaryDirectory(prefix="timesheet-mileage-export-") as temp_dir:
+            output_path = Path(temp_dir) / "timelog-mileage.xlsx"
+            workbook_path = self._export_timesheet_workbook(projects, output_path, entries=entries)
+            workbook = load_workbook(workbook_path)
+            self.addCleanup(workbook.close)
+            worksheet = workbook["time log"]
+
+        self.assertEqual(8, worksheet["R5"].value)
+        self.assertEqual(4, worksheet["R6"].value)
+        self.assertEqual("=SUM(R5:R25)", worksheet["R26"].value)
+
 
 if __name__ == "__main__":
     unittest.main()

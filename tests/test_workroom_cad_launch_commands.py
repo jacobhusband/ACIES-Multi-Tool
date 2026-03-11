@@ -620,5 +620,47 @@ class WorkroomCadLaunchCommandTests(unittest.TestCase):
             list_dwgs_mock.assert_called_once_with(str(temp_path))
 
 
+class BundleStatusVisibilityTests(unittest.TestCase):
+    def setUp(self):
+        self.api = Api.__new__(Api)
+        self.api.github_repo = "jacobhusband/ElectricalCommands"
+        self.api.release_tag = None
+
+    def test_get_bundle_statuses_hides_get_attributes_bundle(self):
+        with tempfile.TemporaryDirectory(prefix="acies-bundle-statuses-") as temp_dir:
+            plugins_dir = Path(temp_dir)
+            (plugins_dir / "ElectricalCommands.CleanCADCommands.bundle").mkdir()
+            (plugins_dir / "ElectricalCommands.GetAttributesCommands.bundle").mkdir()
+            self.api.app_plugins_folder = str(plugins_dir)
+
+            release_info = {
+                "tag": "v1.2.3",
+                "assets": [
+                    {
+                        "name": "ElectricalCommands.CleanCADCommands-v1.2.3.zip",
+                        "browser_download_url": "https://example.com/clean.zip",
+                    },
+                    {
+                        "name": "ElectricalCommands.GetAttributesCommands-v1.2.3.zip",
+                        "browser_download_url": "https://example.com/getattributes.zip",
+                    },
+                ],
+                "release_notes": "",
+                "html_url": "",
+            }
+
+            with patch.object(
+                self.api,
+                "_fetch_latest_bundle_release",
+                return_value=release_info,
+            ):
+                result = self.api.get_bundle_statuses()
+
+        self.assertEqual("success", result["status"])
+        bundle_names = [item["bundle_name"] for item in result["data"]]
+        self.assertIn("ElectricalCommands.CleanCADCommands.bundle", bundle_names)
+        self.assertNotIn("ElectricalCommands.GetAttributesCommands.bundle", bundle_names)
+
+
 if __name__ == "__main__":
     unittest.main()

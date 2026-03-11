@@ -3584,6 +3584,73 @@ Return ONLY the JSON object.
             logging.error(f"Error in expense image selection dialog: {e}")
             return {'status': 'error', 'message': str(e)}
 
+    def resolve_expense_attachment_path(self, path):
+        """Resolves a stored expense attachment path to an existing local file."""
+        try:
+            resolved_path = self._resolve_expense_image_path(path)
+            if not resolved_path or not os.path.isfile(resolved_path):
+                return {'status': 'error', 'message': 'Attachment file not found.'}
+            return {
+                'status': 'success',
+                'path': resolved_path,
+                'filename': os.path.basename(resolved_path),
+            }
+        except Exception as e:
+            logging.error(f"Error resolving expense attachment path: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def get_expense_image_preview(self, path, max_size=1600):
+        """Returns a browser-safe preview data URL for a local expense image."""
+        try:
+            resolved_path = self._resolve_expense_image_path(path)
+            if not resolved_path or not os.path.isfile(resolved_path):
+                return {'status': 'error', 'message': 'Image file not found.'}
+
+            try:
+                preview_max_size = max(1, int(max_size or 1600))
+            except Exception:
+                preview_max_size = 1600
+
+            with PILImage.open(resolved_path) as source_img:
+                if hasattr(source_img, 'n_frames') and source_img.n_frames > 1:
+                    source_img.seek(0)
+                preview = ImageOps.exif_transpose(source_img).copy()
+                if preview.mode in ('P', 'LA'):
+                    preview = preview.convert('RGBA')
+                elif preview.mode not in ('RGB', 'RGBA'):
+                    preview = preview.convert('RGB')
+
+            resampling = getattr(
+                getattr(PILImage, 'Resampling', PILImage),
+                'LANCZOS',
+                getattr(PILImage, 'LANCZOS', getattr(PILImage, 'BICUBIC', 3))
+            )
+            preview.thumbnail((preview_max_size, preview_max_size), resampling)
+
+            buffer = io.BytesIO()
+            preview.save(buffer, format='PNG')
+            encoded = base64.b64encode(buffer.getvalue()).decode('ascii')
+
+            return {
+                'status': 'success',
+                'dataUrl': f'data:image/png;base64,{encoded}',
+                'width': preview.width,
+                'height': preview.height,
+                'path': resolved_path,
+                'filename': os.path.basename(resolved_path),
+            }
+        except UnidentifiedImageError:
+            resolved_path = self._resolve_expense_image_path(path)
+            return {
+                'status': 'unsupported',
+                'message': 'Preview not available for this file type.',
+                'path': resolved_path or '',
+                'filename': os.path.basename(resolved_path) if resolved_path else '',
+            }
+        except Exception as e:
+            logging.error(f"Error generating expense image preview: {e}")
+            return {'status': 'error', 'message': str(e)}
+
     def export_expense_sheet_excel(self, data):
         """Exports expense sheet data to an Excel file with images."""
         try:

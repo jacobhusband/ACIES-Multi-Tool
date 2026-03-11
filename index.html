@@ -823,6 +823,14 @@
             </div>
         </div>
     </dialog>
+    <dialog id="expenseImagePreviewDlg" class="expense-image-preview-dialog" aria-label="Expense attachment preview">
+        <div class="expense-image-preview-shell">
+            <button id="expenseImagePreviewCloseBtn" class="expense-image-preview-close" type="button" aria-label="Close preview" onclick="closeExpenseImagePreviewDialog()">&times;</button>
+            <div id="expenseImagePreviewStage" class="expense-image-preview-stage">
+                <img id="expenseImagePreviewImg" alt="Expense attachment preview" hidden />
+            </div>
+        </div>
+    </dialog>
     <!-- Edit / New Modal -->
     <dialog id="editDlg">
         <div class="modal-header">

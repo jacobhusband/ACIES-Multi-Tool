@@ -557,6 +557,34 @@ class TimesheetExcelExportTests(unittest.TestCase):
         self.assertGreater(anchor["height_pixels"], anchor["width_pixels"])
         self.assertAlmostEqual(round(target_width * 2), anchor["height_pixels"], delta=2)
 
+    def test_expense_image_preview_returns_data_url(self):
+        with tempfile.TemporaryDirectory(prefix="timesheet-image-preview-") as temp_dir:
+            temp_dir = Path(temp_dir)
+            image_path = temp_dir / "preview.png"
+            _write_image(image_path, (180, 120))
+            result = self.api.get_expense_image_preview(str(image_path), max_size=90)
+
+        self.assertEqual("success", result["status"])
+        self.assertTrue(result["dataUrl"].startswith("data:image/png;base64,"))
+        self.assertLessEqual(max(result["width"], result["height"]), 90)
+        self.assertEqual(str(image_path), result["path"])
+
+    def test_expense_image_preview_resolves_moved_attachment_path(self):
+        with tempfile.TemporaryDirectory(prefix="timesheet-image-preview-moved-") as temp_dir:
+            temp_dir = Path(temp_dir)
+            desktop_root = temp_dir / "Desktop"
+            moved_dir = desktop_root / "Expenses" / "BAC Kent, WA Expenses"
+            moved_dir.mkdir(parents=True, exist_ok=True)
+            moved_image_path = moved_dir / "IMG_0466.JPG"
+            _write_image(moved_image_path, (160, 120), image_format="JPEG")
+
+            stale_path = desktop_root / "BAC Kent, WA Expenses" / "IMG_0466.JPG"
+            result = self.api.get_expense_image_preview(str(stale_path), max_size=120)
+
+        self.assertEqual("success", result["status"])
+        self.assertEqual(str(moved_image_path), result["path"])
+        self.assertTrue(result["dataUrl"].startswith("data:image/png;base64,"))
+
     def test_export_uses_moved_attachment_when_stored_path_is_stale(self):
         with tempfile.TemporaryDirectory(prefix="timesheet-image-relocate-") as temp_dir:
             temp_dir = Path(temp_dir)

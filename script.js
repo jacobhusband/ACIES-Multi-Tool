@@ -2526,6 +2526,31 @@ async function exportTimesheetToExcel() {
 // ===================== EXPENSE SHEET FUNCTIONS =====================
 
 const MILEAGE_RATE = 0.70; // Fixed rate per mile
+const EXPENSE_IMAGE_THUMB_MAX_SIZE = 320;
+const EXPENSE_IMAGE_MODAL_MAX_SIZE = 1800;
+const expenseAttachmentPreviewCache = new Map();
+const expenseAttachmentResolvedPathCache = new Map();
+let activeExpenseImagePreviewRequestId = 0;
+const expenseImagePreviewState = {
+  scale: 1,
+  minScale: 1,
+  maxScale: 6,
+  translateX: 0,
+  translateY: 0,
+  naturalWidth: 0,
+  naturalHeight: 0,
+  baseWidth: 0,
+  baseHeight: 0,
+  stageWidth: 0,
+  stageHeight: 0,
+  isDragging: false,
+  pointerId: null,
+  dragStartX: 0,
+  dragStartY: 0,
+  dragOriginX: 0,
+  dragOriginY: 0,
+  initialized: false,
+};
 
 function createExpenseEntryId() {
   return "exp_" + Math.random().toString(36).substr(2, 9);
@@ -2757,24 +2782,30 @@ function createExpenseRow(entry, projectIndex, entryIndex) {
 
 function createExpenseImageThumb(image, projectIndex, imageIndex) {
   const thumb = el("div", { className: "expense-image-thumb" });
+  const previewButton = el("button", {
+    className: "expense-image-preview-btn",
+    type: "button",
+    title: getExpenseAttachmentFilename(image),
+    "aria-label": `Preview ${getExpenseAttachmentFilename(image)}`
+  });
+  thumb.appendChild(previewButton);
 
-  const ext = (image.filename || "").toLowerCase().split(".").pop();
-
-  if (ext === "pdf") {
-    thumb.appendChild(el("div", { className: "pdf-icon", textContent: "📄" }));
+  if (isExpensePreviewableImage(image)) {
+    setExpenseImageThumbLoadingState(previewButton);
+    previewButton.onclick = async () => {
+      await openExpenseImagePreview(image);
+    };
+    void hydrateExpenseImageThumb(previewButton, image);
   } else {
-    // For images, we can't actually load local file:// URLs due to security
-    // So we'll show a placeholder or use the filename
-    const imgEl = el("div", {
-      className: "pdf-icon",
-      textContent: "🖼️",
-      title: image.filename || "Image"
-    });
-    thumb.appendChild(imgEl);
+    renderExpenseAttachmentPlaceholder(previewButton, "PDF", "pdf");
+    previewButton.onclick = async () => {
+      await openExpenseAttachment(image);
+    };
   }
 
   const removeBtn = el("button", {
     className: "remove-image-btn",
+    type: "button",
     innerHTML: "&times;",
     title: "Remove image"
   });
@@ -2785,6 +2816,576 @@ function createExpenseImageThumb(image, projectIndex, imageIndex) {
   thumb.appendChild(removeBtn);
 
   return thumb;
+}
+
+function getExpenseAttachmentFilename(image) {
+  const explicitName = String(image?.filename || "").trim();
+  if (explicitName) return explicitName;
+  const rawPath = String(image?.path || "").trim();
+  if (!rawPath) return "Attachment";
+  return rawPath.split(/[\\/]/).pop() || "Attachment";
+}
+
+function getExpenseAttachmentExtension(image) {
+  const filename = getExpenseAttachmentFilename(image).toLowerCase();
+  const dotIndex = filename.lastIndexOf(".");
+  return dotIndex >= 0 ? filename.slice(dotIndex + 1) : "";
+}
+
+function isExpensePreviewableImage(image) {
+  const ext = getExpenseAttachmentExtension(image);
+  return !!String(image?.path || "").trim() && ext !== "pdf";
+}
+
+function getExpenseAttachmentPreviewCacheKey(path, maxSize) {
+  return `${maxSize}:${String(path || "").trim()}`;
+}
+
+function cacheResolvedExpenseAttachmentPath(rawPath, resolvedPath) {
+  const normalizedRawPath = String(rawPath || "").trim();
+  const normalizedResolvedPath = String(resolvedPath || "").trim();
+  if (!normalizedRawPath || !normalizedResolvedPath) return;
+  expenseAttachmentResolvedPathCache.set(normalizedRawPath, normalizedResolvedPath);
+}
+
+async function fetchExpenseAttachmentPreview(path, maxSize = EXPENSE_IMAGE_THUMB_MAX_SIZE) {
+  const rawPath = String(path || "").trim();
+  if (!rawPath) {
+    return { status: "error", message: "Attachment path is missing." };
+  }
+
+  const cacheKey = getExpenseAttachmentPreviewCacheKey(rawPath, maxSize);
+  const cached = expenseAttachmentPreviewCache.get(cacheKey);
+  if (cached) {
+    return cached instanceof Promise ? await cached : cached;
+  }
+
+  const request = (async () => {
+    if (!window.pywebview?.api?.get_expense_image_preview) {
+      return { status: "error", message: "Preview API unavailable." };
+    }
+    try {
+      const result = await window.pywebview.api.get_expense_image_preview(rawPath, maxSize);
+      if (result?.path) {
+        cacheResolvedExpenseAttachmentPath(rawPath, result.path);
+      }
+      return result || { status: "error", message: "Preview unavailable." };
+    } catch (error) {
+      return { status: "error", message: error?.message || "Preview unavailable." };
+    }
+  })();
+
+  expenseAttachmentPreviewCache.set(cacheKey, request);
+  const result = await request;
+  expenseAttachmentPreviewCache.set(cacheKey, result);
+  return result;
+}
+
+async function resolveExpenseAttachmentPath(path) {
+  const rawPath = String(path || "").trim();
+  if (!rawPath) return "";
+
+  const cached = expenseAttachmentResolvedPathCache.get(rawPath);
+  if (cached) return cached;
+
+  if (!window.pywebview?.api?.resolve_expense_attachment_path) {
+    return rawPath;
+  }
+
+  try {
+    const result = await window.pywebview.api.resolve_expense_attachment_path(rawPath);
+    if (result?.status === "success" && result.path) {
+      cacheResolvedExpenseAttachmentPath(rawPath, result.path);
+      return result.path;
+    }
+  } catch (error) {
+    console.error("Error resolving expense attachment path:", error);
+  }
+
+  return rawPath;
+}
+
+function setExpenseImageThumbLoadingState(previewButton) {
+  previewButton.disabled = false;
+  previewButton.classList.add("is-loading");
+  previewButton.classList.remove("is-error");
+  previewButton.replaceChildren(
+    el("div", { className: "expense-attachment-placeholder" }, [
+      el("span", { className: "expense-attachment-placeholder-icon", textContent: "IMG" }),
+      el("span", { className: "expense-attachment-placeholder-label", textContent: "Loading" }),
+    ])
+  );
+}
+
+function renderExpenseAttachmentPlaceholder(previewButton, label, tone = "") {
+  previewButton.classList.remove("is-loading");
+  previewButton.classList.toggle("is-error", tone === "error");
+  previewButton.replaceChildren(
+    el("div", {
+      className: `expense-attachment-placeholder${tone ? ` ${tone}` : ""}`
+    }, [
+      el("span", {
+        className: "expense-attachment-placeholder-icon",
+        textContent: tone === "pdf" ? "PDF" : "IMG"
+      }),
+      el("span", {
+        className: "expense-attachment-placeholder-label",
+        textContent: label
+      }),
+    ])
+  );
+}
+
+async function hydrateExpenseImageThumb(previewButton, image) {
+  const filename = getExpenseAttachmentFilename(image);
+  const rawPath = String(image?.path || "").trim();
+  try {
+    const preview = await fetchExpenseAttachmentPreview(rawPath, EXPENSE_IMAGE_THUMB_MAX_SIZE);
+    if (!previewButton.isConnected) return;
+    previewButton.classList.remove("is-loading");
+    if (preview?.path) {
+      image.resolvedPath = preview.path;
+      cacheResolvedExpenseAttachmentPath(rawPath, preview.path);
+    }
+    if (preview?.status === "success" && preview.dataUrl) {
+      previewButton.classList.remove("is-error");
+      previewButton.replaceChildren(
+        el("img", {
+          src: preview.dataUrl,
+          alt: filename,
+          loading: "lazy",
+          draggable: false,
+        })
+      );
+      return;
+    }
+
+    if (preview?.status === "unsupported") {
+      renderExpenseAttachmentPlaceholder(previewButton, "Open file", "pdf");
+      previewButton.onclick = async () => {
+        await openExpenseAttachment(image);
+      };
+      return;
+    }
+
+    renderExpenseAttachmentPlaceholder(previewButton, "Open file", "error");
+    previewButton.onclick = async () => {
+      await openExpenseAttachment(image);
+    };
+  } catch (error) {
+    console.error("Error loading expense preview:", error);
+    if (!previewButton.isConnected) return;
+    renderExpenseAttachmentPlaceholder(previewButton, "Open file", "error");
+    previewButton.onclick = async () => {
+      await openExpenseAttachment(image);
+    };
+  }
+}
+
+async function openExpenseAttachment(image) {
+  const rawPath = String(image?.path || "").trim();
+  if (!rawPath || !window.pywebview?.api?.open_path) {
+    toast("Unable to open attachment.");
+    return;
+  }
+
+  try {
+    const targetPath = await resolveExpenseAttachmentPath(image.resolvedPath || rawPath);
+    const result = await window.pywebview.api.open_path(targetPath);
+    if (result?.status && result.status !== "success") {
+      throw new Error(result.message || "Unable to open attachment.");
+    }
+  } catch (error) {
+    console.error("Error opening expense attachment:", error);
+    toast(error?.message || "Unable to open attachment.");
+  }
+}
+
+function getExpenseImagePreviewElements() {
+  return {
+    dialog: document.getElementById("expenseImagePreviewDlg"),
+    stage: document.getElementById("expenseImagePreviewStage"),
+    img: document.getElementById("expenseImagePreviewImg"),
+  };
+}
+
+function clampExpenseImagePreviewTranslation(nextX, nextY) {
+  const displayedWidth =
+    expenseImagePreviewState.baseWidth * expenseImagePreviewState.scale;
+  const displayedHeight =
+    expenseImagePreviewState.baseHeight * expenseImagePreviewState.scale;
+  const maxTranslateX = Math.max(
+    0,
+    (displayedWidth - expenseImagePreviewState.stageWidth) / 2
+  );
+  const maxTranslateY = Math.max(
+    0,
+    (displayedHeight - expenseImagePreviewState.stageHeight) / 2
+  );
+
+  return {
+    translateX: Math.max(-maxTranslateX, Math.min(maxTranslateX, nextX)),
+    translateY: Math.max(-maxTranslateY, Math.min(maxTranslateY, nextY)),
+  };
+}
+
+function renderExpenseImagePreviewTransform() {
+  const { stage, img } = getExpenseImagePreviewElements();
+  if (!stage || !img) return;
+
+  stage.classList.toggle(
+    "is-zoomed",
+    expenseImagePreviewState.scale > expenseImagePreviewState.minScale + 0.001
+  );
+  stage.classList.toggle("is-dragging", expenseImagePreviewState.isDragging);
+
+  if (!img.hidden) {
+    img.style.width = `${expenseImagePreviewState.baseWidth}px`;
+    img.style.height = `${expenseImagePreviewState.baseHeight}px`;
+    img.style.transform = `translate(${expenseImagePreviewState.translateX}px, ${expenseImagePreviewState.translateY}px) scale(${expenseImagePreviewState.scale})`;
+  }
+}
+
+function syncExpenseImagePreviewLayout() {
+  const { stage, img } = getExpenseImagePreviewElements();
+  if (
+    !stage ||
+    !img ||
+    img.hidden ||
+    !expenseImagePreviewState.naturalWidth ||
+    !expenseImagePreviewState.naturalHeight
+  ) {
+    return;
+  }
+
+  expenseImagePreviewState.stageWidth = Math.max(stage.clientWidth, 1);
+  expenseImagePreviewState.stageHeight = Math.max(stage.clientHeight, 1);
+
+  const fitScale = Math.min(
+    expenseImagePreviewState.stageWidth / expenseImagePreviewState.naturalWidth,
+    expenseImagePreviewState.stageHeight / expenseImagePreviewState.naturalHeight
+  );
+
+  expenseImagePreviewState.baseWidth = Math.max(
+    1,
+    expenseImagePreviewState.naturalWidth * fitScale
+  );
+  expenseImagePreviewState.baseHeight = Math.max(
+    1,
+    expenseImagePreviewState.naturalHeight * fitScale
+  );
+
+  if (expenseImagePreviewState.scale <= expenseImagePreviewState.minScale) {
+    expenseImagePreviewState.translateX = 0;
+    expenseImagePreviewState.translateY = 0;
+  } else {
+    const clamped = clampExpenseImagePreviewTranslation(
+      expenseImagePreviewState.translateX,
+      expenseImagePreviewState.translateY
+    );
+    expenseImagePreviewState.translateX = clamped.translateX;
+    expenseImagePreviewState.translateY = clamped.translateY;
+  }
+
+  renderExpenseImagePreviewTransform();
+}
+
+function resetExpenseImagePreviewTransform() {
+  expenseImagePreviewState.scale = expenseImagePreviewState.minScale;
+  expenseImagePreviewState.translateX = 0;
+  expenseImagePreviewState.translateY = 0;
+  syncExpenseImagePreviewLayout();
+}
+
+function applyExpenseImagePreviewPan(deltaX, deltaY) {
+  if (expenseImagePreviewState.scale <= expenseImagePreviewState.minScale) {
+    expenseImagePreviewState.translateX = 0;
+    expenseImagePreviewState.translateY = 0;
+    renderExpenseImagePreviewTransform();
+    return;
+  }
+
+  const clamped = clampExpenseImagePreviewTranslation(
+    expenseImagePreviewState.translateX + deltaX,
+    expenseImagePreviewState.translateY + deltaY
+  );
+  expenseImagePreviewState.translateX = clamped.translateX;
+  expenseImagePreviewState.translateY = clamped.translateY;
+  renderExpenseImagePreviewTransform();
+}
+
+function applyExpenseImagePreviewZoom(nextScale, clientX, clientY) {
+  const { stage } = getExpenseImagePreviewElements();
+  if (!stage || !expenseImagePreviewState.baseWidth || !expenseImagePreviewState.baseHeight) {
+    return;
+  }
+
+  const boundedScale = Math.max(
+    expenseImagePreviewState.minScale,
+    Math.min(expenseImagePreviewState.maxScale, nextScale)
+  );
+  const previousScale = expenseImagePreviewState.scale;
+  if (Math.abs(boundedScale - previousScale) < 0.001) return;
+
+  syncExpenseImagePreviewLayout();
+
+  const stageRect = stage.getBoundingClientRect();
+  const pointerX =
+    Math.max(stageRect.left, Math.min(stageRect.right, clientX)) -
+    (stageRect.left + stageRect.width / 2);
+  const pointerY =
+    Math.max(stageRect.top, Math.min(stageRect.bottom, clientY)) -
+    (stageRect.top + stageRect.height / 2);
+  const contentX = (pointerX - expenseImagePreviewState.translateX) / previousScale;
+  const contentY = (pointerY - expenseImagePreviewState.translateY) / previousScale;
+
+  expenseImagePreviewState.scale = boundedScale;
+  expenseImagePreviewState.translateX = pointerX - contentX * boundedScale;
+  expenseImagePreviewState.translateY = pointerY - contentY * boundedScale;
+
+  if (boundedScale <= expenseImagePreviewState.minScale) {
+    expenseImagePreviewState.translateX = 0;
+    expenseImagePreviewState.translateY = 0;
+  } else {
+    const clamped = clampExpenseImagePreviewTranslation(
+      expenseImagePreviewState.translateX,
+      expenseImagePreviewState.translateY
+    );
+    expenseImagePreviewState.translateX = clamped.translateX;
+    expenseImagePreviewState.translateY = clamped.translateY;
+  }
+
+  renderExpenseImagePreviewTransform();
+}
+
+function stopExpenseImagePreviewDrag(pointerId = null) {
+  const { stage } = getExpenseImagePreviewElements();
+  if (
+    pointerId !== null &&
+    expenseImagePreviewState.pointerId !== null &&
+    pointerId !== expenseImagePreviewState.pointerId
+  ) {
+    return;
+  }
+
+  if (
+    stage &&
+    expenseImagePreviewState.pointerId !== null &&
+    stage.hasPointerCapture?.(expenseImagePreviewState.pointerId)
+  ) {
+    stage.releasePointerCapture(expenseImagePreviewState.pointerId);
+  }
+
+  expenseImagePreviewState.isDragging = false;
+  expenseImagePreviewState.pointerId = null;
+  renderExpenseImagePreviewTransform();
+}
+
+function resetExpenseImagePreviewDialog() {
+  const { stage, img } = getExpenseImagePreviewElements();
+  activeExpenseImagePreviewRequestId += 1;
+  stopExpenseImagePreviewDrag();
+
+  expenseImagePreviewState.scale = expenseImagePreviewState.minScale;
+  expenseImagePreviewState.translateX = 0;
+  expenseImagePreviewState.translateY = 0;
+  expenseImagePreviewState.naturalWidth = 0;
+  expenseImagePreviewState.naturalHeight = 0;
+  expenseImagePreviewState.baseWidth = 0;
+  expenseImagePreviewState.baseHeight = 0;
+  expenseImagePreviewState.stageWidth = 0;
+  expenseImagePreviewState.stageHeight = 0;
+
+  if (stage) {
+    stage.classList.remove("is-zoomed", "is-dragging");
+  }
+
+  if (img) {
+    img.hidden = true;
+    img.removeAttribute("src");
+    img.style.removeProperty("width");
+    img.style.removeProperty("height");
+    img.style.removeProperty("transform");
+  }
+}
+
+function closeExpenseImagePreviewDialog() {
+  const { dialog } = getExpenseImagePreviewElements();
+  if (!dialog) return;
+
+  if (dialog.open) {
+    dialog.close();
+  } else {
+    resetExpenseImagePreviewDialog();
+  }
+}
+
+function openExpenseImagePreviewDialog({ dataUrl, filename, width, height }) {
+  const { dialog, img } = getExpenseImagePreviewElements();
+  if (!dialog || !img || !dataUrl) return;
+
+  stopExpenseImagePreviewDrag();
+  expenseImagePreviewState.naturalWidth = Math.max(1, Number(width) || 1);
+  expenseImagePreviewState.naturalHeight = Math.max(1, Number(height) || 1);
+  img.alt = filename || "Expense attachment preview";
+  img.src = dataUrl;
+  img.hidden = false;
+
+  showDialog(dialog);
+  requestAnimationFrame(() => {
+    resetExpenseImagePreviewTransform();
+  });
+}
+
+function loadExpenseImagePreviewSource(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const preload = new Image();
+    preload.onload = () => {
+      resolve({
+        dataUrl,
+        width: preload.naturalWidth || preload.width || 1,
+        height: preload.naturalHeight || preload.height || 1,
+      });
+    };
+    preload.onerror = () => reject(new Error("Unable to load preview image."));
+    preload.src = dataUrl;
+  });
+}
+
+function initExpenseImagePreviewDialog() {
+  if (expenseImagePreviewState.initialized) return;
+
+  const { dialog, stage } = getExpenseImagePreviewElements();
+  if (!dialog || !stage) return;
+
+  expenseImagePreviewState.initialized = true;
+
+  dialog.addEventListener("close", () => {
+    resetExpenseImagePreviewDialog();
+  });
+
+  dialog.addEventListener(
+    "wheel",
+    (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    },
+    { passive: false }
+  );
+
+  dialog.addEventListener("click", (event) => {
+    if (event.target === dialog) {
+      closeExpenseImagePreviewDialog();
+    }
+  });
+
+  stage.addEventListener(
+    "wheel",
+    (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const zoomFactor = event.deltaY < 0 ? 1.18 : 1 / 1.18;
+      applyExpenseImagePreviewZoom(
+        expenseImagePreviewState.scale * zoomFactor,
+        event.clientX,
+        event.clientY
+      );
+    },
+    { passive: false }
+  );
+
+  stage.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || expenseImagePreviewState.scale <= expenseImagePreviewState.minScale) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+
+    expenseImagePreviewState.isDragging = true;
+    expenseImagePreviewState.pointerId = event.pointerId;
+    expenseImagePreviewState.dragStartX = event.clientX;
+    expenseImagePreviewState.dragStartY = event.clientY;
+    expenseImagePreviewState.dragOriginX = expenseImagePreviewState.translateX;
+    expenseImagePreviewState.dragOriginY = expenseImagePreviewState.translateY;
+    stage.setPointerCapture?.(event.pointerId);
+    renderExpenseImagePreviewTransform();
+  });
+
+  stage.addEventListener("pointermove", (event) => {
+    if (
+      !expenseImagePreviewState.isDragging ||
+      expenseImagePreviewState.pointerId !== event.pointerId
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    expenseImagePreviewState.translateX = expenseImagePreviewState.dragOriginX;
+    expenseImagePreviewState.translateY = expenseImagePreviewState.dragOriginY;
+    applyExpenseImagePreviewPan(
+      event.clientX - expenseImagePreviewState.dragStartX,
+      event.clientY - expenseImagePreviewState.dragStartY
+    );
+  });
+
+  stage.addEventListener("pointerup", (event) => {
+    stopExpenseImagePreviewDrag(event.pointerId);
+  });
+  stage.addEventListener("pointercancel", (event) => {
+    stopExpenseImagePreviewDrag(event.pointerId);
+  });
+  stage.addEventListener("lostpointercapture", (event) => {
+    stopExpenseImagePreviewDrag(event.pointerId);
+  });
+
+  window.addEventListener("resize", () => {
+    if (dialog.open) {
+      syncExpenseImagePreviewLayout();
+    }
+  });
+}
+
+async function openExpenseImagePreview(image) {
+  const filename = getExpenseAttachmentFilename(image);
+  if (!isExpensePreviewableImage(image)) {
+    await openExpenseAttachment(image);
+    return;
+  }
+
+  const requestId = ++activeExpenseImagePreviewRequestId;
+
+  try {
+    const preview = await fetchExpenseAttachmentPreview(
+      image.path,
+      EXPENSE_IMAGE_MODAL_MAX_SIZE
+    );
+
+    if (requestId !== activeExpenseImagePreviewRequestId) return;
+
+    if (preview?.path) {
+      image.resolvedPath = preview.path;
+      cacheResolvedExpenseAttachmentPath(image.path, preview.path);
+    }
+
+    if (preview?.status !== "success" || !preview.dataUrl) {
+      throw new Error(preview?.message || "Unable to load preview.");
+    }
+
+    const loadedPreview = await loadExpenseImagePreviewSource(preview.dataUrl);
+    if (requestId !== activeExpenseImagePreviewRequestId) return;
+
+    openExpenseImagePreviewDialog({
+      dataUrl: loadedPreview.dataUrl,
+      filename,
+      width: loadedPreview.width,
+      height: loadedPreview.height,
+    });
+  } catch (error) {
+    console.error("Error opening expense image preview:", error);
+    if (requestId !== activeExpenseImagePreviewRequestId) return;
+    toast(error?.message || "Unable to load preview. Opening file instead.");
+    await openExpenseAttachment(image);
+  }
 }
 
 function calculateProjectExpenseTotals(project) {
@@ -14175,6 +14776,7 @@ function initEventListeners() {
     openAddExpenseProjectDialog();
   document.getElementById("btnSaveExpenseEntry").onclick = () =>
     saveExpenseEntry();
+  initExpenseImagePreviewDialog();
 
   document.getElementById("checkUpdateBtn").onclick = () =>
     refreshAppUpdateStatus({ manual: true });

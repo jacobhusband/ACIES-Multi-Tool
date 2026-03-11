@@ -1,0 +1,346 @@
+import base64
+import posixpath
+import sys
+import tempfile
+import types
+import unittest
+import xml.etree.ElementTree as ET
+import zipfile
+from pathlib import Path
+from unittest.mock import patch
+
+
+def _ensure_google_genai_stub():
+    try:
+        from google import genai as _genai  # noqa: F401
+        from google.genai import types as _types  # noqa: F401
+        return
+    except Exception:
+        google_module = sys.modules.get("google")
+        if google_module is None:
+            google_module = types.ModuleType("google")
+            google_module.__path__ = []
+            sys.modules["google"] = google_module
+
+        genai_module = types.ModuleType("google.genai")
+        genai_types_module = types.ModuleType("google.genai.types")
+        genai_module.types = genai_types_module
+        google_module.genai = genai_module
+
+        sys.modules["google.genai"] = genai_module
+        sys.modules["google.genai.types"] = genai_types_module
+
+
+def _ensure_webview_stub():
+    try:
+        import webview  # noqa: F401
+        return
+    except Exception:
+        webview_module = types.ModuleType("webview")
+        webview_module.windows = []
+        webview_module.create_window = lambda *args, **kwargs: None
+        webview_module.start = lambda *args, **kwargs: None
+        sys.modules["webview"] = webview_module
+
+
+def _ensure_dotenv_stub():
+    try:
+        from dotenv import load_dotenv as _load_dotenv  # noqa: F401
+        return
+    except Exception:
+        dotenv_module = types.ModuleType("dotenv")
+        dotenv_module.load_dotenv = lambda *args, **kwargs: False
+        sys.modules["dotenv"] = dotenv_module
+
+
+def _ensure_requests_stub():
+    try:
+        import requests  # noqa: F401
+        return
+    except Exception:
+        requests_module = types.ModuleType("requests")
+        requests_module.get = lambda *args, **kwargs: None
+        sys.modules["requests"] = requests_module
+
+
+def _ensure_pydantic_stub():
+    try:
+        from pydantic import BaseModel as _BaseModel, Field as _Field  # noqa: F401
+        return
+    except Exception:
+        pydantic_module = types.ModuleType("pydantic")
+
+        class BaseModel:
+            pass
+
+        def Field(*args, **kwargs):
+            if args:
+                return args[0]
+            return kwargs.get("default")
+
+        pydantic_module.BaseModel = BaseModel
+        pydantic_module.Field = Field
+        sys.modules["pydantic"] = pydantic_module
+
+
+_ensure_google_genai_stub()
+_ensure_webview_stub()
+_ensure_dotenv_stub()
+_ensure_requests_stub()
+_ensure_pydantic_stub()
+
+import main as main_module
+from main import Api
+from openpyxl import load_workbook
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+TEMPLATE_PATH = REPO_ROOT / "templates" / "Template_Timesheet.xlsx"
+EXPENSE_SHEET_NAME = "Project Expense Sheet"
+DAY_TOTALS = {day: 0 for day in ("mon", "tue", "wed", "thu", "fri", "sat", "sun")}
+PNG_BYTES = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII="
+)
+XML_NS = {
+    "main": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
+    "docrel": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+    "pkgrel": "http://schemas.openxmlformats.org/package/2006/relationships",
+    "xdr": "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing",
+}
+
+
+def _make_expense_entry(index, mileage=None, expense=None):
+    value = index + 1
+    return {
+        "date": f"2026-03-{10 + index:02d}",
+        "description": f"Expense {value}",
+        "mileage": value if mileage is None else mileage,
+        "expense": (value * 10) if expense is None else expense,
+    }
+
+
+def _make_project(name, project_id, entry_count, image_paths=None):
+    return {
+        "projectName": name,
+        "projectId": project_id,
+        "entries": [_make_expense_entry(index) for index in range(entry_count)],
+        "images": [{"path": path} for path in (image_paths or [])],
+    }
+
+
+class TimesheetExcelExportTests(unittest.TestCase):
+    def setUp(self):
+        self.api = Api.__new__(Api)
+
+    def _export_timesheet_workbook(self, projects, output_path):
+        payload = {
+            "weekKey": "2026-03-09",
+            "weekDisplay": "Week of 03/09/26",
+            "userName": "Tester",
+            "filePath": str(output_path),
+            "entries": [],
+            "totals": dict(DAY_TOTALS, mileage=0),
+            "expenses": {
+                "projects": projects,
+                "mileageRate": 0.70,
+            },
+        }
+        with patch.object(main_module.os, "startfile", create=True):
+            result = self.api.export_timesheet_excel(payload)
+        self.assertEqual("success", result["status"])
+        self.assertTrue(output_path.exists())
+        return output_path
+
+    def _export_expense_workbook(self, projects, week_key):
+        with tempfile.TemporaryDirectory(prefix="expense-home-") as temp_dir:
+            home_dir = Path(temp_dir)
+            documents_dir = home_dir / "Documents"
+            documents_dir.mkdir(parents=True, exist_ok=True)
+            with patch.object(main_module.os.path, "expanduser", return_value=str(home_dir)):
+                with patch.object(main_module.os, "startfile", create=True):
+                    result = self.api.export_expense_sheet_excel({
+                        "weekKey": week_key,
+                        "projects": projects,
+                        "mileageRate": 0.70,
+                    })
+            self.assertEqual("success", result["status"])
+            output_path = documents_dir / f"Expense_Sheet_{week_key}.xlsx"
+            self.assertTrue(output_path.exists())
+            final_path = Path(tempfile.gettempdir()) / f"{week_key}.xlsx"
+            final_path.write_bytes(output_path.read_bytes())
+        return final_path
+
+    def _load_expense_sheet(self, workbook_path):
+        workbook = load_workbook(workbook_path)
+        template = load_workbook(TEMPLATE_PATH)
+        self.addCleanup(workbook.close)
+        self.addCleanup(template.close)
+        return workbook[EXPENSE_SHEET_NAME], template[EXPENSE_SHEET_NAME]
+
+    def _assert_style_matches(self, worksheet, actual_coord, template_sheet, template_coord):
+        actual = worksheet[actual_coord]
+        expected = template_sheet[template_coord]
+        self.assertEqual(expected.style_id, actual.style_id, actual_coord)
+        self.assertEqual(expected.number_format, actual.number_format, actual_coord)
+        self._assert_border_matches(worksheet, actual_coord, template_sheet, template_coord)
+
+    def _assert_border_matches(self, worksheet, actual_coord, template_sheet, template_coord):
+        actual = worksheet[actual_coord]
+        expected = template_sheet[template_coord]
+        self.assertEqual(expected.border.left.style, actual.border.left.style, actual_coord)
+        self.assertEqual(expected.border.right.style, actual.border.right.style, actual_coord)
+        self.assertEqual(expected.border.top.style, actual.border.top.style, actual_coord)
+        self.assertEqual(expected.border.bottom.style, actual.border.bottom.style, actual_coord)
+
+    def _assert_merged(self, worksheet, range_ref):
+        merged_ranges = {str(cell_range) for cell_range in worksheet.merged_cells.ranges}
+        self.assertIn(range_ref, merged_ranges)
+
+    def _get_first_image_anchor_row(self, workbook_path, sheet_name):
+        with zipfile.ZipFile(workbook_path) as archive:
+            workbook_xml = ET.fromstring(archive.read("xl/workbook.xml"))
+            workbook_rels_xml = ET.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
+            workbook_rels = {
+                rel.attrib["Id"]: rel.attrib["Target"]
+                for rel in workbook_rels_xml.findall("pkgrel:Relationship", XML_NS)
+            }
+
+            sheet_path = None
+            for sheet in workbook_xml.findall("main:sheets/main:sheet", XML_NS):
+                if sheet.attrib["name"] != sheet_name:
+                    continue
+                rel_id = sheet.attrib["{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"]
+                sheet_target = workbook_rels[rel_id]
+                normalized_target = sheet_target.lstrip("/")
+                if normalized_target.startswith("xl/"):
+                    sheet_path = posixpath.normpath(normalized_target)
+                else:
+                    sheet_path = posixpath.normpath(posixpath.join("xl", normalized_target))
+                break
+
+            self.assertIsNotNone(sheet_path)
+
+            sheet_rel_path = posixpath.join(
+                posixpath.dirname(sheet_path),
+                "_rels",
+                f"{posixpath.basename(sheet_path)}.rels",
+            )
+            sheet_rels_xml = ET.fromstring(archive.read(sheet_rel_path))
+            drawing_target = None
+            for rel in sheet_rels_xml.findall("pkgrel:Relationship", XML_NS):
+                if rel.attrib["Type"].endswith("/drawing"):
+                    drawing_target = rel.attrib["Target"]
+                    break
+
+            self.assertIsNotNone(drawing_target)
+            normalized_drawing_target = drawing_target.lstrip("/")
+            if normalized_drawing_target.startswith("xl/"):
+                drawing_path = posixpath.normpath(normalized_drawing_target)
+            else:
+                drawing_path = posixpath.normpath(
+                    posixpath.join(posixpath.dirname(sheet_path), normalized_drawing_target)
+                )
+            drawing_xml = ET.fromstring(archive.read(drawing_path))
+
+            row_node = drawing_xml.find(".//xdr:oneCellAnchor/xdr:from/xdr:row", XML_NS)
+            if row_node is None:
+                row_node = drawing_xml.find(".//xdr:twoCellAnchor/xdr:from/xdr:row", XML_NS)
+            self.assertIsNotNone(row_node)
+            return int(row_node.text) + 1
+
+    def test_combined_export_preserves_second_project_section_formatting(self):
+        projects = [
+            _make_project("Alpha", "1001", 1),
+            _make_project("Beta", "1002", 1),
+        ]
+
+        with tempfile.TemporaryDirectory(prefix="timesheet-export-") as temp_dir:
+            output_path = Path(temp_dir) / "combined.xlsx"
+            workbook_path = self._export_timesheet_workbook(projects, output_path)
+            worksheet, template_sheet = self._load_expense_sheet(workbook_path)
+
+        self.assertEqual("PROJECT: Beta", worksheet["A13"].value)
+        self.assertEqual("JOB #: 1002", worksheet["A14"].value)
+        self._assert_style_matches(worksheet, "A13", template_sheet, "A1")
+        self._assert_style_matches(worksheet, "B15", template_sheet, "B3")
+        self._assert_style_matches(worksheet, "C15", template_sheet, "C3")
+        self._assert_style_matches(worksheet, "A16", template_sheet, "A4")
+        self._assert_style_matches(worksheet, "B16", template_sheet, "B4")
+        self._assert_style_matches(worksheet, "D21", template_sheet, "D9")
+        self._assert_style_matches(worksheet, "C23", template_sheet, "C11")
+        self.assertEqual(template_sheet.row_dimensions[3].height, worksheet.row_dimensions[15].height)
+        self.assertEqual(template_sheet.row_dimensions[4].height, worksheet.row_dimensions[16].height)
+        for range_ref in ("B15:C15", "B16:C16", "B17:C17", "B18:C18", "B19:C19", "B20:C20", "D23:E23"):
+            self._assert_merged(worksheet, range_ref)
+
+    def test_overflow_rows_keep_formatting_and_shift_later_sections(self):
+        projects = [
+            _make_project("Alpha", "2001", 7),
+            _make_project("Beta", "2002", 1),
+        ]
+
+        with tempfile.TemporaryDirectory(prefix="timesheet-overflow-") as temp_dir:
+            output_path = Path(temp_dir) / "overflow.xlsx"
+            workbook_path = self._export_timesheet_workbook(projects, output_path)
+            worksheet, template_sheet = self._load_expense_sheet(workbook_path)
+
+        self.assertEqual("PROJECT: Beta", worksheet["A15"].value)
+        self.assertEqual("JOB #: 2002", worksheet["A16"].value)
+        self._assert_style_matches(worksheet, "A9", template_sheet, "A5")
+        self._assert_style_matches(worksheet, "B9", template_sheet, "B5")
+        self._assert_style_matches(worksheet, "C9", template_sheet, "C5")
+        self._assert_style_matches(worksheet, "D9", template_sheet, "D5")
+        self._assert_border_matches(worksheet, "E9", template_sheet, "E5")
+        self._assert_style_matches(worksheet, "A10", template_sheet, "A5")
+        self.assertEqual(template_sheet.row_dimensions[5].height, worksheet.row_dimensions[9].height)
+        self.assertEqual(template_sheet.row_dimensions[5].height, worksheet.row_dimensions[10].height)
+        self._assert_merged(worksheet, "B9:C9")
+        self._assert_merged(worksheet, "B10:C10")
+        self._assert_merged(worksheet, "D13:E13")
+        self.assertEqual("Expense 7", worksheet["B10"].value)
+        self.assertEqual("=SUM(D4:D10)", worksheet["D11"].value)
+        self.assertEqual("=SUM(E4:E10)", worksheet["E11"].value)
+        self._assert_style_matches(worksheet, "A15", template_sheet, "A1")
+        self._assert_merged(worksheet, "B17:C17")
+        self._assert_merged(worksheet, "D25:E25")
+        self.assertEqual("Expense 1", worksheet["B18"].value)
+
+    def test_expense_only_export_uses_same_section_renderer(self):
+        projects = [
+            _make_project("Gamma", "3001", 1),
+            _make_project("Delta", "3002", 1),
+        ]
+
+        workbook_path = self._export_expense_workbook(projects, "expense-shared-renderer")
+        worksheet, template_sheet = self._load_expense_sheet(workbook_path)
+
+        self.assertEqual("PROJECT: Delta", worksheet["A13"].value)
+        self._assert_style_matches(worksheet, "A13", template_sheet, "A1")
+        self._assert_style_matches(worksheet, "B15", template_sheet, "B3")
+        self._assert_style_matches(worksheet, "A16", template_sheet, "A4")
+        self._assert_merged(worksheet, "B15:C15")
+        self._assert_merged(worksheet, "D23:E23")
+
+    def test_images_anchor_below_shifted_signature_block(self):
+        with tempfile.TemporaryDirectory(prefix="timesheet-images-") as temp_dir:
+            image_path = Path(temp_dir) / "receipt.png"
+            image_path.write_bytes(PNG_BYTES)
+            projects = [
+                _make_project("One", "4001", 1, [str(image_path)]),
+                _make_project("Two", "4002", 1),
+                _make_project("Three", "4003", 1),
+                _make_project("Four", "4004", 1),
+            ]
+
+            output_path = Path(temp_dir) / "images.xlsx"
+            workbook_path = self._export_timesheet_workbook(projects, output_path)
+            worksheet, template_sheet = self._load_expense_sheet(workbook_path)
+            anchor_row = self._get_first_image_anchor_row(workbook_path, EXPENSE_SHEET_NAME)
+
+        self.assertEqual("PROJECT: Four", worksheet["A39"].value)
+        self._assert_style_matches(worksheet, "A39", template_sheet, "A1")
+        self.assertEqual(57, anchor_row)
+
+
+if __name__ == "__main__":
+    unittest.main()

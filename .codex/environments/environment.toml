@@ -9,3 +9,8 @@ script = ""
 name = "Run"
 icon = "run"
 command = ".\\.venv\\Scripts\\python.exe .\\main.py"
+
+[[actions]]
+name = "Build"
+icon = "run"
+command = ".\\build-config\\build.ps1"

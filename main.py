@@ -3220,8 +3220,6 @@ Return ONLY the JSON object.
                     column=5,
                     value=expense if expense else '',
                 )
-                if expense:
-                    expense_cell.number_format = '0.00'
 
             worksheet.cell(row=subtotal_row, column=3, value="SUBTOTAL")
             worksheet.cell(
@@ -3229,33 +3227,30 @@ Return ONLY the JSON object.
                 column=4,
                 value=f'=SUM(D{data_start_row}:D{subtotal_row - 1})',
             )
-            subtotal_expense_cell = worksheet.cell(
+            worksheet.cell(
                 row=subtotal_row,
                 column=5,
                 value=f'=SUM(E{data_start_row}:E{subtotal_row - 1})',
             )
-            subtotal_expense_cell.number_format = '0.00'
 
             worksheet.cell(
                 row=rate_row,
                 column=3,
                 value=f"{mileage_rate:.2f} CENTS PER MILE",
             )
-            rate_mileage_cell = worksheet.cell(
+            worksheet.cell(
                 row=rate_row,
                 column=4,
                 value=f'=D{subtotal_row}*{mileage_rate}',
             )
-            rate_mileage_cell.number_format = '0.00'
             worksheet.cell(row=rate_row, column=5, value=None)
 
             worksheet.cell(row=total_row, column=3, value="TOTAL")
-            total_cell = worksheet.cell(
+            worksheet.cell(
                 row=total_row,
                 column=4,
                 value=f'=D{rate_row}+E{subtotal_row}',
             )
-            total_cell.number_format = '0.00'
 
             for image in project.get('images', []):
                 image_path = image.get('path', '')
@@ -3389,14 +3384,25 @@ Return ONLY the JSON object.
                 ws.cell(row=row_idx, column=18, value=mileage if mileage else '')
 
             # Totals row (row 26 in template based on CSV)
-            totals = data.get('totals', {})
             totals_row = 26
+            data_start_row = 5
+            data_end_row = totals_row - 1
 
-            for day_idx, day in enumerate(day_order):
-                ws.cell(row=totals_row, column=11 + day_idx, value=totals.get(day, 0))
+            for day_idx, _day in enumerate(day_order):
+                col_idx = 11 + day_idx
+                col_letter = openpyxl.utils.get_column_letter(col_idx)
+                ws.cell(
+                    row=totals_row,
+                    column=col_idx,
+                    value=f'=SUM({col_letter}{data_start_row}:{col_letter}{data_end_row})',
+                )
 
-            # Total mileage
-            ws.cell(row=totals_row, column=18, value=totals.get('mileage', 0) or '')
+            mileage_col_letter = openpyxl.utils.get_column_letter(18)
+            ws.cell(
+                row=totals_row,
+                column=18,
+                value=f'=SUM({mileage_col_letter}{data_start_row}:{mileage_col_letter}{data_end_row})',
+            )
 
             # =============== EXPENSE SHEET EXPORT ===============
             # If expense data is provided, also populate the expense sheet

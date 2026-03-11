@@ -128,17 +128,30 @@ def _make_project(name, project_id, entry_count, image_paths=None):
     }
 
 
+def _make_timesheet_entry(project_id, project_name, task_number, hours=None, mileage=0):
+    return {
+        "projectId": project_id,
+        "taskNumber": task_number,
+        "projectName": project_name,
+        "function": "E",
+        "pmInitials": "JH",
+        "serviceDescription": f"Work for {project_name}",
+        "hours": hours or {},
+        "mileage": mileage,
+    }
+
+
 class TimesheetExcelExportTests(unittest.TestCase):
     def setUp(self):
         self.api = Api.__new__(Api)
 
-    def _export_timesheet_workbook(self, projects, output_path):
+    def _export_timesheet_workbook(self, projects, output_path, entries=None):
         payload = {
             "weekKey": "2026-03-09",
             "weekDisplay": "Week of 03/09/26",
             "userName": "Tester",
             "filePath": str(output_path),
-            "entries": [],
+            "entries": entries or [],
             "totals": dict(DAY_TOTALS, mileage=0),
             "expenses": {
                 "projects": projects,
@@ -321,6 +334,27 @@ class TimesheetExcelExportTests(unittest.TestCase):
         self._assert_merged(worksheet, "B15:C15")
         self._assert_merged(worksheet, "D23:E23")
 
+    def test_expense_cells_keep_currency_formatting(self):
+        projects = [
+            _make_project("Money Job", "3500", 2),
+        ]
+
+        with tempfile.TemporaryDirectory(prefix="timesheet-currency-") as temp_dir:
+            output_path = Path(temp_dir) / "currency.xlsx"
+            workbook_path = self._export_timesheet_workbook(projects, output_path)
+            worksheet, template_sheet = self._load_expense_sheet(workbook_path)
+
+        self.assertEqual(10, worksheet["E4"].value)
+        self.assertEqual(20, worksheet["E5"].value)
+        self.assertEqual('"$"#,##0.00', worksheet["E4"].number_format)
+        self.assertEqual(template_sheet["E4"].number_format, worksheet["E4"].number_format)
+        self.assertEqual(template_sheet["E5"].number_format, worksheet["E5"].number_format)
+        self.assertEqual(template_sheet["E9"].number_format, worksheet["E9"].number_format)
+        self.assertEqual(template_sheet["D10"].number_format, worksheet["D10"].number_format)
+        self.assertEqual(template_sheet["D11"].number_format, worksheet["D11"].number_format)
+        self.assertEqual("=SUM(E4:E8)", worksheet["E9"].value)
+        self.assertEqual("=D10+E9", worksheet["D11"].value)
+
     def test_images_anchor_below_shifted_signature_block(self):
         with tempfile.TemporaryDirectory(prefix="timesheet-images-") as temp_dir:
             image_path = Path(temp_dir) / "receipt.png"
@@ -340,6 +374,40 @@ class TimesheetExcelExportTests(unittest.TestCase):
         self.assertEqual("PROJECT: Four", worksheet["A39"].value)
         self._assert_style_matches(worksheet, "A39", template_sheet, "A1")
         self.assertEqual(57, anchor_row)
+
+    def test_time_log_totals_use_sum_formulas(self):
+        entries = [
+            _make_timesheet_entry(
+                "5001",
+                "Alpha",
+                "10",
+                hours={"mon": 1.5, "tue": 2, "wed": 3, "thu": 4, "fri": 5, "sat": 6, "sun": 7},
+                mileage=8,
+            ),
+            _make_timesheet_entry(
+                "5002",
+                "Beta",
+                "20",
+                hours={"mon": 0.5, "wed": 1.25, "fri": 2.75},
+                mileage=4,
+            ),
+        ]
+
+        with tempfile.TemporaryDirectory(prefix="timesheet-formulas-") as temp_dir:
+            output_path = Path(temp_dir) / "timelog.xlsx"
+            workbook_path = self._export_timesheet_workbook([], output_path, entries=entries)
+            workbook = load_workbook(workbook_path)
+            self.addCleanup(workbook.close)
+            worksheet = workbook["time log"]
+
+        self.assertEqual("=SUM(K5:K25)", worksheet["K26"].value)
+        self.assertEqual("=SUM(L5:L25)", worksheet["L26"].value)
+        self.assertEqual("=SUM(M5:M25)", worksheet["M26"].value)
+        self.assertEqual("=SUM(N5:N25)", worksheet["N26"].value)
+        self.assertEqual("=SUM(O5:O25)", worksheet["O26"].value)
+        self.assertEqual("=SUM(P5:P25)", worksheet["P26"].value)
+        self.assertEqual("=SUM(Q5:Q25)", worksheet["Q26"].value)
+        self.assertEqual("=SUM(R5:R25)", worksheet["R26"].value)
 
 
 if __name__ == "__main__":

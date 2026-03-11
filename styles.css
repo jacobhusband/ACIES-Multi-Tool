@@ -4865,7 +4865,7 @@ dialog::backdrop {
 }
 
 .ts-day-col {
-  width: 65px;
+  width: 72px;
 }
 
 .ts-total-col {
@@ -4914,46 +4914,24 @@ dialog::backdrop {
 
 /* Hour Input Cells */
 .ts-hour-cell {
-  position: relative;
   padding: 0.25rem !important;
 }
 
-.ts-hour-bar-container {
-  position: relative;
-  height: 28px;
-  background: var(--bg-tertiary);
-  border-radius: 4px;
-  overflow: hidden;
-  cursor: ew-resize;
-  user-select: none;
+.ts-hour-input {
+  width: 100%;
+  min-width: 56px;
+  text-align: center !important;
+  background: var(--bg-tertiary) !important;
+  border: 1px solid var(--glass-border) !important;
+  font-variant-numeric: tabular-nums;
+  appearance: textfield;
+  -moz-appearance: textfield;
 }
 
-.ts-hour-bar-fill {
-  position: absolute;
-  left: 0;
-  top: 0;
-  height: 100%;
-  background: linear-gradient(90deg, var(--accent) 0%, var(--accent-hover) 100%);
-  transition: width 0.05s ease;
-  border-radius: 4px;
-  min-width: 0;
-}
-
-.ts-hour-value {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 600;
-  font-size: 11px;
-  color: var(--text);
-  pointer-events: none;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
-}
-
-.ts-hour-cell:hover .ts-hour-bar-container {
-  box-shadow: 0 0 0 2px var(--accent-dim);
+.ts-hour-input::-webkit-outer-spin-button,
+.ts-hour-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 
 /* Editable inputs in table */

@@ -1,4 +1,5 @@
 import base64
+import math
 import posixpath
 import sys
 import tempfile
@@ -92,6 +93,8 @@ _ensure_pydantic_stub()
 import main as main_module
 from main import Api
 from openpyxl import load_workbook
+from openpyxl.utils.units import EMU_to_pixels, points_to_pixels
+from PIL import Image as PILImage
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -107,6 +110,16 @@ XML_NS = {
     "pkgrel": "http://schemas.openxmlformats.org/package/2006/relationships",
     "xdr": "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing",
 }
+
+
+def _write_image(path, size, image_format="PNG", orientation=None, color=(220, 64, 64)):
+    image = PILImage.new("RGB", size, color)
+    save_kwargs = {"format": image_format}
+    if orientation is not None:
+        exif = image.getexif()
+        exif[274] = orientation
+        save_kwargs["exif"] = exif.tobytes()
+    image.save(path, **save_kwargs)
 
 
 def _make_expense_entry(index, mileage=None, expense=None):
@@ -210,6 +223,10 @@ class TimesheetExcelExportTests(unittest.TestCase):
         self.assertIn(range_ref, merged_ranges)
 
     def _get_first_image_anchor_row(self, workbook_path, sheet_name):
+        anchors = self._get_image_anchors(workbook_path, sheet_name)
+        return anchors[0]["row"]
+
+    def _get_image_anchors(self, workbook_path, sheet_name):
         with zipfile.ZipFile(workbook_path) as archive:
             workbook_xml = ET.fromstring(archive.read("xl/workbook.xml"))
             workbook_rels_xml = ET.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
@@ -255,11 +272,61 @@ class TimesheetExcelExportTests(unittest.TestCase):
                 )
             drawing_xml = ET.fromstring(archive.read(drawing_path))
 
-            row_node = drawing_xml.find(".//xdr:oneCellAnchor/xdr:from/xdr:row", XML_NS)
-            if row_node is None:
-                row_node = drawing_xml.find(".//xdr:twoCellAnchor/xdr:from/xdr:row", XML_NS)
-            self.assertIsNotNone(row_node)
-            return int(row_node.text) + 1
+            anchors = []
+            for anchor_node in drawing_xml.findall("xdr:oneCellAnchor", XML_NS):
+                row_node = anchor_node.find("xdr:from/xdr:row", XML_NS)
+                col_node = anchor_node.find("xdr:from/xdr:col", XML_NS)
+                ext_node = anchor_node.find("xdr:ext", XML_NS)
+                self.assertIsNotNone(row_node)
+                self.assertIsNotNone(ext_node)
+                anchors.append({
+                    "row": int(row_node.text) + 1,
+                    "col": int(col_node.text) + 1 if col_node is not None else None,
+                    "width_pixels": EMU_to_pixels(int(ext_node.attrib["cx"])),
+                    "height_pixels": EMU_to_pixels(int(ext_node.attrib["cy"])),
+                })
+
+            if not anchors:
+                for anchor_node in drawing_xml.findall("xdr:twoCellAnchor", XML_NS):
+                    row_node = anchor_node.find("xdr:from/xdr:row", XML_NS)
+                    col_node = anchor_node.find("xdr:from/xdr:col", XML_NS)
+                    self.assertIsNotNone(row_node)
+                    anchors.append({
+                        "row": int(row_node.text) + 1,
+                        "col": int(col_node.text) + 1 if col_node is not None else None,
+                        "width_pixels": None,
+                        "height_pixels": None,
+                    })
+
+            self.assertTrue(anchors)
+            return anchors
+
+    def _excel_column_width_to_pixels(self, width):
+        return int(math.floor(((256 * float(width) + math.floor(128 / 7)) / 256) * 7))
+
+    def _get_total_column_width_pixels(self, worksheet, start_column=1, end_column=5):
+        total_width = 0
+        default_width = worksheet.sheet_format.defaultColWidth or 8.43
+        for column_index in range(start_column, end_column + 1):
+            column_letter = chr(ord("A") + column_index - 1)
+            column_width = worksheet.column_dimensions[column_letter].width
+            total_width += self._excel_column_width_to_pixels(
+                default_width if column_width is None else column_width
+            )
+        return total_width
+
+    def _get_row_span_for_height(self, worksheet, start_row, height_pixels):
+        covered_height = 0
+        row_span = 0
+        next_row = start_row
+        while covered_height < height_pixels:
+            row_height = worksheet.row_dimensions[next_row].height
+            if row_height is None:
+                row_height = worksheet.sheet_format.defaultRowHeight or 15
+            covered_height += max(points_to_pixels(row_height), 1)
+            row_span += 1
+            next_row += 1
+        return row_span
 
     def test_combined_export_preserves_second_project_section_formatting(self):
         projects = [
@@ -336,7 +403,9 @@ class TimesheetExcelExportTests(unittest.TestCase):
 
     def test_expense_cells_keep_currency_formatting(self):
         projects = [
-            _make_project("Money Job", "3500", 2),
+            _make_project("Money Job 1", "3500", 2),
+            _make_project("Money Job 2", "3501", 1),
+            _make_project("Money Job 3", "3502", 1),
         ]
 
         with tempfile.TemporaryDirectory(prefix="timesheet-currency-") as temp_dir:
@@ -344,16 +413,37 @@ class TimesheetExcelExportTests(unittest.TestCase):
             workbook_path = self._export_timesheet_workbook(projects, output_path)
             worksheet, template_sheet = self._load_expense_sheet(workbook_path)
 
+        currency_format = template_sheet["E4"].number_format
+        subtotal_currency_format = template_sheet["E9"].number_format
+        rate_currency_format = template_sheet["D10"].number_format
+        total_currency_format = template_sheet["D11"].number_format
+
         self.assertEqual(10, worksheet["E4"].value)
         self.assertEqual(20, worksheet["E5"].value)
+        self.assertEqual(10, worksheet["E16"].value)
+        self.assertEqual(10, worksheet["E28"].value)
         self.assertEqual('"$"#,##0.00', worksheet["E4"].number_format)
-        self.assertEqual(template_sheet["E4"].number_format, worksheet["E4"].number_format)
-        self.assertEqual(template_sheet["E5"].number_format, worksheet["E5"].number_format)
-        self.assertEqual(template_sheet["E9"].number_format, worksheet["E9"].number_format)
-        self.assertEqual(template_sheet["D10"].number_format, worksheet["D10"].number_format)
-        self.assertEqual(template_sheet["D11"].number_format, worksheet["D11"].number_format)
+        self.assertEqual(currency_format, worksheet["E4"].number_format)
+        self.assertEqual(currency_format, worksheet["E5"].number_format)
+        self.assertEqual(currency_format, worksheet["E16"].number_format)
+        self.assertEqual(currency_format, worksheet["E17"].number_format)
+        self.assertEqual(currency_format, worksheet["E28"].number_format)
+        self.assertEqual(currency_format, worksheet["E29"].number_format)
+        self.assertEqual(subtotal_currency_format, worksheet["E9"].number_format)
+        self.assertEqual(subtotal_currency_format, worksheet["E21"].number_format)
+        self.assertEqual(subtotal_currency_format, worksheet["E33"].number_format)
+        self.assertEqual(rate_currency_format, worksheet["D10"].number_format)
+        self.assertEqual(rate_currency_format, worksheet["D22"].number_format)
+        self.assertEqual(rate_currency_format, worksheet["D34"].number_format)
+        self.assertEqual(total_currency_format, worksheet["D11"].number_format)
+        self.assertEqual(total_currency_format, worksheet["D23"].number_format)
+        self.assertEqual(total_currency_format, worksheet["D35"].number_format)
         self.assertEqual("=SUM(E4:E8)", worksheet["E9"].value)
+        self.assertEqual("=SUM(E16:E20)", worksheet["E21"].value)
+        self.assertEqual("=SUM(E28:E32)", worksheet["E33"].value)
         self.assertEqual("=D10+E9", worksheet["D11"].value)
+        self.assertEqual("=D22+E21", worksheet["D23"].value)
+        self.assertEqual("=D34+E33", worksheet["D35"].value)
 
     def test_images_anchor_below_shifted_signature_block(self):
         with tempfile.TemporaryDirectory(prefix="timesheet-images-") as temp_dir:
@@ -374,6 +464,120 @@ class TimesheetExcelExportTests(unittest.TestCase):
         self.assertEqual("PROJECT: Four", worksheet["A39"].value)
         self._assert_style_matches(worksheet, "A39", template_sheet, "A1")
         self.assertEqual(57, anchor_row)
+
+    def test_images_export_from_every_project_in_order(self):
+        with tempfile.TemporaryDirectory(prefix="timesheet-image-order-") as temp_dir:
+            temp_dir = Path(temp_dir)
+            image_sizes = [(120, 60), (100, 100), (60, 120), (200, 100)]
+            image_paths = []
+            for index, size in enumerate(image_sizes, start=1):
+                image_path = temp_dir / f"receipt-{index}.png"
+                _write_image(image_path, size)
+                image_paths.append(str(image_path))
+
+            projects = [
+                _make_project("One", "4101", 1, [image_paths[0]]),
+                _make_project("Two", "4102", 1, [image_paths[1], image_paths[2]]),
+                _make_project("Three", "4103", 1, [image_paths[3]]),
+            ]
+            output_path = temp_dir / "ordered-images.xlsx"
+            workbook_path = self._export_timesheet_workbook(projects, output_path)
+            worksheet, _template_sheet = self._load_expense_sheet(workbook_path)
+            anchors = self._get_image_anchors(workbook_path, EXPENSE_SHEET_NAME)
+            target_width = self._get_total_column_width_pixels(worksheet)
+
+        self.assertEqual(4, len(anchors))
+        self.assertEqual(sorted(anchor["row"] for anchor in anchors), [anchor["row"] for anchor in anchors])
+        expected_heights = [
+            round(target_width * (60 / 120)),
+            round(target_width * (100 / 100)),
+            round(target_width * (120 / 60)),
+            round(target_width * (100 / 200)),
+        ]
+        for anchor in anchors:
+            self.assertAlmostEqual(target_width, anchor["width_pixels"], delta=1)
+        for anchor, expected_height in zip(anchors, expected_heights):
+            self.assertAlmostEqual(expected_height, anchor["height_pixels"], delta=1)
+
+    def test_exported_images_match_columns_a_through_e_width(self):
+        with tempfile.TemporaryDirectory(prefix="timesheet-image-width-") as temp_dir:
+            temp_dir = Path(temp_dir)
+            image_path = temp_dir / "wide.png"
+            _write_image(image_path, (240, 120))
+            output_path = temp_dir / "image-width.xlsx"
+            workbook_path = self._export_timesheet_workbook(
+                [_make_project("Width", "4201", 1, [str(image_path)])],
+                output_path,
+            )
+            worksheet, _template_sheet = self._load_expense_sheet(workbook_path)
+            anchor = self._get_image_anchors(workbook_path, EXPENSE_SHEET_NAME)[0]
+            target_width = self._get_total_column_width_pixels(worksheet)
+
+        self.assertAlmostEqual(target_width, anchor["width_pixels"], delta=1)
+        self.assertAlmostEqual(round(target_width * 0.5), anchor["height_pixels"], delta=1)
+
+    def test_exported_images_stack_without_overlap(self):
+        with tempfile.TemporaryDirectory(prefix="timesheet-image-stack-") as temp_dir:
+            temp_dir = Path(temp_dir)
+            first_path = temp_dir / "first.png"
+            second_path = temp_dir / "second.png"
+            _write_image(first_path, (150, 150))
+            _write_image(second_path, (150, 150), color=(64, 64, 220))
+            output_path = temp_dir / "stacked-images.xlsx"
+            workbook_path = self._export_timesheet_workbook(
+                [_make_project("Stack", "4301", 1, [str(first_path), str(second_path)])],
+                output_path,
+            )
+            worksheet, _template_sheet = self._load_expense_sheet(workbook_path)
+            anchors = self._get_image_anchors(workbook_path, EXPENSE_SHEET_NAME)
+
+        self.assertEqual(2, len(anchors))
+        expected_second_row = (
+            anchors[0]["row"]
+            + self._get_row_span_for_height(worksheet, anchors[0]["row"], anchors[0]["height_pixels"])
+            + 1
+        )
+        self.assertEqual(expected_second_row, anchors[1]["row"])
+
+    def test_exported_images_respect_exif_orientation(self):
+        with tempfile.TemporaryDirectory(prefix="timesheet-image-orientation-") as temp_dir:
+            temp_dir = Path(temp_dir)
+            image_path = temp_dir / "oriented.jpg"
+            _write_image(image_path, (120, 60), image_format="JPEG", orientation=6)
+            output_path = temp_dir / "oriented-image.xlsx"
+            workbook_path = self._export_timesheet_workbook(
+                [_make_project("Orientation", "4401", 1, [str(image_path)])],
+                output_path,
+            )
+            worksheet, _template_sheet = self._load_expense_sheet(workbook_path)
+            anchor = self._get_image_anchors(workbook_path, EXPENSE_SHEET_NAME)[0]
+            target_width = self._get_total_column_width_pixels(worksheet)
+
+        self.assertAlmostEqual(target_width, anchor["width_pixels"], delta=1)
+        self.assertGreater(anchor["height_pixels"], anchor["width_pixels"])
+        self.assertAlmostEqual(round(target_width * 2), anchor["height_pixels"], delta=2)
+
+    def test_export_uses_moved_attachment_when_stored_path_is_stale(self):
+        with tempfile.TemporaryDirectory(prefix="timesheet-image-relocate-") as temp_dir:
+            temp_dir = Path(temp_dir)
+            desktop_root = temp_dir / "Desktop"
+            moved_dir = desktop_root / "Expenses" / "BAC Kent, WA Expenses"
+            moved_dir.mkdir(parents=True, exist_ok=True)
+            moved_image_path = moved_dir / "IMG_0466.JPG"
+            _write_image(moved_image_path, (160, 120), image_format="JPEG")
+
+            stale_path = desktop_root / "BAC Kent, WA Expenses" / "IMG_0466.JPG"
+            output_path = temp_dir / "moved-image.xlsx"
+            workbook_path = self._export_timesheet_workbook(
+                [_make_project("Moved", "4501", 1, [str(stale_path)])],
+                output_path,
+            )
+            worksheet, _template_sheet = self._load_expense_sheet(workbook_path)
+            anchors = self._get_image_anchors(workbook_path, EXPENSE_SHEET_NAME)
+            target_width = self._get_total_column_width_pixels(worksheet)
+
+        self.assertEqual(1, len(anchors))
+        self.assertAlmostEqual(target_width, anchors[0]["width_pixels"], delta=1)
 
     def test_time_log_totals_use_sum_formulas(self):
         entries = [

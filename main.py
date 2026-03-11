@@ -99,7 +99,7 @@ except AttributeError as _exc:
         raise
 from openpyxl.worksheet.copier import WorksheetCopy
 from pydantic import BaseModel, Field
-from PIL import Image as PILImage
+from PIL import Image as PILImage, ImageOps, UnidentifiedImageError
 
 # Helper functions for date parsing and status management
 STATUS_CANON = ["Waiting", "Working",
@@ -3126,6 +3126,23 @@ Return ONLY the JSON object.
             raise ValueError("No formatted expense sections were found in the template.")
 
         section_template = self._capture_expense_section_template(worksheet, section_starts[0])
+        first_section_start = section_starts[0]
+        expense_detail_number_format = worksheet.cell(
+            row=first_section_start + EXPENSE_HEADER_ROWS,
+            column=5,
+        ).number_format
+        expense_subtotal_number_format = worksheet.cell(
+            row=first_section_start + EXPENSE_HEADER_ROWS + EXPENSE_DEFAULT_DATA_ROWS,
+            column=5,
+        ).number_format
+        expense_rate_number_format = worksheet.cell(
+            row=first_section_start + EXPENSE_HEADER_ROWS + EXPENSE_DEFAULT_DATA_ROWS + 1,
+            column=4,
+        ).number_format
+        expense_total_number_format = worksheet.cell(
+            row=first_section_start + EXPENSE_HEADER_ROWS + EXPENSE_DEFAULT_DATA_ROWS + 2,
+            column=4,
+        ).number_format
 
         while len(section_starts) < len(projects):
             worksheet.insert_rows(signature_row, EXPENSE_SECTION_ROWS)
@@ -3205,6 +3222,7 @@ Return ONLY the JSON object.
                 worksheet.cell(row=row_idx, column=2, value=None)
                 worksheet.cell(row=row_idx, column=4, value=None)
                 worksheet.cell(row=row_idx, column=5, value=None)
+                worksheet.cell(row=row_idx, column=5).number_format = expense_detail_number_format
 
             for entry_index, entry in enumerate(entries):
                 row_idx = data_start_row + entry_index
@@ -3220,6 +3238,7 @@ Return ONLY the JSON object.
                     column=5,
                     value=expense if expense else '',
                 )
+                expense_cell.number_format = expense_detail_number_format
 
             worksheet.cell(row=subtotal_row, column=3, value="SUBTOTAL")
             worksheet.cell(
@@ -3232,6 +3251,7 @@ Return ONLY the JSON object.
                 column=5,
                 value=f'=SUM(E{data_start_row}:E{subtotal_row - 1})',
             )
+            worksheet.cell(row=subtotal_row, column=5).number_format = expense_subtotal_number_format
 
             worksheet.cell(
                 row=rate_row,
@@ -3243,6 +3263,7 @@ Return ONLY the JSON object.
                 column=4,
                 value=f'=D{subtotal_row}*{mileage_rate}',
             )
+            worksheet.cell(row=rate_row, column=4).number_format = expense_rate_number_format
             worksheet.cell(row=rate_row, column=5, value=None)
 
             worksheet.cell(row=total_row, column=3, value="TOTAL")
@@ -3251,11 +3272,14 @@ Return ONLY the JSON object.
                 column=4,
                 value=f'=D{rate_row}+E{subtotal_row}',
             )
+            worksheet.cell(row=total_row, column=4).number_format = expense_total_number_format
 
             for image in project.get('images', []):
                 image_path = image.get('path', '')
                 if image_path:
-                    image_paths.append(image_path)
+                    resolved_image_path = self._resolve_expense_image_path(image_path)
+                    if resolved_image_path:
+                        image_paths.append(resolved_image_path)
 
         return {
             "image_paths": image_paths,
@@ -3264,24 +3288,35 @@ Return ONLY the JSON object.
 
     def _add_expense_sheet_images(self, worksheet, image_paths, image_start_row):
         from openpyxl.drawing.image import Image as XLImage
+        from openpyxl.utils.units import points_to_pixels
 
         temp_files_to_cleanup = []
         if not image_paths or image_start_row is None:
             return temp_files_to_cleanup
 
-        target_width = 500
-        target_height = 375
+        target_width = self._get_expense_image_target_width_pixels(worksheet)
 
         for image_path in image_paths:
-            if not os.path.exists(image_path):
+            if not os.path.isfile(image_path):
                 continue
 
             try:
-                pil_img = PILImage.open(image_path)
-                if pil_img.mode in ('RGBA', 'P', 'LA'):
-                    pil_img = pil_img.convert('RGB')
-                if hasattr(pil_img, 'n_frames') and pil_img.n_frames > 1:
-                    pil_img.seek(0)
+                ext = os.path.splitext(image_path)[1].lower()
+                if ext == '.pdf':
+                    continue
+
+                with PILImage.open(image_path) as source_img:
+                    if hasattr(source_img, 'n_frames') and source_img.n_frames > 1:
+                        source_img.seek(0)
+                    pil_img = ImageOps.exif_transpose(source_img).copy()
+                    if pil_img.mode in ('RGBA', 'P', 'LA'):
+                        pil_img = pil_img.convert('RGB')
+                    elif pil_img.mode != 'RGB':
+                        pil_img = pil_img.convert('RGB')
+
+                source_width, source_height = pil_img.size
+                if source_width <= 0 or source_height <= 0:
+                    continue
 
                 temp_img_path = os.path.join(
                     tempfile.gettempdir(),
@@ -3291,17 +3326,97 @@ Return ONLY the JSON object.
                 temp_files_to_cleanup.append(temp_img_path)
 
                 image = XLImage(temp_img_path)
-                scale = min(1.0, target_width / image.width, target_height / image.height)
-                image.width = int(image.width * scale)
-                image.height = int(image.height * scale)
+                image.width = max(int(round(target_width)), 1)
+                image.height = max(
+                    int(round(target_width * (source_height / source_width))),
+                    1,
+                )
                 worksheet.add_image(image, f"A{image_start_row}")
 
-                rows_for_image = max(int(image.height / 15) + 2, 18)
-                image_start_row += rows_for_image
+                rows_for_image = 0
+                covered_height = 0
+                next_row = image_start_row
+                while covered_height < image.height:
+                    row_height_points = worksheet.row_dimensions[next_row].height
+                    if row_height_points is None:
+                        row_height_points = worksheet.sheet_format.defaultRowHeight or 15
+                    covered_height += max(points_to_pixels(row_height_points), 1)
+                    rows_for_image += 1
+                    next_row += 1
+                image_start_row += rows_for_image + 1
+            except UnidentifiedImageError:
+                continue
             except Exception as img_err:
                 logging.warning(f"Could not add image {image_path}: {img_err}")
 
         return temp_files_to_cleanup
+
+    def _get_expense_image_target_width_pixels(self, worksheet, start_column=1, end_column=5):
+        total_width = 0
+        default_width = worksheet.sheet_format.defaultColWidth or 8.43
+        for column_index in range(start_column, end_column + 1):
+            column_letter = openpyxl.utils.get_column_letter(column_index)
+            column_width = worksheet.column_dimensions[column_letter].width
+            total_width += self._excel_column_width_to_pixels(
+                default_width if column_width is None else column_width
+            )
+        return max(total_width, 1)
+
+    def _excel_column_width_to_pixels(self, column_width):
+        width = float(column_width or 8.43)
+        return int(math.floor(((256 * width + math.floor(128 / 7)) / 256) * 7))
+
+    def _find_nearest_existing_directory(self, path):
+        current = os.path.normpath(str(path or "").strip())
+        while current:
+            if os.path.isdir(current):
+                return current
+            parent = os.path.dirname(current)
+            if parent == current:
+                break
+            current = parent
+        return ""
+
+    def _resolve_expense_image_path(self, raw_path):
+        normalized_path = self._coerce_local_file_path(raw_path)
+        if not normalized_path:
+            return ""
+        if os.path.isfile(normalized_path):
+            return normalized_path
+
+        filename = os.path.basename(normalized_path)
+        if not filename:
+            return ""
+
+        search_root = self._find_nearest_existing_directory(os.path.dirname(normalized_path))
+        if not search_root:
+            return ""
+
+        original_parent = os.path.basename(os.path.dirname(normalized_path).rstrip("\\/")).strip().lower()
+        exact_parent_matches = []
+        any_matches = []
+
+        try:
+            for candidate in Path(search_root).rglob(filename):
+                candidate_path = os.path.normpath(str(candidate))
+                if not os.path.isfile(candidate_path):
+                    continue
+                any_matches.append(candidate_path)
+                candidate_parent = os.path.basename(
+                    os.path.dirname(candidate_path).rstrip("\\/")
+                ).strip().lower()
+                if original_parent and candidate_parent == original_parent:
+                    exact_parent_matches.append(candidate_path)
+        except Exception:
+            return ""
+
+        if len(exact_parent_matches) == 1:
+            return exact_parent_matches[0]
+        if len(any_matches) == 1:
+            return any_matches[0]
+        if exact_parent_matches:
+            return sorted(exact_parent_matches)[0]
+        return ""
 
     def export_timesheet_excel(self, data):
         """Exports timesheet data to an Excel file using a template."""
@@ -4450,7 +4565,7 @@ Return ONLY the JSON object.
         text = text[:80]
         return text or fallback
 
-    def _coerce_local_email_path(self, raw):
+    def _coerce_local_file_path(self, raw):
         value = str(raw or "").strip()
         if not value:
             return ""
@@ -4466,6 +4581,9 @@ Return ONLY the JSON object.
                 path = path[1:]
             return os.path.normpath(path)
         return os.path.normpath(value)
+
+    def _coerce_local_email_path(self, raw):
+        return self._coerce_local_file_path(raw)
 
     def _panel_schedule_save_uploads(self, uploads, label):
         temp_paths = []

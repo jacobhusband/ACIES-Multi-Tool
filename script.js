@@ -554,7 +554,7 @@ const WORKROOM_LAUNCH_CONTEXT_TOOL_IDS = new Set([
   ...WORKROOM_TEMPLATE_TOOL_IDS,
 ]);
 const WORKROOM_HIDDEN_TOOL_IDS = new Set([]);
-const MAX_HOURS_PER_DAY = 8;
+const MAX_HOURS_PER_DAY = 24;
 const WFH_SUFFIX = " - WFH";
 const TIMESHEET_SUMMARY_DELIVERABLE_ID = "__summary__";
 const WEEKLY_MEETING_NAME = "workload meeting";
@@ -1793,8 +1793,8 @@ function createTimesheetRow(entry, index) {
   const dayOrder = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
   dayOrder.forEach((day) => {
     const cell = el("td", { className: "ts-hour-cell" });
-    const hours = entry.hours?.[day] || 0;
-    cell.appendChild(createHourDragBar(entry, day, hours, row));
+    const hours = normalizeTimesheetHours(entry.hours?.[day] || 0);
+    cell.appendChild(createHourInput(entry, day, hours, row));
     row.appendChild(cell);
   });
 
@@ -1837,6 +1837,35 @@ function createTimesheetRow(entry, index) {
 
   enableTimesheetRowDrag(row, entry.id);
   return row;
+}
+
+function normalizeTimesheetHours(value) {
+  const parsed = Number.parseFloat(value);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.min(Math.max(Math.round(parsed * 10) / 10, 0), MAX_HOURS_PER_DAY);
+}
+
+function formatTimesheetHours(value) {
+  const normalized = normalizeTimesheetHours(value);
+  if (normalized <= 0) return "";
+  return Number.isInteger(normalized) ? String(normalized) : normalized.toFixed(1);
+}
+
+function getRemainingTimesheetHoursForDay(day, currentEntry) {
+  const weekKey = formatWeekKey(currentTimesheetWeek);
+  const entries = getWeekEntries(weekKey);
+  const otherHours = entries.reduce((sum, entry) => {
+    if (entry === currentEntry || entry?.id === currentEntry?.id) return sum;
+    return sum + normalizeTimesheetHours(entry.hours?.[day] || 0);
+  }, 0);
+  return Math.max(0, MAX_HOURS_PER_DAY - otherHours);
+}
+
+function refreshTimesheetRowTotal(row, entry) {
+  const rowTotalCell = row?.querySelector(".ts-row-total");
+  if (!rowTotalCell) return;
+  const total = calculateRowTotal(entry);
+  rowTotalCell.textContent = total > 0 ? total.toFixed(1) : "";
 }
 
 function enableTimesheetRowDrag(row, entryId) {
@@ -1901,88 +1930,47 @@ function enableTimesheetRowDrag(row, entryId) {
 
 }
 
-function createHourDragBar(entry, day, hours, row) {
-  const container = el("div", { className: "ts-hour-bar-container" });
-
-  const fill = el("div", {
-    className: "ts-hour-bar-fill",
-    style: `width: ${(hours / MAX_HOURS_PER_DAY) * 100}%`,
+function createHourInput(entry, day, hours, row) {
+  const input = el("input", {
+    className: "ts-hour-input",
+    type: "number",
+    min: "0",
+    max: String(MAX_HOURS_PER_DAY),
+    step: "0.1",
+    value: formatTimesheetHours(hours),
+    placeholder: "0",
+    inputMode: "decimal",
+    "aria-label": `${day.toUpperCase()} hours`,
   });
 
-  const valueDisplay = el("div", {
-    className: "ts-hour-value",
-    textContent: hours > 0 ? hours.toFixed(1) : "",
-  });
-
-  container.append(fill, valueDisplay);
-
-  // Drag interaction
-  let isDragging = false;
-
-  const updateHours = (e) => {
-    const rect = container.getBoundingClientRect();
-    const x = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
-    const percentage = x / rect.width;
-    const newHours = Math.round(percentage * MAX_HOURS_PER_DAY * 2) / 2; // Round to 0.5
-
+  input.oninput = (e) => {
+    const rawValue = e.target.value;
     if (!entry.hours) entry.hours = {};
-    entry.hours[day] = Math.min(newHours, MAX_HOURS_PER_DAY);
 
-    fill.style.width = `${(entry.hours[day] / MAX_HOURS_PER_DAY) * 100}%`;
-    valueDisplay.textContent =
-      entry.hours[day] > 0 ? entry.hours[day].toFixed(1) : "";
-
-    // Update row total
-    const rowTotalCell = row?.querySelector(".ts-row-total");
-    if (rowTotalCell) {
-      const total = calculateRowTotal(entry);
-      rowTotalCell.textContent = total > 0 ? total.toFixed(1) : "";
-    }
-
-    updateTimesheetTotals(getWeekEntries(formatWeekKey(currentTimesheetWeek)));
-  };
-
-  container.onmousedown = (e) => {
-    isDragging = true;
-    updateHours(e);
-    e.preventDefault();
-  };
-
-  const onMouseMove = (e) => {
-    if (isDragging) updateHours(e);
-  };
-
-  const onMouseUp = () => {
-    if (isDragging) {
-      isDragging = false;
-      saveTimesheets();
-    }
-  };
-
-  document.addEventListener("mousemove", onMouseMove);
-  document.addEventListener("mouseup", onMouseUp);
-
-  // Double-click to manually enter
-  container.ondblclick = () => {
-    const value = prompt("Enter hours:", entry.hours?.[day] || 0);
-    if (value !== null) {
-      const newHours = Math.min(parseFloat(value) || 0, MAX_HOURS_PER_DAY);
-      if (!entry.hours) entry.hours = {};
-      entry.hours[day] = newHours;
-      fill.style.width = `${(newHours / MAX_HOURS_PER_DAY) * 100}%`;
-      valueDisplay.textContent = newHours > 0 ? newHours.toFixed(1) : "";
-      saveTimesheets();
+    if (rawValue === "") {
+      entry.hours[day] = 0;
+      refreshTimesheetRowTotal(row, entry);
       updateTimesheetTotals(getWeekEntries(formatWeekKey(currentTimesheetWeek)));
-      // Update row total
-      const rowTotalCell = row?.querySelector(".ts-row-total");
-      if (rowTotalCell) {
-        const total = calculateRowTotal(entry);
-        rowTotalCell.textContent = total > 0 ? total.toFixed(1) : "";
-      }
+      saveTimesheets();
+      return;
     }
+
+    const parsedHours = Number.parseFloat(rawValue);
+    if (!Number.isFinite(parsedHours)) return;
+
+    const allowedHours = getRemainingTimesheetHoursForDay(day, entry);
+    const newHours = Math.min(normalizeTimesheetHours(parsedHours), allowedHours);
+    entry.hours[day] = newHours;
+    refreshTimesheetRowTotal(row, entry);
+    updateTimesheetTotals(getWeekEntries(formatWeekKey(currentTimesheetWeek)));
+    saveTimesheets();
   };
 
-  return container;
+  input.onblur = (e) => {
+    e.target.value = formatTimesheetHours(entry.hours?.[day] || 0);
+  };
+
+  return input;
 }
 
 function calculateRowTotal(entry) {

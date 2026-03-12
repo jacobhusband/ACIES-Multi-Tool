@@ -2066,6 +2066,156 @@ select:focus {
   line-height: 1.6;
 }
 
+/* Compact, consistent sizing for the tools tab without affecting plugin grids. */
+#tools-panel .tools-section {
+  gap: 0.625rem;
+}
+
+#tools-panel .tools-section + .tools-section {
+  margin-top: 1.25rem;
+  padding-top: 1.25rem;
+}
+
+#tools-panel .tools-grid {
+  grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+  gap: 1rem;
+}
+
+#tools-panel .tool-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-height: 148px;
+  padding: 0.95rem 1rem;
+}
+
+#tools-panel .tool-card-content {
+  display: grid;
+  flex: 1;
+  grid-template-columns: auto 1fr;
+  grid-template-areas:
+    "icon title"
+    "body body";
+  column-gap: 0.75rem;
+  row-gap: 0.65rem;
+  align-content: start;
+  min-height: 0;
+  padding-right: 2.25rem;
+}
+
+#tools-panel .tool-card-settings {
+  top: 0.75rem;
+  right: 0.75rem;
+  width: 28px;
+  height: 28px;
+  font-size: 0.85rem;
+}
+
+#tools-panel .tool-card:hover {
+  transform: translateY(-3px);
+}
+
+#tools-panel .tool-icon {
+  grid-area: icon;
+  display: inline-flex;
+  align-items: center;
+  align-self: start;
+  line-height: 0;
+  margin-bottom: 0;
+}
+
+#tools-panel .tool-icon svg {
+  width: 24px;
+  height: 24px;
+}
+
+#tools-panel .tool-card-header {
+  grid-area: title;
+  margin-bottom: 0;
+  font-size: 0.98rem;
+  line-height: 1.3;
+  min-height: calc(1em * 1.3 * 2);
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+#tools-panel .tool-card-body {
+  grid-area: body;
+  display: none;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  margin: 0;
+}
+
+#tools-panel .tool-card.details-expanded .tool-card-body {
+  display: block;
+}
+
+#tools-panel .tool-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: auto;
+  min-height: 1.5rem;
+}
+
+#tools-panel .tool-card-toggle {
+  border: 1px solid var(--glass-border);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 0.24rem 0.6rem;
+  font-size: 0.7rem;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+#tools-panel .tool-card-toggle:hover,
+#tools-panel .tool-card-toggle:focus-visible {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: rgba(16, 185, 129, 0.08);
+  outline: none;
+}
+
+#tools-panel .tool-card.details-expanded .tool-card-toggle {
+  color: var(--accent);
+  border-color: rgba(16, 185, 129, 0.35);
+  background: rgba(16, 185, 129, 0.08);
+}
+
+#tools-panel .tool-card-status {
+  flex: 1;
+  min-width: 0;
+  min-height: 1.1rem;
+  margin-top: 0;
+  font-size: 0.75rem;
+  line-height: 1.2;
+  color: var(--accent);
+  text-align: right;
+}
+
+#tools-panel .tool-card-status.error {
+  color: var(--danger);
+}
+
+@media (max-width: 720px) {
+  #tools-panel .tools-grid {
+    grid-template-columns: 1fr;
+    gap: 0.875rem;
+  }
+
+  #tools-panel .tool-card {
+    min-height: 0;
+  }
+}
+
 /* Wire Sizer Dialog */
 dialog.wire-sizer-dialog {
   width: min(1200px, 96vw);
@@ -3435,13 +3585,28 @@ dialog::backdrop {
   gap: 0.5rem;
 }
 
+.release-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding-top: 0.15rem;
+}
+
+.release-card-body[hidden] {
+  display: none;
+}
+
+.release-card-details-state {
+  font-size: 12px;
+  color: var(--muted);
+}
+
 /* Command Tags Grid/Flex Fix */
 .command-tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.75rem;
-  /* Increased spacing */
-  margin-top: 0.25rem;
+  gap: 0.5rem;
+  margin-top: 0;
 }
 
 .command-tag {
@@ -3500,7 +3665,38 @@ dialog::backdrop {
 .release-card-footer {
   margin-top: auto;
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.release-card-footer .btn {
+  margin-left: auto;
+}
+
+.release-card-toggle {
+  border: 1px solid var(--glass-border);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 0.24rem 0.6rem;
+  font-size: 0.7rem;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.release-card-toggle:hover,
+.release-card-toggle:focus-visible {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: rgba(16, 185, 129, 0.08);
+  outline: none;
+}
+
+.release-card.details-expanded .release-card-toggle {
+  color: var(--accent);
+  border-color: rgba(16, 185, 129, 0.35);
+  background: rgba(16, 185, 129, 0.08);
 }
 
 /* Spinner */

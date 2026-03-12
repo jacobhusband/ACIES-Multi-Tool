@@ -11177,6 +11177,9 @@ async function renderBundles(bundles) {
   for (const bundle of visibleBundles) {
     // Normalize name
     const coreName = normalizeBundleCoreName(bundle.name);
+    const detailsId = `bundle-details-${String(
+      bundle.bundle_name || coreName || "bundle"
+    ).replace(/[^a-z0-9_-]+/gi, "-")}`;
 
     const card = el("div", { className: "release-card" });
     let statusClass, statusTitle, btnText, btnClass;
@@ -11213,15 +11216,42 @@ async function renderBundles(bundles) {
       ]),
     ]);
 
-    const body = el("div", { className: "release-card-body" });
+    const body = el("div", {
+      className: "release-card-body",
+      id: detailsId,
+      hidden: true,
+    });
+    const detailsState = el("div", {
+      className: "release-card-details-state",
+      textContent: "Loading details...",
+    });
     const tags = el("div", { className: "command-tags" });
-    body.append(tags);
+    body.append(detailsState, tags);
 
     const footer = el("div", { className: "release-card-footer" });
+    const detailsBtn = el("button", {
+      type: "button",
+      className: "release-card-toggle",
+      textContent: "Details",
+      "aria-controls": detailsId,
+      "aria-expanded": "false",
+    });
     const btn = el("button", {
       className: `btn ${btnClass}`.trim(),
       textContent: btnText,
     });
+
+    const setDetailsExpanded = (expanded) => {
+      body.hidden = !expanded;
+      card.classList.toggle("details-expanded", expanded);
+      detailsBtn.textContent = expanded ? "Hide details" : "Details";
+      detailsBtn.setAttribute("aria-expanded", String(expanded));
+    };
+
+    detailsBtn.addEventListener("click", () => {
+      setDetailsExpanded(body.hidden);
+    });
+
     btn.dataset.bundleName = bundle.bundle_name;
     if (bundle.state === "not_published") {
       btn.disabled = true;
@@ -11236,14 +11266,21 @@ async function renderBundles(bundles) {
       btn.dataset.asset = JSON.stringify(bundle.asset);
     }
 
-    footer.append(btn);
+    footer.append(detailsBtn, btn);
     card.append(header, body, footer);
     container.append(card);
 
     const descriptionPromise = fetchDescriptionForBundle(bundle.name)
       .then((description) => {
-        if (description && description.commands) {
-          Object.keys(description.commands).forEach((cmd) => {
+        const commands = description?.commands
+          ? Object.keys(description.commands)
+          : [];
+
+        if (commands.length > 0) {
+          detailsState.textContent =
+            commands.length === 1 ? "1 command" : `${commands.length} commands`;
+
+          commands.forEach((cmd) => {
             const link = description.links?.[cmd];
             const title =
               description.commands[cmd] || (link ? "Open documentation" : "");
@@ -11257,9 +11294,13 @@ async function renderBundles(bundles) {
               : el("span", { className: "command-tag", textContent: cmd, title });
             tags.append(tagEl);
           });
+        } else {
+          detailsState.textContent = "No extra details available.";
         }
       })
-      .catch(() => { });
+      .catch(() => {
+        detailsState.textContent = "No extra details available.";
+      });
     tagJobs.push(descriptionPromise);
   }
 
@@ -14616,6 +14657,51 @@ function initTabbedInterfaces() {
   });
 }
 
+function initToolCardDetailsToggles() {
+  document.querySelectorAll("#tools-panel .tool-card").forEach((card, index) => {
+    if (card.dataset.detailsToggleReady === "true") return;
+
+    const body = card.querySelector(".tool-card-body");
+    const statusEl = card.querySelector(".tool-card-status");
+    if (!body || !statusEl) return;
+
+    const detailsId =
+      body.id || `${card.id || `tool-card-${index + 1}`}-details`;
+    body.id = detailsId;
+
+    const footer = document.createElement("div");
+    footer.className = "tool-card-footer";
+
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "tool-card-toggle";
+    toggle.textContent = "Details";
+    toggle.setAttribute("aria-controls", detailsId);
+    toggle.setAttribute("aria-expanded", "false");
+
+    const setExpanded = (expanded) => {
+      card.classList.toggle("details-expanded", expanded);
+      toggle.textContent = expanded ? "Hide details" : "Details";
+      toggle.setAttribute("aria-expanded", String(expanded));
+    };
+
+    setExpanded(false);
+
+    toggle.addEventListener("click", (e) => {
+      e.stopPropagation();
+      setExpanded(!card.classList.contains("details-expanded"));
+    });
+
+    toggle.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+    });
+
+    footer.append(toggle, statusEl);
+    card.appendChild(footer);
+    card.dataset.detailsToggleReady = "true";
+  });
+}
+
 function initEventListeners() {
   document.getElementById("search").addEventListener(
     "input",
@@ -14661,6 +14747,8 @@ function initEventListeners() {
       if (dlg) dlg.showModal();
     });
   });
+
+  initToolCardDetailsToggles();
 
   const workroomToolsSettingsBtn = document.getElementById(
     "workroomToolsSettingsBtn"

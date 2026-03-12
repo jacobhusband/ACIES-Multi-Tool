@@ -493,7 +493,9 @@ def _remove_to_section_word(doc):
 def _update_word_file_via_com(file_path, replacements, remove_to_section=False):
     import win32com.client
 
-    word = win32com.client.Dispatch("Word.Application")
+    # Launch an isolated Word instance so closing the template document does not
+    # shut down any Word windows the user already has open.
+    word = win32com.client.DispatchEx("Word.Application")
     word.Visible = False
     word.DisplayAlerts = 0
     doc = None
@@ -1213,16 +1215,26 @@ DEFAULT_TEMPLATES = [
         "fileType": "doc",
         "sourcePath": str(get_bundled_template_path("PCC.doc")),
         "description": "Plan check comments response table template"
+    },
+    {
+        "name": "Electrical Survey Report",
+        "discipline": "Electrical",
+        "fileType": "doc",
+        "sourcePath": str(get_bundled_template_path("Electrical Survey Report Template.doc")),
+        "description": "Electrical survey report document template"
     }
 ]
 TEMPLATE_KEY_BY_NAME = {
     "narrative of changes": "narrative",
     "plan check comments": "planCheck",
     "plan check response letter": "planCheck",
+    "electrical survey report": "electricalSurvey",
+    "electrical survey report template": "electricalSurvey",
 }
 TEMPLATE_DEFAULT_FILENAME_BY_KEY = {
     "narrative": "Narrative of Changes",
     "planCheck": "Plan Check Comments",
+    "electricalSurvey": "Electrical Survey Report",
 }
 
 logging.basicConfig(level=logging.INFO,
@@ -2655,6 +2667,9 @@ Return ONLY the JSON object.
             'plancheckcomments': 'planCheck',
             'plancheckresponseletter': 'planCheck',
             'pcc': 'planCheck',
+            'electricalsurvey': 'electricalSurvey',
+            'electricalsurveyreport': 'electricalSurvey',
+            'electricalsurveyreporttemplate': 'electricalSurvey',
         }
         if raw in TEMPLATE_KEY_BY_NAME:
             return TEMPLATE_KEY_BY_NAME[raw]
@@ -2673,6 +2688,8 @@ Return ONLY the JSON object.
             return 'narrative'
         if 'plan check' in source_name or 'pcc' in source_name:
             return 'planCheck'
+        if 'electrical survey report' in source_name:
+            return 'electricalSurvey'
         return ''
 
     def _find_template_by_key(self, template_key):
@@ -2692,6 +2709,38 @@ Return ONLY the JSON object.
         text = re.sub(r'\s+', ' ', text).strip().strip('.')
         text = text[:120]
         return text or fallback
+
+    def _get_template_output_name_parts(self, template, template_key='', context=None, new_name=None):
+        normalized_key = self._normalize_template_key(
+            template_key or self._infer_template_key(template)
+        )
+        context_data = context if isinstance(context, dict) else {}
+        source_path = str(template.get('sourcePath') or '').strip()
+        extension = os.path.splitext(source_path)[1]
+        if not extension:
+            ext_hint = str(template.get('fileType') or '').strip().lstrip('.')
+            extension = f'.{ext_hint}' if ext_hint else ''
+
+        if new_name is not None and str(new_name).strip():
+            base_name = str(new_name).strip()
+            if extension and base_name.lower().endswith(extension.lower()):
+                base_name = base_name[:-len(extension)]
+            return base_name, extension, normalized_key
+
+        if normalized_key == 'electricalSurvey':
+            project_name = str(context_data.get('projectName') or '').strip()
+            if project_name:
+                return f'{project_name} - Electrical Survey Report', extension, normalized_key
+
+        if normalized_key in TEMPLATE_DEFAULT_FILENAME_BY_KEY:
+            return TEMPLATE_DEFAULT_FILENAME_BY_KEY[normalized_key], extension, normalized_key
+
+        fallback_name = (
+            str(template.get('name') or '').strip()
+            or Path(source_path).stem
+            or 'Template'
+        )
+        return fallback_name, extension, normalized_key
 
     def _resolve_template_destination_path(self, folder_path, base_name, extension, conflict_policy='timestamp'):
         policy = str(conflict_policy or 'timestamp').strip().lower()
@@ -2765,8 +2814,16 @@ Return ONLY the JSON object.
             logging.error(f"Error removing template: {e}")
             return {'status': 'error', 'message': str(e)}
 
-    def copy_template_to_folder(self, template_id, destination_folder, new_name=None, context=None, options=None):
-        """Copies a template file to the specified folder with optional rename."""
+    def copy_template_to_folder(
+        self,
+        template_id,
+        destination_folder,
+        new_name=None,
+        context=None,
+        options=None,
+        conflict_policy='timestamp',
+    ):
+        """Copies a template file to a folder, with optional open-after-save behavior."""
         try:
             data = self.get_templates()
             template = next((t for t in data['templates'] if t['id'] == template_id), None)
@@ -2778,35 +2835,81 @@ Return ONLY the JSON object.
             if not os.path.exists(source):
                 return {'status': 'error', 'message': f'Template file not found: {source}'}
 
+            if isinstance(destination_folder, (list, tuple)):
+                destination_folder = destination_folder[0] if destination_folder else ''
+
+            destination_folder = os.path.normpath(str(destination_folder or '').strip())
+            if not destination_folder:
+                return {'status': 'error', 'message': 'Destination folder is required'}
+
+            options_payload = dict(options or {}) if isinstance(options, dict) else {}
+            context_payload = dict(context or {}) if isinstance(context, dict) else {}
+
             if not os.path.isdir(destination_folder):
                 create_destination = False
-                if isinstance(options, dict):
-                    create_destination = bool(options.get('createDestination'))
+                if options_payload:
+                    create_destination = bool(options_payload.get('createDestination'))
                 if create_destination:
                     os.makedirs(destination_folder, exist_ok=True)
                 else:
                     return {'status': 'error', 'message': 'Destination folder does not exist'}
 
-            # Determine output filename
-            ext = os.path.splitext(source)[1]
-            if new_name:
-                # Ensure proper extension
-                if not new_name.lower().endswith(ext.lower()):
-                    new_name = new_name + ext
-                dest_filename = new_name
-            else:
-                dest_filename = os.path.basename(source)
+            base_name, extension, normalized_key = self._get_template_output_name_parts(
+                template,
+                template_key=options_payload.get('templateKey'),
+                context=context_payload,
+                new_name=new_name,
+            )
+            if not extension:
+                return {'status': 'error', 'message': 'Template file extension could not be determined.'}
 
-            dest_path = os.path.join(destination_folder, dest_filename)
-
-            # Check if file exists and handle
-            if os.path.exists(dest_path):
+            dest_path, filename, has_conflict = self._resolve_template_destination_path(
+                destination_folder,
+                base_name,
+                extension,
+                conflict_policy=conflict_policy,
+            )
+            if has_conflict:
                 return {'status': 'error', 'message': 'File already exists at destination'}
 
             shutil.copy2(source, dest_path)
-            if context or options:
-                _apply_template_context(dest_path, context=context, options=options)
-            return {'status': 'success', 'path': dest_path}
+            if context_payload or options_payload:
+                template_options = dict(options_payload)
+                if normalized_key and 'templateKey' not in template_options:
+                    template_options['templateKey'] = normalized_key
+                _apply_template_context(
+                    dest_path,
+                    context=context_payload,
+                    options=template_options,
+                )
+
+            result = {
+                'status': 'success',
+                'path': dest_path,
+                'filename': filename,
+            }
+
+            if options_payload.get('openOutputs'):
+                opened_folder_path = self._find_project_root_by_id(destination_folder) or destination_folder
+                result['openedFolderPath'] = opened_folder_path
+                warnings = []
+
+                folder_result = self.open_directory_strict(opened_folder_path)
+                if folder_result.get('status') != 'success':
+                    folder_error = folder_result.get('message') or 'Failed to open folder.'
+                    result['openFolderError'] = folder_error
+                    warnings.append(f'Could not open folder: {folder_error}')
+
+                file_result = self.open_path(dest_path)
+                if file_result.get('status') != 'success':
+                    file_error = file_result.get('message') or 'Failed to open file.'
+                    result['openFileError'] = file_error
+                    warnings.append(f'Could not open file: {file_error}')
+
+                if warnings:
+                    result['warnings'] = warnings
+
+            return result
         except Exception as e:
             logging.error(f"Error copying template: {e}")
             return {'status': 'error', 'message': str(e)}
@@ -2991,6 +3094,31 @@ Return ONLY the JSON object.
             return {'status': 'success', 'path': folder_path[0] if folder_path else None}
         except Exception as e:
             logging.error(f"Error in folder dialog: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def select_template_output_folder(self, default_dir=None):
+        """Shows a folder dialog for template-tool output."""
+        try:
+            window = webview.windows[0]
+            directory = str(default_dir or '').strip() or get_default_documents_dir()
+            if os.path.isfile(directory):
+                directory = os.path.dirname(directory)
+            if not os.path.isdir(directory):
+                directory = get_default_documents_dir()
+
+            folder_path = window.create_file_dialog(
+                webview.FOLDER_DIALOG,
+                directory=directory,
+            )
+            if not folder_path:
+                return {'status': 'cancelled', 'path': None}
+            if isinstance(folder_path, (list, tuple)):
+                folder_path = folder_path[0] if folder_path else ''
+            return {'status': 'success', 'path': folder_path}
+        except TypeError:
+            return self.select_folder()
+        except Exception as e:
+            logging.error(f"Error in template output folder dialog: {e}")
             return {'status': 'error', 'message': str(e)}
 
     def select_template_save_location(self, default_dir=None, default_name=None, file_type=None):
@@ -5481,22 +5609,27 @@ TASK 3: LOAD TYPES
             return parent_dirs[0]
         return ''
 
-    def _find_workroom_project_root_by_id(self, project_path):
-        normalized_project_path = os.path.normpath(project_path) if project_path else ''
-        if not normalized_project_path:
+    def _find_project_root_by_id(self, path):
+        normalized_path = os.path.normpath(str(path or '').strip()) if path else ''
+        if not normalized_path:
             return ''
 
-        current = normalized_project_path.rstrip("\\/")
+        current = normalized_path.rstrip("\\/")
         if not current:
             return ''
+
+        basename = os.path.basename(current).strip()
+        if os.path.isfile(current) or (not os.path.isdir(current) and os.path.splitext(basename)[1]):
+            parent = os.path.dirname(current)
+            current = parent.rstrip("\\/") or parent
 
         while current:
             folder_name = os.path.basename(current).strip()
             if re.match(r'^\d{6}(?!\d)', folder_name):
                 logging.info(
-                    "_find_workroom_project_root_by_id: matched %s from %s",
+                    "_find_project_root_by_id: matched %s from %s",
                     current,
-                    normalized_project_path,
+                    normalized_path,
                 )
                 return current
 
@@ -5508,6 +5641,9 @@ TASK 3: LOAD TYPES
             current = parent.rstrip("\\/") or parent
 
         return ''
+
+    def _find_workroom_project_root_by_id(self, project_path):
+        return self._find_project_root_by_id(project_path)
 
     def _resolve_workroom_discipline_folder(self, project_path, discipline):
         requested_discipline = str(discipline or '').strip() or 'Electrical'

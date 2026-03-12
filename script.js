@@ -548,6 +548,7 @@ const WORKROOM_CAD_TOOL_IDS = new Set([
 const WORKROOM_TEMPLATE_TOOL_IDS = new Set([
   "toolCreateNarrativeTemplate",
   "toolCreatePlanCheckTemplate",
+  "toolCreateElectricalSurveyTemplate",
 ]);
 const WORKROOM_LAUNCH_CONTEXT_TOOL_IDS = new Set([
   ...WORKROOM_CAD_TOOL_IDS,
@@ -1163,6 +1164,7 @@ function getTemplateKey(template) {
   const sourceName = basename(template?.sourcePath || "").toLowerCase();
   if (sourceName.includes("narrative of changes")) return "narrative";
   if (sourceName.includes("plan check") || sourceName.includes("pcc")) return "planCheck";
+  if (sourceName.includes("electrical survey report")) return "electricalSurvey";
   return null;
 }
 
@@ -1476,6 +1478,7 @@ async function handleRemoveTemplate(templateId, templateName) {
 function getTemplateToolIdForKey(templateKey) {
   if (templateKey === "narrative") return "toolCreateNarrativeTemplate";
   if (templateKey === "planCheck") return "toolCreatePlanCheckTemplate";
+  if (templateKey === "electricalSurvey") return "toolCreateElectricalSurveyTemplate";
   return "";
 }
 
@@ -1563,56 +1566,15 @@ async function handleTemplateToolSave(templateKey, label, options = {}) {
   const context = {};
   if (projectName) context.projectName = projectName;
   if (deliverableName) context.deliverableName = deliverableName;
-  let manualDefaultDir = projectPath || null;
-
-  const isWorkroomLaunch =
-    String(launchContext?.source || "").trim().toLowerCase() === "workroom";
-  if (isWorkroomLaunch && window.pywebview?.api?.create_template_for_workroom) {
-    try {
-      const autoResult = await window.pywebview.api.create_template_for_workroom(
-        templateKey,
-        launchContext,
-        context,
-        "timestamp"
-      );
-      if (autoResult?.status === "success" && autoResult.path) {
-        if (toolId) window.updateToolStatus(toolId, "DONE");
-        toast("Template saved.");
-        return autoResult;
-      }
-      if (autoResult?.status && autoResult.status !== "fallback") {
-        const message =
-          autoResult?.message || "Failed to create template automatically.";
-        if (toolId) window.updateToolStatus(toolId, `ERROR: ${message}`);
-        toast(message);
-        return autoResult;
-      }
-      if (autoResult?.status === "fallback") {
-        manualDefaultDir = null;
-        console.info(
-          `Workroom template auto-create fallback (${templateKey}):`,
-          autoResult?.message || "manual save dialog"
-        );
-      }
-    } catch (e) {
-      const message = e?.message || "Failed to create template automatically.";
-      if (toolId) window.updateToolStatus(toolId, `ERROR: ${message}`);
-      toast(message);
-      return;
-    }
-  }
-
-  const defaultName = String(label || template.name || "Template").trim() || "Template";
+  const defaultFolder = projectPath || null;
   let selection = null;
   try {
-    selection = await window.pywebview.api.select_template_save_location(
-      manualDefaultDir,
-      defaultName,
-      template.fileType
+    selection = await window.pywebview.api.select_template_output_folder(
+      defaultFolder
     );
   } catch (e) {
-    if (toolId) window.updateToolStatus(toolId, "ERROR: Error selecting save location.");
-    toast("Error selecting save location.");
+    if (toolId) window.updateToolStatus(toolId, "ERROR: Error selecting output folder.");
+    toast("Error selecting output folder.");
     return;
   }
 
@@ -1624,25 +1586,35 @@ async function handleTemplateToolSave(templateKey, label, options = {}) {
     if (toolId) {
       window.updateToolStatus(
         toolId,
-        `ERROR: ${selection.message || "Failed to select save location."}`
+        `ERROR: ${selection.message || "Failed to select output folder."}`
       );
     }
-    toast(selection.message || "Failed to select save location.");
+    toast(selection.message || "Failed to select output folder.");
     return;
   }
 
-  const templateOptions = { templateKey };
+  const templateOptions = { templateKey, openOutputs: true };
 
   try {
-    const result = await window.pywebview.api.copy_template_to_path(
+    const result = await window.pywebview.api.copy_template_to_folder(
       template.id,
       selection.path,
+      null,
       context,
       templateOptions
     );
     if (result.status === "success") {
-      if (toolId) window.updateToolStatus(toolId, "DONE");
-      toast("Template saved.");
+      const warnings = Array.isArray(result.warnings)
+        ? result.warnings.filter(Boolean)
+        : [];
+      if (warnings.length) {
+        if (toolId) window.updateToolStatus(toolId, "WARN: Saved with warnings.");
+        toast(`Template saved. ${warnings.join(" ")}`);
+      } else {
+        if (toolId) window.updateToolStatus(toolId, "DONE");
+        toast("Template saved.");
+      }
+      return result;
     } else {
       if (toolId) {
         window.updateToolStatus(
@@ -4985,6 +4957,8 @@ const TEMPLATE_KEY_BY_NAME = {
   "narrative of changes": "narrative",
   "plan check comments": "planCheck",
   "plan check response letter": "planCheck",
+  "electrical survey report": "electricalSurvey",
+  "electrical survey report template": "electricalSurvey",
 };
 
 let copyDialogTemplate = null;
@@ -11412,6 +11386,9 @@ window.updateToolStatus = function (toolId, message) {
   if (nextMessage.startsWith("ERROR:")) {
     footerPhase = "error";
     footerMessage = nextMessage.substring(6).trim() || "Error.";
+  } else if (nextMessage.startsWith("WARN:")) {
+    footerPhase = "done";
+    footerMessage = nextMessage.substring(5).trim() || "Done with warnings.";
   } else if (nextMessage === "DONE") {
     footerPhase = "done";
     footerMessage = "Done.";
@@ -11449,6 +11426,12 @@ window.updateToolStatus = function (toolId, message) {
       card.classList.remove("running");
       if (abortBtn) abortBtn.style.display = "none";
     }, 5000);
+  } else if (nextMessage.startsWith("WARN:")) {
+    statusEl.textContent = nextMessage.substring(5).trim() || "Done with warnings.";
+    setTimeout(() => {
+      card.classList.remove("running");
+      if (abortBtn) abortBtn.style.display = "none";
+    }, 4000);
   } else if (nextMessage === "DONE") {
     statusEl.textContent = "Done!";
     setTimeout(() => {
@@ -15006,47 +14989,41 @@ function initEventListeners() {
       }
     });
 
-  const narrativeTemplateBtn = document.getElementById(
-    "toolCreateNarrativeTemplate"
-  );
-  if (narrativeTemplateBtn) {
+  const bindTemplateToolButton = (toolId, templateKey, label) => {
+    const button = document.getElementById(toolId);
+    if (!button) return;
     const handler = async () => {
       const launchContext = resolveCadLaunchContextForTool();
-      console.debug("Workroom launch context (narrative template):", launchContext);
-      await handleTemplateToolSave("narrative", "Narrative of Changes", {
+      console.debug(`Workroom launch context (${templateKey} template):`, launchContext);
+      await handleTemplateToolSave(templateKey, label, {
         launchContext,
-        toolId: "toolCreateNarrativeTemplate",
+        toolId,
       });
     };
-    narrativeTemplateBtn.addEventListener("click", handler);
-    narrativeTemplateBtn.addEventListener("keydown", (e) => {
+    button.addEventListener("click", handler);
+    button.addEventListener("keydown", (e) => {
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
         handler();
       }
     });
-  }
+  };
 
-  const planCheckTemplateBtn = document.getElementById(
-    "toolCreatePlanCheckTemplate"
+  bindTemplateToolButton(
+    "toolCreateNarrativeTemplate",
+    "narrative",
+    "Narrative of Changes"
   );
-  if (planCheckTemplateBtn) {
-    const handler = async () => {
-      const launchContext = resolveCadLaunchContextForTool();
-      console.debug("Workroom launch context (plan check template):", launchContext);
-      await handleTemplateToolSave("planCheck", "Plan Check Comments", {
-        launchContext,
-        toolId: "toolCreatePlanCheckTemplate",
-      });
-    };
-    planCheckTemplateBtn.addEventListener("click", handler);
-    planCheckTemplateBtn.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" || e.key === " ") {
-        e.preventDefault();
-        handler();
-      }
-    });
-  }
+  bindTemplateToolButton(
+    "toolCreatePlanCheckTemplate",
+    "planCheck",
+    "Plan Check Comments"
+  );
+  bindTemplateToolButton(
+    "toolCreateElectricalSurveyTemplate",
+    "electricalSurvey",
+    "Electrical Survey Report"
+  );
 
   const copyProjectLocallyBtn = document.getElementById("toolCopyProjectLocally");
   if (copyProjectLocallyBtn) {

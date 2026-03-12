@@ -3337,6 +3337,34 @@ Return ONLY the JSON object.
             end_column=5,
         )
 
+    def _capture_worksheet_row_template(self, worksheet, source_row):
+        row_dimension = worksheet.row_dimensions[source_row]
+        return {
+            "height": row_dimension.height,
+            "hidden": row_dimension.hidden,
+            "outlineLevel": row_dimension.outlineLevel,
+            "collapsed": row_dimension.collapsed,
+            "cells": [
+                {
+                    "value": worksheet.cell(row=source_row, column=col_idx).value,
+                    "style": copy(worksheet.cell(row=source_row, column=col_idx)._style),
+                }
+                for col_idx in range(1, worksheet.max_column + 1)
+            ],
+        }
+
+    def _apply_worksheet_row_template(self, worksheet, template, target_row, copy_values=True):
+        for col_idx, cell_template in enumerate(template["cells"], start=1):
+            target_cell = worksheet.cell(row=target_row, column=col_idx)
+            target_cell._style = copy(cell_template["style"])
+            target_cell.value = cell_template["value"] if copy_values else None
+
+        target_dimension = worksheet.row_dimensions[target_row]
+        target_dimension.height = template["height"]
+        target_dimension.hidden = template["hidden"]
+        target_dimension.outlineLevel = template["outlineLevel"]
+        target_dimension.collapsed = template["collapsed"]
+
     def _render_project_expense_sheet(self, worksheet, projects, mileage_rate):
         if not projects:
             return {"image_paths": [], "image_start_row": None}
@@ -3694,10 +3722,28 @@ Return ONLY the JSON object.
 
             # Data rows start at row 5
             entries = data.get('entries', [])
+            data_start_row = 5
+            insert_after_row = 22
+            insert_at_row = insert_after_row + 1
+            base_totals_row = 26
+            max_template_project_rows_before_insert = insert_after_row - data_start_row + 1
+            overflow_rows = max(0, len(entries) - max_template_project_rows_before_insert)
+
+            if overflow_rows:
+                inserted_row_template = self._capture_worksheet_row_template(ws, insert_after_row)
+                ws.insert_rows(insert_at_row, overflow_rows)
+                for row_offset in range(overflow_rows):
+                    self._apply_worksheet_row_template(
+                        ws,
+                        inserted_row_template,
+                        insert_at_row + row_offset,
+                        copy_values=False,
+                    )
+
             day_order = TIMESHEET_DAY_ORDER
             export_mileage_by_row = _build_export_mileage_by_row(entries, expense_projects)
 
-            for row_idx, entry in enumerate(entries, 5):
+            for row_idx, entry in enumerate(entries, data_start_row):
                 # Column A (1): PROJECT #
                 ws.cell(row=row_idx, column=1, value=entry.get('projectId', ''))
                 # Column B (2): Task #
@@ -3719,12 +3765,11 @@ Return ONLY the JSON object.
                     ws.cell(row=row_idx, column=11 + day_idx, value=h if h else '')
 
                 # Column R (18): MILEAGE derived from project expense dates.
-                mileage = export_mileage_by_row[row_idx - 5] if row_idx - 5 < len(export_mileage_by_row) else 0
+                mileage = export_mileage_by_row[row_idx - data_start_row] if row_idx - data_start_row < len(export_mileage_by_row) else 0
                 ws.cell(row=row_idx, column=18, value=mileage if mileage else '')
 
             # Totals row (row 26 in template based on CSV)
-            totals_row = 26
-            data_start_row = 5
+            totals_row = base_totals_row + overflow_rows
             data_end_row = totals_row - 1
 
             for day_idx, _day in enumerate(day_order):

@@ -330,6 +330,22 @@ h4 {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
 
+.main-tab-btn.has-duplicate-project-id::after {
+  content: "";
+  position: absolute;
+  top: 7px;
+  right: 10px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--warning);
+  box-shadow: 0 0 0 2px var(--bg-secondary);
+}
+
+.main-tab-btn.active.has-duplicate-project-id::after {
+  box-shadow: 0 0 0 2px var(--bg-tertiary);
+}
+
 .nav-search {
   position: relative;
   width: 280px;
@@ -2041,6 +2057,11 @@ select:focus {
   background: rgba(0, 0, 0, 0.35);
 }
 
+.tool-card-settings svg {
+  pointer-events: none;
+  flex-shrink: 0;
+}
+
 .tool-card:hover {
   border-color: var(--accent);
   transform: translateY(-5px);
@@ -2079,25 +2100,26 @@ select:focus {
 #tools-panel .tools-grid {
   grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
   gap: 1rem;
+  align-items: start;
 }
 
 #tools-panel .tool-card {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
-  min-height: 148px;
-  padding: 0.95rem 1rem;
+  gap: 0.5rem;
+  min-height: 0;
+  padding: 0.95rem 1rem 0.55rem;
 }
 
 #tools-panel .tool-card-content {
   display: grid;
-  flex: 1;
+  flex: 0 1 auto;
   grid-template-columns: auto 1fr;
   grid-template-areas:
     "icon title"
     "body body";
   column-gap: 0.75rem;
-  row-gap: 0.65rem;
+  row-gap: 0.5rem;
   align-content: start;
   min-height: 0;
   padding-right: 2.25rem;

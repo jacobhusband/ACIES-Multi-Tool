@@ -802,6 +802,59 @@ function getTimesheetEntryMatchKey(entry) {
   return `name:${projectName.toLowerCase()}`;
 }
 
+function getDuplicateTimesheetProjectIds(entries) {
+  const projectIds = new Map();
+
+  (entries || []).forEach((entry) => {
+    const projectId = String(entry?.projectId || "").trim();
+    if (!projectId) return;
+
+    const key = projectId.toLowerCase();
+    if (!projectIds.has(key)) {
+      projectIds.set(key, { displayValue: projectId, count: 0 });
+    }
+
+    projectIds.get(key).count += 1;
+  });
+
+  return Array.from(projectIds.values())
+    .filter((item) => item.count > 1)
+    .map((item) => item.displayValue)
+    .sort((a, b) =>
+      a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" })
+    );
+}
+
+function updateTimesheetsDuplicateIndicator(entries) {
+  const timesheetsTabBtn = document.querySelector(
+    '.main-tab-btn[data-tab="timesheets"]'
+  );
+  if (!timesheetsTabBtn) return;
+
+  const duplicateIds = getDuplicateTimesheetProjectIds(entries);
+  const hasDuplicates = duplicateIds.length > 0;
+  timesheetsTabBtn.classList.toggle(
+    "has-duplicate-project-id",
+    hasDuplicates
+  );
+
+  if (!hasDuplicates) {
+    timesheetsTabBtn.removeAttribute("title");
+    timesheetsTabBtn.removeAttribute("aria-label");
+    return;
+  }
+
+  const duplicateLabel = duplicateIds.join(", ");
+  const duplicateText =
+    duplicateIds.length === 1 ? "Duplicate project ID" : "Duplicate project IDs";
+
+  timesheetsTabBtn.title = `${duplicateText} in current timesheet: ${duplicateLabel}`;
+  timesheetsTabBtn.setAttribute(
+    "aria-label",
+    `Timesheets. Warning: ${duplicateText.toLowerCase()} ${duplicateLabel}`
+  );
+}
+
 function isProjectSummaryEntry(entry) {
   return (
     entry?.deliverableId === TIMESHEET_SUMMARY_DELIVERABLE_ID ||
@@ -1635,6 +1688,7 @@ async function handleTemplateToolSave(templateKey, label, options = {}) {
 function renderTimesheets() {
   const weekKey = formatWeekKey(currentTimesheetWeek);
   const entries = getWeekEntries(weekKey);
+  updateTimesheetsDuplicateIndicator(entries);
 
   // Update week display
   const weekDisplay = document.getElementById("weekDisplay");
@@ -1690,6 +1744,9 @@ function createTimesheetRow(entry, index) {
   });
   projectIdInput.oninput = (e) => {
     entry.projectId = e.target.value;
+    updateTimesheetsDuplicateIndicator(
+      getWeekEntries(formatWeekKey(currentTimesheetWeek))
+    );
     saveTimesheets();
   };
   projectIdCell.appendChild(projectIdInput);
@@ -3689,6 +3746,38 @@ function createIcon(path, size = 16) {
   p.setAttribute("d", path);
   p.setAttribute("fill", "currentColor");
   svg.appendChild(p);
+  return svg;
+}
+
+function createSettingsIcon(size = 14) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("width", String(size));
+  svg.setAttribute("height", String(size));
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "2");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+
+  const circle = document.createElementNS(
+    "http://www.w3.org/2000/svg",
+    "circle"
+  );
+  circle.setAttribute("cx", "12");
+  circle.setAttribute("cy", "12");
+  circle.setAttribute("r", "3");
+  svg.appendChild(circle);
+
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute(
+    "d",
+    "M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06A2 2 0 1 1 4.38 17l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82L4.21 7.2a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.08a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c0 .66.39 1.26 1 1.51H21a2 2 0 1 1 0 4h-.09c-.66 0-1.26.39-1.51 1z"
+  );
+  svg.appendChild(path);
+
   return svg;
 }
 
@@ -14735,6 +14824,7 @@ function initEventListeners() {
   }
 
   document.querySelectorAll(".tool-card-settings").forEach((btn) => {
+    btn.replaceChildren(createSettingsIcon(14));
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
       const targetId = btn.dataset.settingsTarget;
@@ -16203,6 +16293,9 @@ async function init() {
       renderNoteTabs();
       renderChecklistTabs();
       render();
+      updateTimesheetsDuplicateIndicator(
+        getWeekEntries(formatWeekKey(currentTimesheetWeek))
+      );
 
       // Show setup help banner for returning users who haven't disabled it
       if (userSettings.showSetupHelp !== false) {

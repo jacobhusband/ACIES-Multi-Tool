@@ -641,6 +641,40 @@ class TimesheetExcelExportTests(unittest.TestCase):
         self.assertEqual("=SUM(Q5:Q25)", worksheet["Q26"].value)
         self.assertEqual("=SUM(R5:R25)", worksheet["R26"].value)
 
+    def test_time_log_overflow_inserts_rows_after_row_22_and_shifts_totals(self):
+        entries = [
+            _make_timesheet_entry(
+                f"60{index + 1:02d}",
+                f"Project {index + 1}",
+                f"{index + 1}",
+                hours={"mon": index + 1},
+            )
+            for index in range(22)
+        ]
+
+        with tempfile.TemporaryDirectory(prefix="timesheet-overflow-formulas-") as temp_dir:
+            output_path = Path(temp_dir) / "timelog-overflow.xlsx"
+            workbook_path = self._export_timesheet_workbook([], output_path, entries=entries)
+            workbook = load_workbook(workbook_path)
+            template = load_workbook(TEMPLATE_PATH)
+            self.addCleanup(workbook.close)
+            self.addCleanup(template.close)
+            worksheet = workbook["time log"]
+            template_sheet = template["time log"]
+
+        self.assertEqual("Project 18", worksheet["C22"].value)
+        self.assertEqual("Project 19", worksheet["C23"].value)
+        self.assertEqual("Project 22", worksheet["C26"].value)
+        self.assertIsNone(worksheet["A27"].value)
+        self.assertIsNone(worksheet["A28"].value)
+        self.assertIsNone(worksheet["A29"].value)
+        self._assert_style_matches(worksheet, "A23", template_sheet, "A22")
+        self._assert_style_matches(worksheet, "K23", template_sheet, "K22")
+        self._assert_style_matches(worksheet, "R23", template_sheet, "R22")
+        self.assertEqual(template_sheet.row_dimensions[22].height, worksheet.row_dimensions[23].height)
+        self.assertEqual("=SUM(K5:K29)", worksheet["K30"].value)
+        self.assertEqual("=SUM(R5:R29)", worksheet["R30"].value)
+
     def test_time_log_mileage_comes_from_project_expense_dates(self):
         entries = [
             _make_timesheet_entry(

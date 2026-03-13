@@ -5006,7 +5006,21 @@ let userSettings = {
   freezeLayerOptions: { ...DEFAULT_FREEZE_LAYER_OPTIONS },
   thawLayerOptions: { ...DEFAULT_THAW_LAYER_OPTIONS },
   workroomAutoSelectCadFiles: true,
+  enableUnderConstructionTools: false,
+  googleAuth: null,
 };
+const DEFAULT_GOOGLE_AUTH_STATE = {
+  signedIn: false,
+  provider: "google",
+  email: "",
+  displayName: "",
+  avatarUrl: "",
+  signedInAt: "",
+  expiresAt: "",
+  hasRefreshToken: false,
+};
+let googleAuthState = { ...DEFAULT_GOOGLE_AUTH_STATE };
+let googleAuthBusy = false;
 let hideNonPrimary = true;
 let activeNoteTab = null;
 let activeTextsView = "notes";
@@ -5062,6 +5076,205 @@ const allowedAggregations = {
   "1Y": ["week", "month", "quarter"],
   "3Y": ["month", "quarter"],
 };
+
+function normalizeGoogleAuthState(raw = {}) {
+  return {
+    ...DEFAULT_GOOGLE_AUTH_STATE,
+    ...(raw && typeof raw === "object" ? raw : {}),
+    signedIn: !!raw?.signedIn,
+    provider: String(raw?.provider || "google").trim() || "google",
+    email: String(raw?.email || "").trim(),
+    displayName: String(raw?.displayName || "").trim(),
+    avatarUrl: String(raw?.avatarUrl || "").trim(),
+    signedInAt: String(raw?.signedInAt || "").trim(),
+    expiresAt: String(raw?.expiresAt || "").trim(),
+    hasRefreshToken: !!raw?.hasRefreshToken,
+  };
+}
+
+function getGoogleAuthDisplayName(state = googleAuthState) {
+  return state.displayName || state.email || "Google";
+}
+
+function getGoogleAuthAvatarFallback(state = googleAuthState) {
+  const label = getGoogleAuthDisplayName(state).trim();
+  return label ? label.charAt(0).toUpperCase() : "G";
+}
+
+function applyGoogleAuthAvatar(element, state = googleAuthState) {
+  if (!element) return;
+  const fallback = getGoogleAuthAvatarFallback(state);
+  element.textContent = fallback;
+  if (state.avatarUrl) {
+    const safeUrl = state.avatarUrl.replace(/'/g, "%27");
+    element.style.backgroundImage = `url('${safeUrl}')`;
+    element.style.color = "transparent";
+  } else {
+    element.style.backgroundImage = "";
+    element.style.color = "";
+  }
+}
+
+function renderGoogleAuthUi() {
+  const headerBtn = document.getElementById("headerGoogleAuthBtn");
+  const headerLabel = document.getElementById("headerGoogleAuthLabel");
+  const statusEl = document.getElementById("settings_googleAuthStatus");
+  const detailsEl = document.getElementById("settings_googleAuthDetails");
+  const settingsActionBtn = document.getElementById(
+    "settings_googleAuthActionBtn"
+  );
+  const continueBtn = document.getElementById("googleSignInContinueBtn");
+  const signOutBtn = document.getElementById("googleSignOutBtn");
+  const accountName = document.getElementById("googleAccountName");
+  const accountEmail = document.getElementById("googleAccountEmail");
+  const accountAvatar = document.getElementById("googleAccountAvatar");
+  const headerAvatar = document.getElementById("headerGoogleAuthAvatar");
+
+  if (headerBtn) {
+    headerBtn.disabled = googleAuthBusy;
+    headerBtn.dataset.signedIn = googleAuthState.signedIn ? "true" : "false";
+    headerBtn.setAttribute(
+      "aria-label",
+      googleAuthState.signedIn
+        ? `Google account: ${getGoogleAuthDisplayName()}`
+        : "Sign in with Google"
+    );
+    headerBtn.title = googleAuthState.signedIn
+      ? `Signed in as ${getGoogleAuthDisplayName()}`
+      : "Sign in with Google";
+  }
+  if (headerLabel) {
+    headerLabel.textContent = googleAuthBusy
+      ? "Working..."
+      : googleAuthState.signedIn
+        ? getGoogleAuthDisplayName()
+        : "Sign in";
+  }
+  applyGoogleAuthAvatar(headerAvatar, googleAuthState);
+
+  if (statusEl) {
+    statusEl.textContent = googleAuthState.signedIn
+      ? `Signed in as ${getGoogleAuthDisplayName()}`
+      : "Not signed in";
+  }
+  if (detailsEl) {
+    detailsEl.textContent = googleAuthState.signedIn
+      ? `${
+          googleAuthState.email || "Google account connected."
+        } Sign-in is meant to enable syncing across computers. Until sync is turned on, your data still stays on this desktop.`
+      : "Sign in with Google to enable syncing across computers. For now, your data still stays on this desktop until sync is turned on.";
+  }
+  if (settingsActionBtn) {
+    settingsActionBtn.disabled = googleAuthBusy;
+    settingsActionBtn.textContent = googleAuthBusy
+      ? "Working..."
+      : googleAuthState.signedIn
+        ? "Manage"
+        : "Sign in";
+  }
+  if (continueBtn) {
+    continueBtn.disabled = googleAuthBusy;
+    continueBtn.textContent = googleAuthBusy
+      ? "Opening Google..."
+      : "Continue with Google";
+  }
+  if (signOutBtn) {
+    signOutBtn.disabled = googleAuthBusy || !googleAuthState.signedIn;
+    signOutBtn.style.display = googleAuthState.signedIn ? "inline-flex" : "none";
+    signOutBtn.textContent = googleAuthBusy ? "Signing out..." : "Sign out";
+  }
+  if (accountName) {
+    accountName.textContent = googleAuthState.signedIn
+      ? getGoogleAuthDisplayName()
+      : "Not signed in";
+  }
+  if (accountEmail) {
+    accountEmail.textContent = googleAuthState.signedIn
+      ? googleAuthState.email || "Google account connected."
+      : "Sign in to enable syncing across computers.";
+  }
+  applyGoogleAuthAvatar(accountAvatar, googleAuthState);
+}
+
+async function loadGoogleAuthState({ silent = false } = {}) {
+  if (!window.pywebview?.api?.get_google_auth_state) {
+    googleAuthState = normalizeGoogleAuthState();
+    renderGoogleAuthUi();
+    return googleAuthState;
+  }
+  try {
+    const response = await window.pywebview.api.get_google_auth_state();
+    if (response?.status !== "success") {
+      throw new Error(response?.message || "Failed to load Google sign-in state.");
+    }
+    googleAuthState = normalizeGoogleAuthState(response.auth);
+  } catch (e) {
+    console.warn("Failed to load Google auth state:", e);
+    googleAuthState = normalizeGoogleAuthState();
+    if (!silent) {
+      toast("Could not load Google sign-in state.");
+    }
+  }
+  renderGoogleAuthUi();
+  return googleAuthState;
+}
+
+function openGoogleAuthDialog() {
+  const dialogId = googleAuthState.signedIn ? "googleAccountDlg" : "googleSignInDlg";
+  const dialog = document.getElementById(dialogId);
+  renderGoogleAuthUi();
+  showDialog(dialog);
+}
+
+async function handleGoogleSignIn() {
+  if (googleAuthBusy || !window.pywebview?.api?.sign_in_with_google) return;
+  googleAuthBusy = true;
+  renderGoogleAuthUi();
+  try {
+    const response = await window.pywebview.api.sign_in_with_google();
+    if (response?.status === "success") {
+      closeDlg("googleSignInDlg");
+      await loadUserSettings();
+      await loadGoogleAuthState({ silent: true });
+      toast(`Signed in as ${getGoogleAuthDisplayName()}.`);
+      return;
+    }
+    if (response?.status === "cancelled") {
+      toast(response.message || "Google sign-in was cancelled.");
+      return;
+    }
+    throw new Error(response?.message || "Google sign-in failed.");
+  } catch (e) {
+    console.warn("Google sign-in failed:", e);
+    toast(e?.message || "Google sign-in failed.");
+  } finally {
+    googleAuthBusy = false;
+    renderGoogleAuthUi();
+  }
+}
+
+async function handleGoogleSignOut() {
+  if (googleAuthBusy || !window.pywebview?.api?.sign_out_google) return;
+  googleAuthBusy = true;
+  renderGoogleAuthUi();
+  try {
+    const response = await window.pywebview.api.sign_out_google();
+    if (response?.status !== "success") {
+      throw new Error(response?.message || "Google sign-out failed.");
+    }
+    closeDlg("googleAccountDlg");
+    await loadUserSettings();
+    googleAuthState = normalizeGoogleAuthState(response.auth);
+    renderGoogleAuthUi();
+    toast("Signed out of Google.");
+  } catch (e) {
+    console.warn("Google sign-out failed:", e);
+    toast(e?.message || "Google sign-out failed.");
+  } finally {
+    googleAuthBusy = false;
+    renderGoogleAuthUi();
+  }
+}
 
 // ===================== THEMING =====================
 function readLocalTheme() {
@@ -5269,6 +5482,10 @@ async function loadUserSettings() {
   try {
     const storedSettings = await window.pywebview.api.get_user_settings();
     if (storedSettings) userSettings = { ...userSettings, ...storedSettings };
+    userSettings.googleAuth =
+      userSettings.googleAuth && typeof userSettings.googleAuth === "object"
+        ? userSettings.googleAuth
+        : null;
     userSettings.discipline = normalizeDisciplineList(userSettings.discipline);
     userSettings.cleanDwgOptions = {
       ...DEFAULT_CLEAN_DWG_OPTIONS,
@@ -5288,6 +5505,10 @@ async function loadUserSettings() {
     };
     userSettings.workroomAutoSelectCadFiles =
       userSettings.workroomAutoSelectCadFiles !== false;
+    userSettings.enableUnderConstructionTools =
+      userSettings.enableUnderConstructionTools === true;
+    syncUnderConstructionToolsAvailability();
+    renderGoogleAuthUi();
   } catch (e) {
     console.error("Failed to load settings:", e);
   }
@@ -5366,6 +5587,37 @@ function syncWorkroomCadRoutingInputs() {
   setCheckboxValue("workroom_modal_autoSelectCadFiles", enabled);
 }
 
+function areUnderConstructionToolsEnabled() {
+  return userSettings.enableUnderConstructionTools === true;
+}
+
+function syncUnderConstructionToolsInputs() {
+  setCheckboxValue(
+    "settings_enableUnderConstructionTools",
+    areUnderConstructionToolsEnabled()
+  );
+}
+
+function syncUnderConstructionToolsAvailability() {
+  const enabled = areUnderConstructionToolsEnabled();
+  document
+    .querySelectorAll('#tools-panel .tool-card[data-under-construction="true"]')
+    .forEach((card) => {
+      card.dataset.underConstructionEnabled = enabled ? "true" : "false";
+      card.setAttribute("aria-disabled", enabled ? "false" : "true");
+      card.title = enabled
+        ? "Preview enabled. This tool is still under construction."
+        : "Under construction. Enable preview access in Settings to use this tool.";
+    });
+
+  const warning = document.getElementById("toolsUnderConstructionWarning");
+  if (warning) {
+    warning.textContent = enabled
+      ? "Preview access is enabled. These tools are still under construction and may be incomplete."
+      : "These tools are currently being worked on and are not ready for use.";
+  }
+}
+
 async function populateSettingsModal() {
   document.getElementById("settings_userName").value =
     userSettings.userName || "";
@@ -5389,6 +5641,9 @@ async function populateSettingsModal() {
   syncFreezeOptionsInputs();
   syncThawOptionsInputs();
   syncWorkroomCadRoutingInputs();
+  syncUnderConstructionToolsInputs();
+  syncUnderConstructionToolsAvailability();
+  renderGoogleAuthUi();
 
   await refreshTimesheetsInfo();
 
@@ -6444,8 +6699,13 @@ function matchesDueFilter(deliverable, filter) {
   const endOfWeek = new Date(startOfWeek);
   endOfWeek.setDate(startOfWeek.getDate() + 6);
   endOfWeek.setHours(23, 59, 59, 999);
+  const startOfLastWeek = new Date(startOfWeek);
+  startOfLastWeek.setDate(startOfWeek.getDate() - 7);
+  startOfLastWeek.setHours(0, 0, 0, 0);
+  const endOfLastWeek = new Date(startOfWeek);
+  endOfLastWeek.setMilliseconds(-1);
 
-  if (filter === "past") return d < startOfWeek;
+  if (filter === "lastWeek") return d >= startOfLastWeek && d <= endOfLastWeek;
   if (filter === "soon") return d >= startOfWeek && d <= endOfWeek;
   if (filter === "future") return d > endOfWeek;
   return true;
@@ -15176,6 +15436,28 @@ function initToolCardDetailsToggles() {
   });
 }
 
+function guardUnderConstructionToolAccess(card, label, event) {
+  if (
+    !card ||
+    card.dataset.underConstruction !== "true" ||
+    areUnderConstructionToolsEnabled()
+  ) {
+    return true;
+  }
+
+  if (event?.type === "keydown" && event.key !== "Enter" && event.key !== " ") {
+    return false;
+  }
+
+  event?.preventDefault();
+  event?.stopPropagation();
+  toast(
+    `${label} is under construction. Enable preview access in Settings to use it.`,
+    4000
+  );
+  return false;
+}
+
 function initEventListeners() {
   document.getElementById("search").addEventListener(
     "input",
@@ -15345,6 +15627,10 @@ function initEventListeners() {
   if (mergeSimilarBtn) mergeSimilarBtn.onclick = scanAndMergeSimilarProjects;
 
   document.getElementById("quickNew").onclick = openNew;
+  const headerGoogleAuthBtn = document.getElementById("headerGoogleAuthBtn");
+  if (headerGoogleAuthBtn) {
+    headerGoogleAuthBtn.onclick = () => openGoogleAuthDialog();
+  }
   document.getElementById("settingsBtn").onclick = async () => {
     hideSetupHelpBanner(); // Hide the banner when user manually opens settings
     await populateSettingsModal();
@@ -15353,6 +15639,22 @@ function initEventListeners() {
   document.getElementById("statsBtn").onclick = () => showStatsModal();
   document.getElementById("settings_howToSetupBtn").onclick = () =>
     document.getElementById("apiKeyHelpDlg").showModal();
+  const settingsGoogleAuthActionBtn = document.getElementById(
+    "settings_googleAuthActionBtn"
+  );
+  if (settingsGoogleAuthActionBtn) {
+    settingsGoogleAuthActionBtn.onclick = () => openGoogleAuthDialog();
+  }
+  const googleSignInContinueBtn = document.getElementById(
+    "googleSignInContinueBtn"
+  );
+  if (googleSignInContinueBtn) {
+    googleSignInContinueBtn.onclick = () => handleGoogleSignIn();
+  }
+  const googleSignOutBtn = document.getElementById("googleSignOutBtn");
+  if (googleSignOutBtn) {
+    googleSignOutBtn.onclick = () => handleGoogleSignOut();
+  }
   const openTimesheetsBtn = document.getElementById(
     "settings_openTimesheetsFolder"
   );
@@ -15472,25 +15774,44 @@ function initEventListeners() {
     });
   }
 
-  const timeframeFilterSelect = document.getElementById(
-    "timeframeFilterSelect"
-  );
-  if (timeframeFilterSelect) {
-    timeframeFilterSelect.value = dueFilter;
-    timeframeFilterSelect.addEventListener("change", (e) => {
-      dueFilter = e.target.value || "all";
-      render();
-    });
-  }
+  const syncProjectsFilterChips = () => {
+    document
+      .querySelectorAll('.projects-filter-chip[data-filter-kind="timeframe"]')
+      .forEach((button) => {
+        const isActive = (button.dataset.filterValue || "all") === dueFilter;
+        button.classList.toggle("is-active", isActive);
+        button.setAttribute("aria-pressed", isActive ? "true" : "false");
+      });
 
-  const statusFilterSelect = document.getElementById("statusFilterSelect");
-  if (statusFilterSelect) {
-    statusFilterSelect.value = statusFilter;
-    statusFilterSelect.addEventListener("change", (e) => {
-      statusFilter = e.target.value || "all";
+    document
+      .querySelectorAll('.projects-filter-chip[data-filter-kind="status"]')
+      .forEach((button) => {
+        const isActive = (button.dataset.filterValue || "all") === statusFilter;
+        button.classList.toggle("is-active", isActive);
+        button.setAttribute("aria-pressed", isActive ? "true" : "false");
+      });
+  };
+
+  document.querySelectorAll(".projects-filter-chip").forEach((button) => {
+    button.addEventListener("click", () => {
+      const filterKind = button.dataset.filterKind;
+      const filterValue = button.dataset.filterValue || "all";
+
+      if (filterKind === "timeframe") {
+        dueFilter = dueFilter === filterValue ? "all" : filterValue;
+      } else if (filterKind === "status") {
+        if (statusFilter === filterValue) return;
+        statusFilter = filterValue;
+      } else {
+        return;
+      }
+
+      syncProjectsFilterChips();
       render();
     });
-  }
+  });
+
+  syncProjectsFilterChips();
 
   document
     .getElementById("toolPublishDwgs")
@@ -15943,7 +16264,16 @@ function initEventListeners() {
 
   const lightingScheduleBtn = document.getElementById("toolLightingSchedule");
   if (lightingScheduleBtn) {
-    const openLightingScheduleHandler = () => {
+    const openLightingScheduleHandler = (e) => {
+      if (
+        !guardUnderConstructionToolAccess(
+          lightingScheduleBtn,
+          "Light Fixture Scheduler",
+          e
+        )
+      ) {
+        return;
+      }
       const checklistModal = document.getElementById("checklistModal");
       if (checklistModal?.open) {
         openLightingScheduleFromWorkroom();
@@ -15955,7 +16285,7 @@ function initEventListeners() {
     lightingScheduleBtn.addEventListener("keydown", (e) => {
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
-        openLightingScheduleHandler();
+        openLightingScheduleHandler(e);
       }
     });
   }
@@ -16082,7 +16412,16 @@ function initEventListeners() {
 
   const title24ComplianceBtn = document.getElementById("toolTitle24Compliance");
   if (title24ComplianceBtn) {
-    const openTitle24ComplianceHandler = async () => {
+    const openTitle24ComplianceHandler = async (e) => {
+      if (
+        !guardUnderConstructionToolAccess(
+          title24ComplianceBtn,
+          "Title 24 Compliance",
+          e
+        )
+      ) {
+        return;
+      }
       const checklistModal = document.getElementById("checklistModal");
       if (checklistModal?.open) {
         await openTitle24ComplianceFromWorkroom();
@@ -16090,13 +16429,13 @@ function initEventListeners() {
         await openTitle24Compliance();
       }
     };
-    title24ComplianceBtn.addEventListener("click", () => {
-      openTitle24ComplianceHandler();
+    title24ComplianceBtn.addEventListener("click", (e) => {
+      openTitle24ComplianceHandler(e);
     });
     title24ComplianceBtn.addEventListener("keydown", (e) => {
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
-        openTitle24ComplianceHandler();
+        openTitle24ComplianceHandler(e);
       }
     });
   }
@@ -16483,6 +16822,18 @@ function initEventListeners() {
       };
     });
 
+  const underConstructionToolsCheckbox = document.getElementById(
+    "settings_enableUnderConstructionTools"
+  );
+  if (underConstructionToolsCheckbox) {
+    underConstructionToolsCheckbox.onchange = (e) => {
+      userSettings.enableUnderConstructionTools = e.target.checked;
+      syncUnderConstructionToolsInputs();
+      syncUnderConstructionToolsAvailability();
+      debouncedSaveUserSettings();
+    };
+  }
+
   const cleanOptionBindings = [
     ["settings_clean_stripXrefs", "stripXrefs"],
     ["settings_clean_setByLayer", "setByLayer"],
@@ -16665,6 +17016,7 @@ async function init() {
     initProjectsBackToTop();
     updateStickyOffsets();
     refreshAppUpdateStatus();
+    await loadGoogleAuthState({ silent: true });
     await loadUserSettings();
     initThemeFromPreferences();
 

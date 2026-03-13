@@ -12,11 +12,15 @@ import logging
 import tempfile
 import time
 import sqlite3
+import http.server
+import html
 from pathlib import Path
 from copy import copy
 from dotenv import load_dotenv
 import datetime
 import threading
+import secrets
+import hashlib
 import requests  # Added for GitHub API calls
 import zipfile   # Added for extracting bundles
 import math
@@ -26,7 +30,7 @@ import base64
 from typing import List
 import importlib
 import uuid
-from urllib.parse import urlparse, unquote
+from urllib.parse import parse_qs, urlencode, urlparse, unquote
 
 # Work around NumPy 2.x removing scalar aliases used by openpyxl.
 _NUMPY_ALIAS_MAP = {
@@ -145,6 +149,60 @@ def load_app_version():
 
 APP_VERSION = load_app_version()
 BUNDLE_RELEASE_TAG = f"v{APP_VERSION}"
+GOOGLE_OAUTH_CLIENT_ID_ENV = "GOOGLE_OAUTH_CLIENT_ID"
+GOOGLE_OAUTH_AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
+GOOGLE_OAUTH_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
+GOOGLE_OAUTH_REVOKE_ENDPOINT = "https://oauth2.googleapis.com/revoke"
+GOOGLE_OAUTH_USERINFO_ENDPOINT = "https://openidconnect.googleapis.com/v1/userinfo"
+GOOGLE_OAUTH_SCOPES = ["openid", "email", "profile"]
+GOOGLE_OAUTH_CALLBACK_PATH = "/"
+GOOGLE_OAUTH_TIMEOUT_SECONDS = 180
+
+
+def build_default_user_settings():
+    return {
+        'userName': '',
+        'discipline': ['Electrical'],
+        'apiKey': '',
+        'autocadPath': '',
+        'showSetupHelp': True,
+        'cleanDwgOptions': {
+            'stripXrefs': True,
+            'setByLayer': True,
+            'purge': True,
+            'audit': True,
+            'hatchColor': True
+        },
+        'publishDwgOptions': {
+            'autoDetectPaperSize': True,
+            'shrinkPercent': 100
+        },
+        'freezeLayerOptions': {
+            'scanAllLayers': True
+        },
+        'thawLayerOptions': {
+            'scanAllLayers': True
+        },
+        'workroomAutoSelectCadFiles': True,
+        'enableUnderConstructionTools': False,
+        'googleAuth': None,
+    }
+
+
+def utc_now_iso():
+    return datetime.datetime.now(datetime.timezone.utc).replace(
+        microsecond=0
+    ).isoformat().replace("+00:00", "Z")
+
+
+def parse_utc_iso(value):
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except Exception:
+        return None
 
 
 def _normalize_version(raw):
@@ -2028,31 +2086,7 @@ class Api:
             with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except (FileNotFoundError, json.JSONDecodeError):
-            return {
-                'userName': '',
-                'discipline': ['Electrical'],
-                'apiKey': '',
-                'autocadPath': '',
-                'showSetupHelp': True,
-                'cleanDwgOptions': {
-                    'stripXrefs': True,
-                    'setByLayer': True,
-                    'purge': True,
-                    'audit': True,
-                    'hatchColor': True
-                },
-                'publishDwgOptions': {
-                    'autoDetectPaperSize': True,
-                    'shrinkPercent': 100
-                },
-                'freezeLayerOptions': {
-                    'scanAllLayers': True
-                },
-                'thawLayerOptions': {
-                    'scanAllLayers': True
-                },
-                'workroomAutoSelectCadFiles': True
-            }
+            return build_default_user_settings()
 
     def save_user_settings(self, data):
         """Saves user settings to settings.json."""
@@ -2062,6 +2096,443 @@ class Api:
             return {'status': 'success'}
         except Exception as e:
             logging.error(f"Error saving user settings: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def _get_google_oauth_client_id(self):
+        return (os.getenv(GOOGLE_OAUTH_CLIENT_ID_ENV) or "").strip()
+
+    def _base64url_encode(self, raw_bytes):
+        return base64.urlsafe_b64encode(raw_bytes).rstrip(b"=").decode("ascii")
+
+    def _generate_google_pkce_pair(self):
+        verifier = secrets.token_urlsafe(64)
+        challenge = self._base64url_encode(
+            hashlib.sha256(verifier.encode("ascii")).digest()
+        )
+        return verifier, challenge
+
+    def _extract_google_error_message(self, response):
+        try:
+            payload = response.json() or {}
+        except Exception:
+            payload = {}
+        message = str(
+            payload.get("error_description")
+            or payload.get("error")
+            or response.text
+            or "Google sign-in failed."
+        ).strip()
+        return message
+
+    def _build_google_auth_record(self, token_payload, profile_payload, existing_auth=None):
+        existing_auth = existing_auth if isinstance(existing_auth, dict) else {}
+        issued_at = datetime.datetime.now(datetime.timezone.utc)
+        expires_in = 0
+        try:
+            expires_in = int(token_payload.get("expires_in") or 0)
+        except Exception:
+            expires_in = 0
+        expires_at = (
+            issued_at + datetime.timedelta(seconds=max(expires_in, 0))
+        ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+        refresh_token = str(token_payload.get("refresh_token") or "").strip()
+        if not refresh_token:
+            refresh_token = str(existing_auth.get("refreshToken") or "").strip()
+
+        return {
+            "provider": "google",
+            "subject": str(profile_payload.get("sub") or existing_auth.get("subject") or "").strip(),
+            "email": str(profile_payload.get("email") or existing_auth.get("email") or "").strip(),
+            "displayName": str(profile_payload.get("name") or existing_auth.get("displayName") or "").strip(),
+            "avatarUrl": str(profile_payload.get("picture") or existing_auth.get("avatarUrl") or "").strip(),
+            "signedInAt": str(existing_auth.get("signedInAt") or utc_now_iso()),
+            "tokenIssuedAt": utc_now_iso(),
+            "expiresAt": expires_at,
+            "accessToken": str(token_payload.get("access_token") or "").strip(),
+            "refreshToken": refresh_token,
+            "tokenType": str(token_payload.get("token_type") or "Bearer").strip() or "Bearer",
+            "scope": str(token_payload.get("scope") or " ".join(GOOGLE_OAUTH_SCOPES)).strip(),
+        }
+
+    def _sanitize_google_auth_record(self, auth_record):
+        if not isinstance(auth_record, dict):
+            return {
+                "signedIn": False,
+                "provider": "google",
+                "email": "",
+                "displayName": "",
+                "avatarUrl": "",
+                "signedInAt": "",
+                "expiresAt": "",
+                "hasRefreshToken": False,
+            }
+        return {
+            "signedIn": True,
+            "provider": str(auth_record.get("provider") or "google").strip() or "google",
+            "email": str(auth_record.get("email") or "").strip(),
+            "displayName": str(auth_record.get("displayName") or "").strip(),
+            "avatarUrl": str(auth_record.get("avatarUrl") or "").strip(),
+            "signedInAt": str(auth_record.get("signedInAt") or "").strip(),
+            "expiresAt": str(auth_record.get("expiresAt") or "").strip(),
+            "hasRefreshToken": bool(str(auth_record.get("refreshToken") or "").strip()),
+        }
+
+    def _load_google_auth_record(self):
+        settings = self.get_user_settings()
+        auth_record = settings.get("googleAuth")
+        return auth_record if isinstance(auth_record, dict) else None
+
+    def _persist_google_auth_record(self, auth_record):
+        settings = self.get_user_settings()
+        settings["googleAuth"] = auth_record if isinstance(auth_record, dict) and auth_record else None
+        result = self.save_user_settings(settings)
+        if result.get("status") != "success":
+            raise RuntimeError(result.get("message") or "Failed to save Google sign-in state.")
+        return settings
+
+    def _build_google_oauth_status_html(self, title, body, accent="#2563eb"):
+        safe_title = html.escape(str(title or "").strip() or "Google Sign-In")
+        safe_body = html.escape(str(body or "").strip() or "Return to the app.")
+        return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{safe_title}</title>
+  <style>
+    body {{
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: #0f172a;
+      color: #e2e8f0;
+      font-family: Inter, Segoe UI, sans-serif;
+    }}
+    .card {{
+      width: min(440px, 100%);
+      border-radius: 20px;
+      padding: 28px;
+      background: rgba(15, 23, 42, 0.92);
+      border: 1px solid rgba(148, 163, 184, 0.22);
+      box-shadow: 0 24px 60px rgba(2, 6, 23, 0.45);
+    }}
+    h1 {{
+      margin: 0 0 12px;
+      font-size: 1.45rem;
+      color: {accent};
+    }}
+    p {{
+      margin: 0;
+      line-height: 1.6;
+      color: #cbd5e1;
+    }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>{safe_title}</h1>
+    <p>{safe_body}</p>
+  </div>
+</body>
+</html>"""
+
+    def _start_google_oauth_callback_server(self):
+        class GoogleOAuthCallbackServer(http.server.ThreadingHTTPServer):
+            allow_reuse_address = True
+
+        class GoogleOAuthCallbackHandler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, fmt, *args):
+                return
+
+            def do_GET(self):
+                parsed = urlparse(self.path)
+                if parsed.path != GOOGLE_OAUTH_CALLBACK_PATH:
+                    self.send_response(404)
+                    self.send_header("Content-Type", "text/plain; charset=utf-8")
+                    self.end_headers()
+                    self.wfile.write(b"Not found.")
+                    return
+
+                params = parse_qs(parsed.query or "", keep_blank_values=True)
+                self.server.oauth_result = {
+                    "code": (params.get("code") or [""])[0],
+                    "state": (params.get("state") or [""])[0],
+                    "error": (params.get("error") or [""])[0],
+                    "error_description": (params.get("error_description") or [""])[0],
+                }
+
+                error_code = str(self.server.oauth_result.get("error") or "").strip().lower()
+                if error_code:
+                    title = "Google Sign-In Cancelled" if error_code == "access_denied" else "Google Sign-In Failed"
+                    body = (
+                        "You can close this window and return to the app."
+                        if error_code == "access_denied"
+                        else "There was a problem completing Google sign-in. Return to the app for details."
+                    )
+                    page = self.server.owner._build_google_oauth_status_html(
+                        title,
+                        body,
+                        "#f59e0b" if error_code == "access_denied" else "#ef4444",
+                    )
+                else:
+                    page = self.server.owner._build_google_oauth_status_html(
+                        "Google Sign-In Complete",
+                        "Return to the app. Your sign-in will finish automatically.",
+                    )
+
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(page.encode("utf-8"))
+                self.server.oauth_event.set()
+                threading.Thread(target=self.server.shutdown, daemon=True).start()
+
+        server = GoogleOAuthCallbackServer(("127.0.0.1", 0), GoogleOAuthCallbackHandler)
+        server.owner = self
+        server.oauth_event = threading.Event()
+        server.oauth_result = {}
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+        return server
+
+    def _exchange_google_auth_code(self, client_id, code, code_verifier, redirect_uri):
+        response = requests.post(
+            GOOGLE_OAUTH_TOKEN_ENDPOINT,
+            data={
+                "client_id": client_id,
+                "code": code,
+                "code_verifier": code_verifier,
+                "grant_type": "authorization_code",
+                "redirect_uri": redirect_uri,
+            },
+            timeout=20,
+        )
+        if response.status_code != 200:
+            raise RuntimeError(self._extract_google_error_message(response))
+        payload = response.json() or {}
+        if not str(payload.get("access_token") or "").strip():
+            raise RuntimeError("Google sign-in completed without an access token.")
+        return payload
+
+    def _refresh_google_auth_record_if_needed(self, auth_record):
+        if not isinstance(auth_record, dict):
+            return None
+
+        refresh_token = str(auth_record.get("refreshToken") or "").strip()
+        client_id = self._get_google_oauth_client_id()
+        expires_at = parse_utc_iso(auth_record.get("expiresAt"))
+        if not refresh_token or not client_id or not expires_at:
+            return auth_record
+
+        now = datetime.datetime.now(datetime.timezone.utc)
+        if expires_at > now + datetime.timedelta(minutes=5):
+            return auth_record
+
+        try:
+            response = requests.post(
+                GOOGLE_OAUTH_TOKEN_ENDPOINT,
+                data={
+                    "client_id": client_id,
+                    "grant_type": "refresh_token",
+                    "refresh_token": refresh_token,
+                },
+                timeout=20,
+            )
+            if response.status_code != 200:
+                message = self._extract_google_error_message(response)
+                try:
+                    payload = response.json() or {}
+                except Exception:
+                    payload = {}
+                if str(payload.get("error") or "").strip().lower() == "invalid_grant":
+                    self._persist_google_auth_record(None)
+                    return None
+                logging.warning(f"Could not refresh Google token: {message}")
+                return auth_record
+
+            token_payload = response.json() or {}
+            refreshed_auth = self._build_google_auth_record(
+                token_payload,
+                {
+                    "sub": auth_record.get("subject"),
+                    "email": auth_record.get("email"),
+                    "name": auth_record.get("displayName"),
+                    "picture": auth_record.get("avatarUrl"),
+                },
+                existing_auth=auth_record,
+            )
+            refreshed_auth["signedInAt"] = str(auth_record.get("signedInAt") or utc_now_iso())
+            self._persist_google_auth_record(refreshed_auth)
+            return refreshed_auth
+        except Exception as exc:
+            logging.warning(f"Could not refresh Google auth state: {exc}")
+            return auth_record
+
+    def _fetch_google_user_profile(self, access_token):
+        response = requests.get(
+            GOOGLE_OAUTH_USERINFO_ENDPOINT,
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=20,
+        )
+        if response.status_code != 200:
+            raise RuntimeError(self._extract_google_error_message(response))
+        payload = response.json() or {}
+        if not str(payload.get("email") or "").strip():
+            raise RuntimeError("Google sign-in completed without an email address.")
+        return payload
+
+    def get_google_auth_state(self):
+        try:
+            auth_record = self._refresh_google_auth_record_if_needed(
+                self._load_google_auth_record()
+            )
+            return {
+                "status": "success",
+                "auth": self._sanitize_google_auth_record(auth_record),
+            }
+        except Exception as e:
+            logging.error(f"Error loading Google auth state: {e}")
+            return {
+                "status": "error",
+                "message": str(e),
+                "auth": self._sanitize_google_auth_record(None),
+            }
+
+    def sign_in_with_google(self):
+        client_id = self._get_google_oauth_client_id()
+        if not client_id:
+            return {
+                "status": "error",
+                "message": (
+                    "Google sign-in is not configured. Add "
+                    f"{GOOGLE_OAUTH_CLIENT_ID_ENV} to .env and restart the app."
+                ),
+            }
+
+        existing_auth = self._load_google_auth_record()
+        callback_server = self._start_google_oauth_callback_server()
+        callback_port = callback_server.server_address[1]
+        redirect_uri = f"http://127.0.0.1:{callback_port}{GOOGLE_OAUTH_CALLBACK_PATH}"
+        code_verifier, code_challenge = self._generate_google_pkce_pair()
+        state = secrets.token_urlsafe(32)
+        auth_url = (
+            f"{GOOGLE_OAUTH_AUTH_ENDPOINT}?"
+            + urlencode(
+                {
+                    "client_id": client_id,
+                    "redirect_uri": redirect_uri,
+                    "response_type": "code",
+                    "scope": " ".join(GOOGLE_OAUTH_SCOPES),
+                    "state": state,
+                    "access_type": "offline",
+                    "prompt": "consent select_account",
+                    "code_challenge": code_challenge,
+                    "code_challenge_method": "S256",
+                }
+            )
+        )
+
+        try:
+            open_result = self.open_url(auth_url)
+            if open_result.get("status") != "success":
+                raise RuntimeError(open_result.get("message") or "Could not open the browser for Google sign-in.")
+
+            if not callback_server.oauth_event.wait(GOOGLE_OAUTH_TIMEOUT_SECONDS):
+                return {
+                    "status": "error",
+                    "message": "Google sign-in timed out. Please try again.",
+                }
+
+            result = callback_server.oauth_result or {}
+            error_code = str(result.get("error") or "").strip().lower()
+            if error_code:
+                if error_code == "access_denied":
+                    return {
+                        "status": "cancelled",
+                        "message": "Google sign-in was cancelled.",
+                    }
+                error_detail = str(result.get("error_description") or result.get("error") or "").strip()
+                return {
+                    "status": "error",
+                    "message": error_detail or "Google sign-in did not complete.",
+                }
+
+            if str(result.get("state") or "").strip() != state:
+                return {
+                    "status": "error",
+                    "message": "Google sign-in returned an invalid state token.",
+                }
+
+            code = str(result.get("code") or "").strip()
+            if not code:
+                return {
+                    "status": "error",
+                    "message": "Google sign-in finished without an authorization code.",
+                }
+
+            token_payload = self._exchange_google_auth_code(
+                client_id,
+                code,
+                code_verifier,
+                redirect_uri,
+            )
+            profile_payload = self._fetch_google_user_profile(
+                str(token_payload.get("access_token") or "").strip()
+            )
+            auth_record = self._build_google_auth_record(
+                token_payload,
+                profile_payload,
+                existing_auth=existing_auth,
+            )
+            self._persist_google_auth_record(auth_record)
+            return {
+                "status": "success",
+                "auth": self._sanitize_google_auth_record(auth_record),
+            }
+        except Exception as e:
+            logging.error(f"Error signing in with Google: {e}")
+            return {'status': 'error', 'message': str(e)}
+        finally:
+            try:
+                callback_server.shutdown()
+            except Exception:
+                pass
+            try:
+                callback_server.server_close()
+            except Exception:
+                pass
+
+    def sign_out_google(self):
+        try:
+            auth_record = self._load_google_auth_record()
+            revoke_token = ""
+            if isinstance(auth_record, dict):
+                revoke_token = str(
+                    auth_record.get("refreshToken") or auth_record.get("accessToken") or ""
+                ).strip()
+
+            if revoke_token:
+                try:
+                    requests.post(
+                        GOOGLE_OAUTH_REVOKE_ENDPOINT,
+                        data={"token": revoke_token},
+                        headers={"Content-Type": "application/x-www-form-urlencoded"},
+                        timeout=10,
+                    )
+                except Exception as revoke_exc:
+                    logging.warning(f"Google token revoke failed during sign-out: {revoke_exc}")
+
+            self._persist_google_auth_record(None)
+            return {
+                "status": "success",
+                "auth": self._sanitize_google_auth_record(None),
+            }
+        except Exception as e:
+            logging.error(f"Error signing out of Google: {e}")
             return {'status': 'error', 'message': str(e)}
 
     def get_installed_autocad_versions(self):

@@ -4132,7 +4132,7 @@ Return ONLY the JSON object.
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             unique = uuid.uuid4().hex[:8]
             output_path = os.path.join(
-                temp_dir, f"pinned_deliverables_{timestamp}_{unique}.txt")
+                temp_dir, f"deliverables_export_{timestamp}_{unique}.txt")
             with open(output_path, 'w', encoding='utf-8', newline='') as f:
                 f.write(content)
 

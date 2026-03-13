@@ -726,13 +726,37 @@ main {
   white-space: nowrap;
 }
 
-.projects-filter-controls .due-filter-group,
-.projects-filter-controls .status-filter-group {
-  gap: 0.4rem;
+.projects-filter-select {
+  width: auto;
+  max-width: 100%;
+  min-width: 11rem;
+  padding: 0.35rem 2.2rem 0.35rem 0.8rem;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 500;
+  background:
+    linear-gradient(45deg, transparent 50%, var(--text-secondary) 50%),
+    linear-gradient(135deg, var(--text-secondary) 50%, transparent 50%),
+    var(--input-bg);
+  background-position:
+    calc(100% - 16px) calc(50% - 2px),
+    calc(100% - 10px) calc(50% - 2px),
+    0 0;
+  background-size:
+    6px 6px,
+    6px 6px,
+    100% 100%;
+  background-repeat: no-repeat;
+  appearance: none;
+  cursor: pointer;
 }
 
-.projects-filter-controls .filter-chip {
-  padding: 3px 10px;
+.projects-filter-select:hover {
+  border-color: var(--accent);
+}
+
+.projects-filter-select:focus {
+  box-shadow: 0 0 0 3px var(--accent-dim);
 }
 
 #projects-panel .projects-table th {
@@ -2002,6 +2026,12 @@ select:focus {
   border-top: 1px solid var(--glass-border);
   margin-top: 1.5rem;
   padding-top: 1.5rem;
+}
+
+.commands-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
 }
 
 .tools-section-title {
@@ -3326,6 +3356,10 @@ dialog::backdrop {
   backdrop-filter: blur(4px);
 }
 
+.deliverable-notepad-dialog {
+  width: min(1100px, 96vw);
+}
+
 .modal-header {
   background: var(--bg-tertiary);
   padding: 1rem 1.5rem;
@@ -3345,6 +3379,183 @@ dialog::backdrop {
   display: grid;
   grid-template-columns: repeat(12, 1fr);
   gap: 1rem;
+}
+
+.deliverable-notepad-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 1rem;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.deliverable-notepad-panel {
+  min-height: 460px;
+  min-width: 0;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  background: rgba(0, 0, 0, 0.14);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+[data-theme="light"] .deliverable-notepad-panel {
+  background: var(--bg-secondary);
+}
+
+.deliverable-notepad-panel-header {
+  padding: 0.9rem 1rem;
+  border-bottom: 1px solid var(--glass-border);
+  background: rgba(255, 255, 255, 0.02);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+[data-theme="light"] .deliverable-notepad-panel-header {
+  background: rgba(15, 23, 42, 0.04);
+}
+
+.deliverable-notepad-panel-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.deliverable-notepad-list {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 0.9rem;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.75rem;
+}
+
+.deliverable-notepad-item {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 0.75rem;
+  padding: 0.85rem 0.95rem;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.03);
+  cursor: pointer;
+  overflow: hidden;
+  transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease;
+}
+
+.deliverable-notepad-item:hover {
+  border-color: var(--accent);
+  background: rgba(34, 197, 94, 0.08);
+  transform: translateY(-1px);
+}
+
+[data-theme="light"] .deliverable-notepad-item {
+  background: rgba(15, 23, 42, 0.02);
+}
+
+[data-theme="light"] .deliverable-notepad-item:hover {
+  background: rgba(34, 197, 94, 0.1);
+}
+
+.deliverable-notepad-item input[type="checkbox"] {
+  appearance: auto;
+  -webkit-appearance: checkbox;
+  width: 16px;
+  min-width: 16px;
+  max-width: 16px;
+  height: 16px;
+  padding: 0;
+  margin: 0.2rem 0 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  box-shadow: none;
+  flex: 0 0 16px;
+  accent-color: var(--accent);
+}
+
+.deliverable-notepad-item input[type="checkbox"]:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  box-shadow: none;
+}
+
+.deliverable-notepad-item-content {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.deliverable-notepad-item-title {
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.deliverable-notepad-item-subtitle,
+.deliverable-notepad-item-meta {
+  font-size: 0.8rem;
+  color: var(--muted);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+.deliverable-notepad-transfer {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.75rem;
+}
+
+.deliverable-notepad-transfer .btn {
+  min-width: 170px;
+}
+
+.deliverable-notepad-empty {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  padding: 2rem 1rem;
+  color: var(--muted);
+  border: 1px dashed var(--glass-border);
+  border-radius: var(--radius);
+}
+
+@media (max-width: 900px) {
+  .deliverable-notepad-dialog {
+    width: min(96vw, 720px);
+  }
+
+  .deliverable-notepad-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .deliverable-notepad-panel {
+    min-height: 260px;
+  }
+
+  .deliverable-notepad-transfer {
+    flex-direction: row;
+  }
+
+  .deliverable-notepad-transfer .btn {
+    flex: 1;
+    min-width: 0;
+  }
 }
 
 /* Tool Settings Modals */
@@ -3517,28 +3728,210 @@ dialog::backdrop {
   min-height: 600px;
 }
 
+#texts-panel .full-height {
+  min-height: clamp(700px, calc(100vh - var(--header-height) - 3.5rem), 920px);
+}
+
+/* Texts Panel */
+.texts-toolbar {
+  align-items: flex-start;
+}
+
+.texts-toolbar-main {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 1rem;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.texts-toolbar-main .nav-search.expanded-search {
+  flex: 0 1 320px;
+  max-width: 100%;
+}
+
+.texts-view-tabs {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.24rem;
+  padding: 0.24rem;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  min-width: min(280px, 100%);
+}
+
+.texts-view-tab {
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 1.2;
+  text-transform: uppercase;
+  min-height: 34px;
+  padding: 0.5rem 0.9rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.texts-view-tab:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.texts-view-tab.active {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.texts-content {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.texts-view-pane {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+
+.texts-view-pane[hidden] {
+  display: none;
+}
+
+.texts-view-pane>* {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+
 /* Notes Specifics */
+.notes-layout {
+  display: flex;
+  gap: 2rem;
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.notes-sidebar {
+  flex: 0 0 240px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
 .notes-controls {
-  border-bottom: 1px solid var(--glass-border);
-  padding-bottom: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-height: 0;
+}
+
+.notes-user-tabs-row {
+  min-height: 0;
+}
+
+.notes-nav-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.notes-nav-list .inner-tab-btn {
+  width: 100%;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius);
+  background: transparent;
+  border: 1px solid transparent;
+  font-size: 13px;
+}
+
+.notes-nav-list .inner-tab-btn:hover {
+  background: var(--surface);
+  border-color: var(--glass-border);
+}
+
+.notes-nav-list .inner-tab-btn.active {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: none;
+}
+
+.notes-nav-list .add-tab-btn {
+  width: 100%;
+  height: auto;
+  border-radius: var(--radius);
+  padding: 0.75rem;
+  margin-top: 0.5rem;
+  font-size: 13px;
+}
+
+.notes-editor {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  background: var(--surface);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  padding: 1.5rem;
+  box-shadow: var(--shadow-sm);
   display: flex;
   flex-direction: column;
   gap: 1rem;
 }
 
+.notes-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.inner-tab-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
 .notes-textarea {
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
   background: transparent;
   border: none;
-  padding: 1rem 0;
+  padding: 0;
   font-size: 15px;
   line-height: 1.6;
   color: var(--text);
-  min-height: 400px;
+  resize: none;
 }
 
 .notes-textarea:focus {
   box-shadow: none;
   background: transparent;
+}
+
+.notes-search-results {
+  max-height: min(320px, 34vh);
+  overflow-y: auto;
+}
+
+.notes-search-results:not(:empty) {
+  border-top: 1px dashed var(--glass-border);
+  padding-top: 0.75rem;
 }
 
 .note-result-item {
@@ -3576,6 +3969,49 @@ dialog::backdrop {
 .note-action-icon.copy-icon {
   right: 40px;
   /* Position copy icon to the left of edit */
+}
+
+@media (max-width: 900px) {
+  #texts-panel .full-height {
+    min-height: clamp(620px, calc(100vh - var(--header-height) - 2.5rem), 780px);
+  }
+
+  .texts-toolbar-main {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .texts-view-tabs {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .notes-layout {
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .notes-sidebar {
+    flex: 0 0 auto;
+  }
+
+  .notes-nav-list {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .notes-nav-list .inner-tab-btn,
+  .notes-nav-list .add-tab-btn {
+    width: auto;
+  }
+
+  .notes-nav-list .add-tab-btn {
+    margin-top: 0;
+  }
+
+  .notes-editor {
+    min-height: 420px;
+  }
 }
 
 /* Release Cards (Plugins) - Layout Fixes */
@@ -3731,7 +4167,7 @@ dialog::backdrop {
   gap: 0.5rem;
 }
 
-/* Specific fix for Plugins page loading spinner alignment */
+/* Keep plugin loading states aligned inside the merged tools section */
 .commands-section .spinner {
   justify-content: flex-start;
 }
@@ -7696,12 +8132,16 @@ input:checked+.slider:before {
 }
 
 .checklists-controls {
-  margin-bottom: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-height: 0;
 }
 
 .checklist-editor {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   background: var(--surface);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-lg);
@@ -7712,15 +8152,15 @@ input:checked+.slider:before {
 .checklists-layout {
   display: flex;
   gap: 2rem;
-  align-items: flex-start;
-  margin-top: 1rem;
-  min-height: 60vh;
+  align-items: stretch;
+  min-height: 0;
 }
 
 .checklists-sidebar {
   flex: 0 0 240px;
   display: flex;
   flex-direction: column;
+  min-height: 0;
 }
 
 .checklists-nav-list {
@@ -7733,7 +8173,7 @@ input:checked+.slider:before {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  margin-top: 0.75rem;
+  align-items: flex-start;
 }
 
 .checklists-nav-list .inner-tab-btn {
@@ -7758,42 +8198,154 @@ input:checked+.slider:before {
   box-shadow: none;
 }
 
-.checklists-nav-list .add-tab-btn,
-.checklists-sidebar-actions .add-tab-btn {
+@media (max-width: 900px) {
+  .checklists-layout {
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .checklists-sidebar {
+    flex: 0 0 auto;
+  }
+
+  .checklists-nav-list {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .checklists-nav-list .inner-tab-btn {
+    width: auto;
+  }
+
+  .checklists-sidebar-actions {
+    align-items: flex-start;
+  }
+
+  .checklist-create-dropdown {
+    width: auto;
+  }
+
+  .checklist-create-trigger {
+    width: auto;
+    margin-top: 0;
+  }
+
+  .checklist-editor {
+    min-height: 420px;
+  }
+}
+
+.checklist-action-dropdown {
+  position: relative;
+}
+
+.checklist-action-dropdown.open {
+  z-index: 40;
+}
+
+.checklist-create-dropdown {
+  align-self: flex-start;
+  width: 100%;
+}
+
+.checklist-create-trigger {
   width: 100%;
   height: auto;
   border-radius: var(--radius);
   padding: 0.75rem;
   margin-top: 0.5rem;
   font-size: 13px;
+  box-shadow: none;
 }
 
-.checklist-template-select {
-  width: 100%;
+.checklist-create-trigger:hover,
+.checklist-create-trigger[aria-expanded="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--surface);
+}
+
+.checklist-action-menu {
+  display: none;
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  min-width: 220px;
+  max-width: min(280px, calc(100vw - 2rem));
+  padding: 0.35rem;
   border: 1px solid var(--glass-border);
   border-radius: var(--radius);
-  background: var(--surface);
+  background: var(--bg-secondary);
+  box-shadow: var(--shadow-lg);
+  z-index: 50;
+}
+
+.checklist-action-menu.open {
+  display: block;
+}
+
+.checklist-create-dropdown .checklist-action-menu {
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.checklist-settings-dropdown .checklist-action-menu {
+  right: 0;
+}
+
+.checklist-menu-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 0.65rem 0.75rem;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
   color: var(--text);
-  padding: 0.6rem 0.7rem;
-  font-size: 12px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  text-align: left;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 
-.checklist-template-select:focus {
-  outline: none;
-  border-color: var(--accent);
+.checklist-menu-item:hover {
+  background: var(--bg-hover);
+  color: var(--text);
 }
 
-.checklist-template-select:disabled {
-  opacity: 0.7;
-  cursor: not-allowed;
+.checklist-menu-item.danger {
+  color: var(--danger);
 }
 
-.checklist-template-empty {
+.checklist-menu-item.danger:hover {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.checklist-menu-divider {
+  height: 1px;
+  margin: 0.35rem 0;
+  background: var(--glass-border);
+}
+
+.checklist-menu-label {
+  margin: 0.1rem 0 0.35rem;
+  padding: 0 0.75rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.checklist-menu-empty {
   margin: 0;
+  padding: 0.25rem 0.75rem 0.5rem;
+  font-size: 0.78rem;
   line-height: 1.35;
+  color: var(--muted);
 }
 
-.checklist-header {
+.checklist-editor-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -7826,6 +8378,13 @@ input:checked+.slider:before {
 .checklist-actions {
   display: flex;
   gap: 0.5rem;
+  position: relative;
+  justify-content: flex-end;
+  flex-shrink: 0;
+}
+
+.checklist-settings-dropdown[hidden] {
+  display: none !important;
 }
 
 .checklist-items {

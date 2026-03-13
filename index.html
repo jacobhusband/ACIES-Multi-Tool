@@ -43,10 +43,8 @@
         <div class="header-center">
             <nav class="main-nav">
                 <button class="main-tab-btn active" data-tab="projects">Projects</button>
-                <button class="main-tab-btn" data-tab="notes">Notes</button>
-                <button class="main-tab-btn" data-tab="checklists">Checklists</button>
+                <button class="main-tab-btn" data-tab="texts">Texts</button>
                 <button class="main-tab-btn" data-tab="tools">Tools</button>
-                <button class="main-tab-btn" data-tab="plugins">Plugins</button>
                 <button class="main-tab-btn" data-tab="timesheets">Timesheets</button>
             </nav>
         </div>
@@ -159,8 +157,8 @@
                         <button class="icon-btn" id="pinUrgentDeliverablesBtn" aria-label="Pin urgent deliverables"
                             title="Pin all overdue and due-today deliverables"></button>
                         <button class="icon-btn" id="openPinnedDeliverablesNotepadBtn"
-                            aria-label="Open pinned deliverables in Notepad"
-                            title="Open pinned deliverables in Notepad"></button>
+                            aria-label="Export deliverables to Notepad"
+                            title="Export deliverables to Notepad"></button>
                         <button class="icon-btn" id="projectsHelpBtn" aria-label="Projects help" title="Projects help">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -174,25 +172,27 @@
                 <div class="filter-controls projects-filter-controls" id="projectsFilterControls">
                     <div class="projects-filter-row">
                         <div class="projects-filter-group">
-                            <div class="filter-label">Timeframe</div>
-                            <div class="due-filter-group" id="dueFilterGroup">
-                                <button class="filter-chip active" data-due-filter="all">All</button>
-                                <button class="filter-chip" data-due-filter="past">Past Weeks</button>
-                                <button class="filter-chip" data-due-filter="soon">This Week</button>
-                                <button class="filter-chip" data-due-filter="future">Upcoming Weeks</button>
-                            </div>
+                            <label class="filter-label" for="timeframeFilterSelect">Timeframe</label>
+                            <select id="timeframeFilterSelect" class="projects-filter-select"
+                                aria-label="Filter projects by timeframe">
+                                <option value="all" selected>All</option>
+                                <option value="past">Past Weeks</option>
+                                <option value="soon">This Week</option>
+                                <option value="future">Upcoming Weeks</option>
+                            </select>
                         </div>
                         <div class="projects-filter-group">
-                            <div class="filter-label">Status</div>
-                            <div class="status-filter-group" id="statusFilterGroup">
-                                <button class="filter-chip active" data-filter="all">All</button>
-                                <button class="filter-chip" data-filter="incomplete">Incomplete</button>
-                                <button class="filter-chip" data-filter="Waiting">Waiting</button>
-                                <button class="filter-chip" data-filter="Working">Working</button>
-                                <button class="filter-chip" data-filter="Pending Review">Pending Review</button>
-                                <button class="filter-chip" data-filter="Complete">Complete</button>
-                                <button class="filter-chip" data-filter="Delivered">Delivered</button>
-                            </div>
+                            <label class="filter-label" for="statusFilterSelect">Status</label>
+                            <select id="statusFilterSelect" class="projects-filter-select"
+                                aria-label="Filter projects by status">
+                                <option value="all" selected>All</option>
+                                <option value="incomplete">Incomplete</option>
+                                <option value="Waiting">Waiting</option>
+                                <option value="Working">Working</option>
+                                <option value="Pending Review">Pending Review</option>
+                                <option value="Complete">Complete</option>
+                                <option value="Delivered">Delivered</option>
+                            </select>
                         </div>
                     </div>
                 </div>
@@ -234,20 +234,30 @@
                 </div>
             </section>
         </div>
-        <!-- Tab Panel for Notes -->
-        <div id="notes-panel" class="tab-panel" hidden>
+        <!-- Tab Panel for Texts -->
+        <div id="texts-panel" class="tab-panel" hidden>
             <div class="panel stack full-height">
-                <div class="panel-toolbar">
-                    <div class="nav-search expanded-search">
-                        <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none"
-                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <circle cx="11" cy="11" r="8"></circle>
-                            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-                        </svg>
-                        <input id="notesSearch" type="search" placeholder="Search notes..." />
+                <div class="panel-toolbar texts-toolbar">
+                    <div class="texts-toolbar-main">
+                        <div class="texts-view-tabs" role="tablist" aria-label="Texts views">
+                            <button type="button" class="texts-view-tab active" data-texts-view-tab="notes" role="tab"
+                                aria-selected="true" aria-controls="textsNotesPane">Notes</button>
+                            <button type="button" class="texts-view-tab" data-texts-view-tab="checklists" role="tab"
+                                aria-selected="false" aria-controls="textsChecklistsPane"
+                                tabindex="-1">Checklists</button>
+                        </div>
+                        <div id="textsSearchWrap" class="nav-search expanded-search">
+                            <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                                stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                stroke-linejoin="round">
+                                <circle cx="11" cy="11" r="8"></circle>
+                                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                            </svg>
+                            <input id="notesSearch" type="search" placeholder="Search notes..." />
+                        </div>
                     </div>
                     <div class="toolbar-actions">
-                        <button class="icon-btn" id="notesHelpBtn" aria-label="Notes help" title="Notes help"><svg
+                        <button class="icon-btn" id="textsHelpBtn" aria-label="Notes help" title="Notes help"><svg
                                 width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                 <circle cx="12" cy="12" r="10"></circle>
@@ -256,62 +266,82 @@
                             </svg></button>
                     </div>
                 </div>
-                <div class="notes-controls">
-                    <h3 class="section-title">Custom Notes</h3>
-                    <div class="notes-user-tabs-row">
-                        <nav class="inner-tabs" id="notesTabsContainer"></nav>
-                        <!-- Add/Remove buttons moved inside inner-tabs via JS -->
-                    </div>
-                </div>
-                <div class="inner-tab-content">
-                    <textarea id="notesTextarea" class="notes-textarea"
-                        placeholder="Select a page to start writing notes..."></textarea>
-                </div>
-                <!-- Search Results Container -->
-                <div id="notesSearchResults" class="notes-search-results"></div>
-            </div>
-        </div>
-        <!-- Tab Panel for Checklists -->
-        <div id="checklists-panel" class="tab-panel" hidden>
-            <section class="panel stack">
-                <div class="panel-toolbar">
-                    <div class="toolbar-title">
-                        <h2 class="section-title">Checklists</h2>
-                    </div>
-                    <div class="toolbar-actions">
-                        <button class="icon-btn" id="checklistsHelpBtn" aria-label="Checklists help"
-                            title="Checklists help" <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
-                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <circle cx="12" cy="12" r="10"></circle>
-                            <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
-                            <line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
-                    </div>
-                </div>
-                <div class="checklists-layout">
-                    <div class="checklists-sidebar">
-                        <nav class="inner-tabs checklists-nav-list" id="checklistsTabsContainer"></nav>
-                        <div class="checklists-sidebar-actions" id="checklistsSidebarActions"></div>
-                    </div>
-                    <div class="checklist-editor">
-                        <div class="checklist-header">
-                            <input type="text" id="checklistName" class="checklist-name-input"
-                                placeholder="Checklist Name" />
-                            <div class="checklist-actions">
-                                <button class="btn ghost tiny" id="resetChecklistBtn"
-                                    title="Reset to default items">Reset</button>
-                                <button class="btn btn-danger ghost tiny" id="deleteChecklistBtn"
-                                    title="Delete this checklist">Delete</button>
+                <div class="texts-content">
+                    <section class="texts-view-pane" data-texts-view-pane="notes" id="textsNotesPane" role="tabpanel">
+                        <div class="notes-layout">
+                            <aside class="notes-sidebar">
+                                <div class="notes-controls">
+                                    <h3 class="section-title">Notes</h3>
+                                    <div class="notes-user-tabs-row">
+                                        <nav class="inner-tabs notes-nav-list" id="notesTabsContainer"></nav>
+                                        <!-- Add/Remove buttons moved inside inner-tabs via JS -->
+                                    </div>
+                                </div>
+                            </aside>
+                            <div class="notes-editor">
+                                <div class="notes-editor-header">
+                                    <h3 class="section-title" id="activeNoteTitle">Notes</h3>
+                                </div>
+                                <div class="inner-tab-content">
+                                    <textarea id="notesTextarea" class="notes-textarea"
+                                        placeholder="Select a page to start writing notes..."></textarea>
+                                </div>
+                                <div id="notesSearchResults" class="notes-search-results"></div>
                             </div>
                         </div>
-                        <div class="checklist-items" id="checklistItemsContainer">
-                            <!-- Checklist items rendered here -->
+                    </section>
+                    <section class="texts-view-pane" data-texts-view-pane="checklists" id="textsChecklistsPane"
+                        role="tabpanel" hidden>
+                        <div class="checklists-layout">
+                            <div class="checklists-sidebar">
+                                <div class="checklists-controls">
+                                    <h3 class="section-title">Checklists</h3>
+                                    <nav class="inner-tabs checklists-nav-list" id="checklistsTabsContainer"></nav>
+                                    <div class="checklists-sidebar-actions" id="checklistsSidebarActions"></div>
+                                </div>
+                            </div>
+                            <div class="checklist-editor">
+                                <div class="checklist-editor-header">
+                                    <input type="text" id="checklistName" class="checklist-name-input"
+                                        placeholder="Checklist Name" />
+                                    <div class="checklist-actions">
+                                        <div class="checklist-action-dropdown checklist-settings-dropdown"
+                                            id="checklistSettingsDropdown" hidden>
+                                            <button class="icon-btn" id="checklistSettingsBtn" type="button"
+                                                aria-label="Checklist options" aria-haspopup="menu"
+                                                aria-expanded="false" title="Checklist options">
+                                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                                                    stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                                    stroke-linejoin="round">
+                                                    <path
+                                                        d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+                                                    <circle cx="12" cy="12" r="3" />
+                                                </svg>
+                                            </button>
+                                            <div class="checklist-action-menu checklist-settings-menu"
+                                                id="checklistSettingsMenu" role="menu"
+                                                aria-label="Checklist options">
+                                                <button class="checklist-menu-item" id="resetChecklistBtn"
+                                                    type="button" role="menuitem" title="Reset to default items">Reset
+                                                    to template defaults</button>
+                                                <button class="checklist-menu-item danger" id="deleteChecklistBtn"
+                                                    type="button" role="menuitem" title="Delete this checklist">Delete
+                                                    checklist</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="checklist-items" id="checklistItemsContainer">
+                                    <!-- Checklist items rendered here -->
+                                </div>
+                                <div class="checklist-add-item">
+                                    <button class="btn btn-accent tiny" id="addChecklistItemBtn">+ Add Item</button>
+                                </div>
+                            </div>
                         </div>
-                        <div class="checklist-add-item">
-                            <button class="btn btn-accent tiny" id="addChecklistItemBtn">+ Add Item</button>
-                        </div>
-                    </div>
+                    </section>
                 </div>
-            </section>
+            </div>
         </div>
         <!-- Tab Panel for Tools -->
         <div id="tools-panel" class="tab-panel" hidden>
@@ -582,31 +612,27 @@
                             <div class="tool-card-status"></div>
                         </div>
                     </div>
-            </section>
-        </div>
-        <!-- Tab Panel for Plugins -->
-        <div id="plugins-panel" class="tab-panel" hidden>
-            <section class="panel stack">
-                <!-- Unified Commands Section -->
-                <div class="commands-section">
-                    <div class="commands-header">
-                        <div>
-                            <h3 class="section-title">AutoCAD Plugins</h3>
+                </div>
+
+                <div class="tools-section">
+                    <div class="commands-section">
+                        <div class="commands-header">
+                            <h4 class="tools-section-title">AutoCAD Plugins</h4>
+                            <div class="toolbar-actions">
+                                <button class="icon-btn" id="pluginsHelpBtn" aria-label="Plugins help"
+                                    title="Plugins help"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                                        stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                        stroke-linejoin="round">
+                                        <circle cx="12" cy="12" r="10"></circle>
+                                        <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+                                        <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                                    </svg></button>
+                            </div>
                         </div>
-                        <div class="toolbar-actions">
-                            <button class="icon-btn" id="pluginsHelpBtn" aria-label="Plugins help"
-                                title="Plugins help"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"
-                                    stroke="currentColor" stroke-width="2" stroke-linecap="round"
-                                    stroke-linejoin="round">
-                                    <circle cx="12" cy="12" r="10"></circle>
-                                    <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
-                                    <line x1="12" y1="17" x2="12.01" y2="17"></line>
-                                </svg></button>
+                        <div id="commands-container" class="tools-grid">
+                            <!-- Command cards will be dynamically inserted here -->
+                            <div class="spinner">Loading commands...</div>
                         </div>
-                    </div>
-                    <div id="commands-container" class="tools-grid">
-                        <!-- Command cards will be dynamically inserted here -->
-                        <div class="spinner">Loading commands...</div>
                     </div>
                 </div>
             </section>
@@ -802,6 +828,40 @@
                 <input id="expenseProjectSearch" type="search" placeholder="Search projects..." />
             </div>
             <div id="expenseProjectList" class="timesheet-project-list"></div>
+        </div>
+    </dialog>
+    <dialog id="deliverableNotepadDlg" class="deliverable-notepad-dialog">
+        <div class="modal-header">
+            <div>
+                <div class="title">Export Deliverables to Notepad</div>
+                <div class="muted tiny">Select deliverables to include in the export.</div>
+            </div>
+            <button class="btn ghost" type="button" onclick="closeDlg('deliverableNotepadDlg')">Cancel</button>
+        </div>
+        <div class="modal-body stack">
+            <div class="deliverable-notepad-layout">
+                <section class="deliverable-notepad-panel">
+                    <div class="deliverable-notepad-panel-header">
+                        <div class="deliverable-notepad-panel-title">All Deliverables</div>
+                        <div id="deliverableNotepadAvailableCount" class="muted tiny">0 deliverables</div>
+                    </div>
+                    <div id="deliverableNotepadAvailableList" class="deliverable-notepad-list" role="list"></div>
+                </section>
+                <div class="deliverable-notepad-transfer">
+                    <button class="btn" id="deliverableNotepadAddBtn" type="button">Add Selected &gt;</button>
+                    <button class="btn ghost" id="deliverableNotepadRemoveBtn" type="button">&lt; Remove Selected</button>
+                </div>
+                <section class="deliverable-notepad-panel">
+                    <div class="deliverable-notepad-panel-header">
+                        <div class="deliverable-notepad-panel-title">Notepad Export</div>
+                        <div id="deliverableNotepadSelectedCount" class="muted tiny">0 deliverables</div>
+                    </div>
+                    <div id="deliverableNotepadSelectedList" class="deliverable-notepad-list" role="list"></div>
+                </section>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-primary" id="deliverableNotepadExportBtn" type="button" disabled>Open in Notepad</button>
+            </div>
         </div>
     </dialog>
     <!-- Add Expense Entry Dialog -->

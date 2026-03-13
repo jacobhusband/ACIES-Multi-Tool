@@ -5009,6 +5009,7 @@ let userSettings = {
 };
 let hideNonPrimary = true;
 let activeNoteTab = null;
+let activeTextsView = "notes";
 let latestAppUpdate = null;
 let currentStatsTimespan = "1Y";
 let currentStatsAggregation = "month";
@@ -6061,7 +6062,10 @@ async function pinUrgentDeliverables() {
   );
 }
 
-function formatPinnedDeliverableField(value, fallback = "--") {
+let deliverableNotepadEntries = [];
+let deliverableNotepadSelectedEntryIds = [];
+
+function formatDeliverableExportField(value, fallback = "--") {
   const normalized = String(value ?? "")
     .replace(/\s+/g, " ")
     .trim();
@@ -6080,45 +6084,235 @@ function getDeliverableStatusText(deliverable) {
   return singleStatus || "None";
 }
 
-function buildPinnedDeliverablesNotepadText(projects = []) {
-  const pinnedProjects = Array.isArray(projects) ? projects.slice() : [];
-  sortProjectsByDueDesc(pinnedProjects);
+function hasDeliverableExportContent(deliverable) {
+  if (!deliverable || typeof deliverable !== "object") return false;
+  if (String(deliverable.name || "").trim()) return true;
+  if (String(deliverable.due || "").trim()) return true;
+  if (String(deliverable.notes || "").trim()) return true;
+  if (String(deliverable.status || "").trim()) return true;
+  if (
+    Array.isArray(deliverable.statuses) &&
+    deliverable.statuses.some((status) => String(status || "").trim())
+  ) {
+    return true;
+  }
+  if (
+    Array.isArray(deliverable.tasks) &&
+    deliverable.tasks.some((task) => String(task?.text || "").trim())
+  ) {
+    return true;
+  }
+  return false;
+}
 
-  const lines = [];
-  let deliverableCount = 0;
+function buildDeliverableNotepadEntries(projects = db) {
+  const candidates = Array.isArray(projects) ? projects : [];
+  return candidates
+    .flatMap((project, projectIndex) =>
+      getProjectDeliverables(project)
+        .filter((deliverable) => hasDeliverableExportContent(deliverable))
+        .map((deliverable, deliverableIndex) => {
+          const projectId = String(project?.id || "").trim();
+          const projectName = String(project?.name || "").trim();
+          const deliverableId = String(deliverable?.id || "").trim();
+          const deliverableName = String(deliverable?.name || "").trim();
+          return {
+            id: `${projectId || projectName || `project-${projectIndex}`}::${
+              deliverableId ||
+              deliverableName ||
+              `deliverable-${deliverableIndex}`
+            }`,
+            projectId,
+            projectName,
+            deliverableName,
+            due: String(deliverable?.due || "").trim(),
+            dueLabel: humanDate(deliverable?.due) || "No date",
+            statusText: getDeliverableStatusText(deliverable),
+            project,
+            deliverable,
+          };
+        })
+    )
+    .sort((a, b) => {
+      const dueCompare = compareDeliverablesByDue(a.deliverable, b.deliverable);
+      if (dueCompare) return dueCompare;
+      const projectCompare = String(a.projectId || a.projectName || "").localeCompare(
+        String(b.projectId || b.projectName || ""),
+        undefined,
+        { numeric: true, sensitivity: "base" }
+      );
+      if (projectCompare) return projectCompare;
+      return String(a.deliverableName || "").localeCompare(
+        String(b.deliverableName || ""),
+        undefined,
+        { numeric: true, sensitivity: "base" }
+      );
+    });
+}
 
-  pinnedProjects.forEach((project) => {
-    const deliverable = getPrimaryDeliverable(project);
-    if (!deliverable) return;
-
-    deliverableCount += 1;
-    lines.push(
-      [
-        `Project ID: ${formatPinnedDeliverableField(project?.id)}`,
-        `Project Name: ${formatPinnedDeliverableField(project?.name)}`,
-        `Primary Deliverable: ${formatPinnedDeliverableField(deliverable?.name)}`,
-        `Status: ${getDeliverableStatusText(deliverable)}`,
-      ].join(" | ")
-    );
-  });
+function buildSelectedDeliverablesNotepadText(entries = []) {
+  const selectedEntries = Array.isArray(entries) ? entries.filter(Boolean) : [];
+  const lines = selectedEntries.map((item) =>
+    [
+      `Project ID: ${formatDeliverableExportField(item?.projectId)}`,
+      `Project Name: ${formatDeliverableExportField(item?.projectName)}`,
+      `Deliverable: ${formatDeliverableExportField(
+        item?.deliverableName,
+        "Untitled Deliverable"
+      )}`,
+      `Due: ${formatDeliverableExportField(item?.dueLabel, "No date")}`,
+      `Status: ${formatDeliverableExportField(item?.statusText, "None")}`,
+    ].join(" | ")
+  );
 
   return {
     text: lines.join("\r\n"),
-    deliverableCount,
+    deliverableCount: selectedEntries.length,
   };
 }
 
-async function openPinnedDeliverablesNotepad() {
-  const pinnedProjects = db.filter((project) => project?.pinned);
-  if (!pinnedProjects.length) {
-    toast("No pinned projects found.");
+function createDeliverableNotepadListItem(item) {
+  return el("label", { className: "deliverable-notepad-item", role: "listitem" }, [
+    el("input", {
+      type: "checkbox",
+      value: item.id,
+      "aria-label": `Select ${item.deliverableName || "untitled deliverable"}`,
+    }),
+    el("div", { className: "deliverable-notepad-item-content" }, [
+      el("div", {
+        className: "deliverable-notepad-item-title",
+        textContent: item.deliverableName || "Untitled Deliverable",
+      }),
+      el("div", {
+        className: "deliverable-notepad-item-subtitle",
+        textContent: `Project ID: ${formatDeliverableExportField(item.projectId)}`,
+      }),
+      el("div", {
+        className: "deliverable-notepad-item-subtitle",
+        textContent: `Project Name: ${formatDeliverableExportField(
+          item.projectName
+        )}`,
+      }),
+      el("div", {
+        className: "deliverable-notepad-item-meta",
+        textContent: `Due: ${item.dueLabel} | Status: ${item.statusText}`,
+      }),
+    ]),
+  ]);
+}
+
+function renderDeliverableNotepadList(container, items, emptyMessage) {
+  if (!container) return;
+  container.replaceChildren();
+  if (!items.length) {
+    container.appendChild(
+      el("div", {
+        className: "deliverable-notepad-empty",
+        textContent: emptyMessage,
+      })
+    );
+    return;
+  }
+  items.forEach((item) => container.appendChild(createDeliverableNotepadListItem(item)));
+}
+
+function renderDeliverableNotepadDialog() {
+  const availableList = document.getElementById("deliverableNotepadAvailableList");
+  const selectedList = document.getElementById("deliverableNotepadSelectedList");
+  if (!availableList || !selectedList) return;
+
+  const entryMap = new Map(deliverableNotepadEntries.map((item) => [item.id, item]));
+  const selectedIdSet = new Set(deliverableNotepadSelectedEntryIds);
+  const availableItems = deliverableNotepadEntries.filter(
+    (item) => !selectedIdSet.has(item.id)
+  );
+  const selectedItems = deliverableNotepadSelectedEntryIds
+    .map((id) => entryMap.get(id))
+    .filter(Boolean);
+
+  renderDeliverableNotepadList(
+    availableList,
+    availableItems,
+    "No deliverables are available to add."
+  );
+  renderDeliverableNotepadList(
+    selectedList,
+    selectedItems,
+    "No deliverables have been selected for export."
+  );
+
+  const availableCount = document.getElementById("deliverableNotepadAvailableCount");
+  if (availableCount) {
+    availableCount.textContent = `${availableItems.length} deliverable${
+      availableItems.length === 1 ? "" : "s"
+    }`;
+  }
+
+  const selectedCount = document.getElementById("deliverableNotepadSelectedCount");
+  if (selectedCount) {
+    selectedCount.textContent = `${selectedItems.length} deliverable${
+      selectedItems.length === 1 ? "" : "s"
+    }`;
+  }
+
+  const addBtn = document.getElementById("deliverableNotepadAddBtn");
+  if (addBtn) addBtn.disabled = !availableItems.length;
+
+  const removeBtn = document.getElementById("deliverableNotepadRemoveBtn");
+  if (removeBtn) removeBtn.disabled = !selectedItems.length;
+
+  const exportBtn = document.getElementById("deliverableNotepadExportBtn");
+  if (exportBtn) exportBtn.disabled = !selectedItems.length;
+}
+
+function getCheckedDeliverableNotepadEntryIds(listId) {
+  const list = document.getElementById(listId);
+  if (!list) return [];
+  return [...list.querySelectorAll('input[type="checkbox"]:checked')].map(
+    (input) => input.value
+  );
+}
+
+function addDeliverablesToNotepadSelection() {
+  const ids = getCheckedDeliverableNotepadEntryIds("deliverableNotepadAvailableList");
+  if (!ids.length) {
+    toast("Select at least one deliverable to add.");
     return;
   }
 
-  const { text, deliverableCount } =
-    buildPinnedDeliverablesNotepadText(pinnedProjects);
-  if (!deliverableCount) {
-    toast("No deliverables found on pinned projects.");
+  const selectedIdSet = new Set(deliverableNotepadSelectedEntryIds);
+  ids.forEach((id) => {
+    if (!selectedIdSet.has(id)) {
+      deliverableNotepadSelectedEntryIds.push(id);
+      selectedIdSet.add(id);
+    }
+  });
+  renderDeliverableNotepadDialog();
+}
+
+function removeDeliverablesFromNotepadSelection() {
+  const ids = new Set(
+    getCheckedDeliverableNotepadEntryIds("deliverableNotepadSelectedList")
+  );
+  if (!ids.size) {
+    toast("Select at least one deliverable to remove.");
+    return;
+  }
+
+  deliverableNotepadSelectedEntryIds = deliverableNotepadSelectedEntryIds.filter(
+    (id) => !ids.has(id)
+  );
+  renderDeliverableNotepadDialog();
+}
+
+async function exportSelectedDeliverablesToNotepad() {
+  const entryMap = new Map(deliverableNotepadEntries.map((item) => [item.id, item]));
+  const selectedItems = deliverableNotepadSelectedEntryIds
+    .map((id) => entryMap.get(id))
+    .filter(Boolean);
+
+  if (!selectedItems.length) {
+    toast("Select at least one deliverable to export.");
     return;
   }
 
@@ -6127,19 +6321,41 @@ async function openPinnedDeliverablesNotepad() {
     return;
   }
 
+  const { text, deliverableCount } =
+    buildSelectedDeliverablesNotepadText(selectedItems);
+
   try {
     const response = await window.pywebview.api.open_notepad_with_text(text);
     if (response?.status === "success") {
+      closeDlg("deliverableNotepadDlg");
       toast(
-        `Opened ${deliverableCount} pinned deliverable${deliverableCount === 1 ? "" : "s"} in Notepad.`
+        `Opened ${deliverableCount} deliverable${
+          deliverableCount === 1 ? "" : "s"
+        } in Notepad.`
       );
       return;
     }
-    toast(response?.message || "Failed to open pinned deliverables in Notepad.");
+    toast(response?.message || "Failed to open deliverables in Notepad.");
   } catch (error) {
-    console.error("Failed to open pinned deliverables in Notepad:", error);
-    toast("Failed to open pinned deliverables in Notepad.");
+    console.error("Failed to open deliverables in Notepad:", error);
+    toast("Failed to open deliverables in Notepad.");
   }
+}
+
+function openDeliverablesNotepadDialog() {
+  const dialog = document.getElementById("deliverableNotepadDlg");
+  if (!dialog) return;
+
+  deliverableNotepadEntries = buildDeliverableNotepadEntries(db);
+  deliverableNotepadSelectedEntryIds = [];
+
+  if (!deliverableNotepadEntries.length) {
+    toast("No deliverables found on projects.");
+    return;
+  }
+
+  renderDeliverableNotepadDialog();
+  dialog.showModal();
 }
 
 function compareDeliverablesByDue(a, b) {
@@ -8754,6 +8970,63 @@ function importRows(rows, hasHeader = true) {
 // ===================== NOTES SYSTEM =====================
 const debouncedSaveNotes = debounce(saveNotes, 500);
 
+function normalizeTextsView(viewName) {
+  const normalized = String(viewName || "").trim().toLowerCase();
+  return normalized === "checklists" ? "checklists" : "notes";
+}
+
+function renderTextsView() {
+  const tabs = Array.from(document.querySelectorAll("[data-texts-view-tab]"));
+  const panes = Array.from(document.querySelectorAll("[data-texts-view-pane]"));
+  const searchWrap = document.getElementById("textsSearchWrap");
+  const helpBtn = document.getElementById("textsHelpBtn");
+  const notesResults = document.getElementById("notesSearchResults");
+
+  if (!tabs.length || !panes.length) return;
+
+  activeTextsView = normalizeTextsView(activeTextsView);
+
+  tabs.forEach((tabBtn) => {
+    const viewName = normalizeTextsView(tabBtn.dataset.textsViewTab);
+    const isActive = viewName === activeTextsView;
+    tabBtn.classList.toggle("active", isActive);
+    tabBtn.setAttribute("aria-selected", isActive ? "true" : "false");
+    tabBtn.setAttribute("tabindex", isActive ? "0" : "-1");
+    tabBtn.onclick = () => {
+      const nextView = normalizeTextsView(tabBtn.dataset.textsViewTab);
+      if (nextView === activeTextsView) return;
+      activeTextsView = nextView;
+      renderTextsView();
+    };
+  });
+
+  panes.forEach((pane) => {
+    const paneName = normalizeTextsView(pane.dataset.textsViewPane);
+    pane.hidden = paneName !== activeTextsView;
+    pane.setAttribute("aria-hidden", pane.hidden ? "true" : "false");
+  });
+
+  const isNotesView = activeTextsView === "notes";
+  if (searchWrap) {
+    searchWrap.hidden = !isNotesView;
+    searchWrap.setAttribute("aria-hidden", isNotesView ? "false" : "true");
+  }
+
+  if (helpBtn) {
+    const label = isNotesView ? "Notes help" : "Checklists help";
+    helpBtn.title = label;
+    helpBtn.setAttribute("aria-label", label);
+    helpBtn.onclick = () =>
+      openExternalUrl(isNotesView ? HELP_LINKS.notes : HELP_LINKS.checklists);
+  }
+
+  if (isNotesView) {
+    renderNoteSearchResults();
+  } else if (notesResults) {
+    notesResults.innerHTML = "";
+  }
+}
+
 function renderNoteTabs() {
   const container = document.getElementById("notesTabsContainer");
   container.innerHTML = "";
@@ -8812,6 +9085,8 @@ function renderNoteTabs() {
 
 function updateActiveNoteTextarea() {
   const textarea = document.getElementById("notesTextarea");
+  const title = document.getElementById("activeNoteTitle");
+  if (title) title.textContent = activeNoteTab || "Notes";
   if (!activeNoteTab) {
     textarea.value = "";
     textarea.placeholder = "Create a page to begin.";
@@ -8974,7 +9249,62 @@ function renderWorkroomNoteSearchResults() {
 // ===================== CHECKLISTS RENDERING =====================
 
 let activeChecklistTabId = null;
+let checklistCreateMenuOpen = false;
+let checklistSettingsMenuOpen = false;
 const debouncedSaveChecklists = debounce(saveChecklists, 500);
+
+function closeChecklistMenus() {
+  const hadOpenMenu = checklistCreateMenuOpen || checklistSettingsMenuOpen;
+  checklistCreateMenuOpen = false;
+  checklistSettingsMenuOpen = false;
+  return hadOpenMenu;
+}
+
+function syncChecklistMenuUi() {
+  const createDropdown = document.querySelector(".checklist-create-dropdown");
+  const createBtn = createDropdown?.querySelector(".checklist-create-trigger");
+  const createMenu = createDropdown?.querySelector(".checklist-action-menu");
+  createDropdown?.classList.toggle("open", checklistCreateMenuOpen);
+  createBtn?.setAttribute("aria-expanded", String(checklistCreateMenuOpen));
+  createMenu?.classList.toggle("open", checklistCreateMenuOpen);
+
+  const settingsDropdown = document.getElementById("checklistSettingsDropdown");
+  const settingsBtn = document.getElementById("checklistSettingsBtn");
+  const settingsMenu = document.getElementById("checklistSettingsMenu");
+  const hasActiveChecklist = Boolean(getChecklistById(activeChecklistTabId));
+  const settingsOpen = hasActiveChecklist && checklistSettingsMenuOpen;
+
+  if (settingsDropdown) {
+    settingsDropdown.hidden = !hasActiveChecklist;
+    settingsDropdown.classList.toggle("open", settingsOpen);
+  }
+  if (settingsBtn) settingsBtn.setAttribute("aria-expanded", String(settingsOpen));
+  if (settingsMenu) settingsMenu.classList.toggle("open", settingsOpen);
+}
+
+function handleCreateBlankChecklist() {
+  checklistCreateMenuOpen = false;
+  const name = prompt("Enter name for new checklist:");
+  if (!name || !name.trim()) {
+    renderChecklistTabs();
+    return;
+  }
+  const newChecklist = createChecklist(name.trim());
+  activeChecklistTabId = newChecklist.id;
+  renderChecklistTabs();
+}
+
+function handleCreateChecklistFromTemplate(templateKey) {
+  checklistCreateMenuOpen = false;
+  const newChecklist = createChecklistFromTemplate(templateKey);
+  if (!newChecklist) {
+    toast("Template not found.");
+    renderChecklistTabs();
+    return;
+  }
+  activeChecklistTabId = newChecklist.id;
+  renderChecklistTabs();
+}
 
 function renderChecklistTabs() {
   const container = document.getElementById("checklistsTabsContainer");
@@ -8991,6 +9321,7 @@ function renderChecklistTabs() {
       className: `inner-tab-btn ${checklist.id === activeChecklistTabId ? "active" : ""}`,
       textContent: checklist.name,
       onclick: () => {
+        closeChecklistMenus();
         activeChecklistTabId = checklist.id;
         renderChecklistTabs();
         renderChecklistItems();
@@ -9005,6 +9336,7 @@ function renderChecklistTabs() {
       onclick: (e) => {
         e.stopPropagation();
         if (confirm(`Permanently delete checklist "${checklist.name}"?`)) {
+          closeChecklistMenus();
           deleteChecklist(checklist.id);
           if (activeChecklistTabId === checklist.id) {
             activeChecklistTabId = checklistsDb.checklists[0]?.id || null;
@@ -9024,72 +9356,75 @@ function renderChecklistTabs() {
   }
 
   const sidebarActionsTarget = actionsContainer || container;
-  const addBtn = el("button", {
-    className: "add-tab-btn",
-    textContent: "+ New Blank Checklist",
-    title: "Create New Checklist",
-    onclick: () => {
-      const name = prompt("Enter name for new checklist:");
-      if (name && name.trim()) {
-        const newChecklist = createChecklist(name.trim());
-        activeChecklistTabId = newChecklist.id;
-        renderChecklistTabs();
-        renderChecklistItems();
-      }
-    },
-  });
-  sidebarActionsTarget.appendChild(addBtn);
-
   const templates = getChecklistTemplatesForCurrentDisciplines();
-  const templateSelect = el("select", {
-    className: "checklist-template-select",
-    "aria-label": "Add checklist from template",
-    title: "Add checklist from template",
-    onchange: (e) => {
-      const templateKey = String(e.target.value || "").trim();
-      if (!templateKey) return;
-      const newChecklist = createChecklistFromTemplate(templateKey);
-      if (!newChecklist) {
-        toast("Template not found.");
-        e.target.value = "";
-        return;
-      }
-      activeChecklistTabId = newChecklist.id;
-      e.target.value = "";
-      renderChecklistTabs();
-      renderChecklistItems();
+  const createDropdown = el("div", {
+    className: `checklist-action-dropdown checklist-create-dropdown ${
+      checklistCreateMenuOpen ? "open" : ""
+    }`,
+  });
+  const createBtn = el("button", {
+    className: "add-tab-btn checklist-create-trigger",
+    type: "button",
+    title: "Add Checklist",
+    "aria-label": "Add checklist",
+    "aria-haspopup": "menu",
+    "aria-expanded": String(checklistCreateMenuOpen),
+    onclick: (e) => {
+      e.stopPropagation();
+      checklistCreateMenuOpen = !checklistCreateMenuOpen;
+      if (checklistCreateMenuOpen) checklistSettingsMenuOpen = false;
+      syncChecklistMenuUi();
     },
   });
-  templateSelect.appendChild(
-    el("option", {
-      value: "",
-      textContent: "+ Add From Template...",
+  createBtn.textContent = "+";
+
+  const createMenu = el("div", {
+    className: `checklist-action-menu ${checklistCreateMenuOpen ? "open" : ""}`,
+    role: "menu",
+    "aria-label": "Create checklist",
+  });
+  createMenu.appendChild(
+    el("button", {
+      className: "checklist-menu-item",
+      type: "button",
+      textContent: "Blank checklist",
+      onclick: (e) => {
+        e.stopPropagation();
+        handleCreateBlankChecklist();
+      },
     })
   );
-  templates.forEach((template) => {
-    templateSelect.appendChild(
-      el("option", {
-        value: template.key,
-        textContent: template.name,
-      })
-    );
-  });
-  if (!templates.length) {
-    templateSelect.disabled = true;
-    templateSelect.options[0].textContent =
-      "No templates for selected discipline";
-  }
-  sidebarActionsTarget.appendChild(templateSelect);
-
-  if (!templates.length) {
-    sidebarActionsTarget.appendChild(
+  createMenu.appendChild(el("div", { className: "checklist-menu-divider" }));
+  createMenu.appendChild(
+    el("p", {
+      className: "checklist-menu-label",
+      textContent: "Start from template",
+    })
+  );
+  if (templates.length) {
+    templates.forEach((template) => {
+      createMenu.appendChild(
+        el("button", {
+          className: "checklist-menu-item",
+          type: "button",
+          textContent: template.name,
+          onclick: (e) => {
+            e.stopPropagation();
+            handleCreateChecklistFromTemplate(template.key);
+          },
+        })
+      );
+    });
+  } else {
+    createMenu.appendChild(
       el("p", {
-        className: "tiny muted checklist-template-empty",
-        textContent:
-          "Recommended templates are currently available for Electrical discipline only.",
+        className: "checklist-menu-empty",
+        textContent: "No templates available for the current discipline selection.",
       })
     );
   }
+  createDropdown.append(createBtn, createMenu);
+  sidebarActionsTarget.appendChild(createDropdown);
 
   renderChecklistItems();
 }
@@ -9097,6 +9432,9 @@ function renderChecklistTabs() {
 function renderChecklistItems() {
   const container = document.getElementById("checklistItemsContainer");
   const nameInput = document.getElementById("checklistName");
+  const settingsDropdown = document.getElementById("checklistSettingsDropdown");
+  const settingsBtn = document.getElementById("checklistSettingsBtn");
+  const settingsMenu = document.getElementById("checklistSettingsMenu");
   const resetBtn = document.getElementById("resetChecklistBtn");
   const deleteBtn = document.getElementById("deleteChecklistBtn");
   const addItemBtn = document.getElementById("addChecklistItemBtn");
@@ -9108,8 +9446,12 @@ function renderChecklistItems() {
   if (!checklist) {
     nameInput.value = "";
     nameInput.disabled = true;
-    resetBtn.style.display = "none";
-    deleteBtn.style.display = "none";
+    checklistSettingsMenuOpen = false;
+    if (settingsDropdown) settingsDropdown.hidden = true;
+    if (settingsBtn) settingsBtn.setAttribute("aria-expanded", "false");
+    if (settingsMenu) settingsMenu.classList.remove("open");
+    if (resetBtn) resetBtn.hidden = true;
+    if (deleteBtn) deleteBtn.hidden = true;
     addItemBtn.disabled = true;
     container.innerHTML = '<p class="muted">Select or create a checklist to get started.</p>';
     return;
@@ -9117,10 +9459,16 @@ function renderChecklistItems() {
 
   nameInput.value = checklist.name;
   nameInput.disabled = false;
-  resetBtn.style.display = getChecklistTemplateByKey(checklist.templateKey)
-    ? "inline-flex"
-    : "none";
-  deleteBtn.style.display = "inline-flex";
+  if (settingsDropdown) {
+    settingsDropdown.hidden = false;
+    settingsDropdown.classList.toggle("open", checklistSettingsMenuOpen);
+  }
+  if (settingsBtn) settingsBtn.setAttribute("aria-expanded", String(checklistSettingsMenuOpen));
+  if (settingsMenu) settingsMenu.classList.toggle("open", checklistSettingsMenuOpen);
+  if (resetBtn) {
+    resetBtn.hidden = !getChecklistTemplateByKey(checklist.templateKey);
+  }
+  if (deleteBtn) deleteBtn.hidden = false;
   addItemBtn.disabled = false;
 
   // Render items
@@ -9175,10 +9523,21 @@ document.getElementById("checklistName")?.addEventListener("input", (e) => {
   }
 });
 
+document.getElementById("checklistSettingsBtn")?.addEventListener("click", (e) => {
+  e.stopPropagation();
+  const checklist = getChecklistById(activeChecklistTabId);
+  if (!checklist) return;
+  checklistSettingsMenuOpen = !checklistSettingsMenuOpen;
+  if (checklistSettingsMenuOpen) checklistCreateMenuOpen = false;
+  syncChecklistMenuUi();
+});
+
 document.getElementById("resetChecklistBtn")?.addEventListener("click", () => {
   const checklist = getChecklistById(activeChecklistTabId);
   const template = getChecklistTemplateByKey(checklist?.templateKey);
+  checklistSettingsMenuOpen = false;
   if (!checklist || !template) {
+    syncChecklistMenuUi();
     toast("This checklist does not have template defaults.");
     return;
   }
@@ -9188,17 +9547,22 @@ document.getElementById("resetChecklistBtn")?.addEventListener("click", () => {
     )
   ) {
     resetChecklistToDefault(activeChecklistTabId);
-    renderChecklistItems();
+    renderChecklistTabs();
+    return;
   }
+  syncChecklistMenuUi();
 });
 
 document.getElementById("deleteChecklistBtn")?.addEventListener("click", () => {
   const checklist = getChecklistById(activeChecklistTabId);
+  checklistSettingsMenuOpen = false;
   if (checklist && confirm(`Delete checklist "${checklist.name}"?`)) {
     deleteChecklist(checklist.id);
     activeChecklistTabId = checklistsDb.checklists[0]?.id || null;
     renderChecklistTabs();
+    return;
   }
+  syncChecklistMenuUi();
 });
 
 document.getElementById("addChecklistItemBtn")?.addEventListener("click", () => {
@@ -9215,6 +9579,25 @@ document.getElementById("addChecklistItemBtn")?.addEventListener("click", () => 
       }
     }, 50);
   }
+});
+
+document.addEventListener("click", (e) => {
+  if (!checklistCreateMenuOpen && !checklistSettingsMenuOpen) return;
+
+  const clickedCreateMenu = e.target.closest(".checklist-create-dropdown");
+  const clickedSettingsMenu = e.target.closest("#checklistSettingsDropdown");
+
+  if (!clickedCreateMenu) checklistCreateMenuOpen = false;
+  if (!clickedSettingsMenu) checklistSettingsMenuOpen = false;
+
+  syncChecklistMenuUi();
+});
+
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (!checklistCreateMenuOpen && !checklistSettingsMenuOpen) return;
+  closeChecklistMenus();
+  syncChecklistMenuUi();
 });
 
 // ===================== CHECKLIST MODAL FUNCTIONS =====================
@@ -11443,8 +11826,8 @@ function setUpdateCheckIndicator(visible, text = "Checking for updates...") {
   }
 }
 
-function isPluginsTabActive() {
-  const panel = document.getElementById("plugins-panel");
+function isToolsTabActive() {
+  const panel = document.getElementById("tools-panel");
   return !!panel && !panel.hidden;
 }
 
@@ -11463,7 +11846,7 @@ async function checkBundlesForUpdates({ showIndicator = true } = {}) {
     prefetchBundleDescriptions(data);
     if (bundlesCacheKey !== previousKey) {
       bundlesNeedsRender = true;
-      if (isPluginsTabActive()) {
+      if (isToolsTabActive()) {
         await ensureBundlesRendered({ force: true });
       }
     }
@@ -14730,9 +15113,11 @@ function initTabbedInterfaces() {
       p.classList.toggle("active", p.id === `${tab}-panel`);
     });
 
-    if (notesResults) notesResults.innerHTML = "";
+    if (tab !== "texts" && notesResults) notesResults.innerHTML = "";
 
-    if (tab === "plugins") {
+    if (tab === "texts") {
+      renderTextsView();
+    } else if (tab === "tools") {
       ensureBundlesRendered();
     } else if (tab === "projects") {
       render();
@@ -14819,8 +15204,30 @@ function initEventListeners() {
   if (openPinnedDeliverablesNotepadBtn) {
     openPinnedDeliverablesNotepadBtn.textContent = "";
     openPinnedDeliverablesNotepadBtn.appendChild(createIcon(NOTE_ICON_PATH, 16));
+    openPinnedDeliverablesNotepadBtn.ariaLabel = "Export deliverables to Notepad";
+    openPinnedDeliverablesNotepadBtn.title = "Export deliverables to Notepad";
     openPinnedDeliverablesNotepadBtn.onclick = () =>
-      openPinnedDeliverablesNotepad();
+      openDeliverablesNotepadDialog();
+  }
+  const deliverableNotepadAddBtn = document.getElementById(
+    "deliverableNotepadAddBtn"
+  );
+  if (deliverableNotepadAddBtn) {
+    deliverableNotepadAddBtn.onclick = () => addDeliverablesToNotepadSelection();
+  }
+  const deliverableNotepadRemoveBtn = document.getElementById(
+    "deliverableNotepadRemoveBtn"
+  );
+  if (deliverableNotepadRemoveBtn) {
+    deliverableNotepadRemoveBtn.onclick = () =>
+      removeDeliverablesFromNotepadSelection();
+  }
+  const deliverableNotepadExportBtn = document.getElementById(
+    "deliverableNotepadExportBtn"
+  );
+  if (deliverableNotepadExportBtn) {
+    deliverableNotepadExportBtn.onclick = () =>
+      exportSelectedDeliverablesToNotepad();
   }
 
   document.querySelectorAll(".tool-card-settings").forEach((btn) => {
@@ -14875,10 +15282,6 @@ function initEventListeners() {
       render();
     };
   }
-  document.getElementById("notesHelpBtn").onclick = () =>
-    openExternalUrl(HELP_LINKS.notes);
-  document.getElementById("checklistsHelpBtn").onclick = () =>
-    openExternalUrl(HELP_LINKS.checklists);
   document.getElementById("toolsHelpBtn").onclick = () =>
     openExternalUrl(HELP_LINKS.tools);
   document.getElementById("pluginsHelpBtn").onclick = () =>
@@ -15069,28 +15472,25 @@ function initEventListeners() {
     });
   }
 
-  document.getElementById("dueFilterGroup").addEventListener("click", (e) => {
-    if (e.target.matches(".filter-chip")) {
-      dueFilter = e.target.dataset.dueFilter;
-      document
-        .querySelectorAll("#dueFilterGroup .filter-chip")
-        .forEach((b) => b.classList.remove("active"));
-      e.target.classList.add("active");
+  const timeframeFilterSelect = document.getElementById(
+    "timeframeFilterSelect"
+  );
+  if (timeframeFilterSelect) {
+    timeframeFilterSelect.value = dueFilter;
+    timeframeFilterSelect.addEventListener("change", (e) => {
+      dueFilter = e.target.value || "all";
       render();
-    }
-  });
-  document
-    .getElementById("statusFilterGroup")
-    .addEventListener("click", (e) => {
-      if (e.target.matches(".filter-chip")) {
-        statusFilter = e.target.dataset.filter;
-        document
-          .querySelectorAll("#statusFilterGroup .filter-chip")
-          .forEach((b) => b.classList.remove("active"));
-        e.target.classList.add("active");
-        render();
-      }
     });
+  }
+
+  const statusFilterSelect = document.getElementById("statusFilterSelect");
+  if (statusFilterSelect) {
+    statusFilterSelect.value = statusFilter;
+    statusFilterSelect.addEventListener("change", (e) => {
+      statusFilter = e.target.value || "all";
+      render();
+    });
+  }
 
   document
     .getElementById("toolPublishDwgs")
@@ -16292,6 +16692,7 @@ async function init() {
       }
       renderNoteTabs();
       renderChecklistTabs();
+      renderTextsView();
       render();
       updateTimesheetsDuplicateIndicator(
         getWeekEntries(formatWeekKey(currentTimesheetWeek))

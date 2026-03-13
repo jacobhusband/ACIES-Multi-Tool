@@ -319,9 +319,325 @@ h4 {
   position: relative;
 }
 
+html,
+body {
+  min-height: 100vh;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-main);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--bg-gradient);
+  background-color: var(--bg);
+  background-attachment: fixed;
+  scrollbar-width: thin;
+  scrollbar-color: var(--bg-tertiary) var(--bg);
+}
+
+body.app-loading {
+  overflow: hidden;
+}
+
+.app-loader {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-gradient);
+  background-color: var(--bg);
+  transition: opacity 0.3s ease, visibility 0.3s ease;
+}
+
+.app-loader.hidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.app-loader-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.app-loader-logo {
+  width: 140px;
+  height: auto;
+  filter: drop-shadow(0 10px 30px rgba(0, 0, 0, 0.25));
+}
+
+.app-loader-dots {
+  display: flex;
+  gap: 0.45rem;
+}
+
+.app-loader-dots span {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0.4;
+  animation: loader-dot 1.2s ease-in-out infinite;
+}
+
+.app-loader-dots span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.app-loader-dots span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes loader-dot {
+
+  0%,
+  80%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.35;
+  }
+
+  40% {
+    transform: translateY(-6px);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-loader-dots span {
+    animation: none;
+    opacity: 0.7;
+  }
+}
+
+/* Scrollbar Customization */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--bg-tertiary);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accent);
+}
+
+/* Typography */
+h1,
+h2,
+h3,
+h4 {
+  margin: 0;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.tiny {
+  font-size: 0.75rem;
+}
+
+.muted {
+  color: var(--muted);
+  opacity: 0.8;
+}
+
+/* Header */
+.app-header {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  height: var(--header-height);
+  background: var(--header-bg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--glass-border);
+  padding: 0 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 200px;
+}
+
+.logo-img {
+  height: 28px;
+  width: auto;
+}
+
+/* Header Navigation */
+.header-center {
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+  flex: 1;
+  justify-content: center;
+}
+
+.main-nav {
+  display: flex;
+  background: var(--bg-secondary);
+  padding: 4px;
+  border-radius: 999px;
+  border: 1px solid var(--glass-border);
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.15);
+  position: relative;
+}
+
+.main-tab-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  padding: 8px 20px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  position: relative;
+}
+
 .main-tab-btn:hover {
   color: var(--text);
   background: var(--hover-overlay);
+}
+
+.projects-filter-dropdown {
+  position: relative;
+  min-width: 10.5rem;
+}
+
+.projects-filter-dropdown.open {
+  z-index: 120;
+}
+
+.projects-filter-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  width: 100%;
+  min-height: 34px;
+  padding: 0.42rem 0.9rem;
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-secondary) 82%, var(--surface) 18%);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 500;
+  line-height: 1.2;
+  cursor: pointer;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.05);
+  transition: var(--transition-fast);
+}
+
+.projects-filter-trigger:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--bg-tertiary) 74%, var(--surface-hover) 26%);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+
+.projects-filter-trigger:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-dim), var(--shadow-sm);
+}
+
+.projects-filter-trigger-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.projects-filter-chevron {
+  width: 0.9rem;
+  height: 0.9rem;
+  flex-shrink: 0;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.25;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  color: var(--text-secondary);
+  transition: transform 0.2s ease, color 0.2s ease;
+}
+
+.projects-filter-dropdown.open .projects-filter-chevron {
+  transform: rotate(180deg);
+  color: var(--accent);
+}
+
+.projects-filter-menu {
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  left: 0;
+  min-width: 100%;
+  padding: 0.3rem;
+  border: 1px solid color-mix(in srgb, var(--glass-border) 72%, var(--accent) 28%);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+  box-shadow: var(--shadow-md), var(--glow);
+}
+
+.projects-filter-menu[hidden] {
+  display: none;
+}
+
+.projects-filter-option {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 0.55rem 0.7rem;
+  border: none;
+  border-radius: calc(var(--radius) - 3px);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.projects-filter-option:hover {
+  background: color-mix(in srgb, var(--surface-hover) 82%, var(--accent) 18%);
+}
+
+.projects-filter-option:focus-visible {
+  outline: none;
+  background: color-mix(in srgb, var(--surface-hover) 76%, var(--accent) 24%);
+  box-shadow: 0 0 0 2px var(--accent-dim);
+}
+
+.projects-filter-option.is-selected {
+  background: color-mix(in srgb, var(--accent-dim) 70%, var(--surface) 30%);
+  color: var(--accent);
+}
+
+.projects-filter-option.is-selected:hover,
+.projects-filter-option.is-selected:focus-visible {
+  background: color-mix(in srgb, var(--accent-dim) 82%, var(--surface-hover) 18%);
 }
 
 .main-tab-btn.active {
@@ -344,6 +660,15 @@ h4 {
 
 .main-tab-btn.active.has-duplicate-project-id::after {
   box-shadow: 0 0 0 2px var(--bg-tertiary);
+}
+
+.main-nav .main-tab-btn {
+  width: 8.75rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  white-space: nowrap;
 }
 
 .nav-search {
@@ -3932,21 +4257,33 @@ dialog::backdrop {
 
 /* Texts Panel */
 .texts-toolbar {
-  align-items: flex-start;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.85rem;
+}
+
+.texts-toolbar-top {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: 0;
 }
 
 .texts-toolbar-main {
   display: flex;
-  flex: 1 1 auto;
   align-items: center;
+  justify-content: space-between;
   gap: 1rem;
   min-width: 0;
-  flex-wrap: wrap;
 }
 
 .texts-toolbar-main .nav-search.expanded-search {
   flex: 0 1 320px;
   max-width: 100%;
+}
+
+.texts-toolbar-main .toolbar-actions {
+  margin-left: auto;
 }
 
 .texts-view-tabs {
@@ -4035,6 +4372,7 @@ dialog::backdrop {
 }
 
 .notes-user-tabs-row {
+  display: flex;
   min-height: 0;
 }
 
@@ -4174,9 +4512,21 @@ dialog::backdrop {
     min-height: clamp(620px, calc(100vh - var(--header-height) - 2.5rem), 780px);
   }
 
+  .texts-toolbar-top,
   .texts-toolbar-main {
+    width: 100%;
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .texts-toolbar-main .nav-search.expanded-search {
+    width: 100%;
+    max-width: none;
+  }
+
+  .texts-toolbar-main .toolbar-actions {
+    margin-left: 0;
+    justify-content: flex-end;
   }
 
   .texts-view-tabs {
@@ -8551,149 +8901,147 @@ input:checked+.slider:before {
   gap: 1rem;
 }
 
-/* Texts tabs: minimal UI refresh */
+/* Notebook pills */
 .texts-view-tabs {
-  display: grid;
+  display: inline-grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1rem;
-  padding: 0;
-  background: transparent;
-  border: none;
-  border-bottom: 1px solid var(--glass-border);
-  border-radius: 0;
-  min-width: min(260px, 100%);
+  gap: 0.25rem;
+  width: fit-content;
+  max-width: 100%;
+  min-width: min(280px, 100%);
+  padding: 4px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-pill);
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.15);
 }
 
 .texts-view-tab {
-  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  padding: 8px 20px;
   border: none;
-  border-radius: 0;
+  border-radius: var(--radius-pill);
   background: transparent;
   color: var(--text-secondary);
-  font-size: 0.84rem;
+  font-size: 13px;
   font-weight: 500;
-  letter-spacing: 0.01em;
-  line-height: 1.3;
+  letter-spacing: 0;
+  line-height: 1.2;
   text-transform: none;
-  min-height: 38px;
-  padding: 0.25rem 0 0.7rem;
-  box-shadow: none;
-  transition: color 0.2s ease;
-}
-
-.texts-view-tab::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: -1px;
-  height: 2px;
-  border-radius: 999px;
-  background: var(--accent);
-  opacity: 0;
-  transform: scaleX(0.45);
-  transition: opacity 0.2s ease, transform 0.2s ease;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 0.3s ease;
 }
 
 .texts-view-tab:hover {
   color: var(--text);
-  border-color: transparent;
+  background: var(--hover-overlay);
 }
 
 .texts-view-tab:focus-visible {
   outline: none;
-  color: var(--text);
+  box-shadow: 0 0 0 3px var(--accent-dim);
 }
 
 .texts-view-tab.active {
-  background: transparent;
-  border-color: transparent;
-  color: var(--text);
-  box-shadow: none;
-}
-
-.texts-view-tab.active::after {
-  opacity: 1;
-  transform: scaleX(1);
+  background: var(--bg-tertiary);
+  color: var(--accent);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
 
 .notes-nav-list,
 .checklists-nav-list {
-  gap: 0;
-  border-top: 1px solid var(--glass-border);
+  gap: 0.65rem;
+  align-items: stretch;
+}
+
+.notebook-pill-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .notes-nav-list .inner-tab-btn,
 .checklists-nav-list .inner-tab-btn {
   width: 100%;
+  min-width: 0;
   justify-content: space-between;
-  padding: 0.8rem 0.15rem;
-  border: none;
-  border-bottom: 1px solid var(--glass-border);
-  border-radius: 0;
-  background: transparent;
+  gap: 0.75rem;
+  padding: 0.72rem 0.75rem 0.72rem 1rem;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-pill);
+  background: var(--bg-secondary);
   color: var(--text-secondary);
-  font-size: 0.86rem;
+  font-size: 0.84rem;
   font-weight: 500;
-  box-shadow: none;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.05);
+  transition: var(--transition-fast);
 }
 
 .notes-nav-list .inner-tab-btn:hover,
 .checklists-nav-list .inner-tab-btn:hover {
-  background: transparent;
-  border-color: var(--glass-border);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--bg-tertiary) 78%, var(--surface) 22%);
   color: var(--text);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
 }
 
 .notes-nav-list .inner-tab-btn.active,
 .checklists-nav-list .inner-tab-btn.active {
-  background: transparent;
-  border-color: var(--accent);
-  color: var(--text);
-  box-shadow: none;
+  background: var(--bg-tertiary);
+  border-color: color-mix(in srgb, var(--glass-border) 58%, var(--accent) 42%);
+  color: var(--accent);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
 
 .notes-nav-list .tab-delete-icon,
 .checklists-nav-list .tab-delete-icon {
-  width: 1.25rem;
-  height: 1.25rem;
+  width: 1.4rem;
+  height: 1.4rem;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: center;
   border-radius: 999px;
   color: currentColor;
-  opacity: 0.35;
+  line-height: 1;
+  opacity: 0.45;
 }
 
 .notes-nav-list .tab-delete-icon:hover,
 .checklists-nav-list .tab-delete-icon:hover {
-  background: var(--surface);
-  color: var(--danger);
-  opacity: 0.9;
+  background: rgba(239, 68, 68, 0.16);
+  color: #ef4444;
+  opacity: 1;
 }
 
 .notes-nav-list .add-tab-btn,
 .checklist-create-trigger {
   width: 100%;
-  height: auto;
+  min-height: 40px;
   justify-content: flex-start;
   gap: 0.55rem;
-  padding: 0.9rem 0.15rem 0.15rem;
-  margin-top: 0.25rem;
-  border: none;
-  border-top: 1px solid var(--glass-border);
-  border-radius: 0;
+  padding: 0.72rem 0.95rem;
+  margin-top: 0;
+  border: 1px dashed var(--glass-border);
+  border-radius: var(--radius-pill);
   background: transparent;
   color: var(--text-secondary);
-  font-size: 1rem;
+  font-size: 0.84rem;
   box-shadow: none;
 }
 
 .notes-nav-list .add-tab-btn::after,
 .checklist-create-trigger::after {
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  text-transform: none;
 }
 
 .notes-nav-list .add-tab-btn::after {
@@ -8707,14 +9055,16 @@ input:checked+.slider:before {
 .notes-nav-list .add-tab-btn:hover,
 .checklist-create-trigger:hover,
 .checklist-create-trigger[aria-expanded="true"] {
-  background: transparent;
-  border-color: var(--glass-border);
+  border-color: var(--accent);
+  background: var(--surface);
   color: var(--text);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
 }
 
 .checklists-sidebar-actions {
   width: 100%;
-  gap: 0;
+  gap: 0.65rem;
   align-items: stretch;
 }
 
@@ -8730,19 +9080,27 @@ input:checked+.slider:before {
 
 @media (max-width: 900px) {
   .texts-view-tabs {
-    gap: 0.75rem;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .texts-view-tab {
+    width: 100%;
   }
 
   .notes-nav-list,
   .checklists-nav-list {
-    flex-direction: column;
+    flex-direction: row;
+    flex-wrap: wrap;
   }
 
   .notes-nav-list .inner-tab-btn,
   .notes-nav-list .add-tab-btn,
   .checklists-nav-list .inner-tab-btn,
   .checklist-create-trigger {
-    width: 100%;
+    width: auto;
+    min-width: min(220px, 100%);
+    flex: 1 1 220px;
   }
 }
 

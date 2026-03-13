@@ -162,8 +162,8 @@
                         <button class="icon-btn" id="pinUrgentDeliverablesBtn" aria-label="Pin urgent deliverables"
                             title="Pin all overdue and due-today deliverables"></button>
                         <button class="icon-btn" id="openPinnedDeliverablesNotepadBtn"
-                            aria-label="Export deliverables to Notepad"
-                            title="Export deliverables to Notepad"></button>
+                            aria-label="Export deliverables to Excel"
+                            title="Export deliverables to Excel"></button>
                         <button class="icon-btn" id="projectsHelpBtn" aria-label="Projects help" title="Projects help">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -178,32 +178,67 @@
                     <div class="projects-filter-row">
                         <div class="projects-filter-group">
                             <span class="filter-label" id="timeframeFilterLabel">Timeframe</span>
-                            <div class="projects-filter-chip-list" role="group" aria-labelledby="timeframeFilterLabel">
-                                <button type="button" class="projects-filter-chip" data-filter-kind="timeframe"
-                                    data-filter-value="lastWeek" aria-pressed="false">Last week</button>
-                                <button type="button" class="projects-filter-chip" data-filter-kind="timeframe"
-                                    data-filter-value="soon" aria-pressed="false">This week</button>
-                                <button type="button" class="projects-filter-chip" data-filter-kind="timeframe"
-                                    data-filter-value="future" aria-pressed="false">Upcoming Weeks</button>
+                            <div class="projects-filter-dropdown" data-filter-dropdown="timeframe">
+                                <button
+                                    id="timeframeFilterTrigger"
+                                    class="projects-filter-trigger"
+                                    type="button"
+                                    aria-labelledby="timeframeFilterLabel timeframeFilterTriggerLabel"
+                                    aria-haspopup="menu"
+                                    aria-expanded="false"
+                                    aria-controls="timeframeFilterMenu"
+                                >
+                                    <span id="timeframeFilterTriggerLabel" class="projects-filter-trigger-label">All</span>
+                                    <svg class="projects-filter-chevron" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                        <polyline points="6 9 12 15 18 9"></polyline>
+                                    </svg>
+                                </button>
+                                <div
+                                    id="timeframeFilterMenu"
+                                    class="projects-filter-menu"
+                                    role="menu"
+                                    aria-labelledby="timeframeFilterLabel"
+                                    hidden
+                                >
+                                    <button type="button" class="projects-filter-option is-selected" data-filter-value="all" role="menuitemradio" aria-checked="true" tabindex="-1">All</button>
+                                    <button type="button" class="projects-filter-option" data-filter-value="lastWeek" role="menuitemradio" aria-checked="false" tabindex="-1">Last week</button>
+                                    <button type="button" class="projects-filter-option" data-filter-value="soon" role="menuitemradio" aria-checked="false" tabindex="-1">This week</button>
+                                    <button type="button" class="projects-filter-option" data-filter-value="future" role="menuitemradio" aria-checked="false" tabindex="-1">Upcoming Weeks</button>
+                                </div>
                             </div>
                         </div>
                         <div class="projects-filter-group">
                             <span class="filter-label" id="statusFilterLabel">Status</span>
-                            <div class="projects-filter-chip-list" role="group" aria-labelledby="statusFilterLabel">
-                                <button type="button" class="projects-filter-chip is-active" data-filter-kind="status"
-                                    data-filter-value="all" aria-pressed="true">All</button>
-                                <button type="button" class="projects-filter-chip" data-filter-kind="status"
-                                    data-filter-value="incomplete" aria-pressed="false">Incomplete</button>
-                                <button type="button" class="projects-filter-chip" data-filter-kind="status"
-                                    data-filter-value="Waiting" aria-pressed="false">Waiting</button>
-                                <button type="button" class="projects-filter-chip" data-filter-kind="status"
-                                    data-filter-value="Working" aria-pressed="false">Working</button>
-                                <button type="button" class="projects-filter-chip" data-filter-kind="status"
-                                    data-filter-value="Pending Review" aria-pressed="false">Pending Review</button>
-                                <button type="button" class="projects-filter-chip" data-filter-kind="status"
-                                    data-filter-value="Complete" aria-pressed="false">Complete</button>
-                                <button type="button" class="projects-filter-chip" data-filter-kind="status"
-                                    data-filter-value="Delivered" aria-pressed="false">Delivered</button>
+                            <div class="projects-filter-dropdown" data-filter-dropdown="status">
+                                <button
+                                    id="statusFilterTrigger"
+                                    class="projects-filter-trigger"
+                                    type="button"
+                                    aria-labelledby="statusFilterLabel statusFilterTriggerLabel"
+                                    aria-haspopup="menu"
+                                    aria-expanded="false"
+                                    aria-controls="statusFilterMenu"
+                                >
+                                    <span id="statusFilterTriggerLabel" class="projects-filter-trigger-label">All</span>
+                                    <svg class="projects-filter-chevron" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                        <polyline points="6 9 12 15 18 9"></polyline>
+                                    </svg>
+                                </button>
+                                <div
+                                    id="statusFilterMenu"
+                                    class="projects-filter-menu"
+                                    role="menu"
+                                    aria-labelledby="statusFilterLabel"
+                                    hidden
+                                >
+                                    <button type="button" class="projects-filter-option is-selected" data-filter-value="all" role="menuitemradio" aria-checked="true" tabindex="-1">All</button>
+                                    <button type="button" class="projects-filter-option" data-filter-value="incomplete" role="menuitemradio" aria-checked="false" tabindex="-1">Incomplete</button>
+                                    <button type="button" class="projects-filter-option" data-filter-value="Waiting" role="menuitemradio" aria-checked="false" tabindex="-1">Waiting</button>
+                                    <button type="button" class="projects-filter-option" data-filter-value="Working" role="menuitemradio" aria-checked="false" tabindex="-1">Working</button>
+                                    <button type="button" class="projects-filter-option" data-filter-value="Pending Review" role="menuitemradio" aria-checked="false" tabindex="-1">Pending Review</button>
+                                    <button type="button" class="projects-filter-option" data-filter-value="Complete" role="menuitemradio" aria-checked="false" tabindex="-1">Complete</button>
+                                    <button type="button" class="projects-filter-option" data-filter-value="Delivered" role="menuitemradio" aria-checked="false" tabindex="-1">Delivered</button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -250,7 +285,7 @@
         <div id="texts-panel" class="tab-panel" hidden>
             <div class="panel stack full-height">
                 <div class="panel-toolbar texts-toolbar">
-                    <div class="texts-toolbar-main">
+                    <div class="texts-toolbar-top">
                         <div class="texts-view-tabs" role="tablist" aria-label="Notebook views">
                             <button type="button" class="texts-view-tab active" data-texts-view-tab="notes" role="tab"
                                 aria-selected="true" aria-controls="textsNotesPane">Notes</button>
@@ -258,6 +293,8 @@
                                 aria-selected="false" aria-controls="textsChecklistsPane"
                                 tabindex="-1">Checklists</button>
                         </div>
+                    </div>
+                    <div class="texts-toolbar-main">
                         <div id="textsSearchWrap" class="nav-search expanded-search">
                             <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none"
                                 stroke="currentColor" stroke-width="2" stroke-linecap="round"
@@ -267,15 +304,15 @@
                             </svg>
                             <input id="notesSearch" type="search" placeholder="Search notes..." />
                         </div>
-                    </div>
-                    <div class="toolbar-actions">
-                        <button class="icon-btn" id="textsHelpBtn" aria-label="Notes help" title="Notes help"><svg
-                                width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <circle cx="12" cy="12" r="10"></circle>
-                                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
-                                <line x1="12" y1="17" x2="12.01" y2="17"></line>
-                            </svg></button>
+                        <div class="toolbar-actions">
+                            <button class="icon-btn" id="textsHelpBtn" aria-label="Notes help" title="Notes help"><svg
+                                    width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <circle cx="12" cy="12" r="10"></circle>
+                                    <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+                                    <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                                </svg></button>
+                        </div>
                     </div>
                 </div>
                 <div class="texts-content">
@@ -860,8 +897,8 @@
     <dialog id="deliverableNotepadDlg" class="deliverable-notepad-dialog">
         <div class="modal-header">
             <div>
-                <div class="title">Export Deliverables to Notepad</div>
-                <div class="muted tiny">Select deliverables to include in the export.</div>
+                <div class="title">Export Deliverables to Excel</div>
+                <div class="muted tiny">Select deliverables to include in a basic Excel export.</div>
             </div>
             <button class="btn ghost" type="button" onclick="closeDlg('deliverableNotepadDlg')">Cancel</button>
         </div>
@@ -880,14 +917,14 @@
                 </div>
                 <section class="deliverable-notepad-panel">
                     <div class="deliverable-notepad-panel-header">
-                        <div class="deliverable-notepad-panel-title">Notepad Export</div>
+                        <div class="deliverable-notepad-panel-title">Excel Export</div>
                         <div id="deliverableNotepadSelectedCount" class="muted tiny">0 deliverables</div>
                     </div>
                     <div id="deliverableNotepadSelectedList" class="deliverable-notepad-list" role="list"></div>
                 </section>
             </div>
             <div class="modal-footer">
-                <button class="btn-primary" id="deliverableNotepadExportBtn" type="button" disabled>Open in Notepad</button>
+                <button class="btn-primary" id="deliverableNotepadExportBtn" type="button" disabled>Export to Excel</button>
             </div>
         </div>
     </dialog>

@@ -4617,6 +4617,118 @@ Return ONLY the JSON object.
             logging.error(f"Error opening Notepad text export: {e}")
             return {'status': 'error', 'message': str(e)}
 
+    def export_deliverables_excel(self, data):
+        """Exports selected deliverables to a basic Excel workbook."""
+        try:
+            payload = data or {}
+            if isinstance(payload, str):
+                payload = json.loads(payload)
+            if not isinstance(payload, dict):
+                return {'status': 'error', 'message': 'Invalid export payload.'}
+
+            raw_entries = payload.get('entries', [])
+            if not isinstance(raw_entries, list):
+                return {'status': 'error', 'message': 'Deliverable entries are required.'}
+
+            cleaned_entries = []
+            for raw_entry in raw_entries:
+                if not isinstance(raw_entry, dict):
+                    continue
+
+                due_raw = str(raw_entry.get('due') or '').strip()
+                due_value = parse_due_str(due_raw)
+                deliverable_name = str(raw_entry.get('deliverableName') or '').strip()
+                cleaned_entries.append({
+                    'projectId': str(raw_entry.get('projectId') or '').strip(),
+                    'projectName': str(raw_entry.get('projectName') or '').strip(),
+                    'deliverableName': deliverable_name or 'Untitled Deliverable',
+                    'due': due_raw,
+                    'dueValue': due_value.date() if due_value else None,
+                    'statusText': str(raw_entry.get('statusText') or '').strip() or 'None',
+                })
+
+            if not cleaned_entries:
+                return {'status': 'error', 'message': 'Select at least one deliverable to export.'}
+
+            cleaned_entries.sort(key=lambda entry: (
+                0 if entry['dueValue'] else 1,
+                -(entry['dueValue'].toordinal()) if entry['dueValue'] else 0,
+                entry['projectId'].lower(),
+                entry['projectName'].lower(),
+                entry['deliverableName'].lower(),
+            ))
+
+            file_path = payload.get('filePath')
+            if isinstance(file_path, (list, tuple)):
+                file_path = file_path[0] if file_path else ''
+            file_path = str(file_path or '').strip()
+
+            if not file_path:
+                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                selection = self.select_template_save_location(
+                    default_dir=get_default_documents_dir(),
+                    default_name=f"Deliverables_{timestamp}",
+                    file_type='xlsx',
+                )
+                if selection.get('status') != 'success':
+                    return selection
+                file_path = str(selection.get('path') or '').strip()
+
+            if not file_path:
+                return {'status': 'cancelled'}
+            if not file_path.lower().endswith('.xlsx'):
+                file_path = f"{file_path}.xlsx"
+
+            workbook = openpyxl.Workbook()
+            worksheet = workbook.active
+            worksheet.title = "Deliverables"
+
+            headers = ("Project ID", "Project Name", "Deliverable", "Due Date", "Status")
+            worksheet.append(headers)
+            for header_cell in worksheet[1]:
+                header_cell.font = openpyxl.styles.Font(bold=True)
+
+            for row_index, entry in enumerate(cleaned_entries, start=2):
+                worksheet.cell(row=row_index, column=1, value=entry['projectId'])
+                worksheet.cell(row=row_index, column=2, value=entry['projectName'])
+                worksheet.cell(row=row_index, column=3, value=entry['deliverableName'])
+                due_cell = worksheet.cell(
+                    row=row_index,
+                    column=4,
+                    value=entry['dueValue'] or entry['due'],
+                )
+                if entry['dueValue']:
+                    due_cell.number_format = "mm/dd/yyyy"
+                worksheet.cell(row=row_index, column=5, value=entry['statusText'])
+
+            worksheet.freeze_panes = "A2"
+            worksheet.auto_filter.ref = worksheet.dimensions
+
+            for column_index, width in {
+                1: 14,
+                2: 28,
+                3: 32,
+                4: 14,
+                5: 18,
+            }.items():
+                column_letter = openpyxl.utils.get_column_letter(column_index)
+                worksheet.column_dimensions[column_letter].width = width
+
+            workbook.save(file_path)
+            workbook.close()
+
+            if sys.platform == "win32":
+                os.startfile(file_path)
+            else:
+                self.open_path(file_path)
+
+            return {'status': 'success', 'path': file_path, 'count': len(cleaned_entries)}
+        except ImportError:
+            return {'status': 'error', 'message': 'openpyxl not installed. Run: pip install openpyxl'}
+        except Exception as e:
+            logging.error(f"Error exporting deliverables to Excel: {e}")
+            return {'status': 'error', 'message': str(e)}
+
     def save_dropped_email(self, upload, context=None):
         """Persists a dropped .msg/.eml payload and returns a normalized email reference."""
         try:

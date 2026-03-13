@@ -5039,6 +5039,7 @@ let title24ProjectQuery = "";
 let title24ScopeOptionsDataset = null;
 let title24ScopeOptionsLoadError = "";
 let title24ScopeOptionsLoadingPromise = null;
+let openProjectsFilterDropdown = null;
 let aiNoMatchState = {
   rawAiData: null,
   aiProject: null,
@@ -6389,7 +6390,7 @@ function buildDeliverableNotepadEntries(projects = db) {
         })
     )
     .sort((a, b) => {
-      const dueCompare = compareDeliverablesByDue(a.deliverable, b.deliverable);
+      const dueCompare = compareDeliverablesByDueDesc(a.deliverable, b.deliverable);
       if (dueCompare) return dueCompare;
       const projectCompare = String(a.projectId || a.projectName || "").localeCompare(
         String(b.projectId || b.projectName || ""),
@@ -6405,24 +6406,34 @@ function buildDeliverableNotepadEntries(projects = db) {
     });
 }
 
-function buildSelectedDeliverablesNotepadText(entries = []) {
+function buildSelectedDeliverablesExcelRows(entries = []) {
   const selectedEntries = Array.isArray(entries) ? entries.filter(Boolean) : [];
-  const lines = selectedEntries.map((item) =>
-    [
-      `Project ID: ${formatDeliverableExportField(item?.projectId)}`,
-      `Project Name: ${formatDeliverableExportField(item?.projectName)}`,
-      `Deliverable: ${formatDeliverableExportField(
-        item?.deliverableName,
-        "Untitled Deliverable"
-      )}`,
-      `Due: ${formatDeliverableExportField(item?.dueLabel, "No date")}`,
-      `Status: ${formatDeliverableExportField(item?.statusText, "None")}`,
-    ].join(" | ")
-  );
+  const sortedEntries = selectedEntries.slice().sort((a, b) => {
+    const dueCompare = compareDeliverablesByDueDesc(a?.deliverable, b?.deliverable);
+    if (dueCompare) return dueCompare;
+    const projectCompare = String(a?.projectId || a?.projectName || "").localeCompare(
+      String(b?.projectId || b?.projectName || ""),
+      undefined,
+      { numeric: true, sensitivity: "base" }
+    );
+    if (projectCompare) return projectCompare;
+    return String(a?.deliverableName || "").localeCompare(
+      String(b?.deliverableName || ""),
+      undefined,
+      { numeric: true, sensitivity: "base" }
+    );
+  });
 
   return {
-    text: lines.join("\r\n"),
-    deliverableCount: selectedEntries.length,
+    entries: sortedEntries.map((item) => ({
+      projectId: String(item?.projectId || "").trim(),
+      projectName: String(item?.projectName || "").trim(),
+      deliverableName:
+        String(item?.deliverableName || "").trim() || "Untitled Deliverable",
+      due: String(item?.due || "").trim(),
+      statusText: String(item?.statusText || "").trim() || "None",
+    })),
+    deliverableCount: sortedEntries.length,
   };
 }
 
@@ -6560,7 +6571,7 @@ function removeDeliverablesFromNotepadSelection() {
   renderDeliverableNotepadDialog();
 }
 
-async function exportSelectedDeliverablesToNotepad() {
+async function exportSelectedDeliverablesToExcel() {
   const entryMap = new Map(deliverableNotepadEntries.map((item) => [item.id, item]));
   const selectedItems = deliverableNotepadSelectedEntryIds
     .map((id) => entryMap.get(id))
@@ -6571,33 +6582,35 @@ async function exportSelectedDeliverablesToNotepad() {
     return;
   }
 
-  if (!window.pywebview?.api?.open_notepad_with_text) {
-    toast("Notepad export is unavailable.");
+  if (!window.pywebview?.api?.export_deliverables_excel) {
+    toast("Excel export is unavailable.");
     return;
   }
 
-  const { text, deliverableCount } =
-    buildSelectedDeliverablesNotepadText(selectedItems);
+  const { entries, deliverableCount } =
+    buildSelectedDeliverablesExcelRows(selectedItems);
 
   try {
-    const response = await window.pywebview.api.open_notepad_with_text(text);
+    const response = await window.pywebview.api.export_deliverables_excel({
+      entries,
+    });
     if (response?.status === "success") {
       closeDlg("deliverableNotepadDlg");
       toast(
-        `Opened ${deliverableCount} deliverable${
+        `Exported ${deliverableCount} deliverable${
           deliverableCount === 1 ? "" : "s"
-        } in Notepad.`
+        } to Excel.`
       );
       return;
     }
-    toast(response?.message || "Failed to open deliverables in Notepad.");
+    toast(response?.message || "Failed to export deliverables to Excel.");
   } catch (error) {
-    console.error("Failed to open deliverables in Notepad:", error);
-    toast("Failed to open deliverables in Notepad.");
+    console.error("Failed to export deliverables to Excel:", error);
+    toast("Failed to export deliverables to Excel.");
   }
 }
 
-function openDeliverablesNotepadDialog() {
+function openDeliverablesExcelDialog() {
   const dialog = document.getElementById("deliverableNotepadDlg");
   if (!dialog) return;
 
@@ -6709,6 +6722,108 @@ function matchesDueFilter(deliverable, filter) {
   if (filter === "soon") return d >= startOfWeek && d <= endOfWeek;
   if (filter === "future") return d > endOfWeek;
   return true;
+}
+
+function getProjectsFilterValue(filterKey) {
+  if (filterKey === "timeframe") return dueFilter || "all";
+  if (filterKey === "status") return statusFilter || "all";
+  return "all";
+}
+
+function setProjectsFilterValue(filterKey, value) {
+  if (filterKey === "timeframe") {
+    dueFilter = value;
+  } else if (filterKey === "status") {
+    statusFilter = value;
+  }
+}
+
+function getProjectsFilterOptions(dropdown) {
+  return dropdown
+    ? Array.from(dropdown.querySelectorAll(".projects-filter-option"))
+    : [];
+}
+
+function syncProjectsFilterDropdowns() {
+  document.querySelectorAll(".projects-filter-dropdown").forEach((dropdown) => {
+    const filterKey = dropdown.dataset.filterDropdown;
+    const currentValue = getProjectsFilterValue(filterKey);
+    const trigger = dropdown.querySelector(".projects-filter-trigger");
+    const label = dropdown.querySelector(".projects-filter-trigger-label");
+    const menu = dropdown.querySelector(".projects-filter-menu");
+    const options = getProjectsFilterOptions(dropdown);
+    const selectedOption =
+      options.find((option) => option.dataset.filterValue === currentValue) ||
+      options[0];
+    const isOpen = dropdown.classList.contains("open");
+
+    if (label && selectedOption) {
+      label.textContent = selectedOption.textContent.trim();
+    }
+    if (trigger) {
+      trigger.setAttribute("aria-expanded", String(isOpen));
+    }
+    if (menu) {
+      menu.hidden = !isOpen;
+    }
+
+    options.forEach((option) => {
+      const isSelected = option === selectedOption;
+      option.classList.toggle("is-selected", isSelected);
+      option.setAttribute("aria-checked", String(isSelected));
+      option.tabIndex = isOpen ? 0 : -1;
+    });
+  });
+}
+
+function focusProjectsFilterSelectedOption(dropdown) {
+  const selectedOption =
+    dropdown?.querySelector('.projects-filter-option[aria-checked="true"]') ||
+    dropdown?.querySelector(".projects-filter-option");
+  selectedOption?.focus();
+}
+
+function setProjectsFilterDropdownState(
+  dropdown,
+  isOpen,
+  { focusSelected = false } = {}
+) {
+  if (!dropdown) return;
+
+  if (isOpen && openProjectsFilterDropdown && openProjectsFilterDropdown !== dropdown) {
+    setProjectsFilterDropdownState(openProjectsFilterDropdown, false);
+  }
+
+  const menu = dropdown.querySelector(".projects-filter-menu");
+  dropdown.classList.toggle("open", isOpen);
+  menu?.classList.toggle("open", isOpen);
+
+  if (isOpen) {
+    openProjectsFilterDropdown = dropdown;
+  } else if (openProjectsFilterDropdown === dropdown) {
+    openProjectsFilterDropdown = null;
+  }
+
+  syncProjectsFilterDropdowns();
+
+  if (isOpen && focusSelected) {
+    focusProjectsFilterSelectedOption(dropdown);
+  }
+}
+
+function moveProjectsFilterOptionFocus(dropdown, currentOption, direction) {
+  const options = getProjectsFilterOptions(dropdown);
+  if (!options.length) return;
+
+  const currentIndex = options.indexOf(currentOption);
+  const selectedIndex = options.findIndex(
+    (option) => option.getAttribute("aria-checked") === "true"
+  );
+  const baseIndex =
+    currentIndex >= 0 ? currentIndex : selectedIndex >= 0 ? selectedIndex : 0;
+  const nextIndex = (baseIndex + direction + options.length) % options.length;
+
+  options[nextIndex]?.focus();
 }
 
 // ===================== RENDER LOGIC =====================
@@ -8324,6 +8439,7 @@ function buildMatchContextRow(q, project, context) {
 function render() {
   const tbody = document.getElementById("tbody");
   const emptyState = document.getElementById("emptyState");
+  syncProjectsFilterDropdowns();
   tbody.innerHTML = "";
 
   const q = val("search").toLowerCase();
@@ -9293,13 +9409,19 @@ function renderNoteTabs() {
   noteTabs.forEach((tabName) => {
     const btn = el("button", {
       className: `inner-tab-btn ${tabName === activeNoteTab ? "active" : ""}`,
-      textContent: tabName,
+      type: "button",
       onclick: () => {
         activeNoteTab = tabName;
         renderNoteTabs();
         renderNoteSearchResults();
       },
     });
+    btn.appendChild(
+      el("span", {
+        className: "notebook-pill-label",
+        textContent: tabName,
+      })
+    );
     const delIcon = el("span", {
       className: "tab-delete-icon",
       textContent: "x",
@@ -9325,8 +9447,10 @@ function renderNoteTabs() {
   });
   const addBtn = el("button", {
     className: "add-tab-btn",
+    type: "button",
     textContent: "+",
     title: "Add New Page",
+    "aria-label": "Add new page",
     onclick: () => {
       const name = prompt("Enter name for new page:");
       if (name && name.trim()) {
@@ -9579,7 +9703,7 @@ function renderChecklistTabs() {
   checklistsDb.checklists.forEach((checklist) => {
     const btn = el("button", {
       className: `inner-tab-btn ${checklist.id === activeChecklistTabId ? "active" : ""}`,
-      textContent: checklist.name,
+      type: "button",
       onclick: () => {
         closeChecklistMenus();
         activeChecklistTabId = checklist.id;
@@ -9587,6 +9711,12 @@ function renderChecklistTabs() {
         renderChecklistItems();
       },
     });
+    btn.appendChild(
+      el("span", {
+        className: "notebook-pill-label",
+        textContent: checklist.name,
+      })
+    );
 
     // Add remove icon
     const delIcon = el("span", {
@@ -15486,10 +15616,10 @@ function initEventListeners() {
   if (openPinnedDeliverablesNotepadBtn) {
     openPinnedDeliverablesNotepadBtn.textContent = "";
     openPinnedDeliverablesNotepadBtn.appendChild(createIcon(NOTE_ICON_PATH, 16));
-    openPinnedDeliverablesNotepadBtn.ariaLabel = "Export deliverables to Notepad";
-    openPinnedDeliverablesNotepadBtn.title = "Export deliverables to Notepad";
+    openPinnedDeliverablesNotepadBtn.ariaLabel = "Export deliverables to Excel";
+    openPinnedDeliverablesNotepadBtn.title = "Export deliverables to Excel";
     openPinnedDeliverablesNotepadBtn.onclick = () =>
-      openDeliverablesNotepadDialog();
+      openDeliverablesExcelDialog();
   }
   const deliverableNotepadAddBtn = document.getElementById(
     "deliverableNotepadAddBtn"
@@ -15509,7 +15639,7 @@ function initEventListeners() {
   );
   if (deliverableNotepadExportBtn) {
     deliverableNotepadExportBtn.onclick = () =>
-      exportSelectedDeliverablesToNotepad();
+      exportSelectedDeliverablesToExcel();
   }
 
   document.querySelectorAll(".tool-card-settings").forEach((btn) => {
@@ -15774,44 +15904,87 @@ function initEventListeners() {
     });
   }
 
-  const syncProjectsFilterChips = () => {
-    document
-      .querySelectorAll('.projects-filter-chip[data-filter-kind="timeframe"]')
-      .forEach((button) => {
-        const isActive = (button.dataset.filterValue || "all") === dueFilter;
-        button.classList.toggle("is-active", isActive);
-        button.setAttribute("aria-pressed", isActive ? "true" : "false");
+  document.querySelectorAll(".projects-filter-dropdown").forEach((dropdown) => {
+    const filterKey = dropdown.dataset.filterDropdown;
+    const trigger = dropdown.querySelector(".projects-filter-trigger");
+    const menu = dropdown.querySelector(".projects-filter-menu");
+
+    trigger?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const willOpen = !dropdown.classList.contains("open");
+      setProjectsFilterDropdownState(dropdown, willOpen, {
+        focusSelected: willOpen
       });
+    });
 
-    document
-      .querySelectorAll('.projects-filter-chip[data-filter-kind="status"]')
-      .forEach((button) => {
-        const isActive = (button.dataset.filterValue || "all") === statusFilter;
-        button.classList.toggle("is-active", isActive);
-        button.setAttribute("aria-pressed", isActive ? "true" : "false");
-      });
-  };
+    trigger?.addEventListener("keydown", (e) => {
+      if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+      e.preventDefault();
+      setProjectsFilterDropdownState(dropdown, true, { focusSelected: true });
+    });
 
-  document.querySelectorAll(".projects-filter-chip").forEach((button) => {
-    button.addEventListener("click", () => {
-      const filterKind = button.dataset.filterKind;
-      const filterValue = button.dataset.filterValue || "all";
+    menu?.addEventListener("click", (e) => {
+      const option = e.target.closest(".projects-filter-option");
+      if (!option) return;
 
-      if (filterKind === "timeframe") {
-        dueFilter = dueFilter === filterValue ? "all" : filterValue;
-      } else if (filterKind === "status") {
-        if (statusFilter === filterValue) return;
-        statusFilter = filterValue;
-      } else {
+      e.stopPropagation();
+      setProjectsFilterValue(filterKey, option.dataset.filterValue || "all");
+      setProjectsFilterDropdownState(dropdown, false);
+      render();
+      trigger?.focus();
+    });
+
+    menu?.addEventListener("keydown", (e) => {
+      const option = e.target.closest(".projects-filter-option");
+      if (!option) return;
+
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        moveProjectsFilterOptionFocus(dropdown, option, 1);
         return;
       }
 
-      syncProjectsFilterChips();
-      render();
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        moveProjectsFilterOptionFocus(dropdown, option, -1);
+        return;
+      }
+
+      if (e.key === "Home") {
+        e.preventDefault();
+        getProjectsFilterOptions(dropdown)[0]?.focus();
+        return;
+      }
+
+      if (e.key === "End") {
+        e.preventDefault();
+        const options = getProjectsFilterOptions(dropdown);
+        options[options.length - 1]?.focus();
+        return;
+      }
+
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setProjectsFilterDropdownState(dropdown, false);
+        trigger?.focus();
+      }
     });
   });
 
-  syncProjectsFilterChips();
+  document.addEventListener("click", (e) => {
+    if (!openProjectsFilterDropdown) return;
+    if (openProjectsFilterDropdown.contains(e.target)) return;
+    setProjectsFilterDropdownState(openProjectsFilterDropdown, false);
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || !openProjectsFilterDropdown) return;
+    const dropdown = openProjectsFilterDropdown;
+    setProjectsFilterDropdownState(dropdown, false);
+    dropdown.querySelector(".projects-filter-trigger")?.focus();
+  });
+
+  syncProjectsFilterDropdowns();
 
   document
     .getElementById("toolPublishDwgs")

@@ -95,7 +95,11 @@
             <button class="btn tiny header-auth-btn" id="headerGoogleAuthBtn" type="button"
                 aria-label="Sign in with Google" title="Sign in with Google">
                 <span class="header-auth-avatar" id="headerGoogleAuthAvatar" aria-hidden="true">G</span>
-                <span class="header-auth-label" id="headerGoogleAuthLabel">Sign in</span>
+                <span class="header-auth-copy">
+                    <span class="header-auth-label" id="headerGoogleAuthLabel">Sign in</span>
+                    <span class="header-auth-meta" id="headerGoogleAuthMeta">Google account</span>
+                </span>
+                <span class="header-auth-status-dot" id="headerGoogleAuthStatusDot" aria-hidden="true"></span>
             </button>
         </div>
     </header>
@@ -370,6 +374,10 @@
                                             <div class="checklist-action-menu checklist-settings-menu"
                                                 id="checklistSettingsMenu" role="menu"
                                                 aria-label="Checklist options">
+                                                <button class="checklist-menu-item"
+                                                    id="overrideChecklistTemplateBtn" type="button" role="menuitem"
+                                                    title="Save this checklist over its template">Override
+                                                    template</button>
                                                 <button class="checklist-menu-item" id="resetChecklistBtn"
                                                     type="button" role="menuitem" title="Reset to default items">Reset
                                                     to template defaults</button>
@@ -384,7 +392,11 @@
                                     <!-- Checklist items rendered here -->
                                 </div>
                                 <div class="checklist-add-item">
-                                    <button class="btn btn-accent tiny" id="addChecklistItemBtn">+ Add Item</button>
+                                    <div class="checklist-add-actions">
+                                        <button class="btn btn-accent tiny" id="addChecklistItemBtn">+ Add Item</button>
+                                        <button class="btn tiny checklist-add-subheader-btn"
+                                            id="addChecklistSubheaderBtn">+ Add Subheader</button>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -1217,8 +1229,7 @@
                                 <label class="label" style="margin-bottom: 0.25rem;">Google account</label>
                                 <div id="settings_googleAuthStatus" class="sync-auth-status">Not signed in</div>
                                 <div id="settings_googleAuthDetails" class="tiny muted">
-                                    Sign in with Google to enable syncing across computers. For now, your data still
-                                    stays on this desktop until sync is turned on.
+                                    Sign in with Google. Projects still stay saved on this desktop for now.
                                 </div>
                             </div>
                             <button type="button" class="btn tiny" id="settings_googleAuthActionBtn">Sign in</button>
@@ -1862,22 +1873,6 @@
         </div>
     </dialog>
 
-    <dialog id="googleSignInDlg">
-        <div class="modal-header">
-            <div class="title">Sign in with Google</div>
-            <button class="btn ghost" onclick="closeDlg('googleSignInDlg')">Close</button>
-        </div>
-        <div class="modal-body stack">
-            <p>Sign in with Google to enable syncing your projects across computers.</p>
-            <p class="tiny muted">For now, your projects and other app data still stay on this desktop until cloud sync
-                is turned on.</p>
-            <div class="modal-footer">
-                <button class="btn ghost" onclick="closeDlg('googleSignInDlg')">Not now</button>
-                <button class="btn btn-primary" id="googleSignInContinueBtn" type="button">Continue with Google</button>
-            </div>
-        </div>
-    </dialog>
-
     <dialog id="googleAccountDlg">
         <div class="modal-header">
             <div class="title">Google account</div>
@@ -1889,11 +1884,11 @@
                     <div class="google-account-avatar" id="googleAccountAvatar">G</div>
                     <div class="google-account-copy">
                         <div class="google-account-name" id="googleAccountName">Not signed in</div>
-                        <div class="tiny muted" id="googleAccountEmail">Sign in to enable syncing across computers.</div>
+                        <div class="tiny muted" id="googleAccountEmail">Sign in to connect your Google account.</div>
                     </div>
                 </div>
                 <div class="google-account-note">
-                    Sync is coming soon. Until it is enabled, your projects still stay saved locally on this desktop.
+                    Projects still stay saved locally on this desktop for now.
                 </div>
             </div>
             <div class="modal-footer">

@@ -104,6 +104,7 @@ const MAX_DELIVERABLE_EMAIL_REFS = 3;
 // Checklists Data
 let checklistsDb = {
   checklists: [],
+  templateOverrides: {},
   lastModified: null,
 };
 
@@ -111,6 +112,9 @@ let checklistsDb = {
 let activeChecklistProject = null;
 let activeChecklistDeliverable = null;
 let activeChecklistTab = null;
+let checklistDragState = null;
+let checklistRowMenuState = null;
+let checklistHandleMenuSuppressClickUntil = 0;
 let activeWorkroomLeftTab = "tasks";
 let workroomDisciplineNoticeShown = false;
 let workroomToolStatusState = {
@@ -138,11 +142,23 @@ const CHECKLIST_TEMPLATE_KEYS = {
   PRE_FLIGHT_ELECTRICAL: "pre_flight_electrical",
   ELECTRICAL_GENERAL: "electrical_general",
 };
+const CHECKLIST_ROW_TYPES = {
+  ITEM: "item",
+  SUBHEADER: "subheader",
+};
 const PRE_FLIGHT_ELECTRICAL_CHECKLIST_NAME = "Pre-flight Electrical Checklist";
 const ELECTRICAL_GENERAL_CHECKLIST_NAME = "Electrical General Checklist";
 const LEGACY_DEFAULT_CHECKLIST_ID = "checklist_default";
 
+function createChecklistTemplateSubheader(text) {
+  return {
+    type: CHECKLIST_ROW_TYPES.SUBHEADER,
+    text: String(text ?? ""),
+  };
+}
+
 const PRE_FLIGHT_ELECTRICAL_TEMPLATE_ITEMS = [
+  createChecklistTemplateSubheader("General coordination"),
   "Check relevant codes that apply to the project based on local city, state, and national codes. (CEC 90.2, 90.4)",
   "Check if the tenant space has existing mechanical units on the roof that are not powered from tenant electrical panels. (CEC 430.102, 440.14)",
   "Check for unmentioned items that could need power (interior signage). (CEC 600.6)",
@@ -152,17 +168,20 @@ const PRE_FLIGHT_ELECTRICAL_TEMPLATE_ITEMS = [
   "Check for adequate space for electrical panels, relocate to BOH corridors as necessary, avoid storage rooms, IT server racks. (CEC 110.26(A), 110.26(E))",
   "Check for food waste disposer for all sinks with outlet under counter and switch above (confirm with plumbing as it is not a requirement). (CEC 422.16(B)(1), 422.31(B))",
   "Check for furniture systems and include note to verify point of connection for furniture systems. (CEC 605)",
+  createChecklistTemplateSubheader("Power, receptacles & equipment"),
   "Check for controlled receptacles in office, lobby, kitchen, printer/copy room, conference room, meeting room. Modular furniture workstations need at least one controlled receptacle per workstation. (Title 24, Part 6 Section 130.5(d))",
   "Check for tamper proof receptacles in areas where children may be present: business offices, lobbies, waiting areas, theaters, auditoriums, gyms, bowling alleys, bus stations, airports, train stations. (CEC 406.12)",
   "Check for rooftop mechanical units shown on RCP, ensure they are dashed in appearance and noted to go on the roof along with rooftop receptacle. (CEC 210.63(A), 440.14)",
   "Check for return or supply air system over 2000CFM for duct smoke requirement. Any mechanical units 2000CFM or over should get duct smoke. (Title 24, Part 2 CBC Section 907.2.12.1.2)",
   "Check for hand dryer specification, if not add note to confirm exact breaker size with manufacturer. (CEC 110.3(B))",
-  "Check for kAIC rating shown on single line main switchboard. (CEC 110.9, 110.10)",
-  "Check for >4000W in space needing demand response. Provide necessary software and device(s) to automatically reducing the lighting power by at least 15% upon receiving a demand response signal. (Title 24, Part 6 Section 110.12)",
   "Check for GFCI protection at required nonresidential receptacle locations (kitchens, outdoor, rooftops, within 6 ft of sinks, etc.). (CEC 210.8(B))",
   "Check meeting rooms for required receptacle outlets, including floor outlets when room size thresholds are met. (CEC 210.65)",
+  createChecklistTemplateSubheader("Distribution & single-line"),
+  "Check for kAIC rating shown on single line main switchboard. (CEC 110.9, 110.10)",
   "Check voltage drop requirements and calculations for feeders and branch circuits (<=5% combined). (Title 24, Part 6 Section 130.5(c))",
   "Check AIC ratings for panels and transformers on single line. (CEC 110.9, 110.10)",
+  createChecklistTemplateSubheader("Lighting controls & Title 24"),
+  "Check for >4000W in space needing demand response. Provide necessary software and device(s) to automatically reducing the lighting power by at least 15% upon receiving a demand response signal. (Title 24, Part 6 Section 110.12)",
   "Check for daylight harvesting in daylit zones. Provide daylight sensor & room controller for automatic dimming of light fixtures. (Title 24, Part 6 Section 130.1(d))",
   "Check for dimming in all rooms that are BOTH >100sqft AND >0.5W/sqft.",
   "Check for occupancy sensors which are required in offices, conference & meeting rooms, classrooms, restrooms, multipurpose rooms, warehouses, library aisles, corridors & stairwells.",
@@ -174,6 +193,7 @@ const PRE_FLIGHT_ELECTRICAL_TEMPLATE_ITEMS = [
 ];
 
 const ELECTRICAL_GENERAL_TEMPLATE_ITEMS = [
+  createChecklistTemplateSubheader("General setup"),
   "Reference Manager",
   "\"cleanup\" command",
   "XREF BGs",
@@ -181,11 +201,13 @@ const ELECTRICAL_GENERAL_TEMPLATE_ITEMS = [
   "Scope of work",
   "Specification sheet (CA or other state-specific)",
   "Sheet Index",
+  createChecklistTemplateSubheader("Distribution & major equipment"),
   "MSB / panelboards / meter",
   "SLD",
   "Panel schedules",
   "EV chargers",
   "Solar",
+  createChecklistTemplateSubheader("Lighting plans & controls"),
   "Arch RCP notes",
   "Title 24",
   "Light fixture schedule (check site photos of existing lights and compare to archived bank standard)",
@@ -196,11 +218,13 @@ const ELECTRICAL_GENERAL_TEMPLATE_ITEMS = [
   "EM lights",
   "Symbol list",
   "Light power, controls, notes",
+  createChecklistTemplateSubheader("Power plans & schedules"),
   "Arch power notes",
   "Out-of-scope",
   "Equipment schedule",
   "IG/GFI/WP/Controlled/General power outlets",
   "Symbol list",
+  createChecklistTemplateSubheader("Site, roof & specialty systems"),
   "Solar equipment",
   "Solar meter",
   "HVAC equipment",
@@ -231,13 +255,77 @@ const CHECKLIST_TEMPLATES = [
   },
 ];
 
-function getChecklistTemplateByKey(templateKey) {
+function getBundledChecklistTemplateByKey(templateKey) {
   if (!templateKey) return null;
   return (
     CHECKLIST_TEMPLATES.find(
       (template) => template.key === String(templateKey).trim()
     ) || null
   );
+}
+
+function normalizeChecklistTemplateOverride(rawOverride, templateKey) {
+  const baseTemplate = getBundledChecklistTemplateByKey(templateKey);
+  if (!baseTemplate) {
+    return { changed: false, override: null };
+  }
+
+  if (!rawOverride || typeof rawOverride !== "object" || Array.isArray(rawOverride)) {
+    return { changed: rawOverride != null, override: null };
+  }
+
+  if (!Array.isArray(rawOverride.items)) {
+    return { changed: true, override: null };
+  }
+
+  let changed = false;
+  const rawName = typeof rawOverride.name === "string" ? rawOverride.name : "";
+  const name = rawName.trim() || baseTemplate.name;
+  if (name !== rawName) changed = true;
+
+  const items = rawOverride.items.map((item, index) => {
+    const normalizedItem = normalizeChecklistItem(item, index);
+    changed = changed || normalizedItem.changed;
+    return {
+      text: normalizedItem.item.text,
+      type: normalizedItem.item.type,
+    };
+  });
+
+  return {
+    changed,
+    override: {
+      name,
+      items,
+      updatedAt:
+        typeof rawOverride.updatedAt === "string" ? rawOverride.updatedAt : null,
+    },
+  };
+}
+
+function getChecklistTemplateByKey(templateKey) {
+  const baseTemplate = getBundledChecklistTemplateByKey(templateKey);
+  if (!baseTemplate) return null;
+
+  const override =
+    checklistsDb?.templateOverrides &&
+    typeof checklistsDb.templateOverrides === "object" &&
+    !Array.isArray(checklistsDb.templateOverrides)
+      ? checklistsDb.templateOverrides[baseTemplate.key]
+      : null;
+
+  if (!override) {
+    return baseTemplate;
+  }
+
+  return {
+    ...baseTemplate,
+    name:
+      typeof override.name === "string" && override.name.trim()
+        ? override.name.trim()
+        : baseTemplate.name,
+    items: Array.isArray(override.items) ? override.items : baseTemplate.items,
+  };
 }
 
 function getChecklistTemplatesForCurrentDisciplines() {
@@ -248,31 +336,216 @@ function getChecklistTemplatesForCurrentDisciplines() {
   );
   return CHECKLIST_TEMPLATES.filter((template) =>
     selectedDisciplines.has(String(template.discipline || "").toLowerCase())
+  )
+    .map((template) => getChecklistTemplateByKey(template.key))
+    .filter(Boolean);
+}
+
+function normalizeChecklistRowType(type) {
+  return String(type || "").trim().toLowerCase() === CHECKLIST_ROW_TYPES.SUBHEADER
+    ? CHECKLIST_ROW_TYPES.SUBHEADER
+    : CHECKLIST_ROW_TYPES.ITEM;
+}
+
+function isChecklistSubheader(item) {
+  return normalizeChecklistRowType(item?.type) === CHECKLIST_ROW_TYPES.SUBHEADER;
+}
+
+function getChecklistCheckableItems(items = []) {
+  return (Array.isArray(items) ? items : []).filter(
+    (item) => !isChecklistSubheader(item)
   );
 }
 
+function getChecklistItemNumberLookup(items = []) {
+  const lookup = new Map();
+  let itemNumber = 0;
+
+  (Array.isArray(items) ? items : []).forEach((item) => {
+    if (isChecklistSubheader(item)) {
+      itemNumber = 0;
+      return;
+    }
+
+    itemNumber += 1;
+    lookup.set(item.id, itemNumber);
+  });
+
+  return lookup;
+}
+
+function getChecklistSections(items = []) {
+  const sections = [];
+  let currentSection = { header: null, items: [] };
+
+  (Array.isArray(items) ? items : []).forEach((item) => {
+    if (isChecklistSubheader(item)) {
+      if (currentSection.header || currentSection.items.length) {
+        sections.push(currentSection);
+      }
+      currentSection = { header: item, items: [] };
+      return;
+    }
+
+    currentSection.items.push({
+      item,
+      number: currentSection.items.length + 1,
+    });
+  });
+
+  if (currentSection.header || currentSection.items.length) {
+    sections.push(currentSection);
+  }
+
+  return sections;
+}
+
+function getChecklistSectionBounds(items = [], index) {
+  if (!Array.isArray(items) || !items.length || index < 0 || index >= items.length) {
+    return null;
+  }
+
+  let start = index;
+  if (!isChecklistSubheader(items[index])) {
+    start = -1;
+    for (let i = index; i >= 0; i -= 1) {
+      if (isChecklistSubheader(items[i])) {
+        start = i;
+        break;
+      }
+    }
+    if (start < 0) start = 0;
+  }
+
+  let end = items.length - 1;
+  for (let i = start + 1; i < items.length; i += 1) {
+    if (isChecklistSubheader(items[i])) {
+      end = i - 1;
+      break;
+    }
+  }
+
+  return { start, end };
+}
+
+function getChecklistDragDescriptor(checklist, itemId) {
+  const items = Array.isArray(checklist?.items) ? checklist.items : [];
+  const index = items.findIndex((item) => item.id === itemId);
+  if (index < 0) return null;
+
+  return {
+    type: isChecklistSubheader(items[index]) ? "subheader" : "item",
+    itemId,
+    startIndex: index,
+    endIndex: index,
+  };
+}
+
+function clearChecklistDragStyles() {
+  document.querySelectorAll(".checklist-item-row").forEach((row) => {
+    row.classList.remove("checklist-drop-before", "checklist-drop-after", "checklist-dragging");
+    delete row.dataset.dropPosition;
+  });
+}
+
+function isChecklistRowMenuOpen(checklistId, itemId) {
+  return (
+    checklistRowMenuState?.checklistId === checklistId &&
+    checklistRowMenuState?.itemId === itemId
+  );
+}
+
+function setChecklistRowMenuState(checklistId, itemId) {
+  checklistRowMenuState =
+    checklistId && itemId ? { checklistId, itemId } : null;
+}
+
+function moveChecklistRows(checklistId, draggedItemId, targetItemId, before = true) {
+  const checklist = getChecklistById(checklistId);
+  if (!checklist) return false;
+
+  const items = Array.isArray(checklist.items) ? checklist.items : [];
+  const dragDescriptor = getChecklistDragDescriptor(checklist, draggedItemId);
+  const targetIndex = items.findIndex((item) => item.id === targetItemId);
+  if (!dragDescriptor || targetIndex < 0) return false;
+  if (targetIndex >= dragDescriptor.startIndex && targetIndex <= dragDescriptor.endIndex) {
+    return false;
+  }
+
+  const movedItems = items.slice(
+    dragDescriptor.startIndex,
+    dragDescriptor.endIndex + 1
+  );
+  const remainingItems = items.filter(
+    (_, index) => index < dragDescriptor.startIndex || index > dragDescriptor.endIndex
+  );
+  const remainingTargetIndex = remainingItems.findIndex((item) => item.id === targetItemId);
+  if (remainingTargetIndex < 0) return false;
+
+  const insertIndex = before ? remainingTargetIndex : remainingTargetIndex + 1;
+  remainingItems.splice(insertIndex, 0, ...movedItems);
+
+  checklist.items = remainingItems;
+  reindexChecklistItems(checklist.items);
+  saveChecklists();
+  return true;
+}
+
+function createChecklistTemplateSnapshot(items = []) {
+  return (Array.isArray(items) ? items : []).map((item, order) => {
+    const normalizedItem = normalizeChecklistItem(
+      typeof item === "string"
+        ? item
+        : {
+            text: item?.text,
+            type: item?.type,
+          },
+      order
+    );
+    return {
+      text: normalizedItem.item.text,
+      type: normalizedItem.item.type,
+    };
+  });
+}
+
 function createChecklistItemsFromTexts(texts = []) {
-  return texts.map((text, order) => ({
-    id: generateChecklistItemId(),
-    text: String(text ?? ""),
-    order,
-  }));
+  return createChecklistTemplateSnapshot(texts).map((item, order) =>
+    normalizeChecklistItem(item, order).item
+  );
 }
 
 function normalizeChecklistItem(item, order) {
+  let changed = false;
   const base =
     item && typeof item === "object" && !Array.isArray(item) ? { ...item } : {};
-  const id =
-    typeof base.id === "string" && base.id.trim()
-      ? base.id.trim()
-      : generateChecklistItemId();
+  if (base !== item) changed = true;
+  const rawId = typeof base.id === "string" ? base.id : "";
+  const id = rawId.trim() || generateChecklistItemId();
+  if (!rawId.trim() || rawId.trim() !== rawId) changed = true;
   const text = typeof item === "string" ? item : base.text;
+  if (typeof text !== "string") changed = true;
+  const rawType = typeof item === "string" ? CHECKLIST_ROW_TYPES.ITEM : base.type;
+  const type = normalizeChecklistRowType(rawType);
+  if (type !== rawType) changed = true;
+  if (base.order !== order) changed = true;
   return {
-    ...base,
-    id,
-    text: String(text ?? ""),
-    order,
+    changed,
+    item: {
+      ...base,
+      id,
+      text: String(text ?? ""),
+      order,
+      type,
+    },
   };
+}
+
+function reindexChecklistItems(items = []) {
+  items.forEach((item, index) => {
+    item.order = index;
+  });
+  return items;
 }
 
 function isLegacyDefaultChecklistName(name) {
@@ -301,13 +574,15 @@ function normalizeChecklistRecord(rawChecklist, index) {
   }
 
   if (!Array.isArray(source.items)) changed = true;
-  const items = (Array.isArray(source.items) ? source.items : []).map((item, itemIndex) =>
-    normalizeChecklistItem(item, itemIndex)
-  );
+  const items = (Array.isArray(source.items) ? source.items : []).map((item, itemIndex) => {
+    const normalizedItem = normalizeChecklistItem(item, itemIndex);
+    changed = changed || normalizedItem.changed;
+    return normalizedItem.item;
+  });
 
   let templateKey =
     typeof source.templateKey === "string" ? source.templateKey.trim() : "";
-  if (templateKey && !getChecklistTemplateByKey(templateKey)) {
+  if (templateKey && !getBundledChecklistTemplateByKey(templateKey)) {
     templateKey = "";
     changed = true;
   }
@@ -363,10 +638,34 @@ function normalizeChecklistsDb(rawDb) {
     normalizedChecklists.push(nextChecklist);
   });
 
+  const rawTemplateOverrides =
+    source.templateOverrides &&
+    typeof source.templateOverrides === "object" &&
+    !Array.isArray(source.templateOverrides)
+      ? source.templateOverrides
+      : {};
+  if (rawTemplateOverrides !== source.templateOverrides) changed = true;
+
+  const normalizedTemplateOverrides = {};
+  CHECKLIST_TEMPLATES.forEach((template) => {
+    if (!Object.prototype.hasOwnProperty.call(rawTemplateOverrides, template.key)) return;
+    const normalizedOverride = normalizeChecklistTemplateOverride(
+      rawTemplateOverrides[template.key],
+      template.key
+    );
+    changed = changed || normalizedOverride.changed;
+    if (normalizedOverride.override) {
+      normalizedTemplateOverrides[template.key] = normalizedOverride.override;
+    } else {
+      changed = true;
+    }
+  });
+
   return {
     changed,
     data: {
       checklists: normalizedChecklists,
+      templateOverrides: normalizedTemplateOverrides,
       lastModified:
         typeof source.lastModified === "string" ? source.lastModified : null,
     },
@@ -384,7 +683,7 @@ async function loadChecklists() {
     return checklistsDb;
   } catch (e) {
     console.warn("Failed to load checklists:", e);
-    checklistsDb = { checklists: [], lastModified: null };
+    checklistsDb = { checklists: [], templateOverrides: {}, lastModified: null };
     return checklistsDb;
   }
 }
@@ -410,7 +709,7 @@ function createChecklist(name, options = {}) {
       ? getChecklistTemplateByKey(options.templateKey)
       : null;
   const normalizedItems = (Array.isArray(options.items) ? options.items : []).map(
-    (item, index) => normalizeChecklistItem(item, index)
+    (item, index) => normalizeChecklistItem(item, index).item
   );
   const newChecklist = {
     id:
@@ -476,18 +775,60 @@ function deleteChecklist(id) {
 }
 
 function addChecklistItem(checklistId, text) {
+  return addChecklistRow(checklistId, text, CHECKLIST_ROW_TYPES.ITEM);
+}
+
+function addChecklistSubheader(checklistId, text) {
+  return addChecklistRow(checklistId, text, CHECKLIST_ROW_TYPES.SUBHEADER);
+}
+
+function insertChecklistItem(checklistId, insertIndex, text = "New checklist item") {
+  return insertChecklistRow(
+    checklistId,
+    insertIndex,
+    CHECKLIST_ROW_TYPES.ITEM,
+    text
+  );
+}
+
+function insertChecklistRow(
+  checklistId,
+  insertIndex,
+  type = CHECKLIST_ROW_TYPES.ITEM,
+  text = ""
+) {
   const checklist = getChecklistById(checklistId);
-  if (checklist) {
-    const newItem = {
-      id: generateChecklistItemId(),
-      text: text,
-      order: checklist.items.length,
-    };
-    checklist.items.push(newItem);
-    saveChecklists();
-    return newItem;
-  }
-  return null;
+  if (!checklist) return null;
+
+  const items = Array.isArray(checklist.items) ? checklist.items : [];
+  const boundedIndex = Math.max(0, Math.min(Number(insertIndex) || 0, items.length));
+  const newItem = normalizeChecklistItem(
+    {
+      text,
+      type,
+    },
+    boundedIndex
+  ).item;
+
+  items.splice(boundedIndex, 0, newItem);
+  reindexChecklistItems(items);
+  saveChecklists();
+  return newItem;
+}
+
+function insertChecklistSubheader(checklistId, insertIndex, text = "New section") {
+  return insertChecklistRow(
+    checklistId,
+    insertIndex,
+    CHECKLIST_ROW_TYPES.SUBHEADER,
+    text
+  );
+}
+
+function addChecklistRow(checklistId, text, type = CHECKLIST_ROW_TYPES.ITEM) {
+  const checklist = getChecklistById(checklistId);
+  const nextIndex = Array.isArray(checklist?.items) ? checklist.items.length : 0;
+  return insertChecklistRow(checklistId, nextIndex, type, text);
 }
 
 function removeChecklistItem(checklistId, itemId) {
@@ -496,8 +837,7 @@ function removeChecklistItem(checklistId, itemId) {
     const idx = checklist.items.findIndex(i => i.id === itemId);
     if (idx > -1) {
       checklist.items.splice(idx, 1);
-      // Reorder remaining items
-      checklist.items.forEach((item, i) => item.order = i);
+      reindexChecklistItems(checklist.items);
       saveChecklists();
       return true;
     }
@@ -527,6 +867,31 @@ function resetChecklistToDefault(checklistId) {
     return true;
   }
   return false;
+}
+
+function overrideChecklistTemplate(checklistId) {
+  const checklist = getChecklistById(checklistId);
+  const templateKey =
+    typeof checklist?.templateKey === "string" ? checklist.templateKey.trim() : "";
+  const baseTemplate = getBundledChecklistTemplateByKey(templateKey);
+  if (!checklist || !baseTemplate) return false;
+
+  if (
+    !checklistsDb.templateOverrides ||
+    typeof checklistsDb.templateOverrides !== "object" ||
+    Array.isArray(checklistsDb.templateOverrides)
+  ) {
+    checklistsDb.templateOverrides = {};
+  }
+
+  checklistsDb.templateOverrides[templateKey] = {
+    name: String(checklist.name || "").trim() || baseTemplate.name,
+    items: createChecklistTemplateSnapshot(checklist.items),
+    updatedAt: new Date().toISOString(),
+  };
+
+  saveChecklists();
+  return true;
 }
 
 // Timesheet Constants
@@ -5119,80 +5484,89 @@ function applyGoogleAuthAvatar(element, state = googleAuthState) {
 function renderGoogleAuthUi() {
   const headerBtn = document.getElementById("headerGoogleAuthBtn");
   const headerLabel = document.getElementById("headerGoogleAuthLabel");
+  const headerMeta = document.getElementById("headerGoogleAuthMeta");
   const statusEl = document.getElementById("settings_googleAuthStatus");
   const detailsEl = document.getElementById("settings_googleAuthDetails");
   const settingsActionBtn = document.getElementById(
     "settings_googleAuthActionBtn"
   );
-  const continueBtn = document.getElementById("googleSignInContinueBtn");
   const signOutBtn = document.getElementById("googleSignOutBtn");
   const accountName = document.getElementById("googleAccountName");
   const accountEmail = document.getElementById("googleAccountEmail");
   const accountAvatar = document.getElementById("googleAccountAvatar");
   const headerAvatar = document.getElementById("headerGoogleAuthAvatar");
+  const displayName = getGoogleAuthDisplayName();
+  const isSignedIn = googleAuthState.signedIn;
+  const primaryLabel = googleAuthBusy
+    ? "Connecting..."
+    : isSignedIn
+      ? displayName
+      : "Sign in";
+  const secondaryLabel = googleAuthBusy
+    ? "Check your browser"
+    : isSignedIn
+      ? googleAuthState.email && googleAuthState.email !== displayName
+        ? googleAuthState.email
+        : "Signed in"
+      : "Google account";
 
   if (headerBtn) {
     headerBtn.disabled = googleAuthBusy;
-    headerBtn.dataset.signedIn = googleAuthState.signedIn ? "true" : "false";
+    headerBtn.dataset.signedIn = isSignedIn ? "true" : "false";
     headerBtn.setAttribute(
       "aria-label",
-      googleAuthState.signedIn
-        ? `Google account: ${getGoogleAuthDisplayName()}`
+      isSignedIn
+        ? `Google account: ${displayName}`
         : "Sign in with Google"
     );
-    headerBtn.title = googleAuthState.signedIn
-      ? `Signed in as ${getGoogleAuthDisplayName()}`
-      : "Sign in with Google";
+    headerBtn.title = googleAuthBusy
+      ? "Completing Google sign-in"
+      : isSignedIn
+        ? `Signed in as ${displayName}`
+        : "Sign in with Google";
   }
   if (headerLabel) {
-    headerLabel.textContent = googleAuthBusy
-      ? "Working..."
-      : googleAuthState.signedIn
-        ? getGoogleAuthDisplayName()
-        : "Sign in";
+    headerLabel.textContent = primaryLabel;
+  }
+  if (headerMeta) {
+    headerMeta.textContent = secondaryLabel;
   }
   applyGoogleAuthAvatar(headerAvatar, googleAuthState);
 
   if (statusEl) {
-    statusEl.textContent = googleAuthState.signedIn
-      ? `Signed in as ${getGoogleAuthDisplayName()}`
+    statusEl.textContent = isSignedIn
+      ? `Signed in as ${displayName}`
       : "Not signed in";
   }
   if (detailsEl) {
-    detailsEl.textContent = googleAuthState.signedIn
+    detailsEl.textContent = isSignedIn
       ? `${
           googleAuthState.email || "Google account connected."
-        } Sign-in is meant to enable syncing across computers. Until sync is turned on, your data still stays on this desktop.`
-      : "Sign in with Google to enable syncing across computers. For now, your data still stays on this desktop until sync is turned on.";
+        } Projects still stay saved on this desktop for now.`
+      : "Sign in with Google. Projects still stay saved on this desktop for now.";
   }
   if (settingsActionBtn) {
     settingsActionBtn.disabled = googleAuthBusy;
     settingsActionBtn.textContent = googleAuthBusy
       ? "Working..."
-      : googleAuthState.signedIn
-        ? "Manage"
+      : isSignedIn
+        ? "Account"
         : "Sign in";
   }
-  if (continueBtn) {
-    continueBtn.disabled = googleAuthBusy;
-    continueBtn.textContent = googleAuthBusy
-      ? "Opening Google..."
-      : "Continue with Google";
-  }
   if (signOutBtn) {
-    signOutBtn.disabled = googleAuthBusy || !googleAuthState.signedIn;
-    signOutBtn.style.display = googleAuthState.signedIn ? "inline-flex" : "none";
+    signOutBtn.disabled = googleAuthBusy || !isSignedIn;
+    signOutBtn.style.display = isSignedIn ? "inline-flex" : "none";
     signOutBtn.textContent = googleAuthBusy ? "Signing out..." : "Sign out";
   }
   if (accountName) {
-    accountName.textContent = googleAuthState.signedIn
-      ? getGoogleAuthDisplayName()
+    accountName.textContent = isSignedIn
+      ? displayName
       : "Not signed in";
   }
   if (accountEmail) {
-    accountEmail.textContent = googleAuthState.signedIn
-      ? googleAuthState.email || "Google account connected."
-      : "Sign in to enable syncing across computers.";
+    accountEmail.textContent = isSignedIn
+      ? googleAuthState.email || "Signed in with Google."
+      : "Sign in to connect your Google account.";
   }
   applyGoogleAuthAvatar(accountAvatar, googleAuthState);
 }
@@ -5220,11 +5594,19 @@ async function loadGoogleAuthState({ silent = false } = {}) {
   return googleAuthState;
 }
 
-function openGoogleAuthDialog() {
-  const dialogId = googleAuthState.signedIn ? "googleAccountDlg" : "googleSignInDlg";
-  const dialog = document.getElementById(dialogId);
+function openGoogleAccountDialog() {
+  const dialog = document.getElementById("googleAccountDlg");
   renderGoogleAuthUi();
   showDialog(dialog);
+}
+
+function handleGoogleAuthAction() {
+  if (googleAuthBusy) return;
+  if (googleAuthState.signedIn) {
+    openGoogleAccountDialog();
+    return;
+  }
+  handleGoogleSignIn();
 }
 
 async function handleGoogleSignIn() {
@@ -5234,9 +5616,17 @@ async function handleGoogleSignIn() {
   try {
     const response = await window.pywebview.api.sign_in_with_google();
     if (response?.status === "success") {
-      closeDlg("googleSignInDlg");
+      googleAuthState = normalizeGoogleAuthState(response.auth);
+      googleAuthBusy = false;
+      renderGoogleAuthUi();
       await loadUserSettings();
-      await loadGoogleAuthState({ silent: true });
+      const verifiedAuthState = await loadGoogleAuthState({ silent: true });
+      if (!verifiedAuthState.signedIn) {
+        toast(
+          "Google sign-in completed in the browser, but the app could not confirm your signed-in state."
+        );
+        return;
+      }
       toast(`Signed in as ${getGoogleAuthDisplayName()}.`);
       return;
     }
@@ -9638,9 +10028,11 @@ let checklistSettingsMenuOpen = false;
 const debouncedSaveChecklists = debounce(saveChecklists, 500);
 
 function closeChecklistMenus() {
-  const hadOpenMenu = checklistCreateMenuOpen || checklistSettingsMenuOpen;
+  const hadOpenMenu =
+    checklistCreateMenuOpen || checklistSettingsMenuOpen || Boolean(checklistRowMenuState);
   checklistCreateMenuOpen = false;
   checklistSettingsMenuOpen = false;
+  checklistRowMenuState = null;
   return hadOpenMenu;
 }
 
@@ -9664,6 +10056,17 @@ function syncChecklistMenuUi() {
   }
   if (settingsBtn) settingsBtn.setAttribute("aria-expanded", String(settingsOpen));
   if (settingsMenu) settingsMenu.classList.toggle("open", settingsOpen);
+
+  document.querySelectorAll(".checklist-row-menu-dropdown").forEach((dropdown) => {
+    const checklistId = String(dropdown.dataset.checklistId || "").trim();
+    const itemId = String(dropdown.dataset.itemId || "").trim();
+    const isOpen = isChecklistRowMenuOpen(checklistId, itemId);
+    const trigger = dropdown.querySelector(".checklist-drag-handle");
+    const menu = dropdown.querySelector(".checklist-row-handle-menu");
+    dropdown.classList.toggle("open", isOpen);
+    if (trigger) trigger.setAttribute("aria-expanded", String(isOpen));
+    menu?.classList.toggle("open", isOpen);
+  });
 }
 
 function handleCreateBlankChecklist() {
@@ -9826,14 +10229,18 @@ function renderChecklistItems() {
   const settingsBtn = document.getElementById("checklistSettingsBtn");
   const settingsMenu = document.getElementById("checklistSettingsMenu");
   const resetBtn = document.getElementById("resetChecklistBtn");
+  const overrideBtn = document.getElementById("overrideChecklistTemplateBtn");
   const deleteBtn = document.getElementById("deleteChecklistBtn");
   const addItemBtn = document.getElementById("addChecklistItemBtn");
+  const addSubheaderBtn = document.getElementById("addChecklistSubheaderBtn");
+  if (!container || !nameInput || !addItemBtn || !addSubheaderBtn) return;
 
   container.innerHTML = "";
 
   const checklist = getChecklistById(activeChecklistTabId);
 
   if (!checklist) {
+    checklistRowMenuState = null;
     nameInput.value = "";
     nameInput.disabled = true;
     checklistSettingsMenuOpen = false;
@@ -9841,10 +10248,20 @@ function renderChecklistItems() {
     if (settingsBtn) settingsBtn.setAttribute("aria-expanded", "false");
     if (settingsMenu) settingsMenu.classList.remove("open");
     if (resetBtn) resetBtn.hidden = true;
+    if (overrideBtn) overrideBtn.hidden = true;
     if (deleteBtn) deleteBtn.hidden = true;
     addItemBtn.disabled = true;
+    addSubheaderBtn.disabled = true;
     container.innerHTML = '<p class="muted">Select or create a checklist to get started.</p>';
     return;
+  }
+
+  if (
+    checklistRowMenuState &&
+    (checklistRowMenuState.checklistId !== checklist.id ||
+      !checklist.items.some((item) => item.id === checklistRowMenuState.itemId))
+  ) {
+    checklistRowMenuState = null;
   }
 
   nameInput.value = checklist.name;
@@ -9858,23 +10275,42 @@ function renderChecklistItems() {
   if (resetBtn) {
     resetBtn.hidden = !getChecklistTemplateByKey(checklist.templateKey);
   }
+  if (overrideBtn) {
+    overrideBtn.hidden = !getChecklistTemplateByKey(checklist.templateKey);
+  }
   if (deleteBtn) deleteBtn.hidden = false;
   addItemBtn.disabled = false;
+  addSubheaderBtn.disabled = false;
 
-  // Render items
+  const numberLookup = getChecklistItemNumberLookup(checklist.items);
   checklist.items.forEach((item, index) => {
-    const row = el("div", { className: "checklist-item-row" });
-
-    const order = el("div", {
-      className: "checklist-item-order",
-      textContent: String(index + 1),
+    const isSubheader = isChecklistSubheader(item);
+    const rowMenuOpen = isChecklistRowMenuOpen(checklist.id, item.id);
+    const row = el("div", {
+      className: `checklist-item-row ${isSubheader ? "checklist-subheader-row" : ""}`,
+      "data-item-id": item.id,
     });
+
+    const leadingElement = isSubheader
+      ? el("div", {
+          className: "checklist-subheader-badge",
+          textContent: "Section",
+        })
+      : el("div", {
+          className: "checklist-item-order",
+          textContent: String(numberLookup.get(item.id) || 1),
+        });
 
     const input = el("input", {
       type: "text",
-      className: "checklist-item-input",
+      className: `checklist-item-input checklist-row-input ${
+        isSubheader ? "checklist-subheader-input" : ""
+      }`,
       value: item.text,
-      placeholder: "Enter checklist item...",
+      placeholder: isSubheader
+        ? "Enter section subheader..."
+        : "Enter checklist item...",
+      "data-item-id": item.id,
       oninput: (e) => {
         updateChecklistItem(checklist.id, item.id, e.target.value);
       },
@@ -9883,9 +10319,9 @@ function renderChecklistItems() {
     const removeBtn = el("button", {
       className: "checklist-item-remove",
       type: "button",
-      title: "Remove item",
+      title: isSubheader ? "Remove subheader" : "Remove item",
       onclick: () => {
-        if (confirm('Remove this item?')) {
+        if (confirm(isSubheader ? "Remove this subheader?" : "Remove this item?")) {
           removeChecklistItem(checklist.id, item.id);
           renderChecklistItems();
         }
@@ -9894,13 +10330,173 @@ function renderChecklistItems() {
     // Use an elegant X for the remove button instead of text
     removeBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`;
 
-    // SVG icon for drag handle (lucide styling)
-    const dragHandle = el("div", { className: "checklist-drag-handle", title: "Drag to reorder (Coming soon)" });
-    dragHandle.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="12" r="1"></circle><circle cx="9" cy="5" r="1"></circle><circle cx="9" cy="19" r="1"></circle><circle cx="15" cy="12" r="1"></circle><circle cx="15" cy="5" r="1"></circle><circle cx="15" cy="19" r="1"></circle></svg>`;
+    const handleMenuDropdown = el("div", {
+      className: `checklist-action-dropdown checklist-row-menu-dropdown ${
+        rowMenuOpen ? "open" : ""
+      }`,
+      "data-checklist-id": checklist.id,
+      "data-item-id": item.id,
+    });
 
-    row.append(dragHandle, order, input, removeBtn);
+    // Dragging a subheader moves the whole section; dragging an item moves only that row.
+    const dragHandle = el("button", {
+      className: "checklist-drag-handle",
+      type: "button",
+      title: isSubheader ? "Drag to move section" : "Drag to move item",
+      "aria-label": isSubheader ? "Drag to move section" : "Drag to move item",
+      "aria-haspopup": "menu",
+      "aria-expanded": String(rowMenuOpen),
+    });
+    dragHandle.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="12" r="1"></circle><circle cx="9" cy="5" r="1"></circle><circle cx="9" cy="19" r="1"></circle><circle cx="15" cy="12" r="1"></circle><circle cx="15" cy="5" r="1"></circle><circle cx="15" cy="19" r="1"></circle></svg>`;
+    dragHandle.draggable = true;
+    dragHandle.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (Date.now() < checklistHandleMenuSuppressClickUntil) return;
+      checklistCreateMenuOpen = false;
+      checklistSettingsMenuOpen = false;
+      setChecklistRowMenuState(
+        checklist.id,
+        isChecklistRowMenuOpen(checklist.id, item.id) ? null : item.id
+      );
+      syncChecklistMenuUi();
+    });
+    dragHandle.addEventListener("dragstart", (e) => {
+      checklistHandleMenuSuppressClickUntil = Date.now() + 250;
+      checklistCreateMenuOpen = false;
+      checklistSettingsMenuOpen = false;
+      checklistRowMenuState = null;
+      checklistDragState = {
+        checklistId: checklist.id,
+        itemId: item.id,
+        type: isSubheader ? "section" : "item",
+      };
+      row.classList.add("checklist-dragging");
+      syncChecklistMenuUi();
+      if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", item.id);
+      }
+    });
+    dragHandle.addEventListener("dragend", () => {
+      checklistHandleMenuSuppressClickUntil = Date.now() + 250;
+      checklistDragState = null;
+      row.classList.remove("checklist-dragging");
+      clearChecklistDragStyles();
+    });
+
+    const rowHandleMenu = el("div", {
+      className: `checklist-action-menu checklist-row-handle-menu ${rowMenuOpen ? "open" : ""}`,
+      role: "menu",
+      "aria-label": "Checklist row actions",
+    });
+    rowHandleMenu.appendChild(
+      el("button", {
+        className: "checklist-menu-item",
+        type: "button",
+        textContent: "Insert item above",
+        onclick: (e) => {
+          e.stopPropagation();
+          checklistRowMenuState = null;
+          const newItem = insertChecklistItem(checklist.id, index, "New checklist item");
+          renderChecklistItems();
+          focusChecklistRowInput(newItem?.id);
+        },
+      })
+    );
+    rowHandleMenu.appendChild(
+      el("button", {
+        className: "checklist-menu-item",
+        type: "button",
+        textContent: "Insert item below",
+        onclick: (e) => {
+          e.stopPropagation();
+          checklistRowMenuState = null;
+          const newItem = insertChecklistItem(checklist.id, index + 1, "New checklist item");
+          renderChecklistItems();
+          focusChecklistRowInput(newItem?.id);
+        },
+      })
+    );
+    rowHandleMenu.appendChild(el("div", { className: "checklist-menu-divider" }));
+    rowHandleMenu.appendChild(
+      el("button", {
+        className: "checklist-menu-item",
+        type: "button",
+        textContent: "Insert subheader above",
+        onclick: (e) => {
+          e.stopPropagation();
+          checklistRowMenuState = null;
+          const newItem = insertChecklistSubheader(checklist.id, index, "New section");
+          renderChecklistItems();
+          focusChecklistRowInput(newItem?.id);
+        },
+      })
+    );
+    rowHandleMenu.appendChild(
+      el("button", {
+        className: "checklist-menu-item",
+        type: "button",
+        textContent: "Insert subheader below",
+        onclick: (e) => {
+          e.stopPropagation();
+          checklistRowMenuState = null;
+          const newItem = insertChecklistSubheader(checklist.id, index + 1, "New section");
+          renderChecklistItems();
+          focusChecklistRowInput(newItem?.id);
+        },
+      })
+    );
+    handleMenuDropdown.append(dragHandle, rowHandleMenu);
+
+    row.addEventListener("dragover", (e) => {
+      if (!checklistDragState || checklistDragState.checklistId !== checklist.id) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+      const rect = row.getBoundingClientRect();
+      const before = e.clientY < rect.top + rect.height / 2;
+      row.classList.toggle("checklist-drop-before", before);
+      row.classList.toggle("checklist-drop-after", !before);
+      row.dataset.dropPosition = before ? "before" : "after";
+    });
+
+    row.addEventListener("dragleave", (e) => {
+      const nextTarget = e.relatedTarget;
+      if (nextTarget instanceof Node && row.contains(nextTarget)) return;
+      row.classList.remove("checklist-drop-before", "checklist-drop-after");
+      delete row.dataset.dropPosition;
+    });
+
+    row.addEventListener("drop", (e) => {
+      if (!checklistDragState || checklistDragState.checklistId !== checklist.id) return;
+      e.preventDefault();
+      const before = row.dataset.dropPosition !== "after";
+      const moved = moveChecklistRows(
+        checklist.id,
+        checklistDragState.itemId,
+        item.id,
+        before
+      );
+      clearChecklistDragStyles();
+      checklistDragState = null;
+      if (moved) {
+        renderChecklistItems();
+      }
+    });
+
+    row.append(handleMenuDropdown, leadingElement, input, removeBtn);
     container.appendChild(row);
   });
+}
+
+function focusChecklistRowInput(itemId) {
+  if (!itemId) return;
+  setTimeout(() => {
+    const input = document.querySelector(`.checklist-row-input[data-item-id="${itemId}"]`);
+    if (input) {
+      input.focus();
+      input.select();
+    }
+  }, 50);
 }
 
 // Event listeners for checklist tab
@@ -9943,6 +10539,28 @@ document.getElementById("resetChecklistBtn")?.addEventListener("click", () => {
   syncChecklistMenuUi();
 });
 
+document.getElementById("overrideChecklistTemplateBtn")?.addEventListener("click", () => {
+  const checklist = getChecklistById(activeChecklistTabId);
+  const template = getChecklistTemplateByKey(checklist?.templateKey);
+  checklistSettingsMenuOpen = false;
+  if (!checklist || !template) {
+    syncChecklistMenuUi();
+    toast("This checklist is not linked to a template.");
+    return;
+  }
+  if (
+    confirm(
+      `Save "${checklist.name}" over the "${template.name}" template? New checklists and reset-to-template actions will use this version.`
+    )
+  ) {
+    overrideChecklistTemplate(checklist.id);
+    renderChecklistTabs();
+    toast("Template override saved.");
+    return;
+  }
+  syncChecklistMenuUi();
+});
+
 document.getElementById("deleteChecklistBtn")?.addEventListener("click", () => {
   const checklist = getChecklistById(activeChecklistTabId);
   checklistSettingsMenuOpen = false;
@@ -9958,34 +10576,38 @@ document.getElementById("deleteChecklistBtn")?.addEventListener("click", () => {
 document.getElementById("addChecklistItemBtn")?.addEventListener("click", () => {
   const checklist = getChecklistById(activeChecklistTabId);
   if (checklist) {
-    addChecklistItem(checklist.id, "New checklist item");
+    const newItem = addChecklistItem(checklist.id, "New checklist item");
     renderChecklistItems();
-    // Focus the new item
-    setTimeout(() => {
-      const inputs = document.querySelectorAll(".checklist-item-input");
-      if (inputs.length > 0) {
-        inputs[inputs.length - 1].focus();
-        inputs[inputs.length - 1].select();
-      }
-    }, 50);
+    focusChecklistRowInput(newItem?.id);
+  }
+});
+
+document.getElementById("addChecklistSubheaderBtn")?.addEventListener("click", () => {
+  const checklist = getChecklistById(activeChecklistTabId);
+  if (checklist) {
+    const newItem = addChecklistSubheader(checklist.id, "New section");
+    renderChecklistItems();
+    focusChecklistRowInput(newItem?.id);
   }
 });
 
 document.addEventListener("click", (e) => {
-  if (!checklistCreateMenuOpen && !checklistSettingsMenuOpen) return;
+  if (!checklistCreateMenuOpen && !checklistSettingsMenuOpen && !checklistRowMenuState) return;
 
   const clickedCreateMenu = e.target.closest(".checklist-create-dropdown");
   const clickedSettingsMenu = e.target.closest("#checklistSettingsDropdown");
+  const clickedRowMenu = e.target.closest(".checklist-row-menu-dropdown");
 
   if (!clickedCreateMenu) checklistCreateMenuOpen = false;
   if (!clickedSettingsMenu) checklistSettingsMenuOpen = false;
+  if (!clickedRowMenu) checklistRowMenuState = null;
 
   syncChecklistMenuUi();
 });
 
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
-  if (!checklistCreateMenuOpen && !checklistSettingsMenuOpen) return;
+  if (!checklistCreateMenuOpen && !checklistSettingsMenuOpen && !checklistRowMenuState) return;
   closeChecklistMenus();
   syncChecklistMenuUi();
 });
@@ -11010,8 +11632,13 @@ function renderWorkroomChecklistTabs() {
   checklistModalState.appliedTabs.forEach((tab, tabIndex) => {
     const checklist = getChecklistById(tab.checklistId);
     const instance = deliverable.appliedChecklists?.[tab.instanceIndex];
-    const completedCount = instance?.completedItems?.length || 0;
-    const totalCount = checklist?.items?.length || 0;
+    const completedSet = new Set(
+      Array.isArray(instance?.completedItems) ? instance.completedItems : []
+    );
+    const totalCount = getChecklistCheckableItems(checklist?.items).length;
+    const completedCount = getChecklistCheckableItems(checklist?.items).filter((item) =>
+      completedSet.has(item.id)
+    ).length;
     const isActive = tab.instanceId === checklistModalState.activeInstanceId;
 
     const tabBtn = el("button", {
@@ -11129,48 +11756,92 @@ function renderWorkroomChecklistItems(container, instance, checklist, instanceIn
   container.innerHTML = "";
 
   const completedItems = Array.isArray(instance.completedItems) ? instance.completedItems : [];
+  const completedSet = new Set(completedItems);
   const checklistItems = Array.isArray(checklist.items) ? checklist.items : [];
+  const checklistSections = getChecklistSections(checklistItems);
+  const checkableItems = getChecklistCheckableItems(checklistItems);
+  const completedCount = checkableItems.filter((item) => completedSet.has(item.id)).length;
 
-  if (!checklistItems.length) {
+  if (!checklistSections.length) {
     container.innerHTML = "<div class='chk-empty-state'>This checklist has no items.</div>";
     setWorkroomChecklistProgress(0, 0);
     return;
   }
 
-  checklistItems.forEach((item) => {
-    const isCompleted = completedItems.includes(item.id);
-    const row = el("div", {
-      className: `checklist-modal-item ${isCompleted ? "checked" : ""}`,
-      onclick: () => toggleWorkroomChecklistItem(instanceIndex, item.id),
+  checklistSections.forEach((section) => {
+    const sectionEl = el("div", {
+      className: `workroom-checklist-section ${
+        section.header ? "" : "workroom-checklist-section-untitled"
+      }`,
     });
 
-    const checkLabel = el("label", { className: "custom-check" });
-    checkLabel.addEventListener("click", (e) => e.stopPropagation());
-    const checkbox = el("input", {
-      type: "checkbox",
-      checked: isCompleted,
-      onchange: () => toggleWorkroomChecklistItem(instanceIndex, item.id),
-    });
-    const checkmarkSpan = el("span", { className: "checkmark" });
-    checkLabel.append(checkbox, checkmarkSpan);
+    if (section.header) {
+      const header = el("div", { className: "checklist-section-header" });
+      const title = el("div", { className: "checklist-section-title" });
+      title.appendChild(
+        el("span", {
+          className: "checklist-section-marker",
+          "aria-hidden": "true",
+        })
+      );
+      title.appendChild(
+        el("span", {
+          textContent: section.header.text || "Section",
+        })
+      );
+      header.appendChild(title);
+      sectionEl.appendChild(header);
+    }
 
-    row.append(
-      checkLabel,
-      el("span", {
-        className: "checklist-modal-item-text",
-        textContent: item.text,
-      })
-    );
-    container.appendChild(row);
+    const body = el("div", { className: "checklist-section-body" });
+    section.items.forEach(({ item, number }) => {
+      const isCompleted = completedSet.has(item.id);
+      const row = el("div", {
+        className: `checklist-modal-item ${isCompleted ? "checked" : ""}`,
+        onclick: () => toggleWorkroomChecklistItem(instanceIndex, checklist.id, item.id),
+      });
+
+      const checkLabel = el("label", { className: "custom-check" });
+      checkLabel.addEventListener("click", (e) => e.stopPropagation());
+      const checkbox = el("input", {
+        type: "checkbox",
+        checked: isCompleted,
+        onchange: () => toggleWorkroomChecklistItem(instanceIndex, checklist.id, item.id),
+      });
+      const checkmarkSpan = el("span", { className: "checkmark" });
+      checkLabel.append(checkbox, checkmarkSpan);
+
+      const content = el("div", { className: "checklist-modal-item-content" });
+      content.appendChild(
+        el("span", {
+          className: "checklist-modal-item-order",
+          textContent: String(number),
+        })
+      );
+      content.appendChild(
+        el("span", {
+          className: "checklist-modal-item-text",
+          textContent: item.text,
+        })
+      );
+
+      row.append(checkLabel, content);
+      body.appendChild(row);
+    });
+
+    sectionEl.appendChild(body);
+    container.appendChild(sectionEl);
   });
 
-  setWorkroomChecklistProgress(completedItems.length, checklistItems.length);
+  setWorkroomChecklistProgress(completedCount, checkableItems.length);
 }
 
-function toggleWorkroomChecklistItem(instanceIndex, itemId) {
+function toggleWorkroomChecklistItem(instanceIndex, checklistId, itemId) {
   const { deliverable } = getActiveWorkroomContext();
   const instance = deliverable?.appliedChecklists?.[instanceIndex];
-  if (!instance) return;
+  const checklist = getChecklistById(checklistId);
+  const item = checklist?.items?.find((entry) => entry.id === itemId);
+  if (!instance || !item || isChecklistSubheader(item)) return;
 
   if (!Array.isArray(instance.completedItems)) {
     instance.completedItems = [];
@@ -15671,7 +16342,12 @@ function initEventListeners() {
     };
   }
 
-  const handleAppFocus = () => checkBundlesForUpdates({ showIndicator: true });
+  const handleAppFocus = async () => {
+    if (!googleAuthBusy) {
+      await loadGoogleAuthState({ silent: true });
+    }
+    checkBundlesForUpdates({ showIndicator: true });
+  };
   window.addEventListener("focus", handleAppFocus);
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) handleAppFocus();
@@ -15759,7 +16435,7 @@ function initEventListeners() {
   document.getElementById("quickNew").onclick = openNew;
   const headerGoogleAuthBtn = document.getElementById("headerGoogleAuthBtn");
   if (headerGoogleAuthBtn) {
-    headerGoogleAuthBtn.onclick = () => openGoogleAuthDialog();
+    headerGoogleAuthBtn.onclick = () => handleGoogleAuthAction();
   }
   document.getElementById("settingsBtn").onclick = async () => {
     hideSetupHelpBanner(); // Hide the banner when user manually opens settings
@@ -15773,13 +16449,7 @@ function initEventListeners() {
     "settings_googleAuthActionBtn"
   );
   if (settingsGoogleAuthActionBtn) {
-    settingsGoogleAuthActionBtn.onclick = () => openGoogleAuthDialog();
-  }
-  const googleSignInContinueBtn = document.getElementById(
-    "googleSignInContinueBtn"
-  );
-  if (googleSignInContinueBtn) {
-    googleSignInContinueBtn.onclick = () => handleGoogleSignIn();
+    settingsGoogleAuthActionBtn.onclick = () => handleGoogleAuthAction();
   }
   const googleSignOutBtn = document.getElementById("googleSignOutBtn");
   if (googleSignOutBtn) {

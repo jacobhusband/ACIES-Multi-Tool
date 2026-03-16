@@ -1504,6 +1504,17 @@ main {
   overflow: hidden;
 }
 
+.project-timeframe-note {
+  margin-bottom: 0.7rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--info) 30%, var(--glass-border) 70%);
+  background: color-mix(in srgb, var(--info-bg) 70%, var(--surface) 30%);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 /* ===================== Search Match Context ===================== */
 
 mark.search-highlight {

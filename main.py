@@ -150,6 +150,7 @@ def load_app_version():
 APP_VERSION = load_app_version()
 BUNDLE_RELEASE_TAG = f"v{APP_VERSION}"
 GOOGLE_OAUTH_CLIENT_ID_ENV = "GOOGLE_OAUTH_CLIENT_ID"
+GOOGLE_OAUTH_CLIENT_SECRET_ENV = "GOOGLE_CLIENT_SECRET"
 GOOGLE_OAUTH_AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_OAUTH_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
 GOOGLE_OAUTH_REVOKE_ENDPOINT = "https://oauth2.googleapis.com/revoke"
@@ -2101,6 +2102,9 @@ class Api:
     def _get_google_oauth_client_id(self):
         return (os.getenv(GOOGLE_OAUTH_CLIENT_ID_ENV) or "").strip()
 
+    def _get_google_oauth_client_secret(self):
+        return (os.getenv(GOOGLE_OAUTH_CLIENT_SECRET_ENV) or "").strip()
+
     def _base64url_encode(self, raw_bytes):
         return base64.urlsafe_b64encode(raw_bytes).rstrip(b"=").decode("ascii")
 
@@ -2122,6 +2126,18 @@ class Api:
             or response.text
             or "Google sign-in failed."
         ).strip()
+        if "client_secret is missing" in message.lower():
+            if not self._get_google_oauth_client_secret():
+                return (
+                    "Google sign-in may require a client secret for this OAuth client. "
+                    f"Add {GOOGLE_OAUTH_CLIENT_SECRET_ENV} to .env and restart the app, "
+                    "or verify the Google OAuth client settings."
+                )
+            return (
+                "Google sign-in was rejected by Google OAuth. Verify that "
+                f"{GOOGLE_OAUTH_CLIENT_ID_ENV} and {GOOGLE_OAUTH_CLIENT_SECRET_ENV} "
+                "match the same Google OAuth client."
+            )
         return message
 
     def _build_google_auth_record(self, token_payload, profile_payload, existing_auth=None):
@@ -2300,15 +2316,19 @@ class Api:
         return server
 
     def _exchange_google_auth_code(self, client_id, code, code_verifier, redirect_uri):
+        data = {
+            "client_id": client_id,
+            "code": code,
+            "code_verifier": code_verifier,
+            "grant_type": "authorization_code",
+            "redirect_uri": redirect_uri,
+        }
+        client_secret = self._get_google_oauth_client_secret()
+        if client_secret:
+            data["client_secret"] = client_secret
         response = requests.post(
             GOOGLE_OAUTH_TOKEN_ENDPOINT,
-            data={
-                "client_id": client_id,
-                "code": code,
-                "code_verifier": code_verifier,
-                "grant_type": "authorization_code",
-                "redirect_uri": redirect_uri,
-            },
+            data=data,
             timeout=20,
         )
         if response.status_code != 200:
@@ -2333,13 +2353,17 @@ class Api:
             return auth_record
 
         try:
+            data = {
+                "client_id": client_id,
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+            }
+            client_secret = self._get_google_oauth_client_secret()
+            if client_secret:
+                data["client_secret"] = client_secret
             response = requests.post(
                 GOOGLE_OAUTH_TOKEN_ENDPOINT,
-                data={
-                    "client_id": client_id,
-                    "grant_type": "refresh_token",
-                    "refresh_token": refresh_token,
-                },
+                data=data,
                 timeout=20,
             )
             if response.status_code != 200:

@@ -5968,7 +5968,7 @@ function renderGoogleAuthUi() {
       ? `${
           googleAuthState.email || "Google account connected."
         } Projects still stay saved on this desktop for now.`
-      : "Sign in with Google. Projects still stay saved on this desktop for now.";
+      : "Sign in with Google. Configure GOOGLE_OAUTH_CLIENT_ID and, if your Google OAuth client requires it, GOOGLE_CLIENT_SECRET.";
   }
   if (settingsActionBtn) {
     settingsActionBtn.disabled = googleAuthBusy;
@@ -7509,9 +7509,16 @@ function getOverviewDeliverables(project) {
   return out;
 }
 
-function getProjectSortKey(project) {
-  const primary = getPrimaryDeliverable(project);
+function getProjectSortKey(project, projectListContext = null) {
+  if (projectListContext?.anchorDueDate) return projectListContext.anchorDueDate;
+  const primary = projectListContext?.primaryDeliverable || getPrimaryDeliverable(project);
   return parseDueStr(primary?.due);
+}
+
+function matchesProjectStatusFilter(deliverable, filter) {
+  if (filter === "all") return true;
+  if (filter === "incomplete") return !isFinished(deliverable);
+  return hasStatus(deliverable, filter);
 }
 
 function matchesDueFilter(deliverable, filter) {
@@ -7537,6 +7544,103 @@ function matchesDueFilter(deliverable, filter) {
   if (filter === "soon") return d >= startOfWeek && d <= endOfWeek;
   if (filter === "future") return d > endOfWeek;
   return true;
+}
+
+function getTimeframeFilterLabel(filter) {
+  if (filter === "lastWeek") return "last week";
+  if (filter === "soon") return "this week";
+  if (filter === "future") return "upcoming weeks";
+  return "";
+}
+
+function getLatestDeliverableDueDate(deliverables = []) {
+  let latestDue = null;
+  deliverables.forEach((deliverable) => {
+    const due = parseDueStr(deliverable?.due);
+    if (!due) return;
+    if (!latestDue || due > latestDue) latestDue = due;
+  });
+  return latestDue;
+}
+
+function buildProjectTimeframeNote(
+  filter,
+  activeStatusFilter,
+  primaryMatchesTimeframe
+) {
+  const timeframeLabel = getTimeframeFilterLabel(filter);
+  if (!timeframeLabel) return "";
+
+  const prefix =
+    activeStatusFilter !== "all"
+      ? `Showing deliverables based on ${timeframeLabel} and the active filters.`
+      : `Showing deliverables based on ${timeframeLabel}.`;
+
+  if (activeStatusFilter !== "all" && primaryMatchesTimeframe) {
+    return `${prefix} Primary deliverable does not match the current filters.`;
+  }
+
+  return `${prefix} Primary deliverable is outside this timeframe.`;
+}
+
+function getProjectListRenderContext(project) {
+  const overviewDeliverables = getOverviewDeliverables(project);
+  if (!overviewDeliverables.length) return null;
+
+  const primaryDeliverable = getPrimaryDeliverable(project);
+  if (!primaryDeliverable) return null;
+
+  const isTimeframeView = dueFilter !== "all";
+  const timeframeDeliverables = isTimeframeView
+    ? overviewDeliverables.filter((deliverable) =>
+        matchesDueFilter(deliverable, dueFilter)
+      )
+    : [];
+  const statusMatchingDeliverables = isTimeframeView
+    ? timeframeDeliverables.filter((deliverable) =>
+        matchesProjectStatusFilter(deliverable, statusFilter)
+      )
+    : [];
+  const visibleDeliverables = isTimeframeView
+    ? statusMatchingDeliverables.slice().sort(compareDeliverablesByDueDesc)
+    : overviewDeliverables.filter((deliverable) => {
+        if (hideNonPrimary && primaryDeliverable?.id) {
+          return deliverable.id === primaryDeliverable.id;
+        }
+        return true;
+      });
+  const matchesFilters = isTimeframeView
+    ? statusMatchingDeliverables.length > 0
+    : matchesProjectStatusFilter(primaryDeliverable, statusFilter);
+  const primaryMatchesTimeframe = isTimeframeView
+    ? timeframeDeliverables.some(
+        (deliverable) => deliverable.id === primaryDeliverable.id
+      )
+    : true;
+  const primaryVisible = visibleDeliverables.some(
+    (deliverable) => deliverable.id === primaryDeliverable.id
+  );
+  const showTimeframeNote = isTimeframeView && visibleDeliverables.length > 0 && !primaryVisible;
+
+  return {
+    primaryDeliverable,
+    timeframeDeliverables,
+    statusMatchingDeliverables,
+    visibleDeliverables,
+    anchorDueDate: isTimeframeView
+      ? getLatestDeliverableDueDate(visibleDeliverables)
+      : getProjectSortKey(project),
+    matchesFilters,
+    timeframeLabel: getTimeframeFilterLabel(dueFilter),
+    showTimeframeNote,
+    timeframeNote: showTimeframeNote
+      ? buildProjectTimeframeNote(
+          dueFilter,
+          statusFilter,
+          primaryMatchesTimeframe
+        )
+      : "",
+  };
 }
 
 function getProjectsFilterValue(filterKey) {
@@ -9154,12 +9258,12 @@ function scanAndMergeSimilarProjects() {
   toast(`Merged ${mergedCount} group${mergedCount === 1 ? "" : "s"} (${removedCount} removed).`);
 }
 
-function sortProjectsByCurrent(items) {
+function sortProjectsByCurrent(items, projectListContextMap = null) {
   items.sort((a, b) => {
     const dir = currentSort.dir === "asc" ? 1 : -1;
     if (currentSort.key === "due") {
-      const da = getProjectSortKey(a);
-      const dbb = getProjectSortKey(b);
+      const da = getProjectSortKey(a, projectListContextMap?.get(a));
+      const dbb = getProjectSortKey(b, projectListContextMap?.get(b));
       if (!da && !dbb) return 0;
       if (!da) return 1;
       if (!dbb) return -1;
@@ -9175,10 +9279,10 @@ function sortProjectsByCurrent(items) {
   });
 }
 
-function sortProjectsByDueDesc(items) {
+function sortProjectsByDueDesc(items, projectListContextMap = null) {
   items.sort((a, b) => {
-    const da = getProjectSortKey(a);
-    const dbb = getProjectSortKey(b);
+    const da = getProjectSortKey(a, projectListContextMap?.get(a));
+    const dbb = getProjectSortKey(b, projectListContextMap?.get(b));
     if (!da && !dbb) return 0;
     if (!da) return 1;
     if (!dbb) return -1;
@@ -9259,6 +9363,7 @@ function render() {
 
   const q = val("search").toLowerCase();
   const matchContextMap = new Map();
+  const projectListContextMap = new Map();
 
   let items = db.filter((p) => {
     if (q) {
@@ -9266,28 +9371,16 @@ function render() {
       if (!ctx) return false;
       matchContextMap.set(p, ctx);
     }
-    const overviewDeliverables = getOverviewDeliverables(p);
-    if (!overviewDeliverables.length) return false;
-    const primaryDeliverable = getPrimaryDeliverable(p);
-    if (!primaryDeliverable) return false;
-    if (dueFilter !== "all") {
-      if (!matchesDueFilter(primaryDeliverable, dueFilter)) return false;
-    }
-    if (statusFilter === "incomplete") {
-      if (isFinished(primaryDeliverable)) return false;
-    } else if (
-      statusFilter !== "all" &&
-      !hasStatus(primaryDeliverable, statusFilter)
-    ) {
-      return false;
-    }
-    return true;
+    const projectListContext = getProjectListRenderContext(p);
+    if (!projectListContext) return false;
+    projectListContextMap.set(p, projectListContext);
+    return projectListContext.matchesFilters;
   });
 
   const pinned = items.filter((p) => p?.pinned);
   const unpinned = items.filter((p) => !p?.pinned);
-  sortProjectsByDueDesc(pinned);
-  sortProjectsByCurrent(unpinned);
+  sortProjectsByDueDesc(pinned, projectListContextMap);
+  sortProjectsByCurrent(unpinned, projectListContextMap);
   items = pinned.concat(unpinned);
 
   updateSortHeaders();
@@ -9333,6 +9426,20 @@ function render() {
   // Stats are now handled exclusively by the Statistics Modal (renderStats)
   // We do not update them here to avoid conflicts or incorrect "All Time" overwrites.
 
+  const emptyTitle = emptyState?.querySelector("h3");
+  const emptyBody = emptyState?.querySelector("p");
+  const hasActiveProjectFilters =
+    !!q || dueFilter !== "all" || statusFilter !== "all";
+  if (emptyTitle) {
+    emptyTitle.textContent = hasActiveProjectFilters
+      ? "No matching projects"
+      : "No projects yet";
+  }
+  if (emptyBody) {
+    emptyBody.textContent = hasActiveProjectFilters
+      ? "Try a different search or adjust the current filters."
+      : "Create a new project to get started.";
+  }
   emptyState.style.display = items.length ? "none" : "block";
   const rowTemplate = document.getElementById("project-row-template");
 
@@ -9349,8 +9456,10 @@ function render() {
   let lastWeekKey = null;
   let pinnedSectionShown = false;
   items.forEach((p) => {
+    const projectListContext = projectListContextMap.get(p);
+    if (!projectListContext) return;
     const isPinnedProject = !!p?.pinned;
-    const projectDue = getProjectSortKey(p);
+    const projectDue = getProjectSortKey(p, projectListContext);
     const weekKey = projectDue ? formatWeekKey(projectDue) : "no-date";
     if (isPinnedProject) {
       if (!pinnedSectionShown) {
@@ -9367,8 +9476,7 @@ function render() {
 
     const tr = rowTemplate.content.cloneNode(true).querySelector("tr");
     const idx = db.indexOf(p);
-    const overviewDeliverables = getOverviewDeliverables(p);
-    const primary = getPrimaryDeliverable(p);
+    const primary = projectListContext.primaryDeliverable;
     const totalDeliverables = getProjectDeliverables(p).length;
     const priorityId = primary?.id;
 
@@ -9441,12 +9549,18 @@ function render() {
     const deliverablesCell = tr.querySelector(".cell-deliverables");
     deliverablesCell.innerHTML = "";
 
-    const visibleDeliverables = overviewDeliverables.filter(d => {
-      if (hideNonPrimary && priorityId) return d.id === priorityId;
-      return true;
-    });
+    const visibleDeliverables = projectListContext.visibleDeliverables;
 
     if (visibleDeliverables.length) {
+      if (projectListContext.showTimeframeNote && projectListContext.timeframeNote) {
+        deliverablesCell.appendChild(
+          el("div", {
+            className: "project-timeframe-note",
+            textContent: projectListContext.timeframeNote,
+          })
+        );
+      }
+
       const cardsContainer = el("div", { className: "deliverable-cards-container" });
 
       visibleDeliverables.forEach((deliverable) => {

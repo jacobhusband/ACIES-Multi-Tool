@@ -30,12 +30,22 @@ class ProjectFiltersUiTests(unittest.TestCase):
         self.assertIn("function syncProjectsFilterDropdowns() {", script)
         self.assertIn("function setProjectsFilterDropdownState(", script)
         self.assertIn("function moveProjectsFilterOptionFocus(", script)
+        self.assertIn("function matchesProjectStatusFilter(deliverable, filter) {", script)
+        self.assertIn("function getProjectListRenderContext(project) {", script)
+        self.assertIn(
+            "function buildProjectTimeframeNote(",
+            script,
+        )
         self.assertIn('document.querySelectorAll(".projects-filter-dropdown").forEach((dropdown) => {', script)
         self.assertIn('const filterKey = dropdown.dataset.filterDropdown;', script)
         self.assertIn('if (filterKey === "timeframe") return dueFilter || "all";', script)
         self.assertIn('if (filterKey === "status") return statusFilter || "all";', script)
         self.assertIn('dueFilter = value;', script)
         self.assertIn('statusFilter = value;', script)
+        self.assertIn("const projectListContextMap = new Map();", script)
+        self.assertIn("const visibleDeliverables = projectListContext.visibleDeliverables;", script)
+        self.assertIn("Primary deliverable is outside this timeframe.", script)
+        self.assertIn("No matching projects", script)
 
     def test_project_filter_styles_use_custom_dropdown_classes(self):
         css = STYLES_CSS_PATH.read_text(encoding="utf-8")
@@ -46,6 +56,7 @@ class ProjectFiltersUiTests(unittest.TestCase):
         self.assertIn(".projects-filter-option {", css)
         self.assertIn(".projects-filter-option.is-selected {", css)
         self.assertIn(".projects-filter-dropdown.open .projects-filter-chevron {", css)
+        self.assertIn(".project-timeframe-note {", css)
         self.assertNotIn(".projects-filter-select {", css)
 
 

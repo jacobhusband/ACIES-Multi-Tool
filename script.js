@@ -43,6 +43,13 @@ const HELP_LINKS = {
     "https://brainy-seahorse-3c5.notion.site/ACIES-Desktop-Application-2b03fdbb662c80afa61af555bddc9e61?pvs=74",
 };
 const THEME_STORAGE_KEY = "acies-theme";
+const FIREBASE_JS_SDK_VERSION = "12.7.0";
+const FIREBASE_COMPAT_SCRIPT_URLS = [
+  `https://www.gstatic.com/firebasejs/${FIREBASE_JS_SDK_VERSION}/firebase-app-compat.js`,
+  `https://www.gstatic.com/firebasejs/${FIREBASE_JS_SDK_VERSION}/firebase-auth-compat.js`,
+  `https://www.gstatic.com/firebasejs/${FIREBASE_JS_SDK_VERSION}/firebase-firestore-compat.js`,
+];
+const CLOUD_SYNC_TIMESHEETS_META_DOC_ID = "__meta__";
 const LIGHTING_SCHEDULE_FIELDS = [
   "mark",
   "description",
@@ -1113,14 +1120,40 @@ async function loadChecklists() {
   }
 }
 
-async function saveChecklists() {
+async function saveChecklists({
+  skipCloud = false,
+  saveTimestamp = true,
+  timestamp = new Date().toISOString(),
+  silent = false,
+} = {}) {
+  const resolvedTimestamp =
+    normalizeIsoTimestamp(timestamp) || new Date().toISOString();
+  const comparableChanged =
+    getCloudComparableFingerprint("checklists") !==
+    lastCloudComparableFingerprints.checklists;
+  if (saveTimestamp && comparableChanged) {
+    touchLocalSyncTimestamp("checklists", resolvedTimestamp);
+    checklistsDb.lastModified = resolvedTimestamp;
+  }
   try {
-    checklistsDb.lastModified = new Date().toISOString();
     const response = await window.pywebview.api.save_checklists(checklistsDb);
     if (response.status !== "success") throw new Error(response.message);
+    syncCloudComparableFingerprint("checklists");
+    if (
+      !skipCloud &&
+      comparableChanged &&
+      cloudSyncState.enabled &&
+      !isCloudSyncApplying()
+    ) {
+      queueCloudStatePush("checklists");
+    }
+    return true;
   } catch (e) {
     console.warn("Failed to save checklists:", e);
-    toast("Failed to save checklists.");
+    if (!silent) {
+      toast("Failed to save checklists.");
+    }
+    return false;
   }
 }
 
@@ -1761,14 +1794,40 @@ async function loadTimesheets() {
   }
 }
 
-async function saveTimesheets() {
+async function saveTimesheets({
+  skipCloud = false,
+  saveTimestamp = true,
+  timestamp = new Date().toISOString(),
+  silent = false,
+} = {}) {
+  const resolvedTimestamp =
+    normalizeIsoTimestamp(timestamp) || new Date().toISOString();
+  const comparableChanged =
+    getCloudComparableFingerprint("timesheets") !==
+    lastCloudComparableFingerprints.timesheets;
+  if (saveTimestamp && comparableChanged) {
+    touchLocalSyncTimestamp("timesheets", resolvedTimestamp);
+    timesheetDb.lastModified = resolvedTimestamp;
+  }
   try {
-    timesheetDb.lastModified = new Date().toISOString();
     const response = await window.pywebview.api.save_timesheets(timesheetDb);
     if (response.status !== "success") throw new Error(response.message);
+    syncCloudComparableFingerprint("timesheets");
+    if (
+      !skipCloud &&
+      comparableChanged &&
+      cloudSyncState.enabled &&
+      !isCloudSyncApplying()
+    ) {
+      queueCloudStatePush("timesheets");
+    }
+    return true;
   } catch (e) {
     console.warn("Failed to save timesheets:", e);
-    toast("Failed to save timesheet data.");
+    if (!silent) {
+      toast("Failed to save timesheet data.");
+    }
+    return false;
   }
 }
 
@@ -1785,14 +1844,40 @@ async function loadTemplates() {
   }
 }
 
-async function saveTemplates() {
+async function saveTemplates({
+  skipCloud = false,
+  saveTimestamp = true,
+  timestamp = new Date().toISOString(),
+  silent = false,
+} = {}) {
+  const resolvedTimestamp =
+    normalizeIsoTimestamp(timestamp) || new Date().toISOString();
+  const comparableChanged =
+    getCloudComparableFingerprint("templates") !==
+    lastCloudComparableFingerprints.templates;
+  if (saveTimestamp && comparableChanged) {
+    touchLocalSyncTimestamp("templates", resolvedTimestamp);
+    templatesDb.lastModified = resolvedTimestamp;
+  }
   try {
-    templatesDb.lastModified = new Date().toISOString();
     const response = await window.pywebview.api.save_templates(templatesDb);
     if (response.status !== "success") throw new Error(response.message);
+    syncCloudComparableFingerprint("templates");
+    if (
+      !skipCloud &&
+      comparableChanged &&
+      cloudSyncState.enabled &&
+      !isCloudSyncApplying()
+    ) {
+      queueCloudStatePush("templates");
+    }
+    return true;
   } catch (e) {
     console.warn("Failed to save templates:", e);
-    toast("Failed to save templates.");
+    if (!silent) {
+      toast("Failed to save templates.");
+    }
+    return false;
   }
 }
 
@@ -1908,12 +1993,18 @@ function createTemplateCard(template) {
   }
 
   const actions = el('div', { className: 'template-actions' });
+  const templateNeedsRelink = template.cloudNeedsRelink && !template.sourcePath;
 
   const copyBtn = el('button', {
     className: 'btn btn-primary tiny',
     textContent: 'Copy to Folder',
+    disabled: templateNeedsRelink,
+    title: templateNeedsRelink
+      ? 'This template synced without a local source file. Re-add or relink it on this device.'
+      : 'Copy template to folder',
     onclick: (e) => {
       e.stopPropagation();
+      if (templateNeedsRelink) return;
       handleCopyTemplate(template.id);
     }
   });
@@ -5780,6 +5871,25 @@ const DEFAULT_FREEZE_LAYER_OPTIONS = {
 const DEFAULT_THAW_LAYER_OPTIONS = {
   scanAllLayers: true,
 };
+const DEFAULT_CLOUD_SYNC_SETTINGS = {
+  enabled: false,
+  firebaseUid: "",
+  lastSyncedAt: "",
+  migrationCompleted: false,
+};
+const DEFAULT_CLOUD_SYNC_STATE = {
+  available: false,
+  configured: false,
+  enabled: false,
+  busy: false,
+  status: "local-only",
+  message: "Local-only",
+  error: "",
+  lastSyncedAt: "",
+  firebaseUid: "",
+  sdkLoaded: false,
+  signedIn: false,
+};
 
 let userSettings = {
   userName: "",
@@ -5798,6 +5908,7 @@ let userSettings = {
   workroomAutoSelectCadFiles: true,
   enableUnderConstructionTools: false,
   googleAuth: null,
+  cloudSync: { ...DEFAULT_CLOUD_SYNC_SETTINGS },
 };
 const DEFAULT_GOOGLE_AUTH_STATE = {
   signedIn: false,
@@ -5811,6 +5922,34 @@ const DEFAULT_GOOGLE_AUTH_STATE = {
 };
 let googleAuthState = { ...DEFAULT_GOOGLE_AUTH_STATE };
 let googleAuthBusy = false;
+let cloudSyncState = { ...DEFAULT_CLOUD_SYNC_STATE };
+let cloudSyncConfig = null;
+let firebaseLoadPromise = null;
+let firebaseAppInstance = null;
+let firebaseAuthInstance = null;
+let firebaseFirestoreInstance = null;
+let cloudSyncInitPromise = null;
+let cloudSyncUnsubscribers = [];
+let cloudSyncPushTimers = {};
+let cloudSyncTimesheetsPushTimer = null;
+let cloudSyncApplyDepth = 0;
+let cloudSyncRemoteTimesheetMeta = { updatedAt: "", knownWeeks: [] };
+let localSyncTimestamps = {
+  settings: "",
+  tasks: "",
+  notes: "",
+  templates: "",
+  checklists: "",
+  timesheets: "",
+};
+let lastCloudComparableFingerprints = {
+  settings: "",
+  tasks: "",
+  notes: "",
+  templates: "",
+  checklists: "",
+  timesheets: "",
+};
 let hideNonPrimary = true;
 let activeNoteTab = null;
 let activeTextsView = "notes";
@@ -5867,6 +6006,109 @@ const allowedAggregations = {
   "1Y": ["week", "month", "quarter"],
   "3Y": ["month", "quarter"],
 };
+
+function stableStringify(value) {
+  if (value == null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(",")}]`;
+  }
+  const keys = Object.keys(value).sort();
+  return `{${keys
+    .map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`)
+    .join(",")}}`;
+}
+
+function deepCloneJson(value, fallback = null) {
+  if (value == null) return fallback;
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch (e) {
+    return fallback;
+  }
+}
+
+function normalizeCloudSyncSettings(raw = {}) {
+  return {
+    ...DEFAULT_CLOUD_SYNC_SETTINGS,
+    ...(raw && typeof raw === "object" ? raw : {}),
+    enabled: raw?.enabled === true,
+    firebaseUid: String(raw?.firebaseUid || "").trim(),
+    lastSyncedAt: String(raw?.lastSyncedAt || "").trim(),
+    migrationCompleted: raw?.migrationCompleted === true,
+  };
+}
+
+function ensureCloudSyncSettingsObject() {
+  userSettings.cloudSync = normalizeCloudSyncSettings(userSettings.cloudSync);
+  return userSettings.cloudSync;
+}
+
+function normalizeIsoTimestamp(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : "";
+}
+
+function isIsoAfter(left, right) {
+  const leftMs = Date.parse(normalizeIsoTimestamp(left) || "");
+  const rightMs = Date.parse(normalizeIsoTimestamp(right) || "");
+  if (!Number.isFinite(leftMs)) return false;
+  if (!Number.isFinite(rightMs)) return true;
+  return leftMs > rightMs;
+}
+
+function getLatestIsoTimestamp(values = []) {
+  return values.reduce((latest, value) => {
+    if (isIsoAfter(value, latest)) return normalizeIsoTimestamp(value);
+    return latest;
+  }, "");
+}
+
+function touchLocalSyncTimestamp(domain, timestamp = new Date().toISOString()) {
+  const normalized = normalizeIsoTimestamp(timestamp) || new Date().toISOString();
+  localSyncTimestamps[domain] = normalized;
+  return normalized;
+}
+
+function formatSyncTimestamp(value) {
+  const normalized = normalizeIsoTimestamp(value);
+  if (!normalized) return "";
+  try {
+    return new Date(normalized).toLocaleString();
+  } catch (e) {
+    return normalized;
+  }
+}
+
+function beginCloudSyncApply() {
+  cloudSyncApplyDepth += 1;
+}
+
+function endCloudSyncApply() {
+  cloudSyncApplyDepth = Math.max(0, cloudSyncApplyDepth - 1);
+}
+
+function isCloudSyncApplying() {
+  return cloudSyncApplyDepth > 0;
+}
+
+function isLikelyLocalPath(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return false;
+  return (
+    /^file:\/\//i.test(raw) ||
+    /^[a-z]:[\\/]/i.test(raw) ||
+    /^\\\\/.test(raw)
+  );
+}
+
+function isLocalOnlyLink(link) {
+  const raw = String(link?.raw || link?.url || link || "").trim();
+  return isLikelyLocalPath(raw);
+}
 
 function normalizeGoogleAuthState(raw = {}) {
   return {
@@ -5965,9 +6207,7 @@ function renderGoogleAuthUi() {
   }
   if (detailsEl) {
     detailsEl.textContent = isSignedIn
-      ? `${
-          googleAuthState.email || "Google account connected."
-        } Projects still stay saved on this desktop for now.`
+      ? googleAuthState.email || "Google account connected."
       : "Sign in with Google. Configure GOOGLE_OAUTH_CLIENT_ID and, if your Google OAuth client requires it, GOOGLE_CLIENT_SECRET.";
   }
   if (settingsActionBtn) {
@@ -5994,6 +6234,7 @@ function renderGoogleAuthUi() {
       : "Sign in to connect your Google account.";
   }
   applyGoogleAuthAvatar(accountAvatar, googleAuthState);
+  renderCloudSyncUi();
 }
 
 async function loadGoogleAuthState({ silent = false } = {}) {
@@ -6042,8 +6283,6 @@ async function handleGoogleSignIn() {
     const response = await window.pywebview.api.sign_in_with_google();
     if (response?.status === "success") {
       googleAuthState = normalizeGoogleAuthState(response.auth);
-      googleAuthBusy = false;
-      renderGoogleAuthUi();
       await loadUserSettings();
       const verifiedAuthState = await loadGoogleAuthState({ silent: true });
       if (!verifiedAuthState.signedIn) {
@@ -6052,7 +6291,30 @@ async function handleGoogleSignIn() {
         );
         return;
       }
-      toast(`Signed in as ${getGoogleAuthDisplayName()}.`);
+      googleAuthBusy = false;
+      renderGoogleAuthUi();
+      showAppLoader();
+      try {
+        await bootstrapCloudSync({
+          session: response.syncSession || null,
+          silent: false,
+        });
+      } finally {
+        hideAppLoader();
+      }
+      if (cloudSyncState.enabled) {
+        toast(`Signed in as ${getGoogleAuthDisplayName()}. Cloud sync is active.`);
+      } else if (cloudSyncState.error) {
+        toast(
+          `Signed in as ${getGoogleAuthDisplayName()}, but cloud sync failed: ${cloudSyncState.error}`
+        );
+      } else if (!cloudSyncState.configured) {
+        toast(
+          `Signed in as ${getGoogleAuthDisplayName()}. Firebase sync is not configured, so data stays local.`
+        );
+      } else {
+        toast(`Signed in as ${getGoogleAuthDisplayName()}.`);
+      }
       return;
     }
     if (response?.status === "cancelled") {
@@ -6079,6 +6341,7 @@ async function handleGoogleSignOut() {
       throw new Error(response?.message || "Google sign-out failed.");
     }
     closeDlg("googleAccountDlg");
+    await signOutCloud({ preserveMetadata: true });
     await loadUserSettings();
     googleAuthState = normalizeGoogleAuthState(response.auth);
     renderGoogleAuthUi();
@@ -6090,6 +6353,1698 @@ async function handleGoogleSignOut() {
     googleAuthBusy = false;
     renderGoogleAuthUi();
   }
+}
+
+// ===================== CLOUD SYNC =====================
+
+function updateCloudSyncState(patch = {}) {
+  cloudSyncState = {
+    ...cloudSyncState,
+    ...patch,
+  };
+  if (patch.lastSyncedAt !== undefined) {
+    cloudSyncState.lastSyncedAt = normalizeIsoTimestamp(patch.lastSyncedAt);
+  }
+  renderGoogleAuthUi();
+}
+
+async function updateLocalCloudSyncMetadata(
+  patch = {},
+  { persist = true } = {}
+) {
+  const current = ensureCloudSyncSettingsObject();
+  userSettings.cloudSync = normalizeCloudSyncSettings({
+    ...current,
+    ...patch,
+    lastSyncedAt:
+      patch.lastSyncedAt !== undefined
+        ? normalizeIsoTimestamp(patch.lastSyncedAt)
+        : current.lastSyncedAt,
+  });
+  if (persist) {
+    await persistUserSettingsLocally({
+      skipCloud: true,
+      saveTimestamp: false,
+      silent: true,
+    });
+  }
+  updateCloudSyncState({
+    enabled: userSettings.cloudSync.enabled,
+    firebaseUid: userSettings.cloudSync.firebaseUid,
+    lastSyncedAt: userSettings.cloudSync.lastSyncedAt,
+  });
+  return userSettings.cloudSync;
+}
+
+function getCloudSyncDisplayModel() {
+  const configured = cloudSyncState.configured === true;
+  const lastSyncedAt =
+    cloudSyncState.lastSyncedAt || ensureCloudSyncSettingsObject().lastSyncedAt;
+  if (!configured) {
+    return {
+      status: "Cloud sync not configured",
+      details:
+        "Add FIREBASE_API_KEY, FIREBASE_AUTH_DOMAIN, FIREBASE_PROJECT_ID, and FIREBASE_APP_ID to .env to enable cross-device sync.",
+      note:
+        "Google sign-in works without Firebase, but cross-device sync stays disabled until Firebase is configured.",
+      dot: "disabled",
+    };
+  }
+  if (!googleAuthState.signedIn) {
+    return {
+      status: "Ready when you sign in",
+      details:
+        "Sign in with Google to sync settings, projects, notes, templates, checklists, and timesheets.",
+      note:
+        "This app stays local-first until a Google account is connected and Firebase sync is available.",
+      dot: "idle",
+    };
+  }
+  if (cloudSyncState.busy) {
+    return {
+      status: "Syncing...",
+      details: cloudSyncState.message || "Connecting your Google account to Firestore.",
+      note: "Sync is in progress. Keep the app open until the initial pull completes.",
+      dot: "busy",
+    };
+  }
+  if (cloudSyncState.error) {
+    return {
+      status: "Sync error",
+      details: cloudSyncState.error,
+      note:
+        "Your local data is still available. Fix the Firebase configuration or connectivity issue and sign in again.",
+      dot: "error",
+    };
+  }
+  if (cloudSyncState.enabled) {
+    return {
+      status: "Cloud sync active",
+      details: lastSyncedAt
+        ? `Last sync: ${formatSyncTimestamp(lastSyncedAt)}`
+        : "Cross-device sync is connected.",
+      note:
+        "Supported app data now syncs through Firestore. Local-only secrets and file paths stay on this device.",
+      dot: "active",
+    };
+  }
+  return {
+    status: "Signed in locally",
+    details: "Google is connected, but Firestore sync is not active yet.",
+    note:
+      "Your Google account is available locally, but cross-device sync has not been established.",
+    dot: "idle",
+  };
+}
+
+function renderCloudSyncUi() {
+  const settingsStatus = document.getElementById("settings_cloudSyncStatus");
+  const settingsDetails = document.getElementById("settings_cloudSyncDetails");
+  const accountNote = document.getElementById("googleAccountSyncNote");
+  const headerBtn = document.getElementById("headerGoogleAuthBtn");
+  const headerDot = document.getElementById("headerGoogleAuthStatusDot");
+  const model = getCloudSyncDisplayModel();
+
+  if (settingsStatus) {
+    settingsStatus.textContent = model.status;
+  }
+  if (settingsDetails) {
+    settingsDetails.textContent = model.details;
+  }
+  if (accountNote) {
+    accountNote.textContent = model.note;
+  }
+  if (headerBtn) {
+    headerBtn.dataset.syncStatus = model.dot;
+  }
+  if (headerDot) {
+    headerDot.title = model.status;
+  }
+}
+
+async function loadCloudSyncConfig() {
+  if (cloudSyncConfig) {
+    updateCloudSyncState({
+      configured: !!(
+        cloudSyncConfig.apiKey &&
+        cloudSyncConfig.authDomain &&
+        cloudSyncConfig.projectId &&
+        cloudSyncConfig.appId
+      ),
+      available: true,
+    });
+    return cloudSyncConfig;
+  }
+  if (!window.pywebview?.api?.get_cloud_sync_config) {
+    updateCloudSyncState({
+      configured: false,
+      available: false,
+      status: "local-only",
+    });
+    return null;
+  }
+  try {
+    const response = await window.pywebview.api.get_cloud_sync_config();
+    if (response?.status !== "success") {
+      throw new Error(response?.message || "Failed to load cloud sync configuration.");
+    }
+    cloudSyncConfig = response.config || null;
+    updateCloudSyncState({
+      configured: response.enabled === true,
+      available: true,
+    });
+    return cloudSyncConfig;
+  } catch (e) {
+    console.warn("Failed to load cloud sync config:", e);
+    updateCloudSyncState({
+      configured: false,
+      available: false,
+      error: String(e?.message || "Cloud sync config unavailable."),
+    });
+    return null;
+  }
+}
+
+function loadExternalScript(src) {
+  return new Promise((resolve, reject) => {
+    const existing = document.querySelector(`script[data-cloud-sync-src="${src}"]`);
+    if (existing?.dataset.loaded === "true") {
+      resolve();
+      return;
+    }
+    const script = existing || document.createElement("script");
+    script.async = true;
+    script.src = src;
+    script.dataset.cloudSyncSrc = src;
+    const timeoutId = window.setTimeout(() => {
+      reject(new Error(`Timed out loading ${src}`));
+    }, 15000);
+    script.onload = () => {
+      window.clearTimeout(timeoutId);
+      script.dataset.loaded = "true";
+      resolve();
+    };
+    script.onerror = () => {
+      window.clearTimeout(timeoutId);
+      reject(new Error(`Failed to load ${src}`));
+    };
+    if (!existing) {
+      document.head.appendChild(script);
+    }
+  });
+}
+
+async function ensureFirebaseSdk() {
+  if (window.firebase?.apps) {
+    updateCloudSyncState({ sdkLoaded: true });
+    return true;
+  }
+  if (!firebaseLoadPromise) {
+    firebaseLoadPromise = (async () => {
+      for (const src of FIREBASE_COMPAT_SCRIPT_URLS) {
+        await loadExternalScript(src);
+      }
+      updateCloudSyncState({ sdkLoaded: true });
+      return true;
+    })().catch((error) => {
+      firebaseLoadPromise = null;
+      throw error;
+    });
+  }
+  try {
+    await firebaseLoadPromise;
+    return true;
+  } catch (e) {
+    console.warn("Failed to load Firebase SDK:", e);
+    updateCloudSyncState({
+      sdkLoaded: false,
+      error: String(e?.message || "Firebase SDK could not be loaded."),
+    });
+    return false;
+  }
+}
+
+async function ensureFirebaseServices() {
+  const config = await loadCloudSyncConfig();
+  if (
+    !config ||
+    !config.apiKey ||
+    !config.authDomain ||
+    !config.projectId ||
+    !config.appId
+  ) {
+    updateCloudSyncState({
+      configured: false,
+      enabled: false,
+    });
+    return null;
+  }
+  const sdkReady = await ensureFirebaseSdk();
+  if (!sdkReady || !window.firebase?.initializeApp) {
+    return null;
+  }
+  if (!firebaseAppInstance) {
+    const existingApp =
+      window.firebase.apps?.find((app) => app?.name === "acies-cloud-sync") ||
+      null;
+    firebaseAppInstance =
+      existingApp || window.firebase.initializeApp(config, "acies-cloud-sync");
+    firebaseAuthInstance = window.firebase.auth(firebaseAppInstance);
+    firebaseFirestoreInstance = window.firebase.firestore(firebaseAppInstance);
+    firebaseFirestoreInstance.settings({
+      ignoreUndefinedProperties: true,
+    });
+  }
+  return {
+    app: firebaseAppInstance,
+    auth: firebaseAuthInstance,
+    db: firebaseFirestoreInstance,
+  };
+}
+
+async function getGoogleSyncSessionFromBackend() {
+  if (!window.pywebview?.api?.get_google_sync_session) {
+    return {
+      status: "error",
+      signedIn: false,
+      idToken: "",
+      accessToken: "",
+      firebaseReady: false,
+      auth: { ...DEFAULT_GOOGLE_AUTH_STATE },
+    };
+  }
+  const response = await window.pywebview.api.get_google_sync_session();
+  return {
+    status: response?.status || "error",
+    signedIn: response?.signedIn === true,
+    idToken: String(response?.idToken || "").trim(),
+    accessToken: String(response?.accessToken || "").trim(),
+    firebaseReady: response?.firebaseReady === true,
+    auth: normalizeGoogleAuthState(response?.auth),
+    message: response?.message || "",
+  };
+}
+
+function getCloudSyncDocRefs(uid) {
+  const userDoc = firebaseFirestoreInstance.collection("users").doc(uid);
+  return {
+    settings: userDoc.collection("settings").doc("app"),
+    tasks: userDoc.collection("tasks").doc("main"),
+    notes: userDoc.collection("notes").doc("main"),
+    templates: userDoc.collection("templates").doc("main"),
+    checklists: userDoc.collection("checklists").doc("main"),
+    timesheets: userDoc.collection("timesheets"),
+    timesheetsMeta: userDoc
+      .collection("timesheets")
+      .doc(CLOUD_SYNC_TIMESHEETS_META_DOC_ID),
+  };
+}
+
+function clearCloudSyncSubscriptions() {
+  cloudSyncUnsubscribers.forEach((unsubscribe) => {
+    try {
+      unsubscribe();
+    } catch (e) {
+      console.warn("Failed to unsubscribe cloud sync listener:", e);
+    }
+  });
+  cloudSyncUnsubscribers = [];
+}
+
+async function signInToCloud(session = null) {
+  const services = await ensureFirebaseServices();
+  if (!services) {
+    return null;
+  }
+  const syncSession = session || (await getGoogleSyncSessionFromBackend());
+  if (!syncSession?.signedIn) {
+    return null;
+  }
+  const idToken = String(syncSession.idToken || "").trim();
+  const accessToken = String(syncSession.accessToken || "").trim();
+  if (!idToken && !accessToken) {
+    if (firebaseAuthInstance.currentUser) {
+      return firebaseAuthInstance.currentUser;
+    }
+    throw new Error(
+      "Google sign-in completed, but no Firebase-compatible token was returned."
+    );
+  }
+  const credential = window.firebase.auth.GoogleAuthProvider.credential(
+    idToken || null,
+    accessToken || null
+  );
+  const userCredential = await firebaseAuthInstance.signInWithCredential(
+    credential
+  );
+  return userCredential?.user || firebaseAuthInstance.currentUser;
+}
+
+function queueCloudStatePush(domain, delay = 900) {
+  if (!cloudSyncState.enabled || isCloudSyncApplying()) return;
+  if (domain === "timesheets") {
+    if (cloudSyncTimesheetsPushTimer) {
+      clearTimeout(cloudSyncTimesheetsPushTimer);
+    }
+    cloudSyncTimesheetsPushTimer = setTimeout(() => {
+      pushUserState(["timesheets"]).catch((error) => {
+        console.warn("Failed to push timesheets to cloud:", error);
+        updateCloudSyncState({
+          error: String(error?.message || "Timesheet sync failed."),
+          status: "error",
+        });
+      });
+    }, delay);
+    return;
+  }
+  if (cloudSyncPushTimers[domain]) {
+    clearTimeout(cloudSyncPushTimers[domain]);
+  }
+  cloudSyncPushTimers[domain] = setTimeout(() => {
+    pushUserState([domain]).catch((error) => {
+      console.warn(`Failed to push ${domain} to cloud:`, error);
+      updateCloudSyncState({
+        error: String(error?.message || `${domain} sync failed.`),
+        status: "error",
+      });
+    });
+  }, delay);
+}
+
+const schedulePullUserState = debounce(() => {
+  pullUserState({ silent: true }).catch((error) => {
+    console.warn("Failed to pull remote cloud state:", error);
+    updateCloudSyncState({
+      error: String(error?.message || "Cloud pull failed."),
+      status: "error",
+    });
+  });
+}, 700);
+
+function subscribeToUserState(uid = cloudSyncState.firebaseUid) {
+  if (!uid || !firebaseFirestoreInstance) return;
+  clearCloudSyncSubscriptions();
+  const refs = getCloudSyncDocRefs(uid);
+  const listen = (ref) =>
+    ref.onSnapshot(
+      (snapshot) => {
+        if (snapshot?.metadata?.hasPendingWrites) return;
+        schedulePullUserState();
+      },
+      (error) => {
+        console.warn("Cloud sync listener failed:", error);
+        updateCloudSyncState({
+          error: String(error?.message || "Cloud listener failed."),
+          status: "error",
+        });
+      }
+    );
+  cloudSyncUnsubscribers = [
+    listen(refs.settings),
+    listen(refs.tasks),
+    listen(refs.notes),
+    listen(refs.templates),
+    listen(refs.checklists),
+    listen(refs.timesheetsMeta),
+  ];
+}
+
+async function loadLocalSyncMetadata() {
+  if (!window.pywebview?.api?.get_local_sync_metadata) return;
+  try {
+    const response = await window.pywebview.api.get_local_sync_metadata();
+    if (response?.status !== "success") return;
+    const files = response.files || {};
+    localSyncTimestamps.settings = normalizeIsoTimestamp(
+      files?.settings?.modified || localSyncTimestamps.settings
+    );
+    localSyncTimestamps.tasks = normalizeIsoTimestamp(
+      files?.tasks?.modified || localSyncTimestamps.tasks
+    );
+    localSyncTimestamps.notes = normalizeIsoTimestamp(
+      files?.notes?.modified || localSyncTimestamps.notes
+    );
+    localSyncTimestamps.templates = getLatestIsoTimestamp([
+      files?.templates?.modified,
+      templatesDb?.lastModified,
+      localSyncTimestamps.templates,
+    ]);
+    localSyncTimestamps.checklists = getLatestIsoTimestamp([
+      files?.checklists?.modified,
+      checklistsDb?.lastModified,
+      localSyncTimestamps.checklists,
+    ]);
+    localSyncTimestamps.timesheets = getLatestIsoTimestamp([
+      files?.timesheets?.modified,
+      timesheetDb?.lastModified,
+      localSyncTimestamps.timesheets,
+    ]);
+  } catch (e) {
+    console.warn("Failed to load local sync metadata:", e);
+  }
+}
+
+async function createCloudSyncBackup(reason, metadata = {}) {
+  if (!window.pywebview?.api?.create_cloud_sync_backup) return null;
+  try {
+    const response = await window.pywebview.api.create_cloud_sync_backup(
+      reason,
+      metadata
+    );
+    if (response?.status === "success") {
+      return response;
+    }
+  } catch (e) {
+    console.warn("Failed to create cloud sync backup:", e);
+  }
+  return null;
+}
+
+function getDefaultSyncableSettings() {
+  return {
+    userName: "",
+    discipline: ["Electrical"],
+    showSetupHelp: true,
+    theme: "dark",
+    lightingTemplates: [],
+    autoPrimary: false,
+    defaultPmInitials: "",
+    cleanDwgOptions: { ...DEFAULT_CLEAN_DWG_OPTIONS },
+    publishDwgOptions: { ...DEFAULT_PUBLISH_DWG_OPTIONS },
+    freezeLayerOptions: { ...DEFAULT_FREEZE_LAYER_OPTIONS },
+    thawLayerOptions: { ...DEFAULT_THAW_LAYER_OPTIONS },
+    workroomAutoSelectCadFiles: true,
+    enableUnderConstructionTools: false,
+  };
+}
+
+function sanitizeSettingsForCloud(settings = userSettings) {
+  const source = settings && typeof settings === "object" ? settings : {};
+  const updatedAt =
+    normalizeIsoTimestamp(localSyncTimestamps.settings) || new Date().toISOString();
+  return {
+    ...getDefaultSyncableSettings(),
+    userName: String(source.userName || "").trim(),
+    discipline: normalizeDisciplineList(source.discipline),
+    showSetupHelp: source.showSetupHelp !== false,
+    theme: source.theme === "light" ? "light" : "dark",
+    lightingTemplates: Array.isArray(source.lightingTemplates)
+      ? deepCloneJson(source.lightingTemplates, [])
+      : [],
+    autoPrimary: source.autoPrimary === true,
+    defaultPmInitials: String(source.defaultPmInitials || "")
+      .trim()
+      .toUpperCase(),
+    cleanDwgOptions: {
+      ...DEFAULT_CLEAN_DWG_OPTIONS,
+      ...(source.cleanDwgOptions || {}),
+    },
+    publishDwgOptions: {
+      ...DEFAULT_PUBLISH_DWG_OPTIONS,
+      ...(source.publishDwgOptions || {}),
+    },
+    freezeLayerOptions: {
+      ...DEFAULT_FREEZE_LAYER_OPTIONS,
+      ...(source.freezeLayerOptions || {}),
+    },
+    thawLayerOptions: {
+      ...DEFAULT_THAW_LAYER_OPTIONS,
+      ...(source.thawLayerOptions || {}),
+    },
+    workroomAutoSelectCadFiles: source.workroomAutoSelectCadFiles !== false,
+    enableUnderConstructionTools: source.enableUnderConstructionTools === true,
+    updatedAt,
+  };
+}
+
+function normalizeCloudSettingsDoc(raw = {}) {
+  const source = raw && typeof raw === "object" ? raw : {};
+  const defaults = getDefaultSyncableSettings();
+  return {
+    ...defaults,
+    userName: String(source.userName || "").trim(),
+    discipline: normalizeDisciplineList(source.discipline),
+    showSetupHelp: source.showSetupHelp !== false,
+    theme: source.theme === "light" ? "light" : "dark",
+    lightingTemplates: Array.isArray(source.lightingTemplates)
+      ? deepCloneJson(source.lightingTemplates, [])
+      : [],
+    autoPrimary: source.autoPrimary === true,
+    defaultPmInitials: String(source.defaultPmInitials || "")
+      .trim()
+      .toUpperCase(),
+    cleanDwgOptions: {
+      ...DEFAULT_CLEAN_DWG_OPTIONS,
+      ...(source.cleanDwgOptions || {}),
+    },
+    publishDwgOptions: {
+      ...DEFAULT_PUBLISH_DWG_OPTIONS,
+      ...(source.publishDwgOptions || {}),
+    },
+    freezeLayerOptions: {
+      ...DEFAULT_FREEZE_LAYER_OPTIONS,
+      ...(source.freezeLayerOptions || {}),
+    },
+    thawLayerOptions: {
+      ...DEFAULT_THAW_LAYER_OPTIONS,
+      ...(source.thawLayerOptions || {}),
+    },
+    workroomAutoSelectCadFiles: source.workroomAutoSelectCadFiles !== false,
+    enableUnderConstructionTools: source.enableUnderConstructionTools === true,
+    updatedAt:
+      normalizeIsoTimestamp(source.updatedAt) ||
+      normalizeIsoTimestamp(source.lastModified),
+  };
+}
+
+function hasMeaningfulSettingsState(doc) {
+  if (!doc) return false;
+  const comparable = deepCloneJson(doc, {}) || {};
+  delete comparable.updatedAt;
+  return stableStringify(comparable) !== stableStringify(getDefaultSyncableSettings());
+}
+
+function sanitizeLinkForCloud(link) {
+  const normalized = normalizeRef(link);
+  if (!normalized || isLocalOnlyLink(normalized)) return null;
+  return normalized;
+}
+
+function getLinkKey(link) {
+  const normalized = normalizeRef(link);
+  if (!normalized) return "";
+  return `${String(normalized.raw || normalized.url || "")
+    .trim()
+    .toLowerCase()}|${String(normalized.label || "")
+    .trim()
+    .toLowerCase()}`;
+}
+
+function mergeCloudAndLocalLinks(remoteRefs = [], localRefs = []) {
+  const merged = [];
+  const seen = new Set();
+  [...(Array.isArray(remoteRefs) ? remoteRefs : [])]
+    .map((ref) => normalizeRef(ref))
+    .filter(Boolean)
+    .forEach((ref) => {
+      const key = getLinkKey(ref);
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      merged.push(ref);
+    });
+  [...(Array.isArray(localRefs) ? localRefs : [])]
+    .map((ref) => normalizeRef(ref))
+    .filter((ref) => ref && isLocalOnlyLink(ref))
+    .forEach((ref) => {
+      const key = getLinkKey(ref);
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      merged.push(ref);
+    });
+  return merged;
+}
+
+function sanitizeEmailRefForCloud(ref) {
+  const normalized = normalizeEmailRef(ref);
+  if (!normalized) return null;
+  if (
+    String(normalized.source || "").toLowerCase() === "file" ||
+    isLikelyLocalPath(normalized.raw) ||
+    isLikelyLocalPath(normalized.url)
+  ) {
+    return null;
+  }
+  return normalized;
+}
+
+function mergeCloudAndLocalEmailRefs(remoteRefs = [], localRefs = []) {
+  const merged = [];
+  const seen = new Set();
+  [
+    ...normalizeEmailRefs(remoteRefs, null),
+    ...normalizeEmailRefs(localRefs, null).filter(
+      (ref) =>
+        ref &&
+        (String(ref.source || "").toLowerCase() === "file" ||
+          isLikelyLocalPath(ref.raw) ||
+          isLikelyLocalPath(ref.url))
+    ),
+  ].forEach((ref) => {
+    const normalized = normalizeEmailRef(ref);
+    const key = normalizeEmailRefKey(normalized);
+    if (!normalized || !key || seen.has(key)) return;
+    seen.add(key);
+    merged.push(normalized);
+  });
+  return merged;
+}
+
+function sanitizeDeliverableForCloud(deliverable = {}) {
+  const source =
+    deliverable && typeof deliverable === "object"
+      ? deepCloneJson(deliverable, {}) || {}
+      : {};
+  const normalized = normalizeDeliverable(source);
+  const emailRefs = normalizeEmailRefs(source.emailRefs, source.emailRef)
+    .map((ref) => sanitizeEmailRefForCloud(ref))
+    .filter(Boolean);
+  return {
+    ...source,
+    ...normalized,
+    emailRefs,
+    emailRef: emailRefs[0] || null,
+  };
+}
+
+function getCloudDeliverableKey(deliverable, index = 0) {
+  const id = String(deliverable?.id || "").trim().toLowerCase();
+  if (id) return `id:${id}`;
+  const name = String(deliverable?.name || "").trim().toLowerCase();
+  const due = String(deliverable?.due || "").trim().toLowerCase();
+  if (name || due) return `name:${name}|due:${due}`;
+  return `index:${index}`;
+}
+
+function mergeLocalDeliverableFields(remoteDeliverable, localDeliverable) {
+  const merged = {
+    ...(deepCloneJson(localDeliverable, {}) || {}),
+    ...(deepCloneJson(remoteDeliverable, {}) || {}),
+  };
+  const emailRefs = mergeCloudAndLocalEmailRefs(
+    remoteDeliverable?.emailRefs,
+    localDeliverable?.emailRefs
+  );
+  merged.emailRefs = emailRefs;
+  merged.emailRef = emailRefs[0] || null;
+  return merged;
+}
+
+function sanitizeProjectForCloud(project = {}) {
+  const source =
+    project && typeof project === "object"
+      ? deepCloneJson(project, {}) || {}
+      : {};
+  const normalized = normalizeProject(source);
+  return {
+    ...source,
+    ...normalized,
+    path: "",
+    localProjectPath: "",
+    workroomRootPath: "",
+    refs: (Array.isArray(source.refs) ? source.refs : [])
+      .map((ref) => sanitizeLinkForCloud(ref))
+      .filter(Boolean),
+    deliverables: getProjectDeliverables(normalized).map((deliverable) =>
+      sanitizeDeliverableForCloud(deliverable)
+    ),
+    lightingSchedule: normalized.lightingSchedule
+      ? {
+          ...deepCloneJson(normalized.lightingSchedule, {}),
+          targetDwgPath: "",
+        }
+      : createDefaultLightingSchedule(),
+    title24: normalized.title24
+      ? {
+          ...deepCloneJson(normalized.title24, {}),
+          roomAreas: {
+            ...(deepCloneJson(normalized.title24.roomAreas, {}) || {}),
+            sourcePath: "",
+          },
+        }
+      : createDefaultTitle24(),
+  };
+}
+
+function getCloudProjectKey(project, index = 0) {
+  const id = String(project?.id || "").trim().toLowerCase();
+  if (id) return `id:${id}`;
+  const name = String(project?.name || "").trim().toLowerCase();
+  const nick = String(project?.nick || "").trim().toLowerCase();
+  if (name || nick) return `name:${name}|nick:${nick}`;
+  return `index:${index}`;
+}
+
+function mergeLocalProjectFields(remoteProject, localProject) {
+  const merged = {
+    ...(deepCloneJson(localProject, {}) || {}),
+    ...(deepCloneJson(remoteProject, {}) || {}),
+  };
+  merged.path = String(localProject?.path || merged.path || "").trim();
+  merged.localProjectPath = String(
+    localProject?.localProjectPath || merged.localProjectPath || ""
+  ).trim();
+  merged.workroomRootPath = String(
+    localProject?.workroomRootPath || merged.workroomRootPath || ""
+  ).trim();
+  merged.refs = mergeCloudAndLocalLinks(remoteProject?.refs, localProject?.refs);
+
+  const localDeliverables = Array.isArray(localProject?.deliverables)
+    ? localProject.deliverables
+    : [];
+  const localDeliverableMap = new Map(
+    localDeliverables.map((deliverable, index) => [
+      getCloudDeliverableKey(deliverable, index),
+      deliverable,
+    ])
+  );
+  merged.deliverables = getProjectDeliverables(remoteProject).map(
+    (deliverable, index) =>
+      mergeLocalDeliverableFields(
+        deliverable,
+        localDeliverableMap.get(getCloudDeliverableKey(deliverable, index))
+      )
+  );
+
+  if (merged.lightingSchedule) {
+    merged.lightingSchedule.targetDwgPath = String(
+      localProject?.lightingSchedule?.targetDwgPath ||
+        merged.lightingSchedule.targetDwgPath ||
+        ""
+    ).trim();
+  }
+  if (merged.title24?.roomAreas) {
+    merged.title24.roomAreas.sourcePath = normalizeTitle24Text(
+      localProject?.title24?.roomAreas?.sourcePath ||
+        merged.title24.roomAreas.sourcePath ||
+        ""
+    );
+  }
+  return normalizeProject(merged);
+}
+
+function restoreLocalOnlyProjectFields(remoteProjects, localProjects = db) {
+  const localMap = new Map(
+    (Array.isArray(localProjects) ? localProjects : []).map((project, index) => [
+      getCloudProjectKey(project, index),
+      project,
+    ])
+  );
+  return (Array.isArray(remoteProjects) ? remoteProjects : [])
+    .map((project, index) =>
+      mergeLocalProjectFields(
+        project,
+        localMap.get(getCloudProjectKey(project, index))
+      )
+    )
+    .filter(Boolean);
+}
+
+function buildTasksCloudDoc() {
+  return {
+    projects: deepCloneJson(db, []).map((project) => sanitizeProjectForCloud(project)),
+    updatedAt:
+      normalizeIsoTimestamp(localSyncTimestamps.tasks) || new Date().toISOString(),
+  };
+}
+
+function normalizeCloudTasksDoc(raw = {}) {
+  const source = Array.isArray(raw)
+    ? { projects: raw }
+    : raw && typeof raw === "object"
+      ? raw
+      : {};
+  const migrated = migrateProjects(
+    Array.isArray(source.projects) ? source.projects : []
+  );
+  return {
+    projects: migrated.data,
+    updatedAt:
+      normalizeIsoTimestamp(source.updatedAt) ||
+      normalizeIsoTimestamp(source.lastModified),
+  };
+}
+
+function hasMeaningfulTasksState(doc) {
+  return Array.isArray(doc?.projects) && doc.projects.length > 0;
+}
+
+function buildNotesCloudDoc() {
+  return {
+    tabs: [...(Array.isArray(noteTabs) && noteTabs.length ? noteTabs : ["General"])],
+    general: deepCloneJson(notesDb, {}),
+    updatedAt:
+      normalizeIsoTimestamp(localSyncTimestamps.notes) || new Date().toISOString(),
+  };
+}
+
+function normalizeCloudNotesDoc(raw = {}) {
+  const source = raw && typeof raw === "object" ? raw : {};
+  const tabs =
+    Array.isArray(source.tabs) && source.tabs.length
+      ? source.tabs.map((tab) => String(tab || "").trim()).filter(Boolean)
+      : ["General"];
+  const general =
+    source.general && typeof source.general === "object" && !Array.isArray(source.general)
+      ? deepCloneJson(source.general, {})
+      : {};
+  return {
+    tabs: tabs.length ? tabs : ["General"],
+    general,
+    updatedAt:
+      normalizeIsoTimestamp(source.updatedAt) ||
+      normalizeIsoTimestamp(source.lastModified),
+  };
+}
+
+function hasMeaningfulNotesState(doc) {
+  if (!doc) return false;
+  const values = Object.values(doc.general || {});
+  const hasText = values.some((value) => String(value || "").trim());
+  const tabs = Array.isArray(doc.tabs) ? doc.tabs : [];
+  return hasText || tabs.some((tab) => String(tab || "").trim() && tab !== "General");
+}
+
+function buildTemplateSourceName(template) {
+  return basename(template?.sourcePath || template?.sourceName || "");
+}
+
+function sanitizeTemplateForCloud(template = {}) {
+  const source =
+    template && typeof template === "object"
+      ? deepCloneJson(template, {}) || {}
+      : {};
+  const sourceName = buildTemplateSourceName(source);
+  return {
+    ...source,
+    sourcePath: "",
+    sourceName,
+    cloudNeedsRelink: !source.isDefault && !!sourceName,
+  };
+}
+
+function mergeLocalTemplateFields(remoteTemplate, localTemplate) {
+  const merged = {
+    ...(deepCloneJson(remoteTemplate, {}) || {}),
+  };
+  const localSourcePath = String(localTemplate?.sourcePath || "").trim();
+  if (!String(merged.sourcePath || "").trim() && localSourcePath) {
+    merged.sourcePath = localSourcePath;
+    merged.cloudNeedsRelink = false;
+  }
+  if (!String(merged.sourceName || "").trim()) {
+    merged.sourceName = buildTemplateSourceName(localTemplate) || "";
+  }
+  return merged;
+}
+
+function mergeLocalTemplatePaths(remoteDoc, localDoc = templatesDb) {
+  const localMap = new Map(
+    (Array.isArray(localDoc?.templates) ? localDoc.templates : []).map((template) => [
+      String(template?.id || "").trim(),
+      template,
+    ])
+  );
+  return {
+    templates: (Array.isArray(remoteDoc?.templates) ? remoteDoc.templates : []).map(
+      (template) =>
+        mergeLocalTemplateFields(
+          template,
+          localMap.get(String(template?.id || "").trim())
+        )
+    ),
+    defaultTemplatesInstalled: remoteDoc?.defaultTemplatesInstalled === true,
+    lastModified: normalizeIsoTimestamp(
+      remoteDoc?.lastModified || remoteDoc?.updatedAt
+    ),
+    updatedAt: normalizeIsoTimestamp(remoteDoc?.updatedAt),
+  };
+}
+
+function buildTemplatesCloudDoc() {
+  const updatedAt =
+    normalizeIsoTimestamp(localSyncTimestamps.templates) ||
+    normalizeIsoTimestamp(templatesDb?.lastModified) ||
+    new Date().toISOString();
+  return {
+    templates: (Array.isArray(templatesDb?.templates) ? templatesDb.templates : []).map(
+      (template) => sanitizeTemplateForCloud(template)
+    ),
+    defaultTemplatesInstalled: templatesDb?.defaultTemplatesInstalled === true,
+    lastModified: updatedAt,
+    updatedAt,
+  };
+}
+
+function normalizeCloudTemplatesDoc(raw = {}) {
+  const source = raw && typeof raw === "object" ? raw : {};
+  return {
+    templates: (Array.isArray(source.templates) ? source.templates : []).map((template) => ({
+      ...(deepCloneJson(template, {}) || {}),
+      sourcePath: String(template?.sourcePath || "").trim(),
+      sourceName: String(template?.sourceName || "").trim(),
+      cloudNeedsRelink:
+        template?.cloudNeedsRelink === true ||
+        (!template?.isDefault &&
+          !String(template?.sourcePath || "").trim() &&
+          !!String(template?.sourceName || "").trim()),
+    })),
+    defaultTemplatesInstalled: source.defaultTemplatesInstalled === true,
+    lastModified:
+      normalizeIsoTimestamp(source.lastModified) ||
+      normalizeIsoTimestamp(source.updatedAt),
+    updatedAt:
+      normalizeIsoTimestamp(source.updatedAt) ||
+      normalizeIsoTimestamp(source.lastModified),
+  };
+}
+
+function hasMeaningfulTemplatesState(doc) {
+  return Array.isArray(doc?.templates) && doc.templates.length > 0;
+}
+
+function buildChecklistsCloudDoc() {
+  const updatedAt =
+    normalizeIsoTimestamp(localSyncTimestamps.checklists) ||
+    normalizeIsoTimestamp(checklistsDb?.lastModified) ||
+    new Date().toISOString();
+  return {
+    ...deepCloneJson(checklistsDb, {
+      checklists: [],
+      templateOverrides: {},
+      lastModified: null,
+    }),
+    lastModified: updatedAt,
+    updatedAt,
+  };
+}
+
+function normalizeCloudChecklistsDoc(raw = {}) {
+  const source = raw && typeof raw === "object" ? raw : {};
+  const normalized = normalizeChecklistsDb(source || {});
+  return {
+    ...normalized.data,
+    updatedAt:
+      normalizeIsoTimestamp(source.updatedAt) ||
+      normalizeIsoTimestamp(source.lastModified) ||
+      normalizeIsoTimestamp(normalized.data.lastModified),
+  };
+}
+
+function hasMeaningfulChecklistsState(doc) {
+  return (
+    (Array.isArray(doc?.checklists) && doc.checklists.length > 0) ||
+    (doc?.templateOverrides &&
+      Object.keys(doc.templateOverrides).length > 0)
+  );
+}
+
+function buildTimesheetsCloudState() {
+  const updatedAt =
+    normalizeIsoTimestamp(localSyncTimestamps.timesheets) ||
+    normalizeIsoTimestamp(timesheetDb?.lastModified) ||
+    new Date().toISOString();
+  const weeks =
+    timesheetDb?.weeks && typeof timesheetDb.weeks === "object"
+      ? deepCloneJson(timesheetDb.weeks, {})
+      : {};
+  const knownWeeks = Object.keys(weeks || {}).filter(Boolean).sort();
+  return {
+    weeks,
+    knownWeeks,
+    updatedAt,
+  };
+}
+
+function normalizeRemoteTimesheetsState(metaDoc = {}, docs = []) {
+  const weeks = {};
+  const knownWeeks = [];
+  let updatedAt =
+    normalizeIsoTimestamp(metaDoc?.updatedAt) ||
+    normalizeIsoTimestamp(metaDoc?.lastModified);
+  (Array.isArray(docs) ? docs : []).forEach((doc) => {
+    const docId = String(doc?.id || "").trim();
+    if (!docId || docId === CLOUD_SYNC_TIMESHEETS_META_DOC_ID) return;
+    const payload = doc?.data && typeof doc.data === "object" ? doc.data : {};
+    weeks[docId] = deepCloneJson(payload.data, {}) || {};
+    knownWeeks.push(docId);
+    if (isIsoAfter(payload.updatedAt, updatedAt)) {
+      updatedAt = normalizeIsoTimestamp(payload.updatedAt);
+    }
+  });
+  const metaKnownWeeks = Array.isArray(metaDoc?.knownWeeks)
+    ? metaDoc.knownWeeks.map((weekKey) => String(weekKey || "").trim()).filter(Boolean)
+    : [];
+  return {
+    weeks,
+    knownWeeks: [...new Set(metaKnownWeeks.length ? metaKnownWeeks : knownWeeks)].sort(),
+    updatedAt,
+  };
+}
+
+function hasMeaningfulTimesheetsState(state) {
+  return Object.keys(state?.weeks || {}).length > 0;
+}
+
+function getLocalCloudDoc(domain) {
+  if (domain === "settings") return sanitizeSettingsForCloud(userSettings);
+  if (domain === "tasks") return buildTasksCloudDoc();
+  if (domain === "notes") return buildNotesCloudDoc();
+  if (domain === "templates") return buildTemplatesCloudDoc();
+  if (domain === "checklists") return buildChecklistsCloudDoc();
+  if (domain === "timesheets") return buildTimesheetsCloudState();
+  return null;
+}
+
+function hasMeaningfulCloudDoc(domain, doc) {
+  if (domain === "settings") return hasMeaningfulSettingsState(doc);
+  if (domain === "tasks") return hasMeaningfulTasksState(doc);
+  if (domain === "notes") return hasMeaningfulNotesState(doc);
+  if (domain === "templates") return hasMeaningfulTemplatesState(doc);
+  if (domain === "checklists") return hasMeaningfulChecklistsState(doc);
+  if (domain === "timesheets") return hasMeaningfulTimesheetsState(doc);
+  return false;
+}
+
+function buildComparableCloudDoc(domain, doc = getLocalCloudDoc(domain)) {
+  const comparable = deepCloneJson(doc, null);
+  if (!comparable || typeof comparable !== "object") return comparable;
+  delete comparable.updatedAt;
+  if (domain === "templates" || domain === "checklists") {
+    delete comparable.lastModified;
+  }
+  return comparable;
+}
+
+function getCloudComparableFingerprint(domain, doc = getLocalCloudDoc(domain)) {
+  return stableStringify(buildComparableCloudDoc(domain, doc));
+}
+
+function syncCloudComparableFingerprint(domain, doc = getLocalCloudDoc(domain)) {
+  const fingerprint = getCloudComparableFingerprint(domain, doc);
+  lastCloudComparableFingerprints[domain] = fingerprint;
+  return fingerprint;
+}
+
+function syncAllCloudComparableFingerprints() {
+  [
+    "settings",
+    "tasks",
+    "notes",
+    "templates",
+    "checklists",
+    "timesheets",
+  ].forEach((domain) => {
+    syncCloudComparableFingerprint(domain);
+  });
+}
+
+async function prepareLocalStateForUserSwitch(nextUid) {
+  const currentMetadata = ensureCloudSyncSettingsObject();
+  const previousUid = String(currentMetadata.firebaseUid || "").trim();
+  if (!previousUid || previousUid === nextUid) return false;
+
+  await createCloudSyncBackup("cloud-user-switch", {
+    previousFirebaseUid: previousUid,
+    nextFirebaseUid: nextUid,
+  });
+
+  const resetAt = new Date().toISOString();
+  userSettings = {
+    ...userSettings,
+    ...getDefaultSyncableSettings(),
+    googleAuth: userSettings.googleAuth,
+    cloudSync: {
+      ...currentMetadata,
+      enabled: false,
+      migrationCompleted: false,
+      lastSyncedAt: "",
+    },
+  };
+  db = [];
+  notesDb = {};
+  noteTabs = ["General"];
+  activeNoteTab = "General";
+  timesheetDb = { weeks: {}, lastModified: null };
+  templatesDb = {
+    templates: [],
+    defaultTemplatesInstalled: false,
+    lastModified: null,
+  };
+  checklistsDb = {
+    checklists: [],
+    templateOverrides: {},
+    lastModified: null,
+  };
+  activeChecklistTabId = null;
+  cloudSyncRemoteTimesheetMeta = {
+    updatedAt: "",
+    knownWeeks: [],
+  };
+
+  await persistUserSettingsLocally({
+    skipCloud: true,
+    timestamp: resetAt,
+    silent: true,
+  });
+  await save({ skipCloud: true, timestamp: resetAt, silent: true });
+  await saveNotes({ skipCloud: true, timestamp: resetAt, silent: true });
+  await saveTimesheets({ skipCloud: true, timestamp: resetAt, silent: true });
+  await saveTemplates({ skipCloud: true, timestamp: resetAt, silent: true });
+  templatesDb = (await loadTemplates()) || templatesDb;
+  await saveChecklists({ skipCloud: true, timestamp: resetAt, silent: true });
+  syncAllCloudComparableFingerprints();
+  renderNoteTabs();
+  renderChecklistTabs();
+  renderChecklistItems();
+  renderTextsView();
+  renderTemplates();
+  renderTimesheets();
+  render();
+  return true;
+}
+
+async function pushCloudDomain(domain) {
+  if (!cloudSyncState.enabled || !firebaseFirestoreInstance || !cloudSyncState.firebaseUid) {
+    return "";
+  }
+  const refs = getCloudSyncDocRefs(cloudSyncState.firebaseUid);
+  if (domain === "timesheets") {
+    return pushCloudTimesheetsState();
+  }
+  const payload = getLocalCloudDoc(domain);
+  if (!payload) return "";
+  const updatedAt = normalizeIsoTimestamp(payload.updatedAt) || new Date().toISOString();
+  const ref = refs[domain];
+  if (!ref) return "";
+  await ref.set(payload, { merge: false });
+  return updatedAt;
+}
+
+async function pushCloudTimesheetsState() {
+  if (!cloudSyncState.enabled || !firebaseFirestoreInstance || !cloudSyncState.firebaseUid) {
+    return "";
+  }
+  const refs = getCloudSyncDocRefs(cloudSyncState.firebaseUid);
+  const state = buildTimesheetsCloudState();
+  const upserts = state.knownWeeks.map((weekKey) =>
+    refs.timesheets.doc(weekKey).set(
+      {
+        weekKey,
+        data: deepCloneJson(state.weeks[weekKey], {}),
+        updatedAt: state.updatedAt,
+      },
+      { merge: false }
+    )
+  );
+  const previousKnownWeeks = Array.isArray(cloudSyncRemoteTimesheetMeta.knownWeeks)
+    ? cloudSyncRemoteTimesheetMeta.knownWeeks
+    : [];
+  const removals = previousKnownWeeks
+    .filter((weekKey) => !state.knownWeeks.includes(weekKey))
+    .map((weekKey) => refs.timesheets.doc(weekKey).delete());
+  await Promise.all([
+    ...upserts,
+    ...removals,
+    refs.timesheetsMeta.set(
+      {
+        updatedAt: state.updatedAt,
+        knownWeeks: state.knownWeeks,
+      },
+      { merge: false }
+    ),
+  ]);
+  cloudSyncRemoteTimesheetMeta = {
+    updatedAt: state.updatedAt,
+    knownWeeks: state.knownWeeks,
+  };
+  return state.updatedAt;
+}
+
+async function pushTimesheetWeek(weekKey) {
+  if (!weekKey) return "";
+  return pushCloudTimesheetsState();
+}
+
+async function pushUserState(domains = null) {
+  if (!cloudSyncState.enabled || isCloudSyncApplying()) return "";
+  const requested =
+    Array.isArray(domains) && domains.length
+      ? domains
+      : ["settings", "tasks", "notes", "templates", "checklists", "timesheets"];
+  const uniqueDomains = [...new Set(requested)];
+  updateCloudSyncState({
+    busy: true,
+    status: "syncing",
+    message: "Uploading local changes...",
+    error: "",
+  });
+  try {
+    const timestamps = [];
+    for (const domain of uniqueDomains) {
+      const updatedAt = await pushCloudDomain(domain);
+      if (updatedAt) timestamps.push(updatedAt);
+    }
+    const lastSyncedAt = new Date().toISOString();
+    await updateLocalCloudSyncMetadata(
+      {
+        enabled: true,
+        firebaseUid: cloudSyncState.firebaseUid,
+        migrationCompleted: true,
+        lastSyncedAt,
+      },
+      { persist: true }
+    );
+    updateCloudSyncState({
+      busy: false,
+      enabled: true,
+      status: "synced",
+      message: lastSyncedAt
+        ? `Last sync ${formatSyncTimestamp(lastSyncedAt)}`
+        : "Cloud sync ready",
+      error: "",
+      lastSyncedAt,
+    });
+    return lastSyncedAt;
+  } catch (e) {
+    updateCloudSyncState({
+      busy: false,
+      status: "error",
+      error: String(e?.message || "Cloud push failed."),
+    });
+    throw e;
+  }
+}
+
+async function fetchRemoteUserState(uid = cloudSyncState.firebaseUid) {
+  if (!uid || !firebaseFirestoreInstance) {
+    return {
+      settings: null,
+      tasks: null,
+      notes: null,
+      templates: null,
+      checklists: null,
+      timesheets: normalizeRemoteTimesheetsState({}, []),
+    };
+  }
+  const refs = getCloudSyncDocRefs(uid);
+  const [
+    settingsSnap,
+    tasksSnap,
+    notesSnap,
+    templatesSnap,
+    checklistsSnap,
+    timesheetsSnap,
+  ] = await Promise.all([
+    refs.settings.get(),
+    refs.tasks.get(),
+    refs.notes.get(),
+    refs.templates.get(),
+    refs.checklists.get(),
+    refs.timesheets.get(),
+  ]);
+
+  let timesheetsMeta = {};
+  const timesheetDocs = [];
+  timesheetsSnap.forEach((doc) => {
+    if (doc.id === CLOUD_SYNC_TIMESHEETS_META_DOC_ID) {
+      timesheetsMeta = doc.data() || {};
+      return;
+    }
+    timesheetDocs.push({
+      id: doc.id,
+      data: doc.data() || {},
+    });
+  });
+
+  return {
+    settings: settingsSnap.exists ? normalizeCloudSettingsDoc(settingsSnap.data()) : null,
+    tasks: tasksSnap.exists ? normalizeCloudTasksDoc(tasksSnap.data()) : null,
+    notes: notesSnap.exists ? normalizeCloudNotesDoc(notesSnap.data()) : null,
+    templates: templatesSnap.exists
+      ? normalizeCloudTemplatesDoc(templatesSnap.data())
+      : null,
+    checklists: checklistsSnap.exists
+      ? normalizeCloudChecklistsDoc(checklistsSnap.data())
+      : null,
+    timesheets: normalizeRemoteTimesheetsState(timesheetsMeta, timesheetDocs),
+  };
+}
+
+async function applyRemoteCloudDoc(domain, remoteDoc) {
+  beginCloudSyncApply();
+  try {
+    if (domain === "settings") {
+      const cloudSettings = normalizeCloudSettingsDoc(remoteDoc);
+      const currentCloudSync = ensureCloudSyncSettingsObject();
+      userSettings = {
+        ...userSettings,
+        ...cloudSettings,
+        apiKey: userSettings.apiKey,
+        autocadPath: userSettings.autocadPath,
+        googleAuth: userSettings.googleAuth,
+        cloudSync: currentCloudSync,
+      };
+      touchLocalSyncTimestamp("settings", cloudSettings.updatedAt);
+      await persistUserSettingsLocally({
+        skipCloud: true,
+        saveTimestamp: false,
+        silent: true,
+      });
+      applyTheme(userSettings.theme);
+      syncUnderConstructionToolsAvailability();
+      return cloudSettings.updatedAt;
+    }
+    if (domain === "tasks") {
+      const cloudTasks = normalizeCloudTasksDoc(remoteDoc);
+      db = restoreLocalOnlyProjectFields(cloudTasks.projects, db);
+      touchLocalSyncTimestamp("tasks", cloudTasks.updatedAt);
+      await save({
+        skipCloud: true,
+        saveTimestamp: false,
+        silent: true,
+      });
+      render();
+      return cloudTasks.updatedAt;
+    }
+    if (domain === "notes") {
+      const cloudNotes = normalizeCloudNotesDoc(remoteDoc);
+      noteTabs = [...cloudNotes.tabs];
+      notesDb = deepCloneJson(cloudNotes.general, {});
+      activeNoteTab = noteTabs.includes(activeNoteTab) ? activeNoteTab : noteTabs[0];
+      touchLocalSyncTimestamp("notes", cloudNotes.updatedAt);
+      await saveNotes({
+        skipCloud: true,
+        saveTimestamp: false,
+        silent: true,
+      });
+      renderNoteTabs();
+      renderTextsView();
+      renderNoteSearchResults();
+      return cloudNotes.updatedAt;
+    }
+    if (domain === "templates") {
+      const cloudTemplates = mergeLocalTemplatePaths(
+        normalizeCloudTemplatesDoc(remoteDoc),
+        templatesDb
+      );
+      templatesDb = {
+        templates: cloudTemplates.templates,
+        defaultTemplatesInstalled: cloudTemplates.defaultTemplatesInstalled,
+        lastModified: cloudTemplates.updatedAt || cloudTemplates.lastModified,
+      };
+      touchLocalSyncTimestamp("templates", cloudTemplates.updatedAt);
+      await saveTemplates({
+        skipCloud: true,
+        saveTimestamp: false,
+        silent: true,
+      });
+      templatesDb = (await loadTemplates()) || templatesDb;
+      renderTemplates();
+      return cloudTemplates.updatedAt;
+    }
+    if (domain === "checklists") {
+      const cloudChecklists = normalizeCloudChecklistsDoc(remoteDoc);
+      checklistsDb = {
+        checklists: cloudChecklists.checklists,
+        templateOverrides: cloudChecklists.templateOverrides,
+        lastModified: cloudChecklists.updatedAt || cloudChecklists.lastModified,
+      };
+      activeChecklistTabId =
+        checklistsDb.checklists.find((checklist) => checklist.id === activeChecklistTabId)
+          ?.id || checklistsDb.checklists[0]?.id || null;
+      touchLocalSyncTimestamp("checklists", cloudChecklists.updatedAt);
+      await saveChecklists({
+        skipCloud: true,
+        saveTimestamp: false,
+        silent: true,
+      });
+      renderChecklistTabs();
+      renderChecklistItems();
+      renderTextsView();
+      return cloudChecklists.updatedAt;
+    }
+  } finally {
+    endCloudSyncApply();
+  }
+  return "";
+}
+
+async function pullUserState({ silent = false } = {}) {
+  if (!cloudSyncState.enabled || !cloudSyncState.firebaseUid) return false;
+  updateCloudSyncState({
+    busy: true,
+    status: "syncing",
+    message: "Checking for remote updates...",
+    error: "",
+  });
+
+  let backupCreated = false;
+  const maybeBackup = async (reason, metadata = {}) => {
+    if (backupCreated) return;
+    backupCreated = true;
+    await createCloudSyncBackup(reason, metadata);
+  };
+
+  try {
+    const remote = await fetchRemoteUserState(cloudSyncState.firebaseUid);
+    const domains = ["settings", "tasks", "notes", "templates", "checklists"];
+    const syncedAtValues = [];
+
+    for (const domain of domains) {
+      const localDoc = getLocalCloudDoc(domain);
+      const remoteDoc = remote[domain];
+      const localHasData = hasMeaningfulCloudDoc(domain, localDoc);
+      const remoteHasData = hasMeaningfulCloudDoc(domain, remoteDoc);
+      const localUpdatedAt =
+        normalizeIsoTimestamp(localDoc?.updatedAt) ||
+        normalizeIsoTimestamp(localSyncTimestamps[domain]);
+      const remoteUpdatedAt = normalizeIsoTimestamp(remoteDoc?.updatedAt);
+
+      if (
+        remoteHasData &&
+        (!localHasData || isIsoAfter(remoteUpdatedAt, localUpdatedAt))
+      ) {
+        if (localHasData && isIsoAfter(remoteUpdatedAt, localUpdatedAt)) {
+          await maybeBackup(`cloud-remote-${domain}`, {
+            domain,
+            localUpdatedAt,
+            remoteUpdatedAt,
+            firebaseUid: cloudSyncState.firebaseUid,
+          });
+        }
+        const appliedAt = await applyRemoteCloudDoc(domain, remoteDoc);
+        if (appliedAt) syncedAtValues.push(appliedAt);
+        continue;
+      }
+
+      if (
+        localHasData &&
+        (!remoteHasData || isIsoAfter(localUpdatedAt, remoteUpdatedAt))
+      ) {
+        const pushedAt = await pushCloudDomain(domain);
+        if (pushedAt) syncedAtValues.push(pushedAt);
+      }
+    }
+
+    const localTimesheets = getLocalCloudDoc("timesheets");
+    const remoteTimesheets = remote.timesheets || normalizeRemoteTimesheetsState({}, []);
+    const localTimesheetsHasData = hasMeaningfulCloudDoc("timesheets", localTimesheets);
+    const remoteTimesheetsHasData = hasMeaningfulCloudDoc("timesheets", remoteTimesheets);
+    const localTimesheetsUpdatedAt =
+      normalizeIsoTimestamp(localTimesheets?.updatedAt) ||
+      normalizeIsoTimestamp(localSyncTimestamps.timesheets);
+    const remoteTimesheetsUpdatedAt = normalizeIsoTimestamp(remoteTimesheets?.updatedAt);
+
+    if (
+      remoteTimesheetsHasData &&
+      (!localTimesheetsHasData ||
+        isIsoAfter(remoteTimesheetsUpdatedAt, localTimesheetsUpdatedAt))
+    ) {
+      if (
+        localTimesheetsHasData &&
+        isIsoAfter(remoteTimesheetsUpdatedAt, localTimesheetsUpdatedAt)
+      ) {
+        await maybeBackup("cloud-remote-timesheets", {
+          domain: "timesheets",
+          localUpdatedAt: localTimesheetsUpdatedAt,
+          remoteUpdatedAt: remoteTimesheetsUpdatedAt,
+          firebaseUid: cloudSyncState.firebaseUid,
+        });
+      }
+      timesheetDb = {
+        weeks: deepCloneJson(remoteTimesheets.weeks, {}),
+        lastModified: remoteTimesheets.updatedAt || null,
+      };
+      cloudSyncRemoteTimesheetMeta = {
+        updatedAt: remoteTimesheets.updatedAt || "",
+        knownWeeks: remoteTimesheets.knownWeeks || [],
+      };
+      touchLocalSyncTimestamp("timesheets", remoteTimesheets.updatedAt);
+      await saveTimesheets({
+        skipCloud: true,
+        saveTimestamp: false,
+        silent: true,
+      });
+      renderTimesheets();
+      await refreshTimesheetsInfo();
+      if (remoteTimesheets.updatedAt) {
+        syncedAtValues.push(remoteTimesheets.updatedAt);
+      }
+    } else if (
+      localTimesheetsHasData &&
+      (!remoteTimesheetsHasData ||
+        isIsoAfter(localTimesheetsUpdatedAt, remoteTimesheetsUpdatedAt))
+    ) {
+      const pushedAt = await pushCloudTimesheetsState();
+      if (pushedAt) syncedAtValues.push(pushedAt);
+    } else {
+      cloudSyncRemoteTimesheetMeta = {
+        updatedAt: remoteTimesheets.updatedAt || "",
+        knownWeeks: remoteTimesheets.knownWeeks || [],
+      };
+    }
+
+    const lastSyncedAt = new Date().toISOString();
+    await updateLocalCloudSyncMetadata(
+      {
+        enabled: true,
+        firebaseUid: cloudSyncState.firebaseUid,
+        migrationCompleted: true,
+        lastSyncedAt,
+      },
+      { persist: true }
+    );
+    updateCloudSyncState({
+      busy: false,
+      enabled: true,
+      status: "synced",
+      message: lastSyncedAt
+        ? `Last sync ${formatSyncTimestamp(lastSyncedAt)}`
+        : "Cloud sync ready",
+      error: "",
+      lastSyncedAt,
+    });
+    return true;
+  } catch (e) {
+    if (!silent) {
+      toast(e?.message || "Cloud sync failed.");
+    }
+    updateCloudSyncState({
+      busy: false,
+      status: "error",
+      error: String(e?.message || "Cloud sync failed."),
+    });
+    throw e;
+  }
+}
+
+async function bootstrapCloudSync({ session = null, silent = true } = {}) {
+  if (cloudSyncInitPromise) return cloudSyncInitPromise;
+  cloudSyncInitPromise = (async () => {
+    await loadCloudSyncConfig();
+    if (!cloudSyncState.configured) {
+      updateCloudSyncState({
+        enabled: false,
+        status: "local-only",
+        message: "Firebase is not configured.",
+      });
+      return { enabled: false };
+    }
+    if (!googleAuthState.signedIn) {
+      updateCloudSyncState({
+        enabled: false,
+        signedIn: false,
+        status: "idle",
+        message: "Sign in to enable sync.",
+      });
+      return { enabled: false };
+    }
+
+    updateCloudSyncState({
+      busy: true,
+      signedIn: true,
+      status: "syncing",
+      message: "Connecting cloud sync...",
+      error: "",
+    });
+
+    const user = await signInToCloud(session);
+    if (!user?.uid) {
+      updateCloudSyncState({
+        busy: false,
+        enabled: false,
+        status: "idle",
+        message: "Google is signed in locally.",
+      });
+      return { enabled: false };
+    }
+
+    await prepareLocalStateForUserSwitch(user.uid);
+    updateCloudSyncState({
+      enabled: true,
+      signedIn: true,
+      firebaseUid: user.uid,
+    });
+    await updateLocalCloudSyncMetadata(
+      {
+        enabled: true,
+        firebaseUid: user.uid,
+      },
+      { persist: true }
+    );
+    await pullUserState({ silent });
+    subscribeToUserState(user.uid);
+    return { enabled: true, uid: user.uid };
+  })()
+    .catch((error) => {
+      if (!silent) {
+        toast(error?.message || "Cloud sync failed.");
+      }
+      updateCloudSyncState({
+        busy: false,
+        enabled: false,
+        status: "error",
+        error: String(error?.message || "Cloud sync failed."),
+      });
+      return { enabled: false, error };
+    })
+    .finally(() => {
+      cloudSyncInitPromise = null;
+    });
+  return cloudSyncInitPromise;
+}
+
+async function signOutCloud({ preserveMetadata = true } = {}) {
+  clearCloudSyncSubscriptions();
+  Object.values(cloudSyncPushTimers).forEach((timer) => clearTimeout(timer));
+  cloudSyncPushTimers = {};
+  if (cloudSyncTimesheetsPushTimer) {
+    clearTimeout(cloudSyncTimesheetsPushTimer);
+    cloudSyncTimesheetsPushTimer = null;
+  }
+  if (firebaseAuthInstance) {
+    try {
+      await firebaseAuthInstance.signOut();
+    } catch (e) {
+      console.warn("Failed to sign out of Firebase:", e);
+    }
+  }
+  cloudSyncRemoteTimesheetMeta = {
+    updatedAt: "",
+    knownWeeks: [],
+  };
+  await updateLocalCloudSyncMetadata(
+    {
+      enabled: false,
+      migrationCompleted: false,
+      ...(preserveMetadata ? {} : { firebaseUid: "", lastSyncedAt: "" }),
+    },
+    { persist: true }
+  );
+  updateCloudSyncState({
+    enabled: false,
+    busy: false,
+    signedIn: false,
+    status: "idle",
+    message: "Sign in to enable sync.",
+    error: "",
+    ...(preserveMetadata
+      ? {}
+      : {
+          firebaseUid: "",
+          lastSyncedAt: "",
+        }),
+  });
 }
 
 // ===================== THEMING =====================
@@ -6125,13 +8080,7 @@ function applyTheme(theme) {
 
 async function persistThemePreference(theme) {
   const resolved = applyTheme(theme);
-  if (window.pywebview && window.pywebview.api?.save_user_settings) {
-    try {
-      await window.pywebview.api.save_user_settings(userSettings);
-    } catch (e) {
-      console.warn("Failed to persist theme preference:", e);
-    }
-  }
+  await persistUserSettingsLocally({ silent: true });
   return resolved;
 }
 
@@ -6142,6 +8091,44 @@ function initThemeFromPreferences() {
   const nextTheme =
     storedSetting || localPref || (prefersDark ? "dark" : "light");
   applyTheme(nextTheme);
+}
+
+async function persistUserSettingsLocally({
+  skipCloud = false,
+  saveTimestamp = true,
+  timestamp = new Date().toISOString(),
+  silent = false,
+} = {}) {
+  const resolvedTimestamp =
+    normalizeIsoTimestamp(timestamp) || new Date().toISOString();
+  const comparableChanged =
+    getCloudComparableFingerprint("settings") !==
+    lastCloudComparableFingerprints.settings;
+  if (saveTimestamp && comparableChanged) {
+    touchLocalSyncTimestamp("settings", resolvedTimestamp);
+  }
+  try {
+    const response = await window.pywebview.api.save_user_settings(userSettings);
+    if (response?.status && response.status !== "success") {
+      throw new Error(response.message || "Failed to save settings.");
+    }
+    syncCloudComparableFingerprint("settings");
+    if (
+      !skipCloud &&
+      comparableChanged &&
+      cloudSyncState.enabled &&
+      !isCloudSyncApplying()
+    ) {
+      queueCloudStatePush("settings");
+    }
+    return true;
+  } catch (e) {
+    console.warn("Failed to save settings:", e);
+    if (!silent) {
+      toast("Could not save settings.");
+    }
+    return false;
+  }
 }
 
 async function load() {
@@ -6160,12 +8147,38 @@ async function load() {
   }
 }
 
-async function save() {
+async function save({
+  skipCloud = false,
+  saveTimestamp = true,
+  timestamp = new Date().toISOString(),
+  silent = false,
+} = {}) {
+  const resolvedTimestamp =
+    normalizeIsoTimestamp(timestamp) || new Date().toISOString();
+  const comparableChanged =
+    getCloudComparableFingerprint("tasks") !==
+    lastCloudComparableFingerprints.tasks;
+  if (saveTimestamp && comparableChanged) {
+    touchLocalSyncTimestamp("tasks", resolvedTimestamp);
+  }
   try {
     const response = await window.pywebview.api.save_tasks(db);
     if (response.status !== "success") throw new Error(response.message);
+    syncCloudComparableFingerprint("tasks");
+    if (
+      !skipCloud &&
+      comparableChanged &&
+      cloudSyncState.enabled &&
+      !isCloudSyncApplying()
+    ) {
+      queueCloudStatePush("tasks");
+    }
+    return true;
   } catch (e) {
     console.warn("Backend save failed:", e);
+    if (silent) {
+      return false;
+    }
     toast("⚠️ Failed to save data.");
   }
 }
@@ -6285,12 +8298,42 @@ async function loadNotes() {
   }
 }
 
-async function saveNotes() {
+async function saveNotes({
+  skipCloud = false,
+  saveTimestamp = true,
+  timestamp = new Date().toISOString(),
+  silent = false,
+} = {}) {
+  const resolvedTimestamp =
+    normalizeIsoTimestamp(timestamp) || new Date().toISOString();
+  const comparableChanged =
+    getCloudComparableFingerprint("notes") !==
+    lastCloudComparableFingerprints.notes;
+  if (saveTimestamp && comparableChanged) {
+    touchLocalSyncTimestamp("notes", resolvedTimestamp);
+  }
   try {
     const dataToSave = { tabs: noteTabs, keyed: {}, general: notesDb };
-    await window.pywebview.api.save_notes(dataToSave);
+    const response = await window.pywebview.api.save_notes(dataToSave);
+    if (response?.status && response.status !== "success") {
+      throw new Error(response.message || "Failed to save notes.");
+    }
+    syncCloudComparableFingerprint("notes");
+    if (
+      !skipCloud &&
+      comparableChanged &&
+      cloudSyncState.enabled &&
+      !isCloudSyncApplying()
+    ) {
+      queueCloudStatePush("notes");
+    }
+    return true;
   } catch (e) {
     console.warn("Backend notes save failed:", e);
+    if (!silent) {
+      toast("Failed to save notes.");
+    }
+    return false;
   }
 }
 
@@ -6323,6 +8366,13 @@ async function loadUserSettings() {
       userSettings.workroomAutoSelectCadFiles !== false;
     userSettings.enableUnderConstructionTools =
       userSettings.enableUnderConstructionTools === true;
+    userSettings.cloudSync = normalizeCloudSyncSettings(userSettings.cloudSync);
+    updateCloudSyncState({
+      enabled: userSettings.cloudSync.enabled,
+      firebaseUid: userSettings.cloudSync.firebaseUid,
+      lastSyncedAt: userSettings.cloudSync.lastSyncedAt,
+    });
+    syncCloudComparableFingerprint("settings");
     syncUnderConstructionToolsAvailability();
     renderGoogleAuthUi();
   } catch (e) {
@@ -6556,11 +8606,7 @@ async function saveUserSettings() {
   }
   const autoPrimaryCheck = document.getElementById("settings_autoPrimary");
   if (autoPrimaryCheck) userSettings.autoPrimary = autoPrimaryCheck.checked;
-  try {
-    await window.pywebview.api.save_user_settings(userSettings);
-  } catch (e) {
-    toast("⚠️ Could not save settings.");
-  }
+  await persistUserSettingsLocally();
 }
 const debouncedSaveUserSettings = debounce(saveUserSettings, 500);
 
@@ -16215,7 +18261,10 @@ function validateCurrentStep() {
 
 async function completeOnboarding() {
   try {
-    await window.pywebview.api.save_user_settings(userSettings);
+    const saved = await persistUserSettingsLocally();
+    if (!saved) {
+      throw new Error("Failed to save settings.");
+    }
     closeDlg("onboardingDlg");
     showMainApp();
     toast("Welcome to ACIES! Your settings have been saved.");
@@ -16687,7 +18736,7 @@ async function dismissSetupHelp(type) {
   if (type === "never") {
     userSettings.showSetupHelp = false;
     try {
-      await window.pywebview.api.save_user_settings(userSettings);
+      await persistUserSettingsLocally({ silent: true });
     } catch (e) {
       console.warn("Could not save setup help preference:", e);
     }
@@ -17968,9 +20017,16 @@ function initEventListeners() {
           .value.trim();
       }
       try {
-        await window.pywebview.api.save_user_settings(userSettings);
+        const saved = await persistUserSettingsLocally({
+          skipCloud: true,
+          silent: true,
+        });
+        if (!saved) {
+          throw new Error("Failed to save settings.");
+        }
       } catch (e) {
         toast("⚠️ Could not save settings.");
+        return;
       }
       closeDlg("autocadSelectDlg");
     });
@@ -18401,40 +20457,64 @@ async function init() {
     await loadGoogleAuthState({ silent: true });
     await loadUserSettings();
     initThemeFromPreferences();
+    const [
+      loadedDb,
+      loadedNotes,
+      loadedTimesheets,
+      loadedTemplates,
+      loadedChecklists,
+    ] = await Promise.all([
+      load(),
+      loadNotes(),
+      loadTimesheets(),
+      loadTemplates(),
+      loadChecklists(),
+    ]);
+    db = loadedDb || [];
+    notesDb = loadedNotes || {};
+    timesheetDb = loadedTimesheets || { weeks: {}, lastModified: null };
+    templatesDb = loadedTemplates || {
+      templates: [],
+      defaultTemplatesInstalled: false,
+      lastModified: null,
+    };
+    checklistsDb = loadedChecklists || {
+      checklists: [],
+      templateOverrides: {},
+      lastModified: null,
+    };
+    await loadLocalSyncMetadata();
+    syncAllCloudComparableFingerprints();
+
+    if (googleAuthState.signedIn) {
+      await bootstrapCloudSync({ silent: true });
+    }
+
+    if (checklistsDb.checklists.length > 0) {
+      activeChecklistTabId =
+        checklistsDb.checklists.find((checklist) => checklist.id === activeChecklistTabId)
+          ?.id || checklistsDb.checklists[0].id;
+    } else {
+      activeChecklistTabId = null;
+    }
 
     if (isNewUser()) {
       hideMainApp();
       showOnboardingModal();
     } else {
       showMainApp();
-      const [loadedDb, loadedNotes, loadedTimesheets, loadedTemplates, loadedChecklists] = await Promise.all([
-        load(),
-        loadNotes(),
-        loadTimesheets(),
-        loadTemplates(),
-        loadChecklists(),
-      ]);
-      db = loadedDb;
-      notesDb = loadedNotes || {};
-      timesheetDb = loadedTimesheets || { weeks: {}, lastModified: null };
-      templatesDb = loadedTemplates || { templates: [], defaultTemplatesInstalled: false, lastModified: null };
-      checklistsDb = loadedChecklists || { checklists: [], lastModified: null };
-
-      // Initialize checklist tab
-      if (checklistsDb.checklists.length > 0) {
-        activeChecklistTabId = checklistsDb.checklists[0].id;
-      }
       renderNoteTabs();
       renderChecklistTabs();
+      renderChecklistItems();
       renderTextsView();
+      renderTemplates();
+      renderTimesheets();
       render();
       updateTimesheetsDuplicateIndicator(
         getWeekEntries(formatWeekKey(currentTimesheetWeek))
       );
 
-      // Show setup help banner for returning users who haven't disabled it
       if (userSettings.showSetupHelp !== false) {
-        // Delay showing the banner slightly so the UI is fully loaded
         setTimeout(() => showSetupHelpBanner(), 1000);
       }
     }

@@ -158,6 +158,21 @@ GOOGLE_OAUTH_USERINFO_ENDPOINT = "https://openidconnect.googleapis.com/v1/userin
 GOOGLE_OAUTH_SCOPES = ["openid", "email", "profile"]
 GOOGLE_OAUTH_CALLBACK_PATH = "/"
 GOOGLE_OAUTH_TIMEOUT_SECONDS = 180
+FIREBASE_API_KEY_ENV = "FIREBASE_API_KEY"
+FIREBASE_AUTH_DOMAIN_ENV = "FIREBASE_AUTH_DOMAIN"
+FIREBASE_PROJECT_ID_ENV = "FIREBASE_PROJECT_ID"
+FIREBASE_APP_ID_ENV = "FIREBASE_APP_ID"
+FIREBASE_STORAGE_BUCKET_ENV = "FIREBASE_STORAGE_BUCKET"
+FIREBASE_MESSAGING_SENDER_ID_ENV = "FIREBASE_MESSAGING_SENDER_ID"
+
+
+def build_default_cloud_sync_settings():
+    return {
+        'enabled': False,
+        'firebaseUid': '',
+        'lastSyncedAt': '',
+        'migrationCompleted': False,
+    }
 
 
 def build_default_user_settings():
@@ -187,6 +202,7 @@ def build_default_user_settings():
         'workroomAutoSelectCadFiles': True,
         'enableUnderConstructionTools': False,
         'googleAuth': None,
+        'cloudSync': build_default_cloud_sync_settings(),
     }
 
 
@@ -654,8 +670,17 @@ TIMESHEETS_FILE = get_app_data_path("timesheets.json")
 TEMPLATES_FILE = get_app_data_path("templates.json")
 CAD_AUTO_SELECT_TRACE_FILE = get_app_data_path("cad_auto_select_trace.log")
 CHECKLISTS_FILE = get_app_data_path("checklists.json")
+SYNC_BACKUPS_DIR = os.path.join(get_app_data_dir(), "sync_backups")
 LIGHTING_SCHEDULE_SYNC_FILE = "T24LightingFixtureSchedule.sync.json"
 LIGHTING_SCHEDULE_DB_FILE = get_app_data_path("lighting_schedules.db")
+SYNC_TRACKED_FILES = {
+    "settings": SETTINGS_FILE,
+    "tasks": TASKS_FILE,
+    "notes": NOTES_FILE,
+    "timesheets": TIMESHEETS_FILE,
+    "templates": TEMPLATES_FILE,
+    "checklists": CHECKLISTS_FILE,
+}
 LIGHTING_SCHEDULE_FIELDS = [
     "mark",
     "description",
@@ -754,6 +779,72 @@ def _atomic_write_json_file(path, payload):
                 os.remove(temp_path)
             except OSError:
                 pass
+
+
+def _get_file_modified_iso(path):
+    if not path or not os.path.exists(path):
+        return ""
+    try:
+        modified = datetime.datetime.fromtimestamp(
+            os.path.getmtime(path),
+            tz=datetime.timezone.utc,
+        )
+        return modified.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    except OSError:
+        return ""
+
+
+def _get_local_sync_metadata():
+    files = {}
+    for key, path in SYNC_TRACKED_FILES.items():
+        files[key] = {
+            "path": os.path.normpath(path),
+            "exists": os.path.exists(path),
+            "modified": _get_file_modified_iso(path),
+        }
+    return files
+
+
+def _create_cloud_sync_backup(reason="", metadata=None):
+    created_at = utc_now_iso()
+    safe_reason = re.sub(r"[^a-z0-9]+", "-", str(reason or "").strip().lower()).strip("-")
+    suffix = safe_reason[:40] or "sync"
+    backup_dir = os.path.join(
+        SYNC_BACKUPS_DIR,
+        f"{created_at.replace(':', '').replace('-', '')}_{suffix}_{uuid.uuid4().hex[:8]}",
+    )
+    os.makedirs(backup_dir, exist_ok=True)
+
+    copied = []
+    for key, source_path in SYNC_TRACKED_FILES.items():
+        if not os.path.exists(source_path):
+            continue
+        destination_path = os.path.join(backup_dir, os.path.basename(source_path))
+        shutil.copy2(source_path, destination_path)
+        copied.append(
+            {
+                "key": key,
+                "sourcePath": os.path.normpath(source_path),
+                "backupPath": os.path.normpath(destination_path),
+                "modified": _get_file_modified_iso(source_path),
+            }
+        )
+
+    backup_metadata = {
+        "createdAt": created_at,
+        "reason": str(reason or "").strip(),
+        "files": copied,
+        "localSyncMetadata": _get_local_sync_metadata(),
+    }
+    if isinstance(metadata, dict) and metadata:
+        backup_metadata["metadata"] = metadata
+
+    _atomic_write_json_file(os.path.join(backup_dir, "metadata.json"), backup_metadata)
+    return {
+        "path": os.path.normpath(backup_dir),
+        "createdAt": created_at,
+        "files": copied,
+    }
 
 
 def _normalize_lighting_schedule_text(value):
@@ -2099,6 +2190,46 @@ class Api:
             logging.error(f"Error saving user settings: {e}")
             return {'status': 'error', 'message': str(e)}
 
+    def get_cloud_sync_config(self):
+        config = {
+            "apiKey": str(os.getenv(FIREBASE_API_KEY_ENV) or "").strip(),
+            "authDomain": str(os.getenv(FIREBASE_AUTH_DOMAIN_ENV) or "").strip(),
+            "projectId": str(os.getenv(FIREBASE_PROJECT_ID_ENV) or "").strip(),
+            "appId": str(os.getenv(FIREBASE_APP_ID_ENV) or "").strip(),
+            "storageBucket": str(os.getenv(FIREBASE_STORAGE_BUCKET_ENV) or "").strip(),
+            "messagingSenderId": str(os.getenv(FIREBASE_MESSAGING_SENDER_ID_ENV) or "").strip(),
+        }
+        enabled = all(
+            config.get(key)
+            for key in ("apiKey", "authDomain", "projectId", "appId")
+        )
+        return {
+            "status": "success",
+            "enabled": enabled,
+            "config": config,
+        }
+
+    def get_local_sync_metadata(self):
+        try:
+            return {
+                "status": "success",
+                "files": _get_local_sync_metadata(),
+            }
+        except Exception as e:
+            logging.error(f"Error loading local sync metadata: {e}")
+            return {"status": "error", "message": str(e), "files": {}}
+
+    def create_cloud_sync_backup(self, reason="", metadata=None):
+        try:
+            result = _create_cloud_sync_backup(reason=reason, metadata=metadata)
+            return {
+                "status": "success",
+                **result,
+            }
+        except Exception as e:
+            logging.error(f"Error creating cloud sync backup: {e}")
+            return {"status": "error", "message": str(e)}
+
     def _get_google_oauth_client_id(self):
         return (os.getenv(GOOGLE_OAUTH_CLIENT_ID_ENV) or "").strip()
 
@@ -2155,6 +2286,9 @@ class Api:
         refresh_token = str(token_payload.get("refresh_token") or "").strip()
         if not refresh_token:
             refresh_token = str(existing_auth.get("refreshToken") or "").strip()
+        id_token = str(token_payload.get("id_token") or "").strip()
+        if not id_token:
+            id_token = str(existing_auth.get("idToken") or "").strip()
 
         return {
             "provider": "google",
@@ -2165,6 +2299,7 @@ class Api:
             "signedInAt": str(existing_auth.get("signedInAt") or utc_now_iso()),
             "tokenIssuedAt": utc_now_iso(),
             "expiresAt": expires_at,
+            "idToken": id_token,
             "accessToken": str(token_payload.get("access_token") or "").strip(),
             "refreshToken": refresh_token,
             "tokenType": str(token_payload.get("token_type") or "Bearer").strip() or "Bearer",
@@ -2192,6 +2327,25 @@ class Api:
             "signedInAt": str(auth_record.get("signedInAt") or "").strip(),
             "expiresAt": str(auth_record.get("expiresAt") or "").strip(),
             "hasRefreshToken": bool(str(auth_record.get("refreshToken") or "").strip()),
+        }
+
+    def _build_google_sync_session(self, auth_record):
+        if not isinstance(auth_record, dict):
+            return {
+                "signedIn": False,
+                "idToken": "",
+                "accessToken": "",
+                "firebaseReady": False,
+                "auth": self._sanitize_google_auth_record(None),
+            }
+        id_token = str(auth_record.get("idToken") or "").strip()
+        access_token = str(auth_record.get("accessToken") or "").strip()
+        return {
+            "signedIn": True,
+            "idToken": id_token,
+            "accessToken": access_token,
+            "firebaseReady": bool(id_token or access_token),
+            "auth": self._sanitize_google_auth_record(auth_record),
         }
 
     def _load_google_auth_record(self):
@@ -2426,6 +2580,23 @@ class Api:
                 "auth": self._sanitize_google_auth_record(None),
             }
 
+    def get_google_sync_session(self):
+        try:
+            auth_record = self._refresh_google_auth_record_if_needed(
+                self._load_google_auth_record()
+            )
+            return {
+                "status": "success",
+                **self._build_google_sync_session(auth_record),
+            }
+        except Exception as e:
+            logging.error(f"Error loading Google sync session: {e}")
+            return {
+                "status": "error",
+                "message": str(e),
+                **self._build_google_sync_session(None),
+            }
+
     def sign_in_with_google(self):
         client_id = self._get_google_oauth_client_id()
         if not client_id:
@@ -2516,6 +2687,7 @@ class Api:
             return {
                 "status": "success",
                 "auth": self._sanitize_google_auth_record(auth_record),
+                "syncSession": self._build_google_sync_session(auth_record),
             }
         except Exception as e:
             logging.error(f"Error signing in with Google: {e}")

@@ -480,6 +480,16 @@ h4 {
   width: 200px;
 }
 
+.header-start {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 0.2rem;
+  width: 200px;
+  flex-shrink: 0;
+}
+
 .logo-img {
   height: 28px;
   width: auto;
@@ -721,6 +731,14 @@ h4 {
 }
 
 @media (max-width: 1200px) {
+  .header-start {
+    width: auto;
+  }
+
+  .brand {
+    width: auto;
+  }
+
   .header-center {
     position: static;
     top: auto;
@@ -818,6 +836,26 @@ h4 {
   box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.16);
 }
 
+.header-auth-btn[data-sync-status="active"] .header-auth-status-dot {
+  background: #10b981;
+  box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.16);
+}
+
+.header-auth-btn[data-sync-status="busy"] .header-auth-status-dot {
+  background: #2563eb;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.16);
+}
+
+.header-auth-btn[data-sync-status="error"] .header-auth-status-dot {
+  background: #ef4444;
+  box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.16);
+}
+
+.header-auth-btn[data-sync-status="disabled"] .header-auth-status-dot {
+  background: rgba(148, 163, 184, 0.7);
+  box-shadow: 0 0 0 4px rgba(148, 163, 184, 0.12);
+}
+
 .version-chip {
   display: inline-flex;
   align-items: center;
@@ -829,6 +867,23 @@ h4 {
   font-weight: 600;
   color: var(--text);
   box-shadow: var(--shadow-sm);
+}
+
+.header-version-corner {
+  padding: 3px 8px;
+  gap: 5px;
+  font-size: 0.7rem;
+  line-height: 1;
+}
+
+.version-chip.header-version-corner .version-dot {
+  width: 6px;
+  height: 6px;
+}
+
+.header-version-corner .icon-btn.mini {
+  width: 22px;
+  height: 22px;
 }
 
 .version-chip .version-dot {

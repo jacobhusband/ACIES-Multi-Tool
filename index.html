@@ -36,8 +36,21 @@
         </div>
     </div>
     <header class="app-header">
-        <div class="brand">
-            <img src="./acies.png" alt="ACIES" class="logo-img" onerror="this.style.display='none'" />
+        <div class="header-start">
+            <div class="version-chip header-version-corner" id="versionChip" title="Current version">
+                <span class="version-dot" id="versionDot"></span>
+                <span id="appVersionLabel">v0.0.0</span>
+                <button class="icon-btn mini" id="checkUpdateBtn" aria-label="Check for updates"
+                    title="Check for updates">
+                    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+                        <path fill="currentColor"
+                            d="M12 4a8 8 0 1 0 7.45 10.67 1 1 0 1 1 1.9.66A10 10 0 1 1 12 2a1 1 0 1 1 0 2Zm6.71-3.29a1 1 0 0 0-1.42 0l-3 3a1 1 0 0 0 1.42 1.42L17 5.41V10a1 1 0 1 0 2 0V3.41l1.29 1.3a1 1 0 0 0 1.42-1.42Z" />
+                    </svg>
+                </button>
+            </div>
+            <div class="brand">
+                <img src="./acies.png" alt="ACIES" class="logo-img" onerror="this.style.display='none'" />
+            </div>
         </div>
         <!-- Centered navigation -->
         <div class="header-center">
@@ -49,17 +62,6 @@
             </nav>
         </div>
         <div class="header-actions">
-            <div class="version-chip" id="versionChip" title="Current version">
-                <span class="version-dot" id="versionDot"></span>
-                <span id="appVersionLabel">v0.0.0</span>
-                <button class="icon-btn mini" id="checkUpdateBtn" aria-label="Check for updates"
-                    title="Check for updates">
-                    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
-                        <path fill="currentColor"
-                            d="M12 4a8 8 0 1 0 7.45 10.67 1 1 0 1 1 1.9.66A10 10 0 1 1 12 2a1 1 0 1 1 0 2Zm6.71-3.29a1 1 0 0 0-1.42 0l-3 3a1 1 0 0 0 1.42 1.42L17 5.41V10a1 1 0 1 0 2 0V3.41l1.29 1.3a1 1 0 0 0 1.42-1.42Z" />
-                    </svg>
-                </button>
-            </div>
             <button class="btn btn-primary tiny" id="appUpdateBtn" style="display:none;">Update</button>
             <button class="icon-btn theme-toggle" id="themeToggleBtn" aria-label="Toggle theme"
                 title="Toggle light/dark mode">
@@ -1234,6 +1236,15 @@
                             </div>
                             <button type="button" class="btn tiny" id="settings_googleAuthActionBtn">Sign in</button>
                         </div>
+                        <div class="sync-auth-row" style="margin-top: 0.9rem;">
+                            <div class="sync-auth-copy">
+                                <label class="label" style="margin-bottom: 0.25rem;">Cloud sync</label>
+                                <div id="settings_cloudSyncStatus" class="sync-auth-status">Cloud sync not configured</div>
+                                <div id="settings_cloudSyncDetails" class="tiny muted">
+                                    Add Firebase config to enable sync.
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1887,8 +1898,8 @@
                         <div class="tiny muted" id="googleAccountEmail">Sign in to connect your Google account.</div>
                     </div>
                 </div>
-                <div class="google-account-note">
-                    Projects still stay saved locally on this desktop for now.
+                <div class="google-account-note" id="googleAccountSyncNote">
+                    Cloud sync is not configured yet.
                 </div>
             </div>
             <div class="modal-footer">

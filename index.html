@@ -94,15 +94,40 @@
                     <line x1="12" y1="17" x2="12.01" y2="17"></line>
                 </svg>
             </button>
-            <button class="btn tiny header-auth-btn" id="headerGoogleAuthBtn" type="button"
-                aria-label="Sign in with Google" title="Sign in with Google">
-                <span class="header-auth-avatar" id="headerGoogleAuthAvatar" aria-hidden="true">G</span>
-                <span class="header-auth-copy">
-                    <span class="header-auth-label" id="headerGoogleAuthLabel">Sign in</span>
-                    <span class="header-auth-meta" id="headerGoogleAuthMeta">Google account</span>
-                </span>
-                <span class="header-auth-status-dot" id="headerGoogleAuthStatusDot" aria-hidden="true"></span>
-            </button>
+            <div class="header-auth-dropdown" id="headerAccountDropdown">
+                <button class="btn tiny header-auth-btn" id="headerGoogleAuthBtn" type="button"
+                    aria-label="Sign in with Google" title="Sign in with Google" aria-haspopup="dialog"
+                    aria-expanded="false" aria-controls="headerAccountPopover">
+                    <span class="header-auth-avatar" id="headerGoogleAuthAvatar" aria-hidden="true">G</span>
+                    <span class="header-auth-copy">
+                        <span class="header-auth-label" id="headerGoogleAuthLabel">Sign in</span>
+                        <span class="header-auth-meta" id="headerGoogleAuthMeta">Google account</span>
+                    </span>
+                    <span class="header-auth-status-dot" id="headerGoogleAuthStatusDot" aria-hidden="true"></span>
+                </button>
+                <div class="header-account-popover" id="headerAccountPopover" role="dialog"
+                    aria-label="Google account" hidden>
+                    <div class="header-account-profile">
+                        <div class="header-account-avatar" id="headerAccountPopoverAvatar" aria-hidden="true">G</div>
+                        <div class="header-account-copy">
+                            <div class="header-account-name" id="headerAccountPopoverName">Not signed in</div>
+                            <div class="header-account-email" id="headerAccountPopoverEmail">
+                                Sign in to connect your Google account.
+                            </div>
+                        </div>
+                    </div>
+                    <div class="header-account-sync" id="headerAccountPopoverSync">
+                        <span class="header-account-sync-dot" id="headerAccountPopoverSyncDot" aria-hidden="true"></span>
+                        <span id="headerAccountPopoverStatus">Cloud sync not configured</span>
+                    </div>
+                    <div class="header-account-note" id="headerAccountPopoverNote">
+                        Cloud sync is not configured yet.
+                    </div>
+                    <div class="header-account-actions">
+                        <button class="btn tiny" id="headerAccountSignOutBtn" type="button">Sign out</button>
+                    </div>
+                </div>
+            </div>
         </div>
     </header>
     <!-- Setup Help Notification -->
@@ -149,6 +174,13 @@
                                     d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z" />
                             </svg>
                         </button>
+                        <button class="icon-btn" id="outlookScanBtn" aria-label="Outlook scan" title="Scan Outlook inbox">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M4 4h16v16H4z"></path>
+                                <path d="m4 8 8 6 8-6"></path>
+                            </svg>
+                        </button>
                         <button class="icon-btn" id="statsBtn" aria-label="Statistics" title="View Statistics">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -167,9 +199,6 @@
                         </button>
                         <button class="icon-btn" id="pinUrgentDeliverablesBtn" aria-label="Pin urgent deliverables"
                             title="Pin all overdue and due-today deliverables"></button>
-                        <button class="icon-btn" id="openPinnedDeliverablesNotepadBtn"
-                            aria-label="Export deliverables to Excel"
-                            title="Export deliverables to Excel"></button>
                         <button class="icon-btn" id="projectsHelpBtn" aria-label="Projects help" title="Projects help">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -291,15 +320,6 @@
         <div id="texts-panel" class="tab-panel" hidden>
             <div class="panel stack full-height">
                 <div class="panel-toolbar texts-toolbar">
-                    <div class="texts-toolbar-top">
-                        <div class="texts-view-tabs" role="tablist" aria-label="Notebook views">
-                            <button type="button" class="texts-view-tab active" data-texts-view-tab="notes" role="tab"
-                                aria-selected="true" aria-controls="textsNotesPane">Notes</button>
-                            <button type="button" class="texts-view-tab" data-texts-view-tab="checklists" role="tab"
-                                aria-selected="false" aria-controls="textsChecklistsPane"
-                                tabindex="-1">Checklists</button>
-                        </div>
-                    </div>
                     <div class="texts-toolbar-main">
                         <div id="textsSearchWrap" class="nav-search expanded-search">
                             <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none"
@@ -322,18 +342,31 @@
                     </div>
                 </div>
                 <div class="texts-content">
-                    <section class="texts-view-pane" data-texts-view-pane="notes" id="textsNotesPane" role="tabpanel">
-                        <div class="notes-layout">
-                            <aside class="notes-sidebar">
+                    <div class="notebook-layout">
+                        <aside class="notebook-sidebar">
+                            <section class="notebook-sidebar-section">
                                 <div class="notes-controls">
-                                    <h3 class="section-title">Notes</h3>
+                                    <div class="notebook-section-header">
+                                        <h3 class="section-title">Notes</h3>
+                                    </div>
                                     <div class="notes-user-tabs-row">
                                         <nav class="inner-tabs notes-nav-list" id="notesTabsContainer"></nav>
                                         <!-- Add/Remove buttons moved inside inner-tabs via JS -->
                                     </div>
                                 </div>
-                            </aside>
-                            <div class="notes-editor">
+                            </section>
+                            <section class="notebook-sidebar-section">
+                                <div class="checklists-controls">
+                                    <div class="notebook-section-header">
+                                        <h3 class="section-title">Checklists</h3>
+                                    </div>
+                                    <nav class="inner-tabs checklists-nav-list" id="checklistsTabsContainer"></nav>
+                                    <div class="checklists-sidebar-actions" id="checklistsSidebarActions"></div>
+                                </div>
+                            </section>
+                        </aside>
+                        <div class="notebook-content-shell" id="notebookContentShell">
+                            <section class="notes-editor texts-view-pane" id="textsNotesPane">
                                 <div class="notes-editor-header">
                                     <h3 class="section-title" id="activeNoteTitle">Notes</h3>
                                 </div>
@@ -342,20 +375,8 @@
                                         placeholder="Select a page to start writing notes..."></textarea>
                                 </div>
                                 <div id="notesSearchResults" class="notes-search-results"></div>
-                            </div>
-                        </div>
-                    </section>
-                    <section class="texts-view-pane" data-texts-view-pane="checklists" id="textsChecklistsPane"
-                        role="tabpanel" hidden>
-                        <div class="checklists-layout">
-                            <div class="checklists-sidebar">
-                                <div class="checklists-controls">
-                                    <h3 class="section-title">Checklists</h3>
-                                    <nav class="inner-tabs checklists-nav-list" id="checklistsTabsContainer"></nav>
-                                    <div class="checklists-sidebar-actions" id="checklistsSidebarActions"></div>
-                                </div>
-                            </div>
-                            <div class="checklist-editor">
+                            </section>
+                            <section class="checklist-editor texts-view-pane" id="textsChecklistsPane" hidden>
                                 <div class="checklist-editor-header">
                                     <input type="text" id="checklistName" class="checklist-name-input"
                                         placeholder="Checklist Name" />
@@ -390,6 +411,7 @@
                                         </div>
                                     </div>
                                 </div>
+                                <div id="checklistSearchResults" class="checklist-search-results"></div>
                                 <div class="checklist-items" id="checklistItemsContainer">
                                     <!-- Checklist items rendered here -->
                                 </div>
@@ -400,9 +422,9 @@
                                             id="addChecklistSubheaderBtn">+ Add Subheader</button>
                                     </div>
                                 </div>
-                            </div>
+                            </section>
                         </div>
-                    </section>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1046,6 +1068,45 @@
             <div id="aiSpinner" class="spinner" style="display:none;">Processing with AI...</div>
         </div>
     </dialog>
+    <dialog id="outlookScanDlg">
+        <div class="modal-header">
+            <div class="title">Outlook Scan</div>
+            <button class="btn ghost" onclick="closeDlg('outlookScanDlg')">Close</button>
+        </div>
+        <div class="modal-body stack">
+            <div class="sync-auth-card">
+                <div id="outlookScanAuthStatus" class="sync-auth-status">Not connected</div>
+                <div id="outlookScanAuthDetails" class="tiny muted">
+                    Connect a Microsoft 365 account to scan Inbox messages for missing deliverables.
+                </div>
+                <div class="outlook-scan-toolbar">
+                    <label class="label" for="outlookScanTimeframe">Timeframe</label>
+                    <select id="outlookScanTimeframe" class="input">
+                        <option value="week">This week</option>
+                        <option value="month">This month</option>
+                    </select>
+                    <button type="button" class="btn tiny" id="outlookScanConnectBtn">Connect Outlook</button>
+                    <button type="button" class="btn tiny" id="outlookScanSignOutBtn">Sign out</button>
+                    <button type="button" class="btn-primary tiny" id="outlookScanRunBtn">Scan inbox</button>
+                </div>
+            </div>
+            <div class="outlook-scan-results">
+                <div id="outlookScanSummary" class="sync-auth-status">No Outlook scan has been run yet.</div>
+                <div id="outlookScanMeta" class="tiny muted">Choose This week or This month, then run a scan.</div>
+                <div id="outlookScanEmpty" class="tiny muted">
+                    Suggestions and skipped emails will appear here after a scan.
+                </div>
+                <div class="outlook-scan-section">
+                    <div class="label">Suggested deliverables</div>
+                    <div id="outlookScanSuggestions" class="outlook-scan-list"></div>
+                </div>
+                <div class="outlook-scan-section">
+                    <div class="label">Skipped emails</div>
+                    <div id="outlookScanSkipped" class="outlook-scan-skipped-list"></div>
+                </div>
+            </div>
+        </div>
+    </dialog>
     <dialog id="aiNoMatchDlg">
         <div class="modal-header">
             <div class="title">AI Could Not Locate a Project</div>
@@ -1244,6 +1305,16 @@
                                     Add Firebase config to enable sync.
                                 </div>
                             </div>
+                        </div>
+                        <div class="sync-auth-row" style="margin-top: 0.9rem;">
+                            <div class="sync-auth-copy">
+                                <label class="label" style="margin-bottom: 0.25rem;">Microsoft 365</label>
+                                <div id="settings_microsoftAuthStatus" class="sync-auth-status">Not signed in</div>
+                                <div id="settings_microsoftAuthDetails" class="tiny muted">
+                                    Sign in with Microsoft 365. Configure MICROSOFT_OAUTH_CLIENT_ID and optionally MICROSOFT_OAUTH_TENANT_ID.
+                                </div>
+                            </div>
+                            <button type="button" class="btn tiny" id="settings_microsoftAuthActionBtn">Sign in</button>
                         </div>
                     </div>
                 </div>

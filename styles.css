@@ -748,6 +748,13 @@ h4 {
   }
 }
 
+.header-auth-dropdown {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
 .header-auth-btn {
   position: relative;
   min-width: 156px;
@@ -776,6 +783,35 @@ h4 {
   box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.18), var(--shadow-sm);
 }
 
+.header-auth-btn.is-compact {
+  width: 40px;
+  min-width: 40px;
+  padding: 0;
+  gap: 0;
+  justify-content: center;
+  border-radius: 50%;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.header-auth-btn.is-compact .header-auth-copy {
+  display: none;
+}
+
+.header-auth-btn.is-compact:hover {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--bg-secondary) 72%, transparent 28%);
+  box-shadow: none;
+}
+
+.header-auth-btn.is-compact:focus-visible {
+  outline: none;
+  border-color: transparent;
+  background: color-mix(in srgb, var(--bg-secondary) 68%, transparent 32%);
+  box-shadow: 0 0 0 3px var(--accent-dim);
+}
+
 .header-auth-avatar {
   width: 24px;
   height: 24px;
@@ -792,6 +828,12 @@ h4 {
   background-position: center;
   background-repeat: no-repeat;
   background-size: cover;
+}
+
+.header-auth-btn.is-compact .header-auth-avatar {
+  width: 28px;
+  height: 28px;
+  font-size: 0.8rem;
 }
 
 .header-auth-copy {
@@ -831,6 +873,10 @@ h4 {
   box-shadow: 0 0 0 4px rgba(148, 163, 184, 0.12);
 }
 
+.header-auth-btn.is-compact .header-auth-status-dot {
+  display: none;
+}
+
 .header-auth-btn[data-signed-in="true"] .header-auth-status-dot {
   background: #10b981;
   box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.16);
@@ -852,6 +898,129 @@ h4 {
 }
 
 .header-auth-btn[data-sync-status="disabled"] .header-auth-status-dot {
+  background: rgba(148, 163, 184, 0.7);
+  box-shadow: 0 0 0 4px rgba(148, 163, 184, 0.12);
+}
+
+.header-auth-dropdown.open .header-auth-btn.is-compact {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--bg-secondary) 74%, transparent 26%);
+  box-shadow: 0 0 0 3px var(--accent-dim);
+}
+
+.header-account-popover {
+  position: absolute;
+  top: calc(100% + 0.45rem);
+  right: 0;
+  width: min(320px, calc(100vw - 2rem));
+  padding: 0.95rem;
+  border: 1px solid color-mix(in srgb, var(--glass-border) 72%, var(--accent) 28%);
+  border-radius: calc(var(--radius) + 2px);
+  background: linear-gradient(180deg, var(--bg-secondary), var(--bg-tertiary));
+  box-shadow: var(--shadow-md), var(--glow);
+  z-index: 140;
+}
+
+.header-account-popover[hidden] {
+  display: none;
+}
+
+.header-account-profile {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+}
+
+.header-account-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  flex-shrink: 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #ffffff;
+  background: linear-gradient(135deg, #2563eb, #10b981);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
+}
+
+.header-account-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+}
+
+.header-account-name {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.header-account-email {
+  font-size: 0.78rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.header-account-sync {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 0.9rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.header-account-sync-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(148, 163, 184, 0.7);
+  box-shadow: 0 0 0 4px rgba(148, 163, 184, 0.12);
+}
+
+.header-account-note {
+  margin-top: 0.55rem;
+  font-size: 0.76rem;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.header-account-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.95rem;
+}
+
+.header-account-popover[data-sync-status="active"] .header-account-sync-dot {
+  background: #10b981;
+  box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.16);
+}
+
+.header-account-popover[data-sync-status="busy"] .header-account-sync-dot {
+  background: #2563eb;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.16);
+}
+
+.header-account-popover[data-sync-status="error"] .header-account-sync-dot {
+  background: #ef4444;
+  box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.16);
+}
+
+.header-account-popover[data-sync-status="disabled"] .header-account-sync-dot {
   background: rgba(148, 163, 184, 0.7);
   box-shadow: 0 0 0 4px rgba(148, 163, 184, 0.12);
 }
@@ -2230,6 +2399,80 @@ mark.search-highlight {
   background: rgba(37, 99, 235, 0.08);
   color: var(--text-secondary);
   line-height: 1.5;
+}
+
+.outlook-scan-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.9rem;
+}
+
+.outlook-scan-toolbar .input {
+  min-width: 140px;
+}
+
+.outlook-scan-results {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.outlook-scan-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.outlook-scan-list,
+.outlook-scan-skipped-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.outlook-scan-card,
+.outlook-scan-skipped-item {
+  padding: 0.9rem 1rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--glass-border);
+  background: var(--surface);
+}
+
+.outlook-scan-card-head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.outlook-scan-card-project,
+.outlook-scan-skipped-subject {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.outlook-scan-card-deliverable {
+  font-size: 0.95rem;
+  color: var(--text-secondary);
+}
+
+.outlook-scan-card-meta {
+  margin-top: 0.45rem;
+}
+
+.outlook-scan-card-notes {
+  margin-top: 0.65rem;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.outlook-scan-related-list,
+.outlook-scan-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
 }
 
 /* Notes Internal Tabs Fix */
@@ -4294,24 +4537,29 @@ dialog::backdrop {
 }
 
 @media (max-width: 860px) {
-  .header-auth-copy {
+  .header-auth-btn:not(.is-compact) .header-auth-copy {
     display: none;
   }
 
-  .header-auth-btn {
+  .header-auth-btn:not(.is-compact) {
     width: 36px;
     min-width: 36px;
     padding: 0;
     justify-content: center;
   }
 
-  .header-auth-status-dot {
+  .header-auth-btn:not(.is-compact) .header-auth-status-dot {
     position: absolute;
     right: -1px;
     bottom: -1px;
     width: 9px;
     height: 9px;
     box-shadow: 0 0 0 2px var(--surface);
+  }
+
+  .header-account-popover {
+    right: -0.35rem;
+    width: min(300px, calc(100vw - 1rem));
   }
 }
 
@@ -4389,21 +4637,17 @@ dialog::backdrop {
 }
 
 #texts-panel .full-height {
+  height: clamp(700px, calc(100vh - var(--header-height) - 3.5rem), 920px);
   min-height: clamp(700px, calc(100vh - var(--header-height) - 3.5rem), 920px);
+  max-height: clamp(700px, calc(100vh - var(--header-height) - 3.5rem), 920px);
+  overflow: clip;
 }
 
 /* Texts Panel */
 .texts-toolbar {
   flex-direction: column;
   align-items: stretch;
-  gap: 0.85rem;
-}
-
-.texts-toolbar-top {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  min-width: 0;
+  gap: 0.5rem;
 }
 
 .texts-toolbar-main {
@@ -4464,15 +4708,21 @@ dialog::backdrop {
 .texts-content {
   display: flex;
   flex: 1 1 auto;
+  flex-direction: column;
+  gap: 1rem;
   min-height: 0;
   overflow: hidden;
 }
 
 .texts-view-pane {
   display: flex;
-  flex: 1 1 auto;
+  flex: 1 1 0;
+  flex-direction: column;
+  justify-content: flex-start;
   min-height: 0;
   min-width: 0;
+  align-self: stretch;
+  overflow: hidden;
 }
 
 .texts-view-pane[hidden] {
@@ -4480,9 +4730,45 @@ dialog::backdrop {
 }
 
 .texts-view-pane>* {
-  flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
+}
+
+.notebook-layout {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 2rem;
+  align-items: stretch;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.notebook-sidebar {
+  flex: 0 0 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  align-self: stretch;
+  min-height: 0;
+}
+
+.notebook-sidebar-section {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  align-items: stretch;
+  min-height: 0;
+}
+
+.notebook-content-shell {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+  overflow: hidden;
 }
 
 /* Notes Specifics */
@@ -4503,13 +4789,17 @@ dialog::backdrop {
 
 .notes-controls {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 1rem;
+  justify-content: flex-start;
+  align-items: stretch;
   min-height: 0;
 }
 
 .notes-user-tabs-row {
   display: flex;
+  flex: 1 1 auto;
   width: 100%;
   align-items: stretch;
   min-height: 0;
@@ -4651,10 +4941,12 @@ dialog::backdrop {
 
 @media (max-width: 900px) {
   #texts-panel .full-height {
+    height: clamp(620px, calc(100vh - var(--header-height) - 2.5rem), 780px);
     min-height: clamp(620px, calc(100vh - var(--header-height) - 2.5rem), 780px);
+    max-height: clamp(620px, calc(100vh - var(--header-height) - 2.5rem), 780px);
+    overflow: clip;
   }
 
-  .texts-toolbar-top,
   .texts-toolbar-main {
     width: 100%;
     flex-direction: column;
@@ -4671,35 +4963,18 @@ dialog::backdrop {
     justify-content: flex-end;
   }
 
-  .texts-view-tabs {
-    width: 100%;
-    min-width: 0;
-  }
-
-  .notes-layout {
+  .notebook-layout {
     flex-direction: column;
     gap: 1rem;
   }
 
-  .notes-sidebar {
+  .notebook-sidebar {
     flex: 0 0 auto;
+    width: 100%;
+    max-height: 45vh;
   }
 
-  .notes-nav-list {
-    flex-direction: row;
-    flex-wrap: wrap;
-  }
-
-  .notes-nav-list .inner-tab-btn,
-  .notes-nav-list .add-tab-btn {
-    width: auto;
-  }
-
-  .notes-nav-list .add-tab-btn {
-    margin-top: 0;
-  }
-
-  .notes-editor {
+  .notebook-content-shell {
     min-height: 420px;
   }
 }
@@ -8851,8 +9126,11 @@ input:checked+.slider:before {
 
 .checklists-controls {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 1rem;
+  justify-content: flex-start;
+  align-items: stretch;
   min-height: 0;
 }
 
@@ -8865,10 +9143,15 @@ input:checked+.slider:before {
   border-radius: var(--radius-lg);
   padding: 1.5rem;
   box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  overflow: hidden;
 }
 
 .checklists-layout {
   display: flex;
+  flex: 1 1 auto;
   gap: 2rem;
   align-items: stretch;
   min-height: 0;
@@ -8883,8 +9166,12 @@ input:checked+.slider:before {
 
 .checklists-nav-list {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 0.5rem;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
 }
 
 .checklists-sidebar-actions {
@@ -8892,6 +9179,7 @@ input:checked+.slider:before {
   flex-direction: column;
   gap: 0.5rem;
   align-items: flex-start;
+  flex-shrink: 0;
 }
 
 .checklists-nav-list .inner-tab-btn {
@@ -8914,43 +9202,6 @@ input:checked+.slider:before {
   border-color: var(--accent);
   color: var(--accent);
   box-shadow: none;
-}
-
-@media (max-width: 900px) {
-  .checklists-layout {
-    flex-direction: column;
-    gap: 1rem;
-  }
-
-  .checklists-sidebar {
-    flex: 0 0 auto;
-  }
-
-  .checklists-nav-list {
-    flex-direction: row;
-    flex-wrap: wrap;
-  }
-
-  .checklists-nav-list .inner-tab-btn {
-    width: auto;
-  }
-
-  .checklists-sidebar-actions {
-    align-items: flex-start;
-  }
-
-  .checklist-create-dropdown {
-    width: auto;
-  }
-
-  .checklist-create-trigger {
-    width: auto;
-    margin-top: 0;
-  }
-
-  .checklist-editor {
-    min-height: 420px;
-  }
 }
 
 .checklist-action-dropdown {
@@ -9079,65 +9330,37 @@ input:checked+.slider:before {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 1.5rem;
+  flex-shrink: 0;
   gap: 1rem;
 }
 
-/* Notebook pills */
-.texts-view-tabs {
-  display: inline-grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.25rem;
-  width: fit-content;
-  max-width: 100%;
-  min-width: min(280px, 100%);
-  padding: 4px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-pill);
-  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.15);
-}
-
-.texts-view-tab {
-  display: inline-flex;
+.notebook-section-header {
+  display: flex;
   align-items: center;
-  justify-content: center;
-  min-height: 34px;
-  padding: 8px 20px;
-  border: none;
-  border-radius: var(--radius-pill);
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 13px;
-  font-weight: 500;
-  letter-spacing: 0;
-  line-height: 1.2;
-  text-transform: none;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: all 0.3s ease;
+  justify-content: space-between;
+  gap: 0.75rem;
 }
 
-.texts-view-tab:hover {
-  color: var(--text);
-  background: var(--hover-overlay);
-}
-
-.texts-view-tab:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 3px var(--accent-dim);
-}
-
-.texts-view-tab.active {
-  background: var(--bg-tertiary);
-  color: var(--accent);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+.notebook-section-header .section-title {
+  margin-bottom: 0;
 }
 
 .notes-nav-list,
 .checklists-nav-list {
+  display: flex;
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  justify-content: flex-start;
   gap: 0.65rem;
   align-items: stretch;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 0.25rem;
+  scrollbar-gutter: stable;
 }
 
 .notebook-pill-label {
@@ -9260,30 +9483,72 @@ input:checked+.slider:before {
   min-width: min(280px, 100%);
 }
 
-@media (max-width: 900px) {
-  .texts-view-tabs {
-    width: 100%;
-    min-width: 0;
-  }
+.checklist-search-results {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  gap: 0.5rem;
+  max-height: min(240px, 30vh);
+  min-height: 0;
+  overflow-y: auto;
+}
 
-  .texts-view-tab {
-    width: 100%;
-  }
+.checklist-search-results:not(:empty) {
+  border-top: 1px dashed var(--glass-border);
+  padding-top: 0.75rem;
+}
 
-  .notes-nav-list,
-  .checklists-nav-list {
-    flex-direction: row;
-    flex-wrap: wrap;
-  }
+.checklist-search-result-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 0.75rem;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  background: var(--bg-tertiary);
+  color: var(--text);
+  text-align: left;
+  transition: var(--transition-fast);
+}
 
-  .notes-nav-list .inner-tab-btn,
-  .notes-nav-list .add-tab-btn,
-  .checklists-nav-list .inner-tab-btn,
-  .checklist-create-trigger {
-    width: auto;
-    min-width: min(220px, 100%);
-    flex: 1 1 220px;
-  }
+.checklist-search-result-item:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--bg-tertiary) 80%, var(--surface) 20%);
+}
+
+.checklist-search-result-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2rem;
+  height: 2rem;
+  padding: 0 0.55rem;
+  border-radius: 999px;
+  background: var(--accent-dim);
+  border: 1px solid color-mix(in srgb, var(--glass-border) 45%, var(--accent) 55%);
+  color: var(--accent);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.checklist-search-result-badge.is-section {
+  min-width: 3.25rem;
+  background: color-mix(in srgb, var(--surface) 80%, var(--bg-tertiary) 20%);
+  color: var(--text-secondary);
+}
+
+.checklist-search-result-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.checklist-search-empty {
+  padding: 0.75rem 0;
+  text-align: center;
 }
 
 .checklist-name-input {
@@ -9322,10 +9587,10 @@ input:checked+.slider:before {
 
 .checklist-items {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 0.75rem;
-  margin-bottom: 1.5rem;
-  max-height: 60vh;
+  min-height: 0;
   overflow-y: auto;
   padding: 2px;
 }
@@ -9482,7 +9747,10 @@ input:checked+.slider:before {
 }
 
 .checklist-add-item {
-  margin-top: 1rem;
+  margin-top: 0;
+  padding-top: 0.75rem;
+  border-top: 1px dashed var(--glass-border);
+  flex-shrink: 0;
 }
 
 .checklist-add-actions {

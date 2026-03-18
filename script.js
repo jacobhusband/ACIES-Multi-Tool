@@ -5289,6 +5289,13 @@ function inferEmailRefSource(raw = "", url = "") {
   if (joined.includes(".msg") || joined.includes(".eml") || /^file:\/\//i.test(url)) {
     return "file";
   }
+  if (
+    joined.includes("outlook.office.com/") ||
+    joined.includes("outlook.office365.com/") ||
+    joined.includes("outlook.live.com/")
+  ) {
+    return "outlook-url";
+  }
   if (/^outlook:/i.test(raw) || /^outlook:/i.test(url)) return "outlook-url";
   if (/^mailto:/i.test(raw) || /^mailto:/i.test(url)) return "mailto";
   return "url";
@@ -5315,12 +5322,25 @@ function normalizeEmailRef(value) {
   const label = String(value.label || link.label || "Email").trim() || "Email";
   const source = String(value.source || inferEmailRefSource(raw, url)).trim();
   const savedAt = String(value.savedAt || value.saved_at || "").trim();
-  return { raw, url, label, source, savedAt };
+  const messageId = String(
+    value.messageId || value.message_id || value.graphMessageId || ""
+  ).trim();
+  const internetMessageId = String(
+    value.internetMessageId || value.internet_message_id || ""
+  ).trim();
+  return { raw, url, label, source, savedAt, messageId, internetMessageId };
 }
 
 function normalizeEmailRefKey(value) {
   const ref = normalizeEmailRef(value);
   if (!ref) return "";
+  const messageId = String(ref.messageId || "").trim().toLowerCase();
+  const internetMessageId = String(ref.internetMessageId || "")
+    .trim()
+    .toLowerCase();
+  if (messageId || internetMessageId) {
+    return [`msg:${messageId}`, `internet:${internetMessageId}`].join("|");
+  }
   return [
     String(ref.raw || "").toLowerCase(),
     String(ref.url || "").toLowerCase(),
@@ -5333,11 +5353,7 @@ function sameEmailRef(a, b) {
   const right = normalizeEmailRef(b);
   if (!left && !right) return true;
   if (!left || !right) return false;
-  return (
-    String(left.raw || "").toLowerCase() === String(right.raw || "").toLowerCase() &&
-    String(left.url || "").toLowerCase() === String(right.url || "").toLowerCase() &&
-    String(left.source || "").toLowerCase() === String(right.source || "").toLowerCase()
-  );
+  return normalizeEmailRefKey(left) === normalizeEmailRefKey(right);
 }
 
 function normalizeEmailRefs(value, fallbackSingle = null) {
@@ -5908,6 +5924,7 @@ let userSettings = {
   workroomAutoSelectCadFiles: true,
   enableUnderConstructionTools: false,
   googleAuth: null,
+  microsoftAuth: null,
   cloudSync: { ...DEFAULT_CLOUD_SYNC_SETTINGS },
 };
 const DEFAULT_GOOGLE_AUTH_STATE = {
@@ -5920,8 +5937,30 @@ const DEFAULT_GOOGLE_AUTH_STATE = {
   expiresAt: "",
   hasRefreshToken: false,
 };
+const DEFAULT_MICROSOFT_AUTH_STATE = {
+  signedIn: false,
+  provider: "microsoft",
+  email: "",
+  displayName: "",
+  avatarUrl: "",
+  signedInAt: "",
+  expiresAt: "",
+  tenantId: "",
+  hasRefreshToken: false,
+};
+const DEFAULT_OUTLOOK_SCAN_STATE = {
+  timeframe: "week",
+  busy: false,
+  lastResult: null,
+  suggestions: [],
+  skipped: [],
+  dismissedKeys: [],
+};
 let googleAuthState = { ...DEFAULT_GOOGLE_AUTH_STATE };
 let googleAuthBusy = false;
+let microsoftAuthState = { ...DEFAULT_MICROSOFT_AUTH_STATE };
+let microsoftAuthBusy = false;
+let outlookScanState = { ...DEFAULT_OUTLOOK_SCAN_STATE };
 let cloudSyncState = { ...DEFAULT_CLOUD_SYNC_STATE };
 let cloudSyncConfig = null;
 let firebaseLoadPromise = null;
@@ -5952,7 +5991,9 @@ let lastCloudComparableFingerprints = {
 };
 let hideNonPrimary = true;
 let activeNoteTab = null;
-let activeTextsView = "notes";
+let activeNotebookType = "note";
+let notesSearchQuery = "";
+let checklistSearchQuery = "";
 let latestAppUpdate = null;
 let currentStatsTimespan = "1Y";
 let currentStatsAggregation = "month";
@@ -5969,6 +6010,7 @@ let title24ScopeOptionsDataset = null;
 let title24ScopeOptionsLoadError = "";
 let title24ScopeOptionsLoadingPromise = null;
 let openProjectsFilterDropdown = null;
+let headerAccountPopoverOpen = false;
 let aiNoMatchState = {
   rawAiData: null,
   aiProject: null,
@@ -6129,16 +6171,44 @@ function getGoogleAuthDisplayName(state = googleAuthState) {
   return state.displayName || state.email || "Google";
 }
 
-function getGoogleAuthAvatarFallback(state = googleAuthState) {
-  const label = getGoogleAuthDisplayName(state).trim();
-  return label ? label.charAt(0).toUpperCase() : "G";
+function getGoogleAuthInitials(state = googleAuthState) {
+  const displayName = String(state?.displayName || "").trim();
+  if (displayName) {
+    const initials = displayName
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((token) => {
+        const match = token.match(/[A-Za-z0-9]/);
+        return match ? match[0].toUpperCase() : "";
+      })
+      .join("");
+    if (initials) return initials;
+  }
+
+  const emailLocal = String(state?.email || "")
+    .split("@")[0]
+    .trim();
+  const emailFallback = (emailLocal.match(/[A-Za-z0-9]/g) || [])
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+  return emailFallback || "G";
 }
 
-function applyGoogleAuthAvatar(element, state = googleAuthState) {
+function getGoogleAuthAvatarFallback(state = googleAuthState) {
+  return getGoogleAuthInitials(state);
+}
+
+function applyGoogleAuthAvatar(
+  element,
+  state = googleAuthState,
+  { forceInitials = false } = {}
+) {
   if (!element) return;
   const fallback = getGoogleAuthAvatarFallback(state);
   element.textContent = fallback;
-  if (state.avatarUrl) {
+  if (!forceInitials && state.avatarUrl) {
     const safeUrl = state.avatarUrl.replace(/'/g, "%27");
     element.style.backgroundImage = `url('${safeUrl}')`;
     element.style.color = "transparent";
@@ -6148,20 +6218,54 @@ function applyGoogleAuthAvatar(element, state = googleAuthState) {
   }
 }
 
+function updateHeaderAccountPopoverVisibility() {
+  const dropdown = document.getElementById("headerAccountDropdown");
+  const popover = document.getElementById("headerAccountPopover");
+  const headerBtn = document.getElementById("headerGoogleAuthBtn");
+  const isOpen = googleAuthState.signedIn && !googleAuthBusy && headerAccountPopoverOpen;
+
+  headerAccountPopoverOpen = isOpen;
+  dropdown?.classList.toggle("open", isOpen);
+  if (popover) {
+    popover.hidden = !isOpen;
+  }
+  if (headerBtn) {
+    headerBtn.setAttribute("aria-expanded", String(isOpen));
+  }
+}
+
+function setHeaderAccountPopoverOpen(isOpen, { focusTrigger = false } = {}) {
+  headerAccountPopoverOpen = !!isOpen;
+  updateHeaderAccountPopoverVisibility();
+  if (focusTrigger) {
+    document.getElementById("headerGoogleAuthBtn")?.focus();
+  }
+}
+
+function toggleHeaderAccountPopover() {
+  setHeaderAccountPopoverOpen(!headerAccountPopoverOpen);
+}
+
 function renderGoogleAuthUi() {
   const headerBtn = document.getElementById("headerGoogleAuthBtn");
   const headerLabel = document.getElementById("headerGoogleAuthLabel");
   const headerMeta = document.getElementById("headerGoogleAuthMeta");
+  const headerAvatar = document.getElementById("headerGoogleAuthAvatar");
   const statusEl = document.getElementById("settings_googleAuthStatus");
   const detailsEl = document.getElementById("settings_googleAuthDetails");
   const settingsActionBtn = document.getElementById(
     "settings_googleAuthActionBtn"
   );
   const signOutBtn = document.getElementById("googleSignOutBtn");
+  const headerPopoverName = document.getElementById("headerAccountPopoverName");
+  const headerPopoverEmail = document.getElementById("headerAccountPopoverEmail");
+  const headerPopoverAvatar = document.getElementById("headerAccountPopoverAvatar");
+  const headerPopoverSignOutBtn = document.getElementById(
+    "headerAccountSignOutBtn"
+  );
   const accountName = document.getElementById("googleAccountName");
   const accountEmail = document.getElementById("googleAccountEmail");
   const accountAvatar = document.getElementById("googleAccountAvatar");
-  const headerAvatar = document.getElementById("headerGoogleAuthAvatar");
   const displayName = getGoogleAuthDisplayName();
   const isSignedIn = googleAuthState.signedIn;
   const primaryLabel = googleAuthBusy
@@ -6180,12 +6284,20 @@ function renderGoogleAuthUi() {
   if (headerBtn) {
     headerBtn.disabled = googleAuthBusy;
     headerBtn.dataset.signedIn = isSignedIn ? "true" : "false";
+    headerBtn.classList.toggle("is-compact", isSignedIn);
     headerBtn.setAttribute(
       "aria-label",
       isSignedIn
-        ? `Google account: ${displayName}`
+        ? `Open Google account menu for ${displayName}`
         : "Sign in with Google"
     );
+    if (isSignedIn) {
+      headerBtn.setAttribute("aria-haspopup", "dialog");
+      headerBtn.setAttribute("aria-controls", "headerAccountPopover");
+    } else {
+      headerBtn.removeAttribute("aria-haspopup");
+      headerBtn.removeAttribute("aria-controls");
+    }
     headerBtn.title = googleAuthBusy
       ? "Completing Google sign-in"
       : isSignedIn
@@ -6198,7 +6310,24 @@ function renderGoogleAuthUi() {
   if (headerMeta) {
     headerMeta.textContent = secondaryLabel;
   }
-  applyGoogleAuthAvatar(headerAvatar, googleAuthState);
+  applyGoogleAuthAvatar(headerAvatar, googleAuthState, {
+    forceInitials: isSignedIn,
+  });
+  if (headerPopoverName) {
+    headerPopoverName.textContent = isSignedIn ? displayName : "Not signed in";
+  }
+  if (headerPopoverEmail) {
+    headerPopoverEmail.textContent = isSignedIn
+      ? googleAuthState.email || "Signed in with Google."
+      : "Sign in to connect your Google account.";
+  }
+  applyGoogleAuthAvatar(headerPopoverAvatar, googleAuthState);
+  if (headerPopoverSignOutBtn) {
+    headerPopoverSignOutBtn.disabled = googleAuthBusy || !isSignedIn;
+    headerPopoverSignOutBtn.textContent = googleAuthBusy
+      ? "Signing out..."
+      : "Sign out";
+  }
 
   if (statusEl) {
     statusEl.textContent = isSignedIn
@@ -6234,6 +6363,10 @@ function renderGoogleAuthUi() {
       : "Sign in to connect your Google account.";
   }
   applyGoogleAuthAvatar(accountAvatar, googleAuthState);
+  if (!isSignedIn || googleAuthBusy) {
+    headerAccountPopoverOpen = false;
+  }
+  updateHeaderAccountPopoverVisibility();
   renderCloudSyncUi();
 }
 
@@ -6262,8 +6395,18 @@ async function loadGoogleAuthState({ silent = false } = {}) {
 
 function openGoogleAccountDialog() {
   const dialog = document.getElementById("googleAccountDlg");
+  setHeaderAccountPopoverOpen(false);
   renderGoogleAuthUi();
   showDialog(dialog);
+}
+
+function handleHeaderGoogleAuthAction() {
+  if (googleAuthBusy) return;
+  if (googleAuthState.signedIn) {
+    toggleHeaderAccountPopover();
+    return;
+  }
+  handleGoogleSignIn();
 }
 
 function handleGoogleAuthAction() {
@@ -6333,6 +6476,7 @@ async function handleGoogleSignIn() {
 
 async function handleGoogleSignOut() {
   if (googleAuthBusy || !window.pywebview?.api?.sign_out_google) return;
+  setHeaderAccountPopoverOpen(false);
   googleAuthBusy = true;
   renderGoogleAuthUi();
   try {
@@ -6353,6 +6497,592 @@ async function handleGoogleSignOut() {
     googleAuthBusy = false;
     renderGoogleAuthUi();
   }
+}
+
+function normalizeMicrosoftAuthState(raw = {}) {
+  return {
+    ...DEFAULT_MICROSOFT_AUTH_STATE,
+    ...(raw && typeof raw === "object" ? raw : {}),
+    signedIn: !!raw?.signedIn,
+    provider: String(raw?.provider || "microsoft").trim() || "microsoft",
+    email: String(raw?.email || "").trim(),
+    displayName: String(raw?.displayName || "").trim(),
+    avatarUrl: String(raw?.avatarUrl || "").trim(),
+    signedInAt: String(raw?.signedInAt || "").trim(),
+    expiresAt: String(raw?.expiresAt || "").trim(),
+    tenantId: String(raw?.tenantId || "").trim(),
+    hasRefreshToken: !!raw?.hasRefreshToken,
+  };
+}
+
+function getMicrosoftAuthDisplayName(state = microsoftAuthState) {
+  return state.displayName || state.email || "Microsoft 365";
+}
+
+function getOutlookScanVisibleSuggestions() {
+  const dismissed = new Set(outlookScanState.dismissedKeys || []);
+  return (outlookScanState.suggestions || []).filter(
+    (suggestion) => suggestion && !dismissed.has(suggestion.key)
+  );
+}
+
+function renderOutlookScanUi() {
+  const toolbarBtn = document.getElementById("outlookScanBtn");
+  const authStatusEl = document.getElementById("outlookScanAuthStatus");
+  const authDetailsEl = document.getElementById("outlookScanAuthDetails");
+  const timeframeSelect = document.getElementById("outlookScanTimeframe");
+  const connectBtn = document.getElementById("outlookScanConnectBtn");
+  const signOutBtn = document.getElementById("outlookScanSignOutBtn");
+  const runBtn = document.getElementById("outlookScanRunBtn");
+  const summaryEl = document.getElementById("outlookScanSummary");
+  const metaEl = document.getElementById("outlookScanMeta");
+  const suggestionsEl = document.getElementById("outlookScanSuggestions");
+  const skippedEl = document.getElementById("outlookScanSkipped");
+  const emptyEl = document.getElementById("outlookScanEmpty");
+
+  const isSignedIn = microsoftAuthState.signedIn;
+  const busy = microsoftAuthBusy || outlookScanState.busy;
+  const displayName = getMicrosoftAuthDisplayName();
+  const visibleSuggestions = getOutlookScanVisibleSuggestions();
+  const skipped = Array.isArray(outlookScanState.skipped) ? outlookScanState.skipped : [];
+  const lastResult = outlookScanState.lastResult;
+
+  if (toolbarBtn) {
+    toolbarBtn.disabled = busy;
+    toolbarBtn.title = busy ? "Outlook scan is busy" : "Scan Outlook inbox";
+  }
+  if (authStatusEl) {
+    authStatusEl.textContent = isSignedIn
+      ? `Connected as ${displayName}`
+      : "Not connected";
+  }
+  if (authDetailsEl) {
+    authDetailsEl.textContent = isSignedIn
+      ? microsoftAuthState.email || "Microsoft 365 account connected."
+      : "Connect a Microsoft 365 account to scan Inbox messages for missing deliverables.";
+  }
+  if (timeframeSelect) {
+    timeframeSelect.value = outlookScanState.timeframe || "week";
+    timeframeSelect.disabled = busy;
+  }
+  if (connectBtn) {
+    connectBtn.disabled = busy || isSignedIn;
+    connectBtn.textContent = microsoftAuthBusy
+      ? "Working..."
+      : isSignedIn
+        ? "Connected"
+        : "Connect Outlook";
+  }
+  if (signOutBtn) {
+    signOutBtn.disabled = busy || !isSignedIn;
+    signOutBtn.textContent = microsoftAuthBusy ? "Signing out..." : "Sign out";
+  }
+  if (runBtn) {
+    runBtn.disabled = busy || !isSignedIn;
+    runBtn.textContent = outlookScanState.busy ? "Scanning..." : "Scan inbox";
+  }
+  if (summaryEl) {
+    if (outlookScanState.busy) {
+      summaryEl.textContent = "Scanning Outlook inbox...";
+    } else if (!lastResult) {
+      summaryEl.textContent = "No Outlook scan has been run yet.";
+    } else {
+      summaryEl.textContent =
+        `${visibleSuggestions.length} suggestion` +
+        `${visibleSuggestions.length === 1 ? "" : "s"}, ` +
+        `${skipped.length} skipped email${skipped.length === 1 ? "" : "s"}`;
+    }
+  }
+  if (metaEl) {
+    if (!lastResult) {
+      metaEl.textContent = "Choose This week or This month, then run a scan.";
+    } else {
+      const parts = [
+        `Scanned ${Number(lastResult.scannedCount || 0)} email${Number(lastResult.scannedCount || 0) === 1 ? "" : "s"}`,
+        `AI-checked ${Number(lastResult.candidateCount || 0)} candidate${Number(lastResult.candidateCount || 0) === 1 ? "" : "s"}`,
+      ];
+      if (lastResult.truncated) {
+        parts.push("Results were truncated to keep the scan bounded.");
+      }
+      metaEl.textContent = parts.join(" · ");
+    }
+  }
+
+  if (suggestionsEl) {
+    suggestionsEl.innerHTML = "";
+    visibleSuggestions.forEach((suggestion) => {
+      const projectLabel =
+        suggestion.projectName ||
+        suggestion.projectId ||
+        `Project ${suggestion.projectIndex + 1}`;
+      const metaParts = [];
+      if (suggestion.due) metaParts.push(`Due ${humanDate(suggestion.due) || suggestion.due}`);
+      metaParts.push(
+        `${suggestion.relatedMessages.length} related email${suggestion.relatedMessages.length === 1 ? "" : "s"}`
+      );
+      const card = el("div", { className: "outlook-scan-card" }, [
+        el("div", { className: "outlook-scan-card-head" }, [
+          el("div", { className: "outlook-scan-card-project", textContent: projectLabel }),
+          el("div", {
+            className: "outlook-scan-card-deliverable",
+            textContent: suggestion.deliverableName || "Deliverable",
+          }),
+        ]),
+        el("div", {
+          className: "outlook-scan-card-meta tiny muted",
+          textContent: metaParts.join(" · "),
+        }),
+        el("div", {
+          className: "outlook-scan-card-notes",
+          textContent: suggestion.notes || "No summary available.",
+        }),
+        el(
+          "div",
+          { className: "outlook-scan-related-list" },
+          suggestion.relatedMessages.slice(0, 3).map((message) =>
+            el("button", {
+              className: "btn ghost tiny",
+              type: "button",
+              textContent: message.subject || "Open email",
+              onclick: () => openExternalUrl(message.webLink || message.url || ""),
+            })
+          )
+        ),
+        el("div", { className: "outlook-scan-card-actions" }, [
+          el("button", {
+            className: "btn tiny",
+            type: "button",
+            textContent: "Dismiss",
+            onclick: () => dismissOutlookScanSuggestion(suggestion.key),
+          }),
+          el("button", {
+            className: "btn-primary tiny",
+            type: "button",
+            textContent: "Add deliverable",
+            onclick: () => acceptOutlookScanSuggestion(suggestion.key),
+          }),
+        ]),
+      ]);
+      suggestionsEl.appendChild(card);
+    });
+  }
+
+  if (skippedEl) {
+    skippedEl.innerHTML = "";
+    skipped.slice(0, 20).forEach((item) => {
+      const subject = item?.message?.subject || "Untitled email";
+      skippedEl.appendChild(
+        el("div", { className: "outlook-scan-skipped-item" }, [
+          el("div", { className: "outlook-scan-skipped-subject", textContent: subject }),
+          el("div", {
+            className: "tiny muted",
+            textContent: item.reason || "Skipped",
+          }),
+        ])
+      );
+    });
+  }
+
+  if (emptyEl) {
+    emptyEl.hidden =
+      outlookScanState.busy || visibleSuggestions.length > 0 || skipped.length > 0;
+  }
+}
+
+function renderMicrosoftAuthUi() {
+  const statusEl = document.getElementById("settings_microsoftAuthStatus");
+  const detailsEl = document.getElementById("settings_microsoftAuthDetails");
+  const actionBtn = document.getElementById("settings_microsoftAuthActionBtn");
+  const displayName = getMicrosoftAuthDisplayName();
+  const isSignedIn = microsoftAuthState.signedIn;
+
+  if (statusEl) {
+    statusEl.textContent = isSignedIn
+      ? `Signed in as ${displayName}`
+      : "Not signed in";
+  }
+  if (detailsEl) {
+    detailsEl.textContent = isSignedIn
+      ? microsoftAuthState.email || "Microsoft 365 account connected."
+      : "Sign in with Microsoft 365. Configure MICROSOFT_OAUTH_CLIENT_ID and optionally MICROSOFT_OAUTH_TENANT_ID.";
+  }
+  if (actionBtn) {
+    actionBtn.disabled = microsoftAuthBusy;
+    actionBtn.textContent = microsoftAuthBusy
+      ? "Working..."
+      : isSignedIn
+        ? "Open scan"
+        : "Sign in";
+  }
+  renderOutlookScanUi();
+}
+
+async function loadMicrosoftAuthState({ silent = false } = {}) {
+  if (!window.pywebview?.api?.get_microsoft_auth_state) {
+    microsoftAuthState = normalizeMicrosoftAuthState();
+    renderMicrosoftAuthUi();
+    return microsoftAuthState;
+  }
+  try {
+    const response = await window.pywebview.api.get_microsoft_auth_state();
+    if (response?.status !== "success") {
+      throw new Error(response?.message || "Failed to load Microsoft sign-in state.");
+    }
+    microsoftAuthState = normalizeMicrosoftAuthState(response.auth);
+  } catch (e) {
+    console.warn("Failed to load Microsoft auth state:", e);
+    microsoftAuthState = normalizeMicrosoftAuthState();
+    if (!silent) {
+      toast("Could not load Microsoft sign-in state.");
+    }
+  }
+  renderMicrosoftAuthUi();
+  return microsoftAuthState;
+}
+
+function resetOutlookScanState() {
+  outlookScanState = {
+    ...DEFAULT_OUTLOOK_SCAN_STATE,
+    timeframe: outlookScanState.timeframe || DEFAULT_OUTLOOK_SCAN_STATE.timeframe,
+  };
+}
+
+function openOutlookScanDialog() {
+  renderMicrosoftAuthUi();
+  showDialog(document.getElementById("outlookScanDlg"));
+}
+
+function handleMicrosoftAuthAction() {
+  if (microsoftAuthBusy) return;
+  if (microsoftAuthState.signedIn) {
+    openOutlookScanDialog();
+    return;
+  }
+  handleMicrosoftSignIn();
+}
+
+async function handleMicrosoftSignIn() {
+  if (microsoftAuthBusy || !window.pywebview?.api?.sign_in_with_microsoft) return;
+  microsoftAuthBusy = true;
+  renderMicrosoftAuthUi();
+  try {
+    const response = await window.pywebview.api.sign_in_with_microsoft();
+    if (response?.status === "success") {
+      microsoftAuthState = normalizeMicrosoftAuthState(response.auth);
+      await loadUserSettings();
+      await loadMicrosoftAuthState({ silent: true });
+      renderMicrosoftAuthUi();
+      openOutlookScanDialog();
+      toast(`Connected ${getMicrosoftAuthDisplayName()} to Outlook scan.`);
+      return;
+    }
+    if (response?.status === "cancelled") {
+      toast(response.message || "Microsoft sign-in was cancelled.");
+      return;
+    }
+    throw new Error(response?.message || "Microsoft sign-in failed.");
+  } catch (e) {
+    console.warn("Microsoft sign-in failed:", e);
+    toast(e?.message || "Microsoft sign-in failed.");
+  } finally {
+    microsoftAuthBusy = false;
+    renderMicrosoftAuthUi();
+  }
+}
+
+async function handleMicrosoftSignOut() {
+  if (microsoftAuthBusy || !window.pywebview?.api?.sign_out_microsoft) return;
+  microsoftAuthBusy = true;
+  renderMicrosoftAuthUi();
+  try {
+    const response = await window.pywebview.api.sign_out_microsoft();
+    if (response?.status !== "success") {
+      throw new Error(response?.message || "Microsoft sign-out failed.");
+    }
+    resetOutlookScanState();
+    await loadUserSettings();
+    microsoftAuthState = normalizeMicrosoftAuthState(response.auth);
+    renderMicrosoftAuthUi();
+    toast("Signed out of Microsoft.");
+  } catch (e) {
+    console.warn("Microsoft sign-out failed:", e);
+    toast(e?.message || "Microsoft sign-out failed.");
+  } finally {
+    microsoftAuthBusy = false;
+    renderMicrosoftAuthUi();
+  }
+}
+
+function setOutlookScanTimeframe(value = "week") {
+  outlookScanState.timeframe = value === "month" ? "month" : "week";
+  renderOutlookScanUi();
+}
+
+function getOutlookMessageKey(message = {}) {
+  const messageId = String(message.id || "").trim().toLowerCase();
+  if (messageId) return `msg:${messageId}`;
+  const internetMessageId = String(message.internetMessageId || "")
+    .trim()
+    .toLowerCase();
+  if (internetMessageId) return `internet:${internetMessageId}`;
+  return String(message.webLink || message.url || "")
+    .trim()
+    .toLowerCase();
+}
+
+function buildOutlookEmailRefFromMessage(message = {}) {
+  const webLink = String(message.webLink || message.url || "").trim();
+  if (!webLink) return null;
+  return normalizeEmailRef({
+    raw: webLink,
+    url: webLink,
+    label: String(message.subject || "Email").trim() || "Email",
+    source: "outlook-url",
+    savedAt:
+      normalizeIsoTimestamp(message.receivedDateTime) || new Date().toISOString(),
+    messageId: String(message.id || "").trim(),
+    internetMessageId: String(message.internetMessageId || "").trim(),
+  });
+}
+
+function normalizeDeliverableComparisonKey(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  return normalizeProjectMatchValue(extractDeliverableName(raw) || raw);
+}
+
+function buildOutlookSuggestionNotes(items = []) {
+  const seen = new Set();
+  const parts = [];
+  items.forEach((item) => {
+    const text =
+      String(item?.extraction?.notes || "").trim() ||
+      String(item?.message?.subject || "").trim();
+    const key = text.toLowerCase();
+    if (!text || seen.has(key)) return;
+    seen.add(key);
+    parts.push(text);
+  });
+  return parts.slice(0, 2).join(" ");
+}
+
+function buildOutlookSuggestionTasks(items = []) {
+  const seen = new Set();
+  const out = [];
+  items.forEach((item) => {
+    const tasks = Array.isArray(item?.extraction?.tasks) ? item.extraction.tasks : [];
+    tasks.forEach((task) => {
+      const text = String(task?.text || task || "").trim();
+      const key = text.toLowerCase();
+      if (!text || seen.has(key)) return;
+      seen.add(key);
+      out.push({ text, done: false, links: [] });
+    });
+  });
+  return out;
+}
+
+function getEarliestOutlookSuggestionDue(items = []) {
+  let earliest = null;
+  items.forEach((item) => {
+    const rawDue = String(item?.extraction?.due || "").trim();
+    const parsed = parseDueStr(rawDue);
+    if (!parsed) return;
+    if (!earliest || parsed < earliest) earliest = parsed;
+  });
+  return earliest ? formatDueDateShort(earliest) : "";
+}
+
+function buildOutlookScanDerivedState(result = null) {
+  const items = Array.isArray(result?.items) ? result.items : [];
+  const suggestionsByKey = new Map();
+  const skipped = [];
+  items.forEach((item) => {
+    const message = item?.message || {};
+    if (item?.analysisStatus !== "success") {
+      skipped.push({
+        key: getOutlookMessageKey(message),
+        message,
+        reason: item?.analysisError || "Skipped.",
+      });
+      return;
+    }
+
+    const extraction = item?.extraction || {};
+    const deliverableNameRaw = String(extraction.deliverable || "").trim();
+    const deliverableName = extractDeliverableName(deliverableNameRaw) || deliverableNameRaw;
+    const deliverableKey = normalizeDeliverableComparisonKey(deliverableName);
+    if (!deliverableKey) {
+      skipped.push({
+        key: getOutlookMessageKey(message),
+        message,
+        reason: "No deliverable was extracted from this email.",
+      });
+      return;
+    }
+
+    const aiProject = normalizeProject(extraction);
+    const match = aiProject ? findBestProjectMatch(aiProject) : null;
+    if (!match || !db[match.index]) {
+      skipped.push({
+        key: getOutlookMessageKey(message),
+        message,
+        reason: "No matching existing project was found.",
+      });
+      return;
+    }
+
+    const project = normalizeProject(db[match.index]);
+    const existingDeliverables = new Set(
+      getProjectDeliverables(project).map((deliverable) =>
+        normalizeDeliverableComparisonKey(deliverable?.name)
+      )
+    );
+    if (existingDeliverables.has(deliverableKey)) {
+      skipped.push({
+        key: getOutlookMessageKey(message),
+        message,
+        reason: "That deliverable already exists on the matched project.",
+      });
+      return;
+    }
+
+    const suggestionKey = `project:${match.index}|deliverable:${deliverableKey}`;
+    if (!suggestionsByKey.has(suggestionKey)) {
+      suggestionsByKey.set(suggestionKey, {
+        key: suggestionKey,
+        projectIndex: match.index,
+        projectId: String(project.id || "").trim(),
+        projectName: String(project.name || "").trim(),
+        deliverableName,
+        deliverableKey,
+        items: [],
+      });
+    }
+    suggestionsByKey.get(suggestionKey).items.push(item);
+  });
+
+  const suggestions = Array.from(suggestionsByKey.values())
+    .map((suggestion) => {
+      const relatedMessages = suggestion.items
+        .map((item) => item.message || {})
+        .sort(
+          (left, right) =>
+            Date.parse(normalizeIsoTimestamp(right?.receivedDateTime) || "") -
+            Date.parse(normalizeIsoTimestamp(left?.receivedDateTime) || "")
+        );
+      const emailRefs = normalizeEmailRefs(
+        relatedMessages.map((message) => buildOutlookEmailRefFromMessage(message))
+      ).slice(0, MAX_DELIVERABLE_EMAIL_REFS);
+      return {
+        ...suggestion,
+        relatedMessages,
+        due: getEarliestOutlookSuggestionDue(suggestion.items),
+        tasks: buildOutlookSuggestionTasks(suggestion.items),
+        notes: buildOutlookSuggestionNotes(suggestion.items),
+        emailRefs,
+      };
+    })
+    .sort((left, right) =>
+      `${left.projectName}|${left.deliverableName}`.localeCompare(
+        `${right.projectName}|${right.deliverableName}`
+      )
+    );
+
+  return { suggestions, skipped };
+}
+
+async function runOutlookInboxScan() {
+  if (
+    outlookScanState.busy ||
+    microsoftAuthBusy ||
+    !window.pywebview?.api?.scan_outlook_inbox
+  ) {
+    return;
+  }
+  outlookScanState.busy = true;
+  outlookScanState.dismissedKeys = [];
+  renderOutlookScanUi();
+  try {
+    const response = await window.pywebview.api.scan_outlook_inbox(
+      { timeframe: outlookScanState.timeframe || "week" },
+      userSettings.apiKey,
+      userSettings.userName,
+      userSettings.discipline
+    );
+    if (response?.status !== "success") {
+      throw new Error(response?.message || "Outlook scan failed.");
+    }
+    const derived = buildOutlookScanDerivedState(response);
+    outlookScanState.lastResult = response;
+    outlookScanState.suggestions = derived.suggestions;
+    outlookScanState.skipped = derived.skipped;
+    renderOutlookScanUi();
+    toast(
+      `Outlook scan found ${derived.suggestions.length} suggestion${derived.suggestions.length === 1 ? "" : "s"}.`
+    );
+  } catch (e) {
+    console.warn("Outlook scan failed:", e);
+    outlookScanState.lastResult = null;
+    outlookScanState.suggestions = [];
+    outlookScanState.skipped = [];
+    renderOutlookScanUi();
+    toast(e?.message || "Outlook scan failed.");
+  } finally {
+    outlookScanState.busy = false;
+    renderOutlookScanUi();
+  }
+}
+
+function dismissOutlookScanSuggestion(suggestionKey) {
+  const current = new Set(outlookScanState.dismissedKeys || []);
+  if (suggestionKey) current.add(suggestionKey);
+  outlookScanState.dismissedKeys = [...current];
+  renderOutlookScanUi();
+}
+
+async function acceptOutlookScanSuggestion(suggestionKey) {
+  const suggestion = (outlookScanState.suggestions || []).find(
+    (entry) => entry?.key === suggestionKey
+  );
+  if (!suggestion || !db[suggestion.projectIndex]) return false;
+
+  const snapshot = deepCloneJson(db[suggestion.projectIndex], null);
+  const project = normalizeProject(db[suggestion.projectIndex]);
+  const deliverable = createDeliverable({
+    name: suggestion.deliverableName || "",
+    due: suggestion.due || "",
+    notes: suggestion.notes || "",
+    tasks: suggestion.tasks || [],
+    emailRefs: suggestion.emailRefs || [],
+    emailRef: (suggestion.emailRefs || [])[0] || null,
+  });
+  project.deliverables.push(deliverable);
+  project.overviewDeliverableId = deliverable.id;
+  db[suggestion.projectIndex] = project;
+
+  const saved = await save({ silent: true });
+  if (!saved) {
+    if (snapshot) db[suggestion.projectIndex] = snapshot;
+    render();
+    toast("Could not save the new deliverable.");
+    return false;
+  }
+
+  outlookScanState.suggestions = (outlookScanState.suggestions || []).filter(
+    (entry) => entry?.key !== suggestionKey
+  );
+  outlookScanState.dismissedKeys = (outlookScanState.dismissedKeys || []).filter(
+    (key) => key !== suggestionKey
+  );
+  render();
+  renderOutlookScanUi();
+  toast(
+    `Added ${suggestion.deliverableName || "deliverable"} to ${
+      suggestion.projectName || suggestion.projectId || "project"
+    }.`
+  );
+  return true;
 }
 
 // ===================== CLOUD SYNC =====================
@@ -6463,6 +7193,10 @@ function renderCloudSyncUi() {
   const accountNote = document.getElementById("googleAccountSyncNote");
   const headerBtn = document.getElementById("headerGoogleAuthBtn");
   const headerDot = document.getElementById("headerGoogleAuthStatusDot");
+  const headerPopover = document.getElementById("headerAccountPopover");
+  const headerPopoverStatus = document.getElementById("headerAccountPopoverStatus");
+  const headerPopoverNote = document.getElementById("headerAccountPopoverNote");
+  const headerPopoverDot = document.getElementById("headerAccountPopoverSyncDot");
   const model = getCloudSyncDisplayModel();
 
   if (settingsStatus) {
@@ -6479,6 +7213,18 @@ function renderCloudSyncUi() {
   }
   if (headerDot) {
     headerDot.title = model.status;
+  }
+  if (headerPopover) {
+    headerPopover.dataset.syncStatus = model.dot;
+  }
+  if (headerPopoverStatus) {
+    headerPopoverStatus.textContent = model.status;
+  }
+  if (headerPopoverNote) {
+    headerPopoverNote.textContent = model.note;
+  }
+  if (headerPopoverDot) {
+    headerPopoverDot.title = model.status;
   }
 }
 
@@ -7474,6 +8220,9 @@ async function prepareLocalStateForUserSwitch(nextUid) {
   notesDb = {};
   noteTabs = ["General"];
   activeNoteTab = "General";
+  activeNotebookType = "note";
+  notesSearchQuery = "";
+  checklistSearchQuery = "";
   timesheetDb = { weeks: {}, lastModified: null };
   templatesDb = {
     templates: [],
@@ -7721,6 +8470,7 @@ async function applyRemoteCloudDoc(domain, remoteDoc) {
       noteTabs = [...cloudNotes.tabs];
       notesDb = deepCloneJson(cloudNotes.general, {});
       activeNoteTab = noteTabs.includes(activeNoteTab) ? activeNoteTab : noteTabs[0];
+      ensureActiveNotebookSelection(activeNotebookType);
       touchLocalSyncTimestamp("notes", cloudNotes.updatedAt);
       await saveNotes({
         skipCloud: true,
@@ -7728,6 +8478,7 @@ async function applyRemoteCloudDoc(domain, remoteDoc) {
         silent: true,
       });
       renderNoteTabs();
+      renderChecklistTabs();
       renderTextsView();
       renderNoteSearchResults();
       return cloudNotes.updatedAt;
@@ -7762,14 +8513,15 @@ async function applyRemoteCloudDoc(domain, remoteDoc) {
       activeChecklistTabId =
         checklistsDb.checklists.find((checklist) => checklist.id === activeChecklistTabId)
           ?.id || checklistsDb.checklists[0]?.id || null;
+      ensureActiveNotebookSelection(activeNotebookType);
       touchLocalSyncTimestamp("checklists", cloudChecklists.updatedAt);
       await saveChecklists({
         skipCloud: true,
         saveTimestamp: false,
         silent: true,
       });
+      renderNoteTabs();
       renderChecklistTabs();
-      renderChecklistItems();
       renderTextsView();
       return cloudChecklists.updatedAt;
     }
@@ -8345,6 +9097,10 @@ async function loadUserSettings() {
       userSettings.googleAuth && typeof userSettings.googleAuth === "object"
         ? userSettings.googleAuth
         : null;
+    userSettings.microsoftAuth =
+      userSettings.microsoftAuth && typeof userSettings.microsoftAuth === "object"
+        ? userSettings.microsoftAuth
+        : null;
     userSettings.discipline = normalizeDisciplineList(userSettings.discipline);
     userSettings.cleanDwgOptions = {
       ...DEFAULT_CLEAN_DWG_OPTIONS,
@@ -8375,6 +9131,7 @@ async function loadUserSettings() {
     syncCloudComparableFingerprint("settings");
     syncUnderConstructionToolsAvailability();
     renderGoogleAuthUi();
+    renderMicrosoftAuthUi();
   } catch (e) {
     console.error("Failed to load settings:", e);
   }
@@ -8510,6 +9267,7 @@ async function populateSettingsModal() {
   syncUnderConstructionToolsInputs();
   syncUnderConstructionToolsAvailability();
   renderGoogleAuthUi();
+  renderMicrosoftAuthUi();
 
   await refreshTimesheetsInfo();
 
@@ -12321,73 +13079,133 @@ function importRows(rows, hasHeader = true) {
 // ===================== NOTES SYSTEM =====================
 const debouncedSaveNotes = debounce(saveNotes, 500);
 
-function normalizeTextsView(viewName) {
-  const normalized = String(viewName || "").trim().toLowerCase();
-  return normalized === "checklists" ? "checklists" : "notes";
+function normalizeNotebookType(type) {
+  return type === "checklist" ? "checklist" : "note";
+}
+
+function hasActiveNoteSelection() {
+  return Boolean(activeNoteTab && noteTabs.includes(activeNoteTab));
+}
+
+function hasActiveChecklistSelection() {
+  return Boolean(getChecklistById(activeChecklistTabId));
+}
+
+function ensureActiveNotebookSelection(preferredType = activeNotebookType) {
+  const normalizedPreferred = normalizeNotebookType(preferredType);
+  const hasNote = hasActiveNoteSelection();
+  const hasChecklist = hasActiveChecklistSelection();
+
+  if (normalizedPreferred === "note" && hasNote) {
+    activeNotebookType = "note";
+    return;
+  }
+
+  if (normalizedPreferred === "checklist" && hasChecklist) {
+    activeNotebookType = "checklist";
+    return;
+  }
+
+  if (hasNote) {
+    activeNotebookType = "note";
+    return;
+  }
+
+  if (hasChecklist) {
+    activeNotebookType = "checklist";
+    return;
+  }
+
+  activeNotebookType = "note";
+}
+
+function syncNotebookSearchUi() {
+  const searchInput = document.getElementById("notesSearch");
+  if (!searchInput) return;
+
+  const isChecklistMode = activeNotebookType === "checklist";
+  const hasActiveSelection = isChecklistMode
+    ? hasActiveChecklistSelection()
+    : hasActiveNoteSelection();
+  const nextValue = isChecklistMode ? checklistSearchQuery : notesSearchQuery;
+
+  searchInput.placeholder = isChecklistMode
+    ? "Search checklist items..."
+    : "Search notes...";
+  searchInput.disabled = !hasActiveSelection;
+  if (searchInput.value !== nextValue) {
+    searchInput.value = nextValue;
+  }
+}
+
+function handleNotebookSearchInput(e) {
+  const nextValue = String(e?.target?.value || "");
+  if (activeNotebookType === "checklist") {
+    checklistSearchQuery = nextValue;
+    renderChecklistSearchResults();
+    return;
+  }
+
+  notesSearchQuery = nextValue;
+  renderNoteSearchResults();
 }
 
 function renderTextsView() {
-  const tabs = Array.from(document.querySelectorAll("[data-texts-view-tab]"));
-  const panes = Array.from(document.querySelectorAll("[data-texts-view-pane]"));
+  ensureActiveNotebookSelection();
+
   const searchWrap = document.getElementById("textsSearchWrap");
+  const notesPane = document.getElementById("textsNotesPane");
+  const checklistsPane = document.getElementById("textsChecklistsPane");
   const helpBtn = document.getElementById("textsHelpBtn");
-  const notesResults = document.getElementById("notesSearchResults");
+  const isChecklistMode = activeNotebookType === "checklist";
 
-  if (!tabs.length || !panes.length) return;
-
-  activeTextsView = normalizeTextsView(activeTextsView);
-
-  tabs.forEach((tabBtn) => {
-    const viewName = normalizeTextsView(tabBtn.dataset.textsViewTab);
-    const isActive = viewName === activeTextsView;
-    tabBtn.classList.toggle("active", isActive);
-    tabBtn.setAttribute("aria-selected", isActive ? "true" : "false");
-    tabBtn.setAttribute("tabindex", isActive ? "0" : "-1");
-    tabBtn.onclick = () => {
-      const nextView = normalizeTextsView(tabBtn.dataset.textsViewTab);
-      if (nextView === activeTextsView) return;
-      activeTextsView = nextView;
-      renderTextsView();
-    };
-  });
-
-  panes.forEach((pane) => {
-    const paneName = normalizeTextsView(pane.dataset.textsViewPane);
-    pane.hidden = paneName !== activeTextsView;
-    pane.setAttribute("aria-hidden", pane.hidden ? "true" : "false");
-  });
-
-  const isNotesView = activeTextsView === "notes";
   if (searchWrap) {
-    searchWrap.hidden = !isNotesView;
-    searchWrap.setAttribute("aria-hidden", isNotesView ? "false" : "true");
+    searchWrap.hidden = false;
+    searchWrap.setAttribute("aria-hidden", "false");
   }
 
+  syncNotebookSearchUi();
+
   if (helpBtn) {
-    const label = isNotesView ? "Notes help" : "Checklists help";
+    const label = isChecklistMode ? "Checklists help" : "Notes help";
     helpBtn.title = label;
     helpBtn.setAttribute("aria-label", label);
     helpBtn.onclick = () =>
-      openExternalUrl(isNotesView ? HELP_LINKS.notes : HELP_LINKS.checklists);
+      openExternalUrl(isChecklistMode ? HELP_LINKS.checklists : HELP_LINKS.notes);
   }
 
-  if (isNotesView) {
+  if (notesPane) {
+    notesPane.hidden = isChecklistMode;
+    notesPane.setAttribute("aria-hidden", String(isChecklistMode));
+  }
+
+  if (checklistsPane) {
+    checklistsPane.hidden = !isChecklistMode;
+    checklistsPane.setAttribute("aria-hidden", String(!isChecklistMode));
+  }
+
+  if (isChecklistMode) {
+    renderChecklistSearchResults();
+  } else {
     renderNoteSearchResults();
-  } else if (notesResults) {
-    notesResults.innerHTML = "";
   }
 }
 
 function renderNoteTabs() {
+  ensureActiveNotebookSelection();
   const container = document.getElementById("notesTabsContainer");
   container.innerHTML = "";
   noteTabs.forEach((tabName) => {
+    const isActive = activeNotebookType === "note" && tabName === activeNoteTab;
     const btn = el("button", {
-      className: `inner-tab-btn ${tabName === activeNoteTab ? "active" : ""}`,
+      className: `inner-tab-btn ${isActive ? "active" : ""}`,
       type: "button",
       onclick: () => {
         activeNoteTab = tabName;
+        activeNotebookType = "note";
         renderNoteTabs();
+        renderChecklistTabs();
+        renderTextsView();
         renderNoteSearchResults();
       },
     });
@@ -12411,8 +13229,11 @@ function renderNoteTabs() {
             if (activeNoteTab === tabName)
               activeNoteTab =
                 noteTabs.length > 0 ? noteTabs[Math.max(0, idx - 1)] : null;
+            ensureActiveNotebookSelection(activeNotebookType);
             saveNotes();
             renderNoteTabs();
+            renderChecklistTabs();
+            renderTextsView();
           }
         }
       },
@@ -12432,8 +13253,11 @@ function renderNoteTabs() {
         if (!noteTabs.includes(name.trim())) {
           noteTabs.push(name.trim());
           activeNoteTab = name.trim();
+          activeNotebookType = "note";
           saveNotes();
           renderNoteTabs();
+          renderChecklistTabs();
+          renderTextsView();
         } else toast("Page name already exists.");
       }
     },
@@ -12542,7 +13366,7 @@ function createNoteSearchResultItem(noteText, onEdit) {
 }
 
 function renderNoteSearchResults() {
-  const query = val("notesSearch").toLowerCase();
+  const query = String(notesSearchQuery || "").toLowerCase();
   const resultsContainer = document.getElementById("notesSearchResults");
   if (!resultsContainer) return;
   resultsContainer.innerHTML = "";
@@ -12567,6 +13391,63 @@ function renderNoteSearchResults() {
         focusAndSelectNoteSnippet(textarea, noteText, { scrollWindow: true });
       })
     );
+  });
+}
+
+function createChecklistSearchResultItem(item, numberLookup) {
+  const isSubheader = isChecklistSubheader(item);
+  const badgeText = isSubheader ? "Section" : String(numberLookup.get(item.id) || 1);
+  const itemText = String(item.text || "").trim() || (isSubheader ? "Untitled section" : "Untitled item");
+
+  const button = el("button", {
+    className: "checklist-search-result-item",
+    type: "button",
+    onclick: () => {
+      focusChecklistRowInput(item.id, { scrollIntoView: true });
+    },
+  });
+
+  button.append(
+    el("span", {
+      className: `checklist-search-result-badge ${isSubheader ? "is-section" : ""}`,
+      textContent: badgeText,
+    }),
+    el("span", {
+      className: "checklist-search-result-label",
+      textContent: itemText,
+    })
+  );
+  return button;
+}
+
+function renderChecklistSearchResults() {
+  const resultsContainer = document.getElementById("checklistSearchResults");
+  if (!resultsContainer) return;
+
+  resultsContainer.innerHTML = "";
+  const checklist = getChecklistById(activeChecklistTabId);
+  if (!checklist) return;
+
+  const query = String(checklistSearchQuery || "").trim().toLowerCase();
+  if (!query) return;
+
+  const queryWords = query.split(" ").filter(Boolean);
+  if (!queryWords.length) return;
+
+  const numberLookup = getChecklistItemNumberLookup(checklist.items);
+  const matches = checklist.items.filter((item) => {
+    const itemText = String(item.text || "").toLowerCase();
+    return queryWords.every((word) => itemText.includes(word));
+  });
+
+  if (!matches.length) {
+    resultsContainer.innerHTML =
+      "<p class='muted tiny checklist-search-empty'>No checklist results found.</p>";
+    return;
+  }
+
+  matches.forEach((item) => {
+    resultsContainer.appendChild(createChecklistSearchResultItem(item, numberLookup));
   });
 }
 
@@ -12658,12 +13539,17 @@ function handleCreateBlankChecklist() {
   checklistCreateMenuOpen = false;
   const name = prompt("Enter name for new checklist:");
   if (!name || !name.trim()) {
+    renderNoteTabs();
     renderChecklistTabs();
+    renderTextsView();
     return;
   }
   const newChecklist = createChecklist(name.trim());
   activeChecklistTabId = newChecklist.id;
+  activeNotebookType = "checklist";
+  renderNoteTabs();
   renderChecklistTabs();
+  renderTextsView();
 }
 
 function handleCreateChecklistFromTemplate(templateKey) {
@@ -12671,14 +13557,20 @@ function handleCreateChecklistFromTemplate(templateKey) {
   const newChecklist = createChecklistFromTemplate(templateKey);
   if (!newChecklist) {
     toast("Template not found.");
+    renderNoteTabs();
     renderChecklistTabs();
+    renderTextsView();
     return;
   }
   activeChecklistTabId = newChecklist.id;
+  activeNotebookType = "checklist";
+  renderNoteTabs();
   renderChecklistTabs();
+  renderTextsView();
 }
 
 function renderChecklistTabs() {
+  ensureActiveNotebookSelection();
   const container = document.getElementById("checklistsTabsContainer");
   const actionsContainer = document.getElementById("checklistsSidebarActions");
   if (!container) return;
@@ -12689,14 +13581,18 @@ function renderChecklistTabs() {
   }
 
   checklistsDb.checklists.forEach((checklist) => {
+    const isActive =
+      activeNotebookType === "checklist" && checklist.id === activeChecklistTabId;
     const btn = el("button", {
-      className: `inner-tab-btn ${checklist.id === activeChecklistTabId ? "active" : ""}`,
+      className: `inner-tab-btn ${isActive ? "active" : ""}`,
       type: "button",
       onclick: () => {
         closeChecklistMenus();
         activeChecklistTabId = checklist.id;
+        activeNotebookType = "checklist";
+        renderNoteTabs();
         renderChecklistTabs();
-        renderChecklistItems();
+        renderTextsView();
       },
     });
     btn.appendChild(
@@ -12719,8 +13615,10 @@ function renderChecklistTabs() {
           if (activeChecklistTabId === checklist.id) {
             activeChecklistTabId = checklistsDb.checklists[0]?.id || null;
           }
+          ensureActiveNotebookSelection(activeNotebookType);
+          renderNoteTabs();
           renderChecklistTabs();
-          renderChecklistItems();
+          renderTextsView();
         }
       },
     });
@@ -12732,6 +13630,7 @@ function renderChecklistTabs() {
   if (activeChecklistTabId && !getChecklistById(activeChecklistTabId)) {
     activeChecklistTabId = checklistsDb.checklists[0]?.id || null;
   }
+  ensureActiveNotebookSelection(activeNotebookType);
 
   const sidebarActionsTarget = actionsContainer || container;
   const templates = getChecklistTemplatesForCurrentDisciplines();
@@ -12809,6 +13708,7 @@ function renderChecklistTabs() {
 
 function renderChecklistItems() {
   const container = document.getElementById("checklistItemsContainer");
+  const searchResults = document.getElementById("checklistSearchResults");
   const nameInput = document.getElementById("checklistName");
   const settingsDropdown = document.getElementById("checklistSettingsDropdown");
   const settingsBtn = document.getElementById("checklistSettingsBtn");
@@ -12826,6 +13726,7 @@ function renderChecklistItems() {
 
   if (!checklist) {
     checklistRowMenuState = null;
+    if (searchResults) searchResults.innerHTML = "";
     nameInput.value = "";
     nameInput.disabled = true;
     checklistSettingsMenuOpen = false;
@@ -13071,13 +13972,22 @@ function renderChecklistItems() {
     row.append(handleMenuDropdown, leadingElement, input, removeBtn);
     container.appendChild(row);
   });
+
+  renderChecklistSearchResults();
 }
 
-function focusChecklistRowInput(itemId) {
+function focusChecklistRowInput(itemId, options = {}) {
   if (!itemId) return;
+  const { scrollIntoView = false } = options;
   setTimeout(() => {
     const input = document.querySelector(`.checklist-row-input[data-item-id="${itemId}"]`);
     if (input) {
+      if (scrollIntoView) {
+        input.closest(".checklist-item-row")?.scrollIntoView({
+          block: "center",
+          behavior: "smooth",
+        });
+      }
       input.focus();
       input.select();
     }
@@ -13152,7 +14062,10 @@ document.getElementById("deleteChecklistBtn")?.addEventListener("click", () => {
   if (checklist && confirm(`Delete checklist "${checklist.name}"?`)) {
     deleteChecklist(checklist.id);
     activeChecklistTabId = checklistsDb.checklists[0]?.id || null;
+    ensureActiveNotebookSelection(activeNotebookType);
+    renderNoteTabs();
     renderChecklistTabs();
+    renderTextsView();
     return;
   }
   syncChecklistMenuUi();
@@ -18749,6 +19662,7 @@ async function dismissSetupHelp(type) {
 function initTabbedInterfaces() {
   const mainTabContainer = document.querySelector(".main-nav");
   const notesResults = document.getElementById("notesSearchResults");
+  const checklistResults = document.getElementById("checklistSearchResults");
 
   mainTabContainer.addEventListener("click", (e) => {
     if (!e.target.matches(".main-tab-btn")) return;
@@ -18763,6 +19677,7 @@ function initTabbedInterfaces() {
     });
 
     if (tab !== "texts" && notesResults) notesResults.innerHTML = "";
+    if (tab !== "texts" && checklistResults) checklistResults.innerHTML = "";
 
     if (tab === "texts") {
       renderTextsView();
@@ -18854,7 +19769,7 @@ function initEventListeners() {
   );
   document.getElementById("notesSearch").addEventListener(
     "input",
-    debounce(() => renderNoteSearchResults(), 250)
+    debounce((e) => handleNotebookSearchInput(e), 250)
   );
 
   document.getElementById("mainHelpBtn").onclick = () =>
@@ -18868,17 +19783,6 @@ function initEventListeners() {
     pinUrgentDeliverablesBtn.textContent = "";
     pinUrgentDeliverablesBtn.appendChild(createIcon(PIN_ICON_PATH, 16));
     pinUrgentDeliverablesBtn.onclick = () => pinUrgentDeliverables();
-  }
-  const openPinnedDeliverablesNotepadBtn = document.getElementById(
-    "openPinnedDeliverablesNotepadBtn"
-  );
-  if (openPinnedDeliverablesNotepadBtn) {
-    openPinnedDeliverablesNotepadBtn.textContent = "";
-    openPinnedDeliverablesNotepadBtn.appendChild(createIcon(NOTE_ICON_PATH, 16));
-    openPinnedDeliverablesNotepadBtn.ariaLabel = "Export deliverables to Excel";
-    openPinnedDeliverablesNotepadBtn.title = "Export deliverables to Excel";
-    openPinnedDeliverablesNotepadBtn.onclick = () =>
-      openDeliverablesExcelDialog();
   }
   const deliverableNotepadAddBtn = document.getElementById(
     "deliverableNotepadAddBtn"
@@ -18933,6 +19837,9 @@ function initEventListeners() {
   const handleAppFocus = async () => {
     if (!googleAuthBusy) {
       await loadGoogleAuthState({ silent: true });
+    }
+    if (!microsoftAuthBusy) {
+      await loadMicrosoftAuthState({ silent: true });
     }
     checkBundlesForUpdates({ showIndicator: true });
   };
@@ -19023,7 +19930,7 @@ function initEventListeners() {
   document.getElementById("quickNew").onclick = openNew;
   const headerGoogleAuthBtn = document.getElementById("headerGoogleAuthBtn");
   if (headerGoogleAuthBtn) {
-    headerGoogleAuthBtn.onclick = () => handleGoogleAuthAction();
+    headerGoogleAuthBtn.onclick = () => handleHeaderGoogleAuthAction();
   }
   document.getElementById("settingsBtn").onclick = async () => {
     hideSetupHelpBanner(); // Hide the banner when user manually opens settings
@@ -19039,9 +19946,42 @@ function initEventListeners() {
   if (settingsGoogleAuthActionBtn) {
     settingsGoogleAuthActionBtn.onclick = () => handleGoogleAuthAction();
   }
+  const settingsMicrosoftAuthActionBtn = document.getElementById(
+    "settings_microsoftAuthActionBtn"
+  );
+  if (settingsMicrosoftAuthActionBtn) {
+    settingsMicrosoftAuthActionBtn.onclick = () => handleMicrosoftAuthAction();
+  }
   const googleSignOutBtn = document.getElementById("googleSignOutBtn");
   if (googleSignOutBtn) {
     googleSignOutBtn.onclick = () => handleGoogleSignOut();
+  }
+  const outlookScanBtn = document.getElementById("outlookScanBtn");
+  if (outlookScanBtn) {
+    outlookScanBtn.onclick = () => openOutlookScanDialog();
+  }
+  const outlookScanConnectBtn = document.getElementById("outlookScanConnectBtn");
+  if (outlookScanConnectBtn) {
+    outlookScanConnectBtn.onclick = () => handleMicrosoftSignIn();
+  }
+  const outlookScanSignOutBtn = document.getElementById("outlookScanSignOutBtn");
+  if (outlookScanSignOutBtn) {
+    outlookScanSignOutBtn.onclick = () => handleMicrosoftSignOut();
+  }
+  const outlookScanRunBtn = document.getElementById("outlookScanRunBtn");
+  if (outlookScanRunBtn) {
+    outlookScanRunBtn.onclick = () => runOutlookInboxScan();
+  }
+  const outlookScanTimeframe = document.getElementById("outlookScanTimeframe");
+  if (outlookScanTimeframe) {
+    outlookScanTimeframe.onchange = (event) =>
+      setOutlookScanTimeframe(event?.target?.value || "week");
+  }
+  const headerAccountSignOutBtn = document.getElementById(
+    "headerAccountSignOutBtn"
+  );
+  if (headerAccountSignOutBtn) {
+    headerAccountSignOutBtn.onclick = () => handleGoogleSignOut();
   }
   const openTimesheetsBtn = document.getElementById(
     "settings_openTimesheetsFolder"
@@ -19235,11 +20175,24 @@ function initEventListeners() {
     setProjectsFilterDropdownState(openProjectsFilterDropdown, false);
   });
 
+  document.addEventListener("click", (e) => {
+    if (!headerAccountPopoverOpen) return;
+    const dropdown = document.getElementById("headerAccountDropdown");
+    if (dropdown?.contains(e.target)) return;
+    setHeaderAccountPopoverOpen(false);
+  });
+
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape" || !openProjectsFilterDropdown) return;
     const dropdown = openProjectsFilterDropdown;
     setProjectsFilterDropdownState(dropdown, false);
     dropdown.querySelector(".projects-filter-trigger")?.focus();
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || !headerAccountPopoverOpen) return;
+    e.preventDefault();
+    setHeaderAccountPopoverOpen(false, { focusTrigger: true });
   });
 
   syncProjectsFilterDropdowns();
@@ -20455,6 +21408,7 @@ async function init() {
     updateStickyOffsets();
     refreshAppUpdateStatus();
     await loadGoogleAuthState({ silent: true });
+    await loadMicrosoftAuthState({ silent: true });
     await loadUserSettings();
     initThemeFromPreferences();
     const [
@@ -20497,6 +21451,7 @@ async function init() {
     } else {
       activeChecklistTabId = null;
     }
+    ensureActiveNotebookSelection(activeNotebookType);
 
     if (isNewUser()) {
       hideMainApp();

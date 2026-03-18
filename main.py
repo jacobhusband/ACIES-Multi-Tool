@@ -158,6 +158,21 @@ GOOGLE_OAUTH_USERINFO_ENDPOINT = "https://openidconnect.googleapis.com/v1/userin
 GOOGLE_OAUTH_SCOPES = ["openid", "email", "profile"]
 GOOGLE_OAUTH_CALLBACK_PATH = "/"
 GOOGLE_OAUTH_TIMEOUT_SECONDS = 180
+MICROSOFT_OAUTH_CLIENT_ID_ENV = "MICROSOFT_OAUTH_CLIENT_ID"
+MICROSOFT_OAUTH_TENANT_ID_ENV = "MICROSOFT_OAUTH_TENANT_ID"
+MICROSOFT_OAUTH_DEFAULT_TENANT = "organizations"
+MICROSOFT_OAUTH_CALLBACK_PATH = "/"
+MICROSOFT_OAUTH_TIMEOUT_SECONDS = 180
+MICROSOFT_OAUTH_SCOPES = [
+    "openid",
+    "profile",
+    "email",
+    "offline_access",
+    "Mail.Read",
+]
+MICROSOFT_GRAPH_API_BASE = "https://graph.microsoft.com/v1.0"
+OUTLOOK_SCAN_FETCH_LIMIT = 200
+OUTLOOK_SCAN_AI_LIMIT = 40
 FIREBASE_API_KEY_ENV = "FIREBASE_API_KEY"
 FIREBASE_AUTH_DOMAIN_ENV = "FIREBASE_AUTH_DOMAIN"
 FIREBASE_PROJECT_ID_ENV = "FIREBASE_PROJECT_ID"
@@ -202,6 +217,7 @@ def build_default_user_settings():
         'workroomAutoSelectCadFiles': True,
         'enableUnderConstructionTools': False,
         'googleAuth': None,
+        'microsoftAuth': None,
         'cloudSync': build_default_cloud_sync_settings(),
     }
 
@@ -2239,6 +2255,26 @@ class Api:
     def _base64url_encode(self, raw_bytes):
         return base64.urlsafe_b64encode(raw_bytes).rstrip(b"=").decode("ascii")
 
+    def _base64url_decode(self, raw_text):
+        text = str(raw_text or "").strip()
+        if not text:
+            return b""
+        padding = "=" * ((4 - (len(text) % 4)) % 4)
+        return base64.urlsafe_b64decode(f"{text}{padding}")
+
+    def _decode_jwt_payload(self, token):
+        raw = str(token or "").strip()
+        if not raw:
+            return {}
+        parts = raw.split(".")
+        if len(parts) < 2:
+            return {}
+        try:
+            payload = json.loads(self._base64url_decode(parts[1]).decode("utf-8"))
+        except Exception:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
     def _generate_google_pkce_pair(self):
         verifier = secrets.token_urlsafe(64)
         challenge = self._base64url_encode(
@@ -2731,6 +2767,741 @@ class Api:
             logging.error(f"Error signing out of Google: {e}")
             return {'status': 'error', 'message': str(e)}
 
+    def _get_microsoft_oauth_client_id(self):
+        return (os.getenv(MICROSOFT_OAUTH_CLIENT_ID_ENV) or "").strip()
+
+    def _get_microsoft_oauth_tenant_id(self):
+        tenant = (os.getenv(MICROSOFT_OAUTH_TENANT_ID_ENV) or "").strip()
+        return tenant or MICROSOFT_OAUTH_DEFAULT_TENANT
+
+    def _get_microsoft_oauth_authority_base(self):
+        tenant_id = self._get_microsoft_oauth_tenant_id()
+        return f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0"
+
+    def _get_microsoft_oauth_auth_endpoint(self):
+        return f"{self._get_microsoft_oauth_authority_base()}/authorize"
+
+    def _get_microsoft_oauth_token_endpoint(self):
+        return f"{self._get_microsoft_oauth_authority_base()}/token"
+
+    def _extract_microsoft_error_message(self, response):
+        payload = {}
+        try:
+            payload = response.json() or {}
+        except Exception:
+            payload = {}
+        error_block = payload.get("error")
+        message = str(
+            payload.get("error_description")
+            or (error_block.get("message") if isinstance(error_block, dict) else "")
+            or error_block
+            or response.text
+            or "Microsoft sign-in failed."
+        ).strip()
+        lower = message.lower()
+        if "client_id" in lower and "missing" in lower:
+            return (
+                "Microsoft sign-in is not configured. Add "
+                f"{MICROSOFT_OAUTH_CLIENT_ID_ENV} to .env and restart the app."
+            )
+        return message
+
+    def _build_microsoft_auth_record(self, token_payload, claims_payload, existing_auth=None):
+        existing_auth = existing_auth if isinstance(existing_auth, dict) else {}
+        issued_at = datetime.datetime.now(datetime.timezone.utc)
+        expires_in = 0
+        try:
+            expires_in = int(token_payload.get("expires_in") or 0)
+        except Exception:
+            expires_in = 0
+        expires_at = (
+            issued_at + datetime.timedelta(seconds=max(expires_in, 0))
+        ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+        refresh_token = str(token_payload.get("refresh_token") or "").strip()
+        if not refresh_token:
+            refresh_token = str(existing_auth.get("refreshToken") or "").strip()
+        id_token = str(token_payload.get("id_token") or "").strip()
+        if not id_token:
+            id_token = str(existing_auth.get("idToken") or "").strip()
+
+        return {
+            "provider": "microsoft",
+            "subject": str(claims_payload.get("sub") or existing_auth.get("subject") or "").strip(),
+            "email": str(
+                claims_payload.get("email")
+                or claims_payload.get("preferred_username")
+                or existing_auth.get("email")
+                or ""
+            ).strip(),
+            "displayName": str(
+                claims_payload.get("name") or existing_auth.get("displayName") or ""
+            ).strip(),
+            "avatarUrl": "",
+            "signedInAt": str(existing_auth.get("signedInAt") or utc_now_iso()),
+            "tokenIssuedAt": utc_now_iso(),
+            "expiresAt": expires_at,
+            "idToken": id_token,
+            "accessToken": str(token_payload.get("access_token") or "").strip(),
+            "refreshToken": refresh_token,
+            "tokenType": str(token_payload.get("token_type") or "Bearer").strip() or "Bearer",
+            "scope": str(token_payload.get("scope") or " ".join(MICROSOFT_OAUTH_SCOPES)).strip(),
+            "tenantId": str(claims_payload.get("tid") or existing_auth.get("tenantId") or "").strip(),
+        }
+
+    def _sanitize_microsoft_auth_record(self, auth_record):
+        if not isinstance(auth_record, dict):
+            return {
+                "signedIn": False,
+                "provider": "microsoft",
+                "email": "",
+                "displayName": "",
+                "avatarUrl": "",
+                "signedInAt": "",
+                "expiresAt": "",
+                "tenantId": "",
+                "hasRefreshToken": False,
+            }
+        return {
+            "signedIn": True,
+            "provider": str(auth_record.get("provider") or "microsoft").strip() or "microsoft",
+            "email": str(auth_record.get("email") or "").strip(),
+            "displayName": str(auth_record.get("displayName") or "").strip(),
+            "avatarUrl": "",
+            "signedInAt": str(auth_record.get("signedInAt") or "").strip(),
+            "expiresAt": str(auth_record.get("expiresAt") or "").strip(),
+            "tenantId": str(auth_record.get("tenantId") or "").strip(),
+            "hasRefreshToken": bool(str(auth_record.get("refreshToken") or "").strip()),
+        }
+
+    def _load_microsoft_auth_record(self):
+        settings = self.get_user_settings()
+        auth_record = settings.get("microsoftAuth")
+        return auth_record if isinstance(auth_record, dict) else None
+
+    def _persist_microsoft_auth_record(self, auth_record):
+        settings = self.get_user_settings()
+        settings["microsoftAuth"] = auth_record if isinstance(auth_record, dict) and auth_record else None
+        result = self.save_user_settings(settings)
+        if result.get("status") != "success":
+            raise RuntimeError(result.get("message") or "Failed to save Microsoft sign-in state.")
+        return settings
+
+    def _build_microsoft_oauth_status_html(self, title, body, accent="#2563eb"):
+        safe_title = html.escape(str(title or "").strip() or "Microsoft Sign-In")
+        safe_body = html.escape(str(body or "").strip() or "Return to the app.")
+        return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{safe_title}</title>
+  <style>
+    body {{
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: #0f172a;
+      color: #e2e8f0;
+      font-family: Inter, Segoe UI, sans-serif;
+    }}
+    .card {{
+      width: min(440px, 100%);
+      border-radius: 20px;
+      padding: 28px;
+      background: rgba(15, 23, 42, 0.92);
+      border: 1px solid rgba(148, 163, 184, 0.22);
+      box-shadow: 0 24px 60px rgba(2, 6, 23, 0.45);
+    }}
+    h1 {{
+      margin: 0 0 12px;
+      font-size: 1.45rem;
+      color: {accent};
+    }}
+    p {{
+      margin: 0;
+      line-height: 1.6;
+      color: #cbd5e1;
+    }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>{safe_title}</h1>
+    <p>{safe_body}</p>
+  </div>
+</body>
+</html>"""
+
+    def _start_microsoft_oauth_callback_server(self):
+        class MicrosoftOAuthCallbackServer(http.server.ThreadingHTTPServer):
+            allow_reuse_address = True
+
+        class MicrosoftOAuthCallbackHandler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, fmt, *args):
+                return
+
+            def do_GET(self):
+                parsed = urlparse(self.path)
+                if parsed.path != MICROSOFT_OAUTH_CALLBACK_PATH:
+                    self.send_response(404)
+                    self.send_header("Content-Type", "text/plain; charset=utf-8")
+                    self.end_headers()
+                    self.wfile.write(b"Not found.")
+                    return
+
+                params = parse_qs(parsed.query or "", keep_blank_values=True)
+                self.server.oauth_result = {
+                    "code": (params.get("code") or [""])[0],
+                    "state": (params.get("state") or [""])[0],
+                    "error": (params.get("error") or [""])[0],
+                    "error_description": (params.get("error_description") or [""])[0],
+                }
+
+                error_code = str(self.server.oauth_result.get("error") or "").strip().lower()
+                if error_code:
+                    title = (
+                        "Microsoft Sign-In Cancelled"
+                        if error_code == "access_denied"
+                        else "Microsoft Sign-In Failed"
+                    )
+                    body = (
+                        "You can close this window and return to the app."
+                        if error_code == "access_denied"
+                        else "There was a problem completing Microsoft sign-in. Return to the app for details."
+                    )
+                    page = self.server.owner._build_microsoft_oauth_status_html(
+                        title,
+                        body,
+                        "#f59e0b" if error_code == "access_denied" else "#ef4444",
+                    )
+                else:
+                    page = self.server.owner._build_microsoft_oauth_status_html(
+                        "Microsoft Sign-In Complete",
+                        "Return to the app. Your sign-in will finish automatically.",
+                    )
+
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(page.encode("utf-8"))
+                self.server.oauth_event.set()
+                threading.Thread(target=self.server.shutdown, daemon=True).start()
+
+        server = MicrosoftOAuthCallbackServer(("127.0.0.1", 0), MicrosoftOAuthCallbackHandler)
+        server.owner = self
+        server.oauth_event = threading.Event()
+        server.oauth_result = {}
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+        return server
+
+    def _exchange_microsoft_auth_code(self, client_id, code, code_verifier, redirect_uri):
+        response = requests.post(
+            self._get_microsoft_oauth_token_endpoint(),
+            data={
+                "client_id": client_id,
+                "code": code,
+                "code_verifier": code_verifier,
+                "grant_type": "authorization_code",
+                "redirect_uri": redirect_uri,
+            },
+            timeout=20,
+        )
+        if response.status_code != 200:
+            raise RuntimeError(self._extract_microsoft_error_message(response))
+        payload = response.json() or {}
+        if not str(payload.get("access_token") or "").strip():
+            raise RuntimeError("Microsoft sign-in completed without an access token.")
+        return payload
+
+    def _refresh_microsoft_auth_record_if_needed(self, auth_record):
+        if not isinstance(auth_record, dict):
+            return None
+
+        refresh_token = str(auth_record.get("refreshToken") or "").strip()
+        client_id = self._get_microsoft_oauth_client_id()
+        expires_at = parse_utc_iso(auth_record.get("expiresAt"))
+        if not refresh_token or not client_id or not expires_at:
+            return auth_record
+
+        now = datetime.datetime.now(datetime.timezone.utc)
+        if expires_at > now + datetime.timedelta(minutes=5):
+            return auth_record
+
+        try:
+            response = requests.post(
+                self._get_microsoft_oauth_token_endpoint(),
+                data={
+                    "client_id": client_id,
+                    "grant_type": "refresh_token",
+                    "refresh_token": refresh_token,
+                    "scope": " ".join(MICROSOFT_OAUTH_SCOPES),
+                },
+                timeout=20,
+            )
+            if response.status_code != 200:
+                message = self._extract_microsoft_error_message(response)
+                try:
+                    payload = response.json() or {}
+                except Exception:
+                    payload = {}
+                if str(payload.get("error") or "").strip().lower() == "invalid_grant":
+                    self._persist_microsoft_auth_record(None)
+                    return None
+                logging.warning(f"Could not refresh Microsoft token: {message}")
+                return auth_record
+
+            token_payload = response.json() or {}
+            claims = self._decode_jwt_payload(
+                token_payload.get("id_token") or auth_record.get("idToken")
+            )
+            refreshed_auth = self._build_microsoft_auth_record(
+                token_payload,
+                claims,
+                existing_auth=auth_record,
+            )
+            refreshed_auth["signedInAt"] = str(auth_record.get("signedInAt") or utc_now_iso())
+            self._persist_microsoft_auth_record(refreshed_auth)
+            return refreshed_auth
+        except Exception as exc:
+            logging.warning(f"Could not refresh Microsoft auth state: {exc}")
+            return auth_record
+
+    def get_microsoft_auth_state(self):
+        try:
+            auth_record = self._refresh_microsoft_auth_record_if_needed(
+                self._load_microsoft_auth_record()
+            )
+            return {
+                "status": "success",
+                "auth": self._sanitize_microsoft_auth_record(auth_record),
+            }
+        except Exception as e:
+            logging.error(f"Error loading Microsoft auth state: {e}")
+            return {
+                "status": "error",
+                "message": str(e),
+                "auth": self._sanitize_microsoft_auth_record(None),
+            }
+
+    def sign_in_with_microsoft(self):
+        client_id = self._get_microsoft_oauth_client_id()
+        if not client_id:
+            return {
+                "status": "error",
+                "message": (
+                    "Microsoft sign-in is not configured. Add "
+                    f"{MICROSOFT_OAUTH_CLIENT_ID_ENV} to .env and restart the app."
+                ),
+            }
+
+        existing_auth = self._load_microsoft_auth_record()
+        callback_server = self._start_microsoft_oauth_callback_server()
+        callback_port = callback_server.server_address[1]
+        redirect_uri = f"http://127.0.0.1:{callback_port}{MICROSOFT_OAUTH_CALLBACK_PATH}"
+        code_verifier, code_challenge = self._generate_google_pkce_pair()
+        state = secrets.token_urlsafe(32)
+        auth_url = (
+            f"{self._get_microsoft_oauth_auth_endpoint()}?"
+            + urlencode(
+                {
+                    "client_id": client_id,
+                    "redirect_uri": redirect_uri,
+                    "response_type": "code",
+                    "response_mode": "query",
+                    "scope": " ".join(MICROSOFT_OAUTH_SCOPES),
+                    "state": state,
+                    "prompt": "select_account",
+                    "code_challenge": code_challenge,
+                    "code_challenge_method": "S256",
+                }
+            )
+        )
+
+        try:
+            open_result = self.open_url(auth_url)
+            if open_result.get("status") != "success":
+                raise RuntimeError(
+                    open_result.get("message") or "Could not open the browser for Microsoft sign-in."
+                )
+
+            if not callback_server.oauth_event.wait(MICROSOFT_OAUTH_TIMEOUT_SECONDS):
+                return {
+                    "status": "error",
+                    "message": "Microsoft sign-in timed out. Please try again.",
+                }
+
+            result = callback_server.oauth_result or {}
+            error_code = str(result.get("error") or "").strip().lower()
+            if error_code:
+                if error_code == "access_denied":
+                    return {
+                        "status": "cancelled",
+                        "message": "Microsoft sign-in was cancelled.",
+                    }
+                error_detail = str(
+                    result.get("error_description") or result.get("error") or ""
+                ).strip()
+                return {
+                    "status": "error",
+                    "message": error_detail or "Microsoft sign-in did not complete.",
+                }
+
+            if str(result.get("state") or "").strip() != state:
+                return {
+                    "status": "error",
+                    "message": "Microsoft sign-in returned an invalid state token.",
+                }
+
+            code = str(result.get("code") or "").strip()
+            if not code:
+                return {
+                    "status": "error",
+                    "message": "Microsoft sign-in finished without an authorization code.",
+                }
+
+            token_payload = self._exchange_microsoft_auth_code(
+                client_id,
+                code,
+                code_verifier,
+                redirect_uri,
+            )
+            claims = self._decode_jwt_payload(token_payload.get("id_token"))
+            auth_record = self._build_microsoft_auth_record(
+                token_payload,
+                claims,
+                existing_auth=existing_auth,
+            )
+            self._persist_microsoft_auth_record(auth_record)
+            return {
+                "status": "success",
+                "auth": self._sanitize_microsoft_auth_record(auth_record),
+            }
+        except Exception as e:
+            logging.error(f"Error signing in with Microsoft: {e}")
+            return {'status': 'error', 'message': str(e)}
+        finally:
+            try:
+                callback_server.shutdown()
+            except Exception:
+                pass
+            try:
+                callback_server.server_close()
+            except Exception:
+                pass
+
+    def sign_out_microsoft(self):
+        try:
+            self._persist_microsoft_auth_record(None)
+            return {
+                "status": "success",
+                "auth": self._sanitize_microsoft_auth_record(None),
+            }
+        except Exception as e:
+            logging.error(f"Error signing out of Microsoft: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def _build_outlook_scan_start(self, timeframe):
+        now = datetime.datetime.now().astimezone()
+        today = now.date()
+        if str(timeframe or "").strip().lower() == "month":
+            start_local = datetime.datetime.combine(
+                today.replace(day=1),
+                datetime.time.min,
+                tzinfo=now.tzinfo,
+            )
+            return start_local.astimezone(datetime.timezone.utc)
+
+        weekday = today.weekday()
+        days_since_sunday = (weekday + 1) % 7
+        start_date = today - datetime.timedelta(days=days_since_sunday)
+        start_local = datetime.datetime.combine(
+            start_date,
+            datetime.time.min,
+            tzinfo=now.tzinfo,
+        )
+        return start_local.astimezone(datetime.timezone.utc)
+
+    def _get_microsoft_graph_headers(self, access_token, prefer_text=False):
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json",
+        }
+        if prefer_text:
+            headers["Prefer"] = 'outlook.body-content-type="text"'
+        return headers
+
+    def _microsoft_graph_get_json(self, url, access_token, params=None, prefer_text=False):
+        response = requests.get(
+            url,
+            headers=self._get_microsoft_graph_headers(access_token, prefer_text=prefer_text),
+            params=params,
+            timeout=20,
+        )
+        if response.status_code != 200:
+            raise RuntimeError(self._extract_microsoft_error_message(response))
+        payload = response.json() or {}
+        return payload if isinstance(payload, dict) else {}
+
+    def _build_outlook_message_summary(self, message):
+        raw_sender = message.get("from") or {}
+        email_address = raw_sender.get("emailAddress") if isinstance(raw_sender, dict) else {}
+        email_address = email_address if isinstance(email_address, dict) else {}
+        return {
+            "id": str(message.get("id") or "").strip(),
+            "subject": str(message.get("subject") or "").strip(),
+            "bodyPreview": str(message.get("bodyPreview") or "").strip(),
+            "receivedDateTime": str(message.get("receivedDateTime") or "").strip(),
+            "webLink": str(message.get("webLink") or "").strip(),
+            "internetMessageId": str(message.get("internetMessageId") or "").strip(),
+            "hasAttachments": bool(message.get("hasAttachments")),
+            "from": {
+                "name": str(email_address.get("name") or "").strip(),
+                "address": str(email_address.get("address") or "").strip(),
+            },
+        }
+
+    def _outlook_message_candidate_score(self, message_summary):
+        summary = message_summary if isinstance(message_summary, dict) else {}
+        subject = str(summary.get("subject") or "")
+        preview = str(summary.get("bodyPreview") or "")
+        sender = str((summary.get("from") or {}).get("address") or "")
+        combined = f"{subject}\n{preview}".lower()
+        if not combined.strip():
+            return 0
+
+        score = 1
+        if re.search(r"\b\d{5,}\b", combined):
+            score += 2
+        if re.search(r"[A-Z]:\\\\", f"{subject}\n{preview}"):
+            score += 2
+        if re.search(
+            r"\b(rfi|submittal|record drawings|record set|coordination|meeting|bulletin|revision|dd\d+|cd\d+|ifp|ifc|survey|due|deliverable)\b",
+            combined,
+        ):
+            score += 2
+        if re.search(r"\b(review|comments|deadline|schedule|submit|issuance|issue)\b", combined):
+            score += 1
+        if summary.get("hasAttachments"):
+            score += 1
+        if "noreply" in sender.lower() and score < 3:
+            return 0
+        return score
+
+    def _list_outlook_inbox_messages(self, access_token, timeframe, limit=OUTLOOK_SCAN_FETCH_LIMIT):
+        start_utc = self._build_outlook_scan_start(timeframe)
+        url = f"{MICROSOFT_GRAPH_API_BASE}/me/mailFolders/inbox/messages"
+        params = {
+            "$top": 50,
+            "$orderby": "receivedDateTime desc",
+            "$filter": f"receivedDateTime ge {start_utc.isoformat().replace('+00:00', 'Z')}",
+            "$select": ",".join(
+                [
+                    "id",
+                    "subject",
+                    "bodyPreview",
+                    "receivedDateTime",
+                    "webLink",
+                    "internetMessageId",
+                    "from",
+                    "hasAttachments",
+                ]
+            ),
+        }
+        messages = []
+        has_more = False
+        next_url = url
+        next_params = params
+        while next_url and len(messages) < max(int(limit or 0), 1):
+            payload = self._microsoft_graph_get_json(
+                next_url,
+                access_token,
+                params=next_params,
+                prefer_text=False,
+            )
+            batch = payload.get("value") or []
+            if not isinstance(batch, list):
+                batch = []
+            remaining = max(int(limit or 0), 1) - len(messages)
+            messages.extend(batch[:remaining])
+            next_url = str(payload.get("@odata.nextLink") or "").strip()
+            next_params = None
+            has_more = bool(next_url)
+            if not batch:
+                break
+        return messages, has_more
+
+    def _html_to_plain_text(self, value):
+        raw = str(value or "")
+        if not raw:
+            return ""
+        stripped = re.sub(r"(?is)<(script|style).*?>.*?</\1>", " ", raw)
+        stripped = re.sub(r"(?i)<br\s*/?>", "\n", stripped)
+        stripped = re.sub(r"(?i)</(p|div|li|tr|h[1-6])>", "\n", stripped)
+        stripped = re.sub(r"(?s)<[^>]+>", " ", stripped)
+        text = html.unescape(stripped)
+        text = re.sub(r"[ \t\f\v]+", " ", text)
+        text = re.sub(r"\r?\n\s*", "\n", text)
+        return text.strip()
+
+    def _get_outlook_message_body_text(self, access_token, message_id):
+        payload = self._microsoft_graph_get_json(
+            f"{MICROSOFT_GRAPH_API_BASE}/me/messages/{message_id}",
+            access_token,
+            params={
+                "$select": ",".join(
+                    [
+                        "id",
+                        "subject",
+                        "body",
+                        "bodyPreview",
+                        "receivedDateTime",
+                        "webLink",
+                        "internetMessageId",
+                        "from",
+                        "hasAttachments",
+                    ]
+                )
+            },
+            prefer_text=True,
+        )
+        body = payload.get("body") if isinstance(payload, dict) else {}
+        body = body if isinstance(body, dict) else {}
+        body_content = str(body.get("content") or "").strip()
+        if not body_content:
+            body_content = str(payload.get("bodyPreview") or "").strip()
+        if body.get("contentType") == "html":
+            body_content = self._html_to_plain_text(body_content)
+        return self._build_outlook_message_summary(payload), body_content
+
+    def scan_outlook_inbox(self, payload, api_key, user_name, discipline):
+        try:
+            request_payload = payload or {}
+            if isinstance(request_payload, str):
+                request_payload = json.loads(request_payload)
+            if not isinstance(request_payload, dict):
+                request_payload = {}
+            timeframe = str(request_payload.get("timeframe") or "week").strip().lower()
+            if timeframe not in ("week", "month"):
+                timeframe = "week"
+
+            auth_record = self._refresh_microsoft_auth_record_if_needed(
+                self._load_microsoft_auth_record()
+            )
+            access_token = str((auth_record or {}).get("accessToken") or "").strip()
+            if not access_token:
+                return {
+                    "status": "error",
+                    "message": "Sign in with Microsoft before scanning Outlook inbox messages.",
+                    "items": [],
+                    "candidateCount": 0,
+                    "scannedCount": 0,
+                    "truncated": False,
+                    "timeframe": timeframe,
+                }
+
+            raw_messages, has_more = self._list_outlook_inbox_messages(
+                access_token,
+                timeframe,
+                limit=OUTLOOK_SCAN_FETCH_LIMIT,
+            )
+            message_summaries = [
+                self._build_outlook_message_summary(message)
+                for message in raw_messages
+            ]
+
+            candidate_items = []
+            items = []
+            for summary in message_summaries:
+                score = self._outlook_message_candidate_score(summary)
+                if score <= 0:
+                    items.append({
+                        "message": summary,
+                        "analysisStatus": "skipped",
+                        "analysisError": "Message did not look like project work.",
+                        "extraction": None,
+                    })
+                    continue
+                candidate_items.append(summary)
+
+            truncated = has_more or len(candidate_items) > OUTLOOK_SCAN_AI_LIMIT
+            for summary in candidate_items[:OUTLOOK_SCAN_AI_LIMIT]:
+                try:
+                    hydrated_summary, body_text = self._get_outlook_message_body_text(
+                        access_token,
+                        summary.get("id"),
+                    )
+                    email_text = "\n".join(
+                        [
+                            f"Subject: {hydrated_summary.get('subject') or ''}".strip(),
+                            f"From: {(hydrated_summary.get('from') or {}).get('name') or ''} <{(hydrated_summary.get('from') or {}).get('address') or ''}>".strip(),
+                            f"Received: {hydrated_summary.get('receivedDateTime') or ''}".strip(),
+                            "",
+                            body_text.strip(),
+                        ]
+                    ).strip()
+                    if not email_text:
+                        items.append({
+                            "message": hydrated_summary,
+                            "analysisStatus": "skipped",
+                            "analysisError": "Message body was empty.",
+                            "extraction": None,
+                        })
+                        continue
+                    extraction = self._extract_project_data_from_email_text(
+                        email_text,
+                        api_key,
+                        user_name,
+                        discipline,
+                    )
+                    items.append({
+                        "message": hydrated_summary,
+                        "analysisStatus": "success",
+                        "analysisError": "",
+                        "extraction": extraction,
+                    })
+                except Exception as exc:
+                    items.append({
+                        "message": summary,
+                        "analysisStatus": "error",
+                        "analysisError": str(exc),
+                        "extraction": None,
+                    })
+
+            return {
+                "status": "success",
+                "items": items,
+                "candidateCount": len(candidate_items),
+                "scannedCount": len(message_summaries),
+                "truncated": truncated,
+                "timeframe": timeframe,
+            }
+        except json.JSONDecodeError:
+            return {
+                "status": "error",
+                "message": "Invalid Outlook scan payload.",
+                "items": [],
+                "candidateCount": 0,
+                "scannedCount": 0,
+                "truncated": False,
+                "timeframe": "week",
+            }
+        except Exception as e:
+            logging.error(f"Error scanning Outlook inbox: {e}")
+            return {
+                "status": "error",
+                "message": str(e),
+                "items": [],
+                "candidateCount": 0,
+                "scannedCount": 0,
+                "truncated": False,
+                "timeframe": "week",
+            }
+
     def get_installed_autocad_versions(self):
         """Scans for installed AutoCAD versions in the typical directory."""
         versions = []
@@ -2982,6 +3753,150 @@ Return ONLY the JSON object.
                 return {'status': 'error',
                         'message': 'API rate limit exceeded. Please wait a moment and try again.'}
             return {'status': 'error', 'message': f"AI error: {msg}"}
+
+    def _resolve_google_ai_api_key(self, api_key):
+        final_api_key = (api_key or "").strip()
+        if not final_api_key:
+            final_api_key = (os.getenv("GOOGLE_API_KEY") or "").strip()
+        if not final_api_key:
+            raise RuntimeError(
+                "AI API key is not configured. Please provide it in the app settings or set GOOGLE_API_KEY in your .env file."
+            )
+        return final_api_key
+
+    def _build_email_analysis_prompt(self, email_text, user_name, discipline):
+        current_date = datetime.date.today().strftime("%m/%d/%Y")
+        disciplines_str = ', '.join(discipline) if isinstance(
+            discipline, list) else (discipline or 'Engineering')
+        return f"""
+You are an intelligent assistant for {user_name}, a(n) {disciplines_str} engineering project manager. Your task is to analyze an email and extract specific project details. Focus ONLY on the primary {disciplines_str} engineering tasks mentioned. Ignore tasks for other disciplines.
+Analyze the following email text and extract the information into a valid JSON object with the following keys: "id", "name", "due", "path", "deliverable", "tasks", "notes".
+- "id": Find a project number or project ID (e.g., "250597", "P-12345", "Job #1042"). Look in the subject line, headers, and body. This could be called a job number, project number, project ID, or similar. If none, leave it empty.
+- "name": Determine the project name, typically including the client and address or building name (e.g., "BofA, 22004 Sherman Way, Canoga Park, CA"). Include enough detail to uniquely identify the project. If no formal name is found, compose one from the client name and location mentioned.
+- "due": Find the due date and format it as "MM/DD/YY". The current date is {current_date}. If the year is not specified in the email, assume the current year or the next year if the date would be in the past. Ensure the due date is on or after today. If multiple dates, choose the most relevant upcoming one.
+- "path": Find the main project file path (e.g., "M:\\\\Gensler\\\\...").
+- "deliverable": Infer the deliverable name from the email if possible. Prefer concise, standardized names when present (for example: DD60, DD90, CD60, CD90, CD100, CDF, RFI, RFI #2, Submittal, Lighting Submittal, Controls Submittal, Record Set, Record Drawings, IFP, Site Survey, Survey Report, ASR, ASR #2, PCC, PCC #3, Bulletin #2, Coordination, Meeting, Revision). If no deliverable is clear, leave it empty.
+- "tasks": Create a JSON array of strings listing only the key {disciplines_str} engineering action items. Be concise. Examples: ["Update CAD per architect's comments", "Fill out permit forms", "Prepare binded CADs for IFP submission"].
+- "notes": Provide a brief, one-sentence summary of the email's main request.
+If a piece of information is not found, the value should be an empty string "" for strings, or an empty array [] for tasks.
+Here is the email:
+---
+{email_text}
+---
+Return ONLY the JSON object.
+""".strip()
+
+    def _normalize_email_project_data(self, project_data):
+        if isinstance(project_data, list):
+            project_data = project_data[0] if project_data else {}
+        if not isinstance(project_data, dict):
+            project_data = {}
+        project_data.setdefault("id", "")
+        project_data.setdefault("name", "")
+        project_data.setdefault("due", "")
+        project_data.setdefault("path", "")
+        project_data.setdefault("deliverable", "")
+        project_data.setdefault("tasks", [])
+        project_data.setdefault("notes", "")
+        normalized_tasks = []
+        if isinstance(project_data.get("tasks"), list):
+            for task in project_data["tasks"]:
+                if isinstance(task, dict):
+                    text = str(task.get("text") or "").strip()
+                    done = bool(task.get("done"))
+                    links = task.get("links") if isinstance(task.get("links"), list) else []
+                else:
+                    text = str(task).strip()
+                    done = False
+                    links = []
+                if not text:
+                    continue
+                normalized_tasks.append({
+                    "text": text,
+                    "done": done,
+                    "links": links,
+                })
+        project_data["tasks"] = normalized_tasks
+        return project_data
+
+    def _extract_project_data_from_email_text(self, email_text, api_key, user_name, discipline):
+        final_api_key = self._resolve_google_ai_api_key(api_key)
+        prompt = self._build_email_analysis_prompt(email_text, user_name, discipline)
+        try:
+            self._ensure_aiohttp()
+            client = genai.Client(
+                api_key=final_api_key,
+                http_options=types.HttpOptions(timeout=120000),
+            )
+            response = client.models.generate_content(
+                model="gemini-3-flash-preview",
+                contents=[
+                    types.Content(
+                        role="user",
+                        parts=[types.Part.from_text(text=prompt)],
+                    ),
+                ],
+                config=types.GenerateContentConfig(
+                    temperature=0,
+                    response_mime_type="application/json",
+                ),
+            )
+
+            logging.debug(f"AI response object: {response}")
+            raw_text = response.text
+            if raw_text is None:
+                if hasattr(response, 'parts') and response.parts:
+                    raw_text = ''.join(
+                        part.text for part in response.parts
+                        if hasattr(part, 'text') and part.text
+                    )
+                if not raw_text:
+                    logging.error(f"AI returned empty response. Full response: {response}")
+                    raise RuntimeError('AI returned an empty response. Please try again.')
+
+            cleaned = raw_text.strip()
+            if not cleaned:
+                raise RuntimeError('AI returned an empty response. Please try again.')
+
+            logging.debug(f"AI response text: {cleaned[:500]}...")
+            return self._normalize_email_project_data(json.loads(cleaned))
+        except json.JSONDecodeError as e:
+            logging.error(f"Failed to parse AI response as JSON: {e}")
+            raise RuntimeError('AI returned invalid JSON. Please try again.')
+        except Exception as e:
+            msg = str(e)
+            lower = msg.lower()
+            logging.error(f"Error processing email with AI: {type(e).__name__}: {e}")
+            if ("api key expired" in lower or
+                "api_key_invalid" in lower or
+                    "invalid api key" in lower):
+                raise RuntimeError(
+                    'Your Google API key is expired/invalid. '
+                    'Create a new key in Google AI Studio, '
+                    'update your settings, then try again.'
+                )
+            if "model" in lower and ("not found" in lower or "does not exist" in lower):
+                raise RuntimeError(
+                    'AI model not available. The Gemini 3 Flash model may not be accessible with your API key.'
+                )
+            if "quota" in lower or "rate limit" in lower:
+                raise RuntimeError('API rate limit exceeded. Please wait a moment and try again.')
+            raise RuntimeError(f"AI error: {msg}")
+
+    def process_email_with_ai(self, email_text, api_key, user_name, discipline):
+        """
+        Processes email text using Google GenAI to extract project details.
+        """
+        try:
+            project_data = self._extract_project_data_from_email_text(
+                email_text,
+                api_key,
+                user_name,
+                discipline,
+            )
+            return {'status': 'success', 'data': project_data}
+        except Exception as e:
+            return {'status': 'error', 'message': str(e)}
 
     def get_tasks(self):
         """Reads and returns the content of tasks.json."""

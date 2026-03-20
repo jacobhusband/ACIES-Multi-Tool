@@ -27,7 +27,7 @@
 <body>
     <div id="appLoader" class="app-loader" role="status" aria-live="polite" aria-label="Loading">
         <div class="app-loader-content">
-            <img src="./acies.png" alt="ACIES" class="app-loader-logo" onerror="this.style.display='none'" />
+            <img src="./assets/acies.png" alt="ACIES" class="app-loader-logo" onerror="this.style.display='none'" />
             <div class="app-loader-dots" aria-hidden="true">
                 <span></span>
                 <span></span>
@@ -37,19 +37,8 @@
     </div>
     <header class="app-header">
         <div class="header-start">
-            <div class="version-chip header-version-corner" id="versionChip" title="Current version">
-                <span class="version-dot" id="versionDot"></span>
-                <span id="appVersionLabel">v0.0.0</span>
-                <button class="icon-btn mini" id="checkUpdateBtn" aria-label="Check for updates"
-                    title="Check for updates">
-                    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
-                        <path fill="currentColor"
-                            d="M12 4a8 8 0 1 0 7.45 10.67 1 1 0 1 1 1.9.66A10 10 0 1 1 12 2a1 1 0 1 1 0 2Zm6.71-3.29a1 1 0 0 0-1.42 0l-3 3a1 1 0 0 0 1.42 1.42L17 5.41V10a1 1 0 1 0 2 0V3.41l1.29 1.3a1 1 0 0 0 1.42-1.42Z" />
-                    </svg>
-                </button>
-            </div>
             <div class="brand">
-                <img src="./acies.png" alt="ACIES" class="logo-img" onerror="this.style.display='none'" />
+                <img src="./assets/acies.png" alt="ACIES" class="logo-img" onerror="this.style.display='none'" />
             </div>
         </div>
         <!-- Centered navigation -->
@@ -62,6 +51,17 @@
             </nav>
         </div>
         <div class="header-actions">
+            <div class="version-chip header-version-corner" id="versionChip" title="Current version">
+                <span class="version-dot" id="versionDot"></span>
+                <span id="appVersionLabel">v0.0.0</span>
+                <button class="icon-btn mini" id="checkUpdateBtn" aria-label="Check for updates"
+                    title="Check for updates">
+                    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+                        <path fill="currentColor"
+                            d="M12 4a8 8 0 1 0 7.45 10.67 1 1 0 1 1 1.9.66A10 10 0 1 1 12 2a1 1 0 1 1 0 2Zm6.71-3.29a1 1 0 0 0-1.42 0l-3 3a1 1 0 0 0 1.42 1.42L17 5.41V10a1 1 0 1 0 2 0V3.41l1.29 1.3a1 1 0 0 0 1.42-1.42Z" />
+                    </svg>
+                </button>
+            </div>
             <button class="btn btn-primary tiny" id="appUpdateBtn" style="display:none;">Update</button>
             <button class="icon-btn theme-toggle" id="themeToggleBtn" aria-label="Toggle theme"
                 title="Toggle light/dark mode">
@@ -661,6 +661,24 @@
                             </div>
                             <div class="tool-card-status"></div>
                         </div>
+                        <div id="toolBackupDrawings" class="tool-card" role="button" tabindex="0">
+                            <div class="tool-card-content">
+                                <div class="tool-icon">
+                                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                        stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                        <polyline points="7 10 12 15 17 10"></polyline>
+                                        <line x1="12" y1="15" x2="12" y2="3"></line>
+                                    </svg>
+                                </div>
+                                <div class="tool-card-header">Backup Drawings</div>
+                                <div class="tool-card-body">
+                                    Archive your configured discipline folders and Xrefs into
+                                    Archive\current-datetime inside the selected project.
+                                </div>
+                            </div>
+                            <div class="tool-card-status"></div>
+                        </div>
                     </div>
                 </div>
 
@@ -1080,19 +1098,23 @@
                     Connect a Microsoft 365 account to scan Inbox messages for missing deliverables.
                 </div>
                 <div class="outlook-scan-toolbar">
-                    <label class="label" for="outlookScanTimeframe">Timeframe</label>
-                    <select id="outlookScanTimeframe" class="input">
-                        <option value="week">This week</option>
-                        <option value="month">This month</option>
-                    </select>
+                    <label class="label" for="outlookScanDate">Day</label>
+                    <input id="outlookScanDate" type="date" class="input" />
                     <button type="button" class="btn tiny" id="outlookScanConnectBtn">Connect Outlook</button>
                     <button type="button" class="btn tiny" id="outlookScanSignOutBtn">Sign out</button>
                     <button type="button" class="btn-primary tiny" id="outlookScanRunBtn">Scan inbox</button>
                 </div>
             </div>
             <div class="outlook-scan-results">
-                <div id="outlookScanSummary" class="sync-auth-status">No Outlook scan has been run yet.</div>
-                <div id="outlookScanMeta" class="tiny muted">Choose This week or This month, then run a scan.</div>
+                <div id="outlookScanProgress" class="outlook-scan-progress">
+                    <div id="outlookScanSummary" class="sync-auth-status">No Outlook scan has been run yet.</div>
+                    <div id="outlookScanMeta" class="tiny muted">Choose a day, then run a scan.</div>
+                </div>
+                <details id="outlookScanReport" class="outlook-scan-report" hidden>
+                    <summary>Scan report</summary>
+                    <div id="outlookScanReportSummary" class="outlook-scan-report-summary"></div>
+                    <div id="outlookScanReportLog" class="outlook-scan-report-log"></div>
+                </details>
                 <div id="outlookScanEmpty" class="tiny muted">
                     Suggestions and skipped emails will appear here after a scan.
                 </div>

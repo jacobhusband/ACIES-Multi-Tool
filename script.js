@@ -1376,6 +1376,7 @@ const WORKROOM_TEMPLATE_TOOL_IDS = new Set([
 const WORKROOM_LAUNCH_CONTEXT_TOOL_IDS = new Set([
   ...WORKROOM_CAD_TOOL_IDS,
   ...WORKROOM_TEMPLATE_TOOL_IDS,
+  "toolBackupDrawings",
 ]);
 const WORKROOM_HIDDEN_TOOL_IDS = new Set([]);
 const MAX_HOURS_PER_DAY = 24;
@@ -2921,8 +2922,13 @@ function renderTimesheetSuggestions() {
     return;
   }
 
+  const projectIdsWithEntries = new Set();
   const summaryEntriesByProject = new Map();
   entries.forEach((entry) => {
+    const projectIdKey = String(entry?.projectId || "")
+      .trim()
+      .toLowerCase();
+    if (projectIdKey) projectIdsWithEntries.add(projectIdKey);
     if (!isProjectSummaryEntry(entry)) return;
     const key = getTimesheetEntryMatchKey(entry);
     if (!key) return;
@@ -2976,15 +2982,18 @@ function renderTimesheetSuggestions() {
     const summaryEntries = matchKey
       ? summaryEntriesByProject.get(matchKey) || []
       : [];
-    const entryStatus = getSummaryEntryStatus(
-      summaryEntries,
-      deliverableNames
-    );
+    const entryStatus = getSummaryEntryStatus(summaryEntries, deliverableNames);
+    const projectIdKey = String(group.project?.id || "")
+      .trim()
+      .toLowerCase();
+    const hasProjectEntry = projectIdKey
+      ? projectIdsWithEntries.has(projectIdKey)
+      : entryStatus.count > 0;
     const card = createSuggestionCard(
       group.project,
       deliverableNames,
       group.earliestDue,
-      entryStatus
+      { ...entryStatus, hasProjectEntry }
     );
     container.appendChild(card);
   });
@@ -3032,8 +3041,9 @@ function createSuggestionCard(
   const {
     count = 0,
     needsUpdate = false,
+    hasProjectEntry = false,
   } = entryStatus;
-  const showAddedStyle = count > 0 && !needsUpdate;
+  const showAddedStyle = hasProjectEntry;
   const card = el("div", {
     className: `ts-suggestion-card ${showAddedStyle ? "added" : ""}`,
   });
@@ -3084,7 +3094,7 @@ function createSuggestionCard(
         textContent: "Click to add another entry",
       })
     );
-  } else if (count > 0) {
+  } else if (hasProjectEntry) {
     card.appendChild(
       el("div", {
         className: "ts-suggestion-added",
@@ -5427,6 +5437,29 @@ async function deleteManagedSavedEmailRef(emailRef) {
 async function openDeliverableEmailRef(emailRef) {
   const ref = normalizeEmailRef(emailRef);
   if (!ref) return false;
+  const source = String(ref.source || "").trim().toLowerCase();
+  if (
+    source === "outlook-desktop" &&
+    ref.messageId &&
+    window.pywebview?.api?.open_outlook_desktop_message
+  ) {
+    try {
+      const res = await window.pywebview.api.open_outlook_desktop_message(
+        ref.messageId
+      );
+      if (res && res.status === "error") {
+        throw new Error(res.message || "Unable to open Desktop Outlook email.");
+      }
+      return true;
+    } catch (e) {
+      toast("Could not open Desktop Outlook email.");
+      return false;
+    }
+  }
+  if (source === "outlook-desktop" && ref.messageId) {
+    toast("Desktop Outlook message opening is unavailable in this environment.");
+    return false;
+  }
   const localPath = getEmailRefLocalPath(ref);
   if (localPath && window.pywebview?.api?.open_path) {
     try {
@@ -5947,19 +5980,182 @@ const DEFAULT_MICROSOFT_AUTH_STATE = {
   expiresAt: "",
   tenantId: "",
   hasRefreshToken: false,
+  outlookScan: {
+    preferredSource: "none",
+    desktopAvailable: false,
+    desktopReason: "",
+  },
 };
+function formatLocalDateInputValue(date = new Date()) {
+  const safeDate = date instanceof Date && !isNaN(date) ? date : new Date();
+  const year = safeDate.getFullYear();
+  const month = String(safeDate.getMonth() + 1).padStart(2, "0");
+  const day = String(safeDate.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getTodayLocalDateInputValue() {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return formatLocalDateInputValue(today);
+}
+
+function normalizeOutlookScanDateInput(value = "") {
+  const todayValue = getTodayLocalDateInputValue();
+  const raw = String(value || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return todayValue;
+  const [year, month, day] = raw.split("-").map((token) => Number(token));
+  const parsed = new Date(year, month - 1, day);
+  if (
+    !(parsed instanceof Date) ||
+    isNaN(parsed) ||
+    parsed.getFullYear() !== year ||
+    parsed.getMonth() !== month - 1 ||
+    parsed.getDate() !== day
+  ) {
+    return todayValue;
+  }
+  const normalized = formatLocalDateInputValue(parsed);
+  return normalized > todayValue ? todayValue : normalized;
+}
+
+function parseOutlookScanDateValue(value = "") {
+  const normalized = normalizeOutlookScanDateInput(value);
+  const [year, month, day] = normalized.split("-").map((token) => Number(token));
+  return new Date(year, month - 1, day, 0, 0, 0, 0);
+}
+
+function createEmptyOutlookScanProgress() {
+  return {
+    active: false,
+    stage: "",
+    message: "",
+    source: "",
+    timeframe: "",
+    scanDate: "",
+    totalEmails: null,
+    processedEmails: null,
+    includedEmails: null,
+    skippedEmails: null,
+    deliverablesInPeriod: null,
+    relevantEmails: null,
+    threadsDetected: null,
+    dedupedEmailCount: null,
+    dedupeSkippedEmailCount: null,
+    receivedAt: "",
+  };
+}
+
+function normalizeOutlookScanCount(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  return Math.max(0, Math.trunc(numeric));
+}
+
+function normalizeOutlookScanProgress(raw = {}, previous = null) {
+  const base =
+    previous && typeof previous === "object"
+      ? previous
+      : createEmptyOutlookScanProgress();
+  const stage =
+    raw?.stage !== undefined
+      ? String(raw.stage || "").trim().toLowerCase()
+      : String(base.stage || "").trim().toLowerCase();
+  const message =
+    raw?.message !== undefined
+      ? String(raw.message || "").trim()
+      : String(base.message || "").trim();
+  const source =
+    raw?.source !== undefined
+      ? String(raw.source || "").trim()
+      : String(base.source || "").trim();
+  const scanDate =
+    raw?.scanDate !== undefined
+      ? normalizeOutlookScanDateInput(raw.scanDate || "")
+      : String(base.scanDate || "").trim();
+  const timeframe =
+    raw?.timeframe !== undefined
+      ? String(raw.timeframe || "").trim().toLowerCase()
+      : String(base.timeframe || "").trim().toLowerCase();
+  const active =
+    typeof raw?.active === "boolean"
+      ? raw.active
+      : stage
+        ? !["done", "error"].includes(stage)
+        : !!base.active;
+  const receivedAt =
+    raw?.receivedAt !== undefined
+      ? String(raw.receivedAt || "").trim()
+      : String(base.receivedAt || "").trim();
+  return {
+    ...createEmptyOutlookScanProgress(),
+    ...base,
+    active,
+    stage,
+    message,
+    source,
+    timeframe,
+    scanDate,
+    totalEmails:
+      raw?.totalEmails !== undefined
+        ? normalizeOutlookScanCount(raw.totalEmails)
+        : normalizeOutlookScanCount(base.totalEmails),
+    processedEmails:
+      raw?.processedEmails !== undefined
+        ? normalizeOutlookScanCount(raw.processedEmails)
+        : normalizeOutlookScanCount(base.processedEmails),
+    includedEmails:
+      raw?.includedEmails !== undefined
+        ? normalizeOutlookScanCount(raw.includedEmails)
+        : normalizeOutlookScanCount(base.includedEmails),
+    skippedEmails:
+      raw?.skippedEmails !== undefined
+        ? normalizeOutlookScanCount(raw.skippedEmails)
+        : normalizeOutlookScanCount(base.skippedEmails),
+    deliverablesInPeriod:
+      raw?.deliverablesInPeriod !== undefined
+        ? normalizeOutlookScanCount(raw.deliverablesInPeriod)
+        : normalizeOutlookScanCount(base.deliverablesInPeriod),
+    relevantEmails:
+      raw?.relevantEmails !== undefined
+        ? normalizeOutlookScanCount(raw.relevantEmails)
+        : normalizeOutlookScanCount(base.relevantEmails),
+    threadsDetected:
+      raw?.threadsDetected !== undefined
+        ? normalizeOutlookScanCount(raw.threadsDetected)
+        : normalizeOutlookScanCount(base.threadsDetected),
+    dedupedEmailCount:
+      raw?.dedupedEmailCount !== undefined
+        ? normalizeOutlookScanCount(raw.dedupedEmailCount)
+        : normalizeOutlookScanCount(base.dedupedEmailCount),
+    dedupeSkippedEmailCount:
+      raw?.dedupeSkippedEmailCount !== undefined
+        ? normalizeOutlookScanCount(raw.dedupeSkippedEmailCount)
+        : normalizeOutlookScanCount(base.dedupeSkippedEmailCount),
+    receivedAt,
+  };
+}
+
 const DEFAULT_OUTLOOK_SCAN_STATE = {
-  timeframe: "week",
+  scanDate: getTodayLocalDateInputValue(),
   busy: false,
   lastResult: null,
   suggestions: [],
   skipped: [],
   dismissedKeys: [],
+  progress: createEmptyOutlookScanProgress(),
+  progressLog: [],
+  reportOpen: false,
+  reportStats: null,
 };
 let googleAuthState = { ...DEFAULT_GOOGLE_AUTH_STATE };
 let googleAuthBusy = false;
 let microsoftAuthState = { ...DEFAULT_MICROSOFT_AUTH_STATE };
 let microsoftAuthBusy = false;
+let microsoftAuthIssueMessage = "";
+let microsoftAdminConsentRequired = false;
+let microsoftConsentDiagnosticRecommended = false;
 let outlookScanState = { ...DEFAULT_OUTLOOK_SCAN_STATE };
 let cloudSyncState = { ...DEFAULT_CLOUD_SYNC_STATE };
 let cloudSyncConfig = null;
@@ -6512,7 +6708,62 @@ function normalizeMicrosoftAuthState(raw = {}) {
     expiresAt: String(raw?.expiresAt || "").trim(),
     tenantId: String(raw?.tenantId || "").trim(),
     hasRefreshToken: !!raw?.hasRefreshToken,
+    outlookScan: {
+      ...DEFAULT_MICROSOFT_AUTH_STATE.outlookScan,
+      ...(raw?.outlookScan && typeof raw.outlookScan === "object"
+        ? raw.outlookScan
+        : {}),
+      preferredSource:
+        String(raw?.outlookScan?.preferredSource || "none").trim() || "none",
+      desktopAvailable: !!raw?.outlookScan?.desktopAvailable,
+      desktopReason: String(raw?.outlookScan?.desktopReason || "").trim(),
+    },
   };
+}
+
+function getOutlookScanSourceLabel(source = "") {
+  const normalized = String(source || "").trim().toLowerCase();
+  if (normalized === "desktop-outlook") return "Desktop Outlook";
+  if (normalized === "microsoft-graph") return "Microsoft 365";
+  return "Outlook";
+}
+
+function isMicrosoftAdminConsentErrorMessage(message = "") {
+  const normalized = String(message || "").trim().toLowerCase();
+  if (!normalized) return false;
+  return (
+    normalized.includes("entra admin approval") ||
+    normalized.includes("need admin approval") ||
+    normalized.includes("admin approval") ||
+    normalized.includes("admin consent")
+  );
+}
+
+function isMicrosoftConsentPolicyErrorMessage(message = "") {
+  const normalized = String(message || "").trim().toLowerCase();
+  if (!normalized) return false;
+  return (
+    normalized.includes("tenant consent policy") ||
+    normalized.includes("retry minimal consent") ||
+    normalized.includes("permission classifications") ||
+    normalized.includes("user consent settings")
+  );
+}
+
+function setMicrosoftAuthIssue(message = "") {
+  microsoftAuthIssueMessage = String(message || "").trim();
+  microsoftAdminConsentRequired = isMicrosoftAdminConsentErrorMessage(
+    microsoftAuthIssueMessage
+  );
+  microsoftConsentDiagnosticRecommended = isMicrosoftConsentPolicyErrorMessage(
+    microsoftAuthIssueMessage
+  );
+}
+
+function clearMicrosoftAuthIssue() {
+  microsoftAuthIssueMessage = "";
+  microsoftAdminConsentRequired = false;
+  microsoftConsentDiagnosticRecommended = false;
 }
 
 function getMicrosoftAuthDisplayName(state = microsoftAuthState) {
@@ -6526,44 +6777,322 @@ function getOutlookScanVisibleSuggestions() {
   );
 }
 
+function setOutlookScanProgress(
+  payload = {},
+  { reset = false, appendLog = true } = {}
+) {
+  const previous = reset
+    ? createEmptyOutlookScanProgress()
+    : normalizeOutlookScanProgress(outlookScanState.progress || {});
+  const next = normalizeOutlookScanProgress(
+    {
+      ...(payload || {}),
+      receivedAt: payload?.receivedAt || new Date().toISOString(),
+    },
+    previous
+  );
+  outlookScanState.progress = next;
+  if (reset) {
+    outlookScanState.progressLog = [];
+  }
+  if (appendLog && (next.stage || next.message)) {
+    outlookScanState.progressLog = [
+      ...(Array.isArray(outlookScanState.progressLog)
+        ? outlookScanState.progressLog
+        : []),
+      { ...next },
+    ].slice(-100);
+  }
+  return next;
+}
+
+function formatOutlookScanTimeframeLabel(timeframe = "") {
+  return String(timeframe || "").trim().toLowerCase() === "month"
+    ? "This month"
+    : "This week";
+}
+
+function formatOutlookScanSelectedDayLabel(scanDate = "", timeframe = "") {
+  const normalized = normalizeOutlookScanDateInput(scanDate || "");
+  if (normalized) {
+    return parseOutlookScanDateValue(normalized).toLocaleDateString([], {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+  }
+  return formatOutlookScanTimeframeLabel(timeframe);
+}
+
+function formatOutlookScanStageLabel(stage = "") {
+  const key = String(stage || "").trim().toLowerCase();
+  const labels = {
+    starting: "Starting scan",
+    listing: "Loading inbox",
+    fallback: "Switching source",
+    hydrating: "Reading emails",
+    preparing_ai: "Preparing AI review",
+    reviewing_ai: "Reviewing with AI",
+    matching: "Matching suggestions",
+    done: "Scan complete",
+    error: "Scan failed",
+  };
+  return labels[key] || "Outlook scan";
+}
+
+function buildOutlookScanProgressParts(progress = {}) {
+  const parts = [];
+  const totalEmails = normalizeOutlookScanCount(progress?.totalEmails);
+  const processedEmails = normalizeOutlookScanCount(progress?.processedEmails);
+  const includedEmails = normalizeOutlookScanCount(progress?.includedEmails);
+  const skippedEmails = normalizeOutlookScanCount(progress?.skippedEmails);
+  const deliverablesInPeriod = normalizeOutlookScanCount(
+    progress?.deliverablesInPeriod
+  );
+  const relevantEmails = normalizeOutlookScanCount(progress?.relevantEmails);
+  const threadsDetected = normalizeOutlookScanCount(progress?.threadsDetected);
+  const dedupedEmailCount = normalizeOutlookScanCount(progress?.dedupedEmailCount);
+  const dedupeSkippedEmailCount = normalizeOutlookScanCount(
+    progress?.dedupeSkippedEmailCount
+  );
+
+  if (totalEmails !== null && processedEmails !== null && totalEmails > 0) {
+    parts.push(
+      `${Math.min(processedEmails, totalEmails)} of ${totalEmails} emails processed`
+    );
+  } else if (totalEmails !== null) {
+    parts.push(`${totalEmails} email${totalEmails === 1 ? "" : "s"} found`);
+  } else if (processedEmails !== null) {
+    parts.push(
+      `${processedEmails} email${processedEmails === 1 ? "" : "s"} processed`
+    );
+  }
+  if (includedEmails !== null) {
+    parts.push(
+      `${includedEmails} email${includedEmails === 1 ? "" : "s"} included in AI review`
+    );
+  }
+  if (skippedEmails !== null && skippedEmails > 0) {
+    parts.push(`${skippedEmails} skipped`);
+  }
+  if (deliverablesInPeriod !== null) {
+    parts.push(
+      `${deliverablesInPeriod} deliverable${deliverablesInPeriod === 1 ? "" : "s"} on day`
+    );
+  }
+  if (relevantEmails !== null && relevantEmails > 0) {
+    parts.push(
+      `${relevantEmails} relevant email${relevantEmails === 1 ? "" : "s"} found`
+    );
+  }
+  if (threadsDetected !== null && threadsDetected > 0) {
+    parts.push(
+      `${threadsDetected} thread${threadsDetected === 1 ? "" : "s"} detected`
+    );
+  }
+  if (dedupedEmailCount !== null && dedupedEmailCount > 0) {
+    parts.push(
+      `${dedupedEmailCount} email${dedupedEmailCount === 1 ? "" : "s"} shortened`
+    );
+  }
+  if (dedupeSkippedEmailCount !== null && dedupeSkippedEmailCount > 0) {
+    parts.push(
+      `${dedupeSkippedEmailCount} duplicate email${dedupeSkippedEmailCount === 1 ? "" : "s"} skipped`
+    );
+  }
+  return parts;
+}
+
+function getOutlookScanProgressSummary(progress = {}) {
+  return (
+    String(progress?.message || "").trim() ||
+    formatOutlookScanStageLabel(progress?.stage)
+  );
+}
+
+function formatOutlookScanLogTime(value = "") {
+  const date = value ? new Date(value) : null;
+  if (!(date instanceof Date) || isNaN(date)) return "";
+  return date.toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function buildOutlookScanReportModel() {
+  const progress = normalizeOutlookScanProgress(outlookScanState.progress || {});
+  const log = Array.isArray(outlookScanState.progressLog)
+    ? outlookScanState.progressLog.map((entry) =>
+        normalizeOutlookScanProgress(
+          entry || {},
+          createEmptyOutlookScanProgress()
+        )
+      )
+    : [];
+  const stats =
+    outlookScanState.reportStats && typeof outlookScanState.reportStats === "object"
+      ? outlookScanState.reportStats
+      : {};
+  const lastResult =
+    outlookScanState.lastResult && typeof outlookScanState.lastResult === "object"
+      ? outlookScanState.lastResult
+      : null;
+  return {
+    source:
+      String(stats.source || lastResult?.source || progress.source || "").trim(),
+    scanDate: normalizeOutlookScanDateInput(
+      stats.scanDate ||
+        lastResult?.scanDate ||
+        progress.scanDate ||
+        outlookScanState.scanDate ||
+        ""
+    ),
+    timeframe: String(
+      stats.timeframe ||
+        lastResult?.timeframe ||
+        progress.timeframe ||
+        (outlookScanState.scanDate ? "" : "week") ||
+        "week"
+    )
+      .trim()
+      .toLowerCase(),
+    fallbackUsed: log.some((entry) => entry.stage === "fallback"),
+    totalEmails:
+      normalizeOutlookScanCount(progress.totalEmails) ??
+      normalizeOutlookScanCount(lastResult?.scannedCount),
+    processedEmails:
+      normalizeOutlookScanCount(progress.processedEmails) ??
+      normalizeOutlookScanCount(lastResult?.scannedCount),
+    includedEmails:
+      normalizeOutlookScanCount(progress.includedEmails) ??
+      normalizeOutlookScanCount(lastResult?.emailsIncludedCount),
+    skippedEmails:
+      normalizeOutlookScanCount(progress.skippedEmails) ??
+      normalizeOutlookScanCount(stats.skippedCount) ??
+      normalizeOutlookScanCount(
+        Array.isArray(lastResult?.skippedMessages)
+          ? lastResult.skippedMessages.length
+          : null
+      ),
+    deliverablesInPeriod:
+      normalizeOutlookScanCount(progress.deliverablesInPeriod) ??
+      normalizeOutlookScanCount(stats.deliverablesInPeriod) ??
+      normalizeOutlookScanCount(lastResult?.deliverablesIncludedCount),
+    relevantEmails:
+      normalizeOutlookScanCount(progress.relevantEmails) ??
+      normalizeOutlookScanCount(lastResult?.relevantEmailCount),
+    threadsDetected:
+      normalizeOutlookScanCount(progress.threadsDetected) ??
+      normalizeOutlookScanCount(stats.threadsDetected) ??
+      normalizeOutlookScanCount(lastResult?.threadsDetected),
+    dedupedEmailCount:
+      normalizeOutlookScanCount(progress.dedupedEmailCount) ??
+      normalizeOutlookScanCount(stats.dedupedEmailCount) ??
+      normalizeOutlookScanCount(lastResult?.dedupedEmailCount),
+    dedupeSkippedEmailCount:
+      normalizeOutlookScanCount(progress.dedupeSkippedEmailCount) ??
+      normalizeOutlookScanCount(stats.dedupeSkippedEmailCount) ??
+      normalizeOutlookScanCount(lastResult?.dedupeSkippedEmailCount),
+    promptTruncated: !!(lastResult?.promptTruncated || stats.promptTruncated),
+    suggestionCount:
+      normalizeOutlookScanCount(stats.suggestionCount) ??
+      normalizeOutlookScanCount(
+        Array.isArray(lastResult?.suggestions) ? lastResult.suggestions.length : 0
+      ) ??
+      0,
+    errorMessage: String(
+      stats.errorMessage || lastResult?.message || ""
+    ).trim(),
+    log,
+  };
+}
+
+window.updateOutlookScanProgress = function (payload = {}) {
+  setOutlookScanProgress(payload, { appendLog: true });
+  const dialog = document.getElementById("outlookScanDlg");
+  if (dialog?.open) {
+    renderOutlookScanUi();
+  }
+};
+
 function renderOutlookScanUi() {
   const toolbarBtn = document.getElementById("outlookScanBtn");
   const authStatusEl = document.getElementById("outlookScanAuthStatus");
   const authDetailsEl = document.getElementById("outlookScanAuthDetails");
-  const timeframeSelect = document.getElementById("outlookScanTimeframe");
+  const scanDateInput = document.getElementById("outlookScanDate");
   const connectBtn = document.getElementById("outlookScanConnectBtn");
   const signOutBtn = document.getElementById("outlookScanSignOutBtn");
+  const progressEl = document.getElementById("outlookScanProgress");
   const runBtn = document.getElementById("outlookScanRunBtn");
   const summaryEl = document.getElementById("outlookScanSummary");
   const metaEl = document.getElementById("outlookScanMeta");
+  const reportEl = document.getElementById("outlookScanReport");
+  const reportSummaryEl = document.getElementById("outlookScanReportSummary");
+  const reportLogEl = document.getElementById("outlookScanReportLog");
   const suggestionsEl = document.getElementById("outlookScanSuggestions");
   const skippedEl = document.getElementById("outlookScanSkipped");
   const emptyEl = document.getElementById("outlookScanEmpty");
 
   const isSignedIn = microsoftAuthState.signedIn;
+  const outlookScanCapability = microsoftAuthState.outlookScan || {};
+  const desktopAvailable = !!outlookScanCapability.desktopAvailable;
+  const desktopReason = String(outlookScanCapability.desktopReason || "").trim();
+  const preferredSource =
+    String(outlookScanCapability.preferredSource || "").trim() || "none";
+  const usingDesktop = preferredSource === "desktop-outlook";
+  const canScan = desktopAvailable || isSignedIn;
   const busy = microsoftAuthBusy || outlookScanState.busy;
   const displayName = getMicrosoftAuthDisplayName();
   const visibleSuggestions = getOutlookScanVisibleSuggestions();
-  const skipped = Array.isArray(outlookScanState.skipped) ? outlookScanState.skipped : [];
+  const skipped = Array.isArray(outlookScanState.skipped)
+    ? outlookScanState.skipped
+    : [];
   const lastResult = outlookScanState.lastResult;
+  const progress = normalizeOutlookScanProgress(outlookScanState.progress || {});
+  const reportModel = buildOutlookScanReportModel();
+  const selectedDayLabel = formatOutlookScanSelectedDayLabel(
+    reportModel.scanDate,
+    reportModel.timeframe
+  );
+  const showReport =
+    !busy &&
+    !!(reportModel.log.length || reportModel.errorMessage || lastResult);
 
   if (toolbarBtn) {
-    toolbarBtn.disabled = busy;
-    toolbarBtn.title = busy ? "Outlook scan is busy" : "Scan Outlook inbox";
+    toolbarBtn.disabled = false;
+    toolbarBtn.title = outlookScanState.busy
+      ? "Outlook scan is running"
+      : microsoftAuthBusy
+        ? "Microsoft sign-in is in progress"
+        : "Scan Outlook inbox";
   }
   if (authStatusEl) {
-    authStatusEl.textContent = isSignedIn
-      ? `Connected as ${displayName}`
-      : "Not connected";
+    authStatusEl.textContent = usingDesktop
+      ? "Using Desktop Outlook"
+      : isSignedIn
+        ? `Connected as ${displayName}`
+        : "Not connected";
   }
   if (authDetailsEl) {
-    authDetailsEl.textContent = isSignedIn
-      ? microsoftAuthState.email || "Microsoft 365 account connected."
-      : "Connect a Microsoft 365 account to scan Inbox messages for missing deliverables.";
+    authDetailsEl.textContent = usingDesktop
+      ? microsoftAuthIssueMessage
+        ? `${microsoftAuthIssueMessage} Desktop Outlook is still available on this machine.`
+        : isSignedIn
+          ? `Scanning with the installed Outlook desktop app. Microsoft 365 is connected as ${
+              microsoftAuthState.email || displayName
+            } for fallback.`
+          : "Scanning with the installed Outlook desktop app on this machine. Microsoft sign-in is optional."
+      : isSignedIn
+        ? microsoftAuthState.email || "Microsoft 365 account connected."
+        : microsoftAuthIssueMessage ||
+          desktopReason ||
+          "Connect a Microsoft 365 account to scan Inbox messages for missing deliverables.";
   }
-  if (timeframeSelect) {
-    timeframeSelect.value = outlookScanState.timeframe || "week";
-    timeframeSelect.disabled = busy;
+  if (scanDateInput) {
+    scanDateInput.value = normalizeOutlookScanDateInput(outlookScanState.scanDate);
+    scanDateInput.max = getTodayLocalDateInputValue();
+    scanDateInput.disabled = busy;
   }
   if (connectBtn) {
     connectBtn.disabled = busy || isSignedIn;
@@ -6571,40 +7100,207 @@ function renderOutlookScanUi() {
       ? "Working..."
       : isSignedIn
         ? "Connected"
-        : "Connect Outlook";
+        : microsoftConsentDiagnosticRecommended
+          ? "Retry minimal consent"
+          : microsoftAdminConsentRequired
+            ? "Admin approval"
+            : desktopAvailable
+              ? "Connect Microsoft 365"
+              : "Connect Outlook";
   }
   if (signOutBtn) {
     signOutBtn.disabled = busy || !isSignedIn;
     signOutBtn.textContent = microsoftAuthBusy ? "Signing out..." : "Sign out";
   }
   if (runBtn) {
-    runBtn.disabled = busy || !isSignedIn;
+    runBtn.disabled = busy || !canScan;
     runBtn.textContent = outlookScanState.busy ? "Scanning..." : "Scan inbox";
   }
+  if (progressEl) {
+    progressEl.classList.toggle("is-active", busy || progress.active);
+    progressEl.classList.toggle(
+      "is-error",
+      !busy && String(lastResult?.status || "").trim().toLowerCase() === "error"
+    );
+  }
   if (summaryEl) {
-    if (outlookScanState.busy) {
-      summaryEl.textContent = "Scanning Outlook inbox...";
+    if (busy || progress.active) {
+      summaryEl.textContent = getOutlookScanProgressSummary(progress);
+    } else if (
+      String(lastResult?.status || "").trim().toLowerCase() === "error"
+    ) {
+      summaryEl.textContent = reportModel.errorMessage || "Outlook scan failed.";
     } else if (!lastResult) {
       summaryEl.textContent = "No Outlook scan has been run yet.";
     } else {
       summaryEl.textContent =
         `${visibleSuggestions.length} suggestion` +
         `${visibleSuggestions.length === 1 ? "" : "s"}, ` +
-        `${skipped.length} skipped email${skipped.length === 1 ? "" : "s"}`;
+        `${skipped.length} skipped item${skipped.length === 1 ? "" : "s"}`;
     }
   }
   if (metaEl) {
-    if (!lastResult) {
-      metaEl.textContent = "Choose This week or This month, then run a scan.";
+    if (busy || progress.active) {
+      const progressParts = buildOutlookScanProgressParts(progress);
+      metaEl.textContent =
+        progressParts.join(" · ") ||
+        "This can take a bit if there are many emails on the selected day.";
+    } else if (
+      String(lastResult?.status || "").trim().toLowerCase() === "error"
+    ) {
+      const parts = [];
+      if (reportModel.source) {
+        parts.push(`Source: ${getOutlookScanSourceLabel(reportModel.source)}`);
+      }
+      parts.push(`Day: ${selectedDayLabel}`);
+      if (reportModel.promptTruncated) {
+        parts.push("Prompt was trimmed to keep the scan bounded.");
+      }
+      if (reportModel.errorMessage) {
+        parts.push(reportModel.errorMessage);
+      }
+      metaEl.textContent = parts.join(" · ");
+    } else if (!lastResult) {
+      metaEl.textContent = "Choose a day, then run a scan.";
     } else {
+      const deliverableCount =
+        reportModel.deliverablesInPeriod ?? lastResult.deliverablesIncludedCount ?? 0;
       const parts = [
         `Scanned ${Number(lastResult.scannedCount || 0)} email${Number(lastResult.scannedCount || 0) === 1 ? "" : "s"}`,
-        `AI-checked ${Number(lastResult.candidateCount || 0)} candidate${Number(lastResult.candidateCount || 0) === 1 ? "" : "s"}`,
+        `Included ${Number(lastResult.emailsIncludedCount || 0)} email${Number(lastResult.emailsIncludedCount || 0) === 1 ? "" : "s"} and ${Number(deliverableCount || 0)} current deliverable${Number(deliverableCount || 0) === 1 ? "" : "s"} in one AI review`,
+        `Day: ${selectedDayLabel}`,
       ];
-      if (lastResult.truncated) {
+      if (lastResult?.source) {
+        parts.push(`Source: ${getOutlookScanSourceLabel(lastResult.source)}`);
+      }
+      if (lastResult.promptTruncated) {
+        parts.push("Prompt was trimmed to keep the scan bounded.");
+      } else if (lastResult.truncated) {
         parts.push("Results were truncated to keep the scan bounded.");
       }
       metaEl.textContent = parts.join(" · ");
+    }
+  }
+  if (reportEl) {
+    reportEl.hidden = !showReport;
+    if (!showReport) {
+      reportEl.open = false;
+    } else if (reportEl.open !== !!outlookScanState.reportOpen) {
+      reportEl.open = !!outlookScanState.reportOpen;
+    }
+  }
+  if (reportSummaryEl) {
+    reportSummaryEl.innerHTML = "";
+    if (showReport) {
+      const rows = [];
+      if (reportModel.source) {
+        rows.push(["Source", getOutlookScanSourceLabel(reportModel.source)]);
+      }
+      rows.push([
+        "Day",
+        selectedDayLabel,
+      ]);
+      if (reportModel.fallbackUsed) {
+        rows.push([
+          "Fallback",
+          "Desktop Outlook failed and Microsoft 365 was used.",
+        ]);
+      }
+      if (reportModel.totalEmails !== null) {
+        rows.push(["Emails found", `${reportModel.totalEmails}`]);
+      }
+      if (reportModel.processedEmails !== null) {
+        rows.push(["Emails processed", `${reportModel.processedEmails}`]);
+      }
+      if (reportModel.includedEmails !== null) {
+        rows.push(["Emails in AI review", `${reportModel.includedEmails}`]);
+      }
+      if (reportModel.skippedEmails !== null) {
+        rows.push(["Skipped emails", `${reportModel.skippedEmails}`]);
+      }
+      if (reportModel.deliverablesInPeriod !== null) {
+        rows.push([
+          "Deliverables on day",
+          `${reportModel.deliverablesInPeriod}`,
+        ]);
+      }
+      if (reportModel.relevantEmails !== null) {
+        rows.push(["Relevant emails", `${reportModel.relevantEmails}`]);
+      }
+      if (reportModel.threadsDetected !== null) {
+        rows.push(["Threads detected", `${reportModel.threadsDetected}`]);
+      }
+      if (reportModel.dedupedEmailCount !== null) {
+        rows.push(["Emails shortened", `${reportModel.dedupedEmailCount}`]);
+      }
+      if (reportModel.dedupeSkippedEmailCount !== null) {
+        rows.push([
+          "Duplicate emails skipped",
+          `${reportModel.dedupeSkippedEmailCount}`,
+        ]);
+      }
+      rows.push(["Prompt trimmed", reportModel.promptTruncated ? "Yes" : "No"]);
+      rows.push(["Suggestions", `${reportModel.suggestionCount}`]);
+      if (reportModel.errorMessage) {
+        rows.push(["Error", reportModel.errorMessage]);
+      }
+      rows.forEach(([label, value]) => {
+        reportSummaryEl.appendChild(
+          el("div", { className: "outlook-scan-report-row" }, [
+            el("div", {
+              className: "outlook-scan-report-label tiny muted",
+              textContent: label,
+            }),
+            el("div", {
+              className: "outlook-scan-report-value",
+              textContent: value,
+            }),
+          ])
+        );
+      });
+    }
+  }
+  if (reportLogEl) {
+    reportLogEl.innerHTML = "";
+    if (showReport) {
+      if (reportModel.log.length) {
+        reportModel.log.forEach((entry) => {
+          const entryParts = buildOutlookScanProgressParts(entry);
+          reportLogEl.appendChild(
+            el("div", { className: "outlook-scan-log-item" }, [
+              el("div", { className: "outlook-scan-log-head" }, [
+                el("div", {
+                  className: "outlook-scan-log-stage",
+                  textContent: formatOutlookScanStageLabel(entry.stage),
+                }),
+                el("div", {
+                  className: "tiny muted",
+                  textContent: formatOutlookScanLogTime(entry.receivedAt),
+                }),
+              ]),
+              el("div", {
+                className: "outlook-scan-log-message",
+                textContent:
+                  String(entry.message || "").trim() ||
+                  formatOutlookScanStageLabel(entry.stage),
+              }),
+              entryParts.length
+                ? el("div", {
+                    className: "tiny muted",
+                    textContent: entryParts.join(" · "),
+                  })
+                : null,
+            ].filter(Boolean))
+          );
+        });
+      } else {
+        reportLogEl.appendChild(
+          el("div", {
+            className: "tiny muted",
+            textContent: "No scan events were recorded for this run.",
+          })
+        );
+      }
     }
   }
 
@@ -6616,13 +7312,18 @@ function renderOutlookScanUi() {
         suggestion.projectId ||
         `Project ${suggestion.projectIndex + 1}`;
       const metaParts = [];
-      if (suggestion.due) metaParts.push(`Due ${humanDate(suggestion.due) || suggestion.due}`);
+      if (suggestion.due) {
+        metaParts.push(`Due ${humanDate(suggestion.due) || suggestion.due}`);
+      }
       metaParts.push(
         `${suggestion.relatedMessages.length} related email${suggestion.relatedMessages.length === 1 ? "" : "s"}`
       );
       const card = el("div", { className: "outlook-scan-card" }, [
         el("div", { className: "outlook-scan-card-head" }, [
-          el("div", { className: "outlook-scan-card-project", textContent: projectLabel }),
+          el("div", {
+            className: "outlook-scan-card-project",
+            textContent: projectLabel,
+          }),
           el("div", {
             className: "outlook-scan-card-deliverable",
             textContent: suggestion.deliverableName || "Deliverable",
@@ -6644,7 +7345,7 @@ function renderOutlookScanUi() {
               className: "btn ghost tiny",
               type: "button",
               textContent: message.subject || "Open email",
-              onclick: () => openExternalUrl(message.webLink || message.url || ""),
+              onclick: () => openOutlookScanMessage(message),
             })
           )
         ),
@@ -6673,7 +7374,10 @@ function renderOutlookScanUi() {
       const subject = item?.message?.subject || "Untitled email";
       skippedEl.appendChild(
         el("div", { className: "outlook-scan-skipped-item" }, [
-          el("div", { className: "outlook-scan-skipped-subject", textContent: subject }),
+          el("div", {
+            className: "outlook-scan-skipped-subject",
+            textContent: subject,
+          }),
           el("div", {
             className: "tiny muted",
             textContent: item.reason || "Skipped",
@@ -6685,7 +7389,7 @@ function renderOutlookScanUi() {
 
   if (emptyEl) {
     emptyEl.hidden =
-      outlookScanState.busy || visibleSuggestions.length > 0 || skipped.length > 0;
+      busy || showReport || visibleSuggestions.length > 0 || skipped.length > 0;
   }
 }
 
@@ -6695,16 +7399,23 @@ function renderMicrosoftAuthUi() {
   const actionBtn = document.getElementById("settings_microsoftAuthActionBtn");
   const displayName = getMicrosoftAuthDisplayName();
   const isSignedIn = microsoftAuthState.signedIn;
+  const outlookScanCapability = microsoftAuthState.outlookScan || {};
+  const desktopAvailable = !!outlookScanCapability.desktopAvailable;
 
   if (statusEl) {
     statusEl.textContent = isSignedIn
       ? `Signed in as ${displayName}`
-      : "Not signed in";
+      : desktopAvailable
+        ? "Desktop Outlook available"
+        : "Not signed in";
   }
   if (detailsEl) {
     detailsEl.textContent = isSignedIn
       ? microsoftAuthState.email || "Microsoft 365 account connected."
-      : "Sign in with Microsoft 365. Configure MICROSOFT_OAUTH_CLIENT_ID and optionally MICROSOFT_OAUTH_TENANT_ID.";
+      : microsoftAuthIssueMessage ||
+        (desktopAvailable
+          ? "Outlook inbox scan can use the installed Outlook app on this machine. Sign in only if you want Microsoft 365 fallback."
+          : "Sign in with Microsoft 365. Configure MICROSOFT_OAUTH_CLIENT_ID and optionally MICROSOFT_OAUTH_TENANT_ID.");
   }
   if (actionBtn) {
     actionBtn.disabled = microsoftAuthBusy;
@@ -6712,7 +7423,13 @@ function renderMicrosoftAuthUi() {
       ? "Working..."
       : isSignedIn
         ? "Open scan"
-        : "Sign in";
+        : microsoftConsentDiagnosticRecommended
+          ? "Retry minimal consent"
+          : microsoftAdminConsentRequired
+          ? "Admin approval"
+          : desktopAvailable
+            ? "Sign in (fallback)"
+            : "Sign in";
   }
   renderOutlookScanUi();
 }
@@ -6729,6 +7446,9 @@ async function loadMicrosoftAuthState({ silent = false } = {}) {
       throw new Error(response?.message || "Failed to load Microsoft sign-in state.");
     }
     microsoftAuthState = normalizeMicrosoftAuthState(response.auth);
+    if (microsoftAuthState.signedIn) {
+      clearMicrosoftAuthIssue();
+    }
   } catch (e) {
     console.warn("Failed to load Microsoft auth state:", e);
     microsoftAuthState = normalizeMicrosoftAuthState();
@@ -6743,7 +7463,9 @@ async function loadMicrosoftAuthState({ silent = false } = {}) {
 function resetOutlookScanState() {
   outlookScanState = {
     ...DEFAULT_OUTLOOK_SCAN_STATE,
-    timeframe: outlookScanState.timeframe || DEFAULT_OUTLOOK_SCAN_STATE.timeframe,
+    scanDate:
+      normalizeOutlookScanDateInput(outlookScanState.scanDate) ||
+      DEFAULT_OUTLOOK_SCAN_STATE.scanDate,
   };
 }
 
@@ -6758,7 +7480,86 @@ function handleMicrosoftAuthAction() {
     openOutlookScanDialog();
     return;
   }
+  if (microsoftConsentDiagnosticRecommended) {
+    handleMicrosoftConsentDiagnostic();
+    return;
+  }
+  if (microsoftAdminConsentRequired) {
+    handleMicrosoftAdminConsent();
+    return;
+  }
   handleMicrosoftSignIn();
+}
+
+async function handleMicrosoftConsentDiagnostic() {
+  if (microsoftAuthBusy || !window.pywebview?.api?.diagnose_microsoft_consent_policy) {
+    toast("Microsoft consent diagnostic is unavailable in this environment.");
+    return;
+  }
+  microsoftAuthBusy = true;
+  renderMicrosoftAuthUi();
+  try {
+    const response = await window.pywebview.api.diagnose_microsoft_consent_policy();
+    if (response?.status === "success") {
+      microsoftAuthIssueMessage =
+        response.message ||
+        "Reduced-scope Microsoft consent succeeded. Review tenant consent settings, then retry Connect Outlook.";
+      microsoftAdminConsentRequired = false;
+      microsoftConsentDiagnosticRecommended = false;
+      renderMicrosoftAuthUi();
+      openOutlookScanDialog();
+      toast(microsoftAuthIssueMessage);
+      return;
+    }
+    if (response?.status === "cancelled") {
+      toast(response.message || "Microsoft consent diagnostic was cancelled.");
+      return;
+    }
+    throw new Error(response?.message || "Microsoft consent diagnostic failed.");
+  } catch (e) {
+    console.warn("Microsoft consent diagnostic failed:", e);
+    setMicrosoftAuthIssue(e?.message || "Microsoft consent diagnostic failed.");
+    openOutlookScanDialog();
+    toast(e?.message || "Microsoft consent diagnostic failed.");
+  } finally {
+    microsoftAuthBusy = false;
+    renderMicrosoftAuthUi();
+  }
+}
+
+async function handleMicrosoftAdminConsent() {
+  if (microsoftAuthBusy || !window.pywebview?.api?.request_microsoft_admin_consent) {
+    toast("Microsoft admin approval is unavailable in this environment.");
+    return;
+  }
+  microsoftAuthBusy = true;
+  renderMicrosoftAuthUi();
+  try {
+    const response = await window.pywebview.api.request_microsoft_admin_consent();
+    if (response?.status === "success") {
+      clearMicrosoftAuthIssue();
+      renderMicrosoftAuthUi();
+      openOutlookScanDialog();
+      toast(
+        response.message ||
+          "Microsoft admin approval completed. Connect Outlook again."
+      );
+      return;
+    }
+    if (response?.status === "cancelled") {
+      toast(response.message || "Microsoft admin approval was cancelled.");
+      return;
+    }
+    throw new Error(response?.message || "Microsoft admin approval failed.");
+  } catch (e) {
+    console.warn("Microsoft admin approval failed:", e);
+    setMicrosoftAuthIssue(e?.message || "Microsoft admin approval failed.");
+    openOutlookScanDialog();
+    toast(e?.message || "Microsoft admin approval failed.");
+  } finally {
+    microsoftAuthBusy = false;
+    renderMicrosoftAuthUi();
+  }
 }
 
 async function handleMicrosoftSignIn() {
@@ -6768,6 +7569,7 @@ async function handleMicrosoftSignIn() {
   try {
     const response = await window.pywebview.api.sign_in_with_microsoft();
     if (response?.status === "success") {
+      clearMicrosoftAuthIssue();
       microsoftAuthState = normalizeMicrosoftAuthState(response.auth);
       await loadUserSettings();
       await loadMicrosoftAuthState({ silent: true });
@@ -6783,6 +7585,10 @@ async function handleMicrosoftSignIn() {
     throw new Error(response?.message || "Microsoft sign-in failed.");
   } catch (e) {
     console.warn("Microsoft sign-in failed:", e);
+    setMicrosoftAuthIssue(e?.message || "Microsoft sign-in failed.");
+    if (microsoftAdminConsentRequired) {
+      openOutlookScanDialog();
+    }
     toast(e?.message || "Microsoft sign-in failed.");
   } finally {
     microsoftAuthBusy = false;
@@ -6800,6 +7606,7 @@ async function handleMicrosoftSignOut() {
       throw new Error(response?.message || "Microsoft sign-out failed.");
     }
     resetOutlookScanState();
+    clearMicrosoftAuthIssue();
     await loadUserSettings();
     microsoftAuthState = normalizeMicrosoftAuthState(response.auth);
     renderMicrosoftAuthUi();
@@ -6813,24 +7620,109 @@ async function handleMicrosoftSignOut() {
   }
 }
 
-function setOutlookScanTimeframe(value = "week") {
-  outlookScanState.timeframe = value === "month" ? "month" : "week";
+function setOutlookScanDate(value = "") {
+  outlookScanState.scanDate = normalizeOutlookScanDateInput(value);
   renderOutlookScanUi();
 }
 
 function getOutlookMessageKey(message = {}) {
+  const source = String(message.source || "").trim().toLowerCase();
   const messageId = String(message.id || "").trim().toLowerCase();
-  if (messageId) return `msg:${messageId}`;
+  if (messageId) return `${source || "message"}:msg:${messageId}`;
   const internetMessageId = String(message.internetMessageId || "")
     .trim()
     .toLowerCase();
-  if (internetMessageId) return `internet:${internetMessageId}`;
-  return String(message.webLink || message.url || "")
+  if (internetMessageId) return `${source || "message"}:internet:${internetMessageId}`;
+  return `${source || "message"}:${String(message.webLink || message.url || "")
     .trim()
-    .toLowerCase();
+    .toLowerCase()}`;
+}
+
+function getOutlookScanDayRange(scanDate = "") {
+  const start = parseOutlookScanDateValue(scanDate);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setHours(23, 59, 59, 999);
+  return { start, end };
+}
+
+function buildOutlookScanProjectContext(scanDate = "") {
+  const { start, end } = getOutlookScanDayRange(scanDate);
+  return db
+    .map((rawProject) => normalizeProject(rawProject))
+    .filter(Boolean)
+    .map((project) => {
+      const deliverables = getProjectDeliverables(project)
+        .filter((deliverable) => {
+          const due = parseDueStr(deliverable?.due);
+          return due && due >= start && due <= end;
+        })
+        .map((deliverable) => ({
+          name: String(deliverable?.name || "").trim(),
+          due: String(deliverable?.due || "").trim(),
+          status: String(deliverable?.status || "").trim(),
+        }))
+        .sort((left, right) => {
+          const leftDue = parseDueStr(left?.due);
+          const rightDue = parseDueStr(right?.due);
+          if (leftDue && rightDue && leftDue.getTime() !== rightDue.getTime()) {
+            return leftDue - rightDue;
+          }
+          if (leftDue && !rightDue) return -1;
+          if (!leftDue && rightDue) return 1;
+          return `${left.name}|${left.status}`.localeCompare(
+            `${right.name}|${right.status}`
+          );
+        });
+      if (!deliverables.length) return null;
+      return {
+        id: String(project.id || "").trim(),
+        name: String(project.name || "").trim(),
+        nick: String(project.nick || "").trim(),
+        path: String(project.path || "").trim(),
+        deliverables,
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => {
+      const leftDue = parseDueStr(left.deliverables[0]?.due);
+      const rightDue = parseDueStr(right.deliverables[0]?.due);
+      if (leftDue && rightDue && leftDue.getTime() !== rightDue.getTime()) {
+        return leftDue - rightDue;
+      }
+      if (leftDue && !rightDue) return -1;
+      if (!leftDue && rightDue) return 1;
+      return `${left.id}|${left.name}|${left.path}`.localeCompare(
+        `${right.id}|${right.name}|${right.path}`
+      );
+    });
+}
+
+function countOutlookScanProjectContextDeliverables(projectContext = []) {
+  return (Array.isArray(projectContext) ? projectContext : []).reduce(
+    (total, project) =>
+      total +
+      (Array.isArray(project?.deliverables) ? project.deliverables.length : 0),
+    0
+  );
 }
 
 function buildOutlookEmailRefFromMessage(message = {}) {
+  const source = String(message.source || "").trim().toLowerCase();
+  const messageId = String(message.id || "").trim();
+  const internetMessageId = String(message.internetMessageId || "").trim();
+  if (source === "desktop-outlook" && messageId) {
+    return normalizeEmailRef({
+      raw: messageId,
+      url: "",
+      label: String(message.subject || "Email").trim() || "Email",
+      source: "outlook-desktop",
+      savedAt:
+        normalizeIsoTimestamp(message.receivedDateTime) || new Date().toISOString(),
+      messageId,
+      internetMessageId,
+    });
+  }
   const webLink = String(message.webLink || message.url || "").trim();
   if (!webLink) return null;
   return normalizeEmailRef({
@@ -6840,9 +7732,23 @@ function buildOutlookEmailRefFromMessage(message = {}) {
     source: "outlook-url",
     savedAt:
       normalizeIsoTimestamp(message.receivedDateTime) || new Date().toISOString(),
-    messageId: String(message.id || "").trim(),
-    internetMessageId: String(message.internetMessageId || "").trim(),
+    messageId,
+    internetMessageId,
   });
+}
+
+async function openOutlookScanMessage(message = {}) {
+  const ref = buildOutlookEmailRefFromMessage(message);
+  if (ref) {
+    return openDeliverableEmailRef(ref);
+  }
+  const webLink = String(message.webLink || message.url || "").trim();
+  if (webLink) {
+    openExternalUrl(webLink);
+    return true;
+  }
+  toast("Could not open this Outlook message.");
+  return false;
 }
 
 function normalizeDeliverableComparisonKey(value) {
@@ -6851,84 +7757,133 @@ function normalizeDeliverableComparisonKey(value) {
   return normalizeProjectMatchValue(extractDeliverableName(raw) || raw);
 }
 
-function buildOutlookSuggestionNotes(items = []) {
+function pickEarlierOutlookSuggestionDue(currentDue = "", nextDue = "") {
+  const currentDate = parseDueStr(currentDue);
+  const nextDate = parseDueStr(nextDue);
+  if (!currentDate) return nextDue || currentDue || "";
+  if (!nextDate) return currentDue || nextDue || "";
+  return nextDate < currentDate ? nextDue : currentDue;
+}
+
+function normalizeOutlookSuggestionTasks(tasks = []) {
   const seen = new Set();
-  const parts = [];
-  items.forEach((item) => {
-    const text =
-      String(item?.extraction?.notes || "").trim() ||
-      String(item?.message?.subject || "").trim();
+  const out = [];
+  (Array.isArray(tasks) ? tasks : []).forEach((task) => {
+    const normalizedTask = normalizeTask(task);
+    const text = String(normalizedTask?.text || task || "").trim();
     const key = text.toLowerCase();
     if (!text || seen.has(key)) return;
     seen.add(key);
-    parts.push(text);
-  });
-  return parts.slice(0, 2).join(" ");
-}
-
-function buildOutlookSuggestionTasks(items = []) {
-  const seen = new Set();
-  const out = [];
-  items.forEach((item) => {
-    const tasks = Array.isArray(item?.extraction?.tasks) ? item.extraction.tasks : [];
-    tasks.forEach((task) => {
-      const text = String(task?.text || task || "").trim();
-      const key = text.toLowerCase();
-      if (!text || seen.has(key)) return;
-      seen.add(key);
-      out.push({ text, done: false, links: [] });
+    out.push({
+      text,
+      done: !!normalizedTask?.done,
+      links: Array.isArray(normalizedTask?.links) ? normalizedTask.links : [],
     });
   });
   return out;
 }
 
-function getEarliestOutlookSuggestionDue(items = []) {
-  let earliest = null;
-  items.forEach((item) => {
-    const rawDue = String(item?.extraction?.due || "").trim();
-    const parsed = parseDueStr(rawDue);
-    if (!parsed) return;
-    if (!earliest || parsed < earliest) earliest = parsed;
-  });
-  return earliest ? formatDueDateShort(earliest) : "";
+function mergeOutlookSuggestionNotes(currentNotes = "", nextNotes = "") {
+  const current = String(currentNotes || "").trim();
+  const next = String(nextNotes || "").trim();
+  if (!current) return next;
+  if (!next) return current;
+  if (current.toLowerCase() === next.toLowerCase()) return current;
+  return `${current} ${next}`.trim();
+}
+
+function mergeOutlookSuggestionTasks(currentTasks = [], nextTasks = []) {
+  return normalizeOutlookSuggestionTasks([...(currentTasks || []), ...(nextTasks || [])]);
+}
+
+function normalizeOutlookRelatedMessages(messages = []) {
+  const seen = new Set();
+  return (Array.isArray(messages) ? messages : [])
+    .filter((message) => {
+      const key = getOutlookMessageKey(message);
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort(
+      (left, right) =>
+        Date.parse(normalizeIsoTimestamp(right?.receivedDateTime) || "") -
+        Date.parse(normalizeIsoTimestamp(left?.receivedDateTime) || "")
+    );
+}
+
+function buildOutlookScanSkippedItem(item = {}, fallbackKey = "") {
+  const message = item?.message || {};
+  return {
+    key: String(item?.key || fallbackKey || getOutlookMessageKey(message) || createId("outlook-skip")).trim(),
+    message,
+    reason: String(item?.reason || "Skipped.").trim() || "Skipped.",
+  };
+}
+
+function buildOutlookScanSuggestionProject(entry = {}) {
+  const project = entry?.project || {};
+  return {
+    id: String(project.id || entry?.projectId || "").trim(),
+    name: String(project.name || entry?.projectName || "").trim(),
+    nick: String(project.nick || entry?.projectNick || "").trim(),
+    path: String(project.path || entry?.projectPath || "").trim(),
+  };
+}
+
+function buildOutlookScanSuggestionEmailRefs(messages = []) {
+  return normalizeEmailRefs(
+    normalizeOutlookRelatedMessages(messages).map((message) =>
+      buildOutlookEmailRefFromMessage(message)
+    )
+  ).slice(0, MAX_DELIVERABLE_EMAIL_REFS);
 }
 
 function buildOutlookScanDerivedState(result = null) {
-  const items = Array.isArray(result?.items) ? result.items : [];
+  const rawSuggestions = Array.isArray(result?.suggestions) ? result.suggestions : [];
+  const skipped = Array.isArray(result?.skippedMessages)
+    ? result.skippedMessages.map((item, index) =>
+        buildOutlookScanSkippedItem(item, `backend-skip:${index}`)
+      )
+    : [];
   const suggestionsByKey = new Map();
-  const skipped = [];
-  items.forEach((item) => {
-    const message = item?.message || {};
-    if (item?.analysisStatus !== "success") {
-      skipped.push({
-        key: getOutlookMessageKey(message),
-        message,
-        reason: item?.analysisError || "Skipped.",
-      });
-      return;
-    }
 
-    const extraction = item?.extraction || {};
-    const deliverableNameRaw = String(extraction.deliverable || "").trim();
-    const deliverableName = extractDeliverableName(deliverableNameRaw) || deliverableNameRaw;
+  rawSuggestions.forEach((entry, index) => {
+    const relatedMessages = normalizeOutlookRelatedMessages(entry?.relatedMessages || []);
+    const primaryMessage = relatedMessages[0] || {};
+    const projectInfo = buildOutlookScanSuggestionProject(entry);
+    const deliverablePayload =
+      entry?.deliverable && typeof entry.deliverable === "object" ? entry.deliverable : {};
+    const deliverableNameRaw = String(
+      deliverablePayload.name || entry?.deliverableName || entry?.deliverable || entry?.name || ""
+    ).trim();
+    const deliverableName =
+      extractDeliverableName(deliverableNameRaw) || deliverableNameRaw;
     const deliverableKey = normalizeDeliverableComparisonKey(deliverableName);
     if (!deliverableKey) {
-      skipped.push({
-        key: getOutlookMessageKey(message),
-        message,
-        reason: "No deliverable was extracted from this email.",
-      });
+      skipped.push(
+        buildOutlookScanSkippedItem(
+          {
+            message: primaryMessage,
+            reason: "No deliverable was suggested for this email batch.",
+          },
+          `suggestion:${index}:missing-deliverable`
+        )
+      );
       return;
     }
 
-    const aiProject = normalizeProject(extraction);
-    const match = aiProject ? findBestProjectMatch(aiProject) : null;
+    const match = findBestProjectMatch(projectInfo);
     if (!match || !db[match.index]) {
-      skipped.push({
-        key: getOutlookMessageKey(message),
-        message,
-        reason: "No matching existing project was found.",
-      });
+      skipped.push(
+        buildOutlookScanSkippedItem(
+          {
+            message: primaryMessage,
+            reason: "No matching existing project was found.",
+          },
+          `suggestion:${index}:unmatched-project`
+        )
+      );
       return;
     }
 
@@ -6939,15 +7894,24 @@ function buildOutlookScanDerivedState(result = null) {
       )
     );
     if (existingDeliverables.has(deliverableKey)) {
-      skipped.push({
-        key: getOutlookMessageKey(message),
-        message,
-        reason: "That deliverable already exists on the matched project.",
-      });
+      skipped.push(
+        buildOutlookScanSkippedItem(
+          {
+            message: primaryMessage,
+            reason: "That deliverable already exists on the matched project.",
+          },
+          `suggestion:${index}:existing-deliverable`
+        )
+      );
       return;
     }
 
     const suggestionKey = `project:${match.index}|deliverable:${deliverableKey}`;
+    const due = String(deliverablePayload.due || entry?.due || "").trim();
+    const tasks = normalizeOutlookSuggestionTasks(
+      deliverablePayload.tasks || entry?.tasks || []
+    );
+    const notes = String(deliverablePayload.notes || entry?.notes || "").trim();
     if (!suggestionsByKey.has(suggestionKey)) {
       suggestionsByKey.set(suggestionKey, {
         key: suggestionKey,
@@ -6956,31 +7920,33 @@ function buildOutlookScanDerivedState(result = null) {
         projectName: String(project.name || "").trim(),
         deliverableName,
         deliverableKey,
-        items: [],
+        due,
+        tasks,
+        notes,
+        relatedMessages,
       });
+      return;
     }
-    suggestionsByKey.get(suggestionKey).items.push(item);
+
+    const existing = suggestionsByKey.get(suggestionKey);
+    existing.due = pickEarlierOutlookSuggestionDue(existing.due, due);
+    existing.tasks = mergeOutlookSuggestionTasks(existing.tasks, tasks);
+    existing.notes = mergeOutlookSuggestionNotes(existing.notes, notes);
+    existing.relatedMessages = normalizeOutlookRelatedMessages([
+      ...(existing.relatedMessages || []),
+      ...relatedMessages,
+    ]);
   });
 
   const suggestions = Array.from(suggestionsByKey.values())
     .map((suggestion) => {
-      const relatedMessages = suggestion.items
-        .map((item) => item.message || {})
-        .sort(
-          (left, right) =>
-            Date.parse(normalizeIsoTimestamp(right?.receivedDateTime) || "") -
-            Date.parse(normalizeIsoTimestamp(left?.receivedDateTime) || "")
-        );
-      const emailRefs = normalizeEmailRefs(
-        relatedMessages.map((message) => buildOutlookEmailRefFromMessage(message))
-      ).slice(0, MAX_DELIVERABLE_EMAIL_REFS);
+      const relatedMessages = normalizeOutlookRelatedMessages(
+        suggestion.relatedMessages || []
+      );
       return {
         ...suggestion,
         relatedMessages,
-        due: getEarliestOutlookSuggestionDue(suggestion.items),
-        tasks: buildOutlookSuggestionTasks(suggestion.items),
-        notes: buildOutlookSuggestionNotes(suggestion.items),
-        emailRefs,
+        emailRefs: buildOutlookScanSuggestionEmailRefs(relatedMessages),
       };
     })
     .sort((left, right) =>
@@ -7000,34 +7966,181 @@ async function runOutlookInboxScan() {
   ) {
     return;
   }
+  const scanDate = normalizeOutlookScanDateInput(outlookScanState.scanDate);
+  outlookScanState.scanDate = scanDate;
+  const projectContext = buildOutlookScanProjectContext(scanDate);
+  const deliverablesInPeriod =
+    countOutlookScanProjectContextDeliverables(projectContext);
   outlookScanState.busy = true;
   outlookScanState.dismissedKeys = [];
+  outlookScanState.lastResult = null;
+  outlookScanState.suggestions = [];
+  outlookScanState.skipped = [];
+  outlookScanState.reportOpen = false;
+  outlookScanState.reportStats = null;
+  setOutlookScanProgress(
+    {
+      active: true,
+      stage: "starting",
+      message: "Starting Outlook inbox scan...",
+      scanDate,
+      deliverablesInPeriod,
+    },
+    { reset: true, appendLog: false }
+  );
   renderOutlookScanUi();
   try {
     const response = await window.pywebview.api.scan_outlook_inbox(
-      { timeframe: outlookScanState.timeframe || "week" },
+      {
+        scanDate,
+        projectContext,
+      },
       userSettings.apiKey,
       userSettings.userName,
       userSettings.discipline
     );
-    if (response?.status !== "success") {
-      throw new Error(response?.message || "Outlook scan failed.");
-    }
     const derived = buildOutlookScanDerivedState(response);
     outlookScanState.lastResult = response;
     outlookScanState.suggestions = derived.suggestions;
     outlookScanState.skipped = derived.skipped;
-    renderOutlookScanUi();
+    outlookScanState.reportStats = {
+      suggestionCount: derived.suggestions.length,
+      skippedCount: derived.skipped.length,
+      deliverablesInPeriod:
+        normalizeOutlookScanCount(outlookScanState.progress?.deliverablesInPeriod) ??
+        deliverablesInPeriod,
+      threadsDetected:
+        normalizeOutlookScanCount(response?.threadsDetected) ??
+        normalizeOutlookScanCount(outlookScanState.progress?.threadsDetected),
+      dedupedEmailCount:
+        normalizeOutlookScanCount(response?.dedupedEmailCount) ??
+        normalizeOutlookScanCount(outlookScanState.progress?.dedupedEmailCount),
+      dedupeSkippedEmailCount:
+        normalizeOutlookScanCount(response?.dedupeSkippedEmailCount) ??
+        normalizeOutlookScanCount(
+          outlookScanState.progress?.dedupeSkippedEmailCount
+        ),
+      source:
+        String(response?.source || outlookScanState.progress?.source || "").trim(),
+      timeframe: String(response?.timeframe || "").trim().toLowerCase(),
+      scanDate: normalizeOutlookScanDateInput(response?.scanDate || scanDate),
+      promptTruncated: !!response?.promptTruncated,
+      errorMessage:
+        response?.status === "success"
+          ? ""
+          : String(response?.message || "Outlook scan failed.").trim(),
+    };
+    if (response?.status === "success") {
+      outlookScanState.progress = normalizeOutlookScanProgress(
+        { active: false },
+        outlookScanState.progress
+      );
+      outlookScanState.reportOpen = true;
+      renderOutlookScanUi();
+      toast(
+        `${getOutlookScanSourceLabel(response?.source)} scan found ${
+          derived.suggestions.length
+        } suggestion${derived.suggestions.length === 1 ? "" : "s"}.`
+      );
+      return;
+    }
+    if (
+      String(outlookScanState.progress?.stage || "").trim().toLowerCase() !==
+        "error" ||
+      outlookScanState.progress?.active
+    ) {
+      setOutlookScanProgress({
+        active: false,
+        stage: "error",
+        message: response?.message || "Outlook scan failed.",
+        source:
+          String(response?.source || outlookScanState.progress?.source || "").trim(),
+        timeframe: String(response?.timeframe || "").trim().toLowerCase(),
+        scanDate: normalizeOutlookScanDateInput(response?.scanDate || scanDate),
+        skippedEmails: derived.skipped.length,
+        deliverablesInPeriod:
+          normalizeOutlookScanCount(outlookScanState.progress?.deliverablesInPeriod) ??
+          deliverablesInPeriod,
+        threadsDetected:
+          normalizeOutlookScanCount(response?.threadsDetected) ??
+          normalizeOutlookScanCount(outlookScanState.progress?.threadsDetected),
+        dedupedEmailCount:
+          normalizeOutlookScanCount(response?.dedupedEmailCount) ??
+          normalizeOutlookScanCount(outlookScanState.progress?.dedupedEmailCount),
+        dedupeSkippedEmailCount:
+          normalizeOutlookScanCount(response?.dedupeSkippedEmailCount) ??
+          normalizeOutlookScanCount(
+            outlookScanState.progress?.dedupeSkippedEmailCount
+          ),
+      });
+    } else {
+      outlookScanState.progress = normalizeOutlookScanProgress(
+        { active: false },
+        outlookScanState.progress
+      );
+    }
+    outlookScanState.reportOpen = true;
     toast(
-      `Outlook scan found ${derived.suggestions.length} suggestion${derived.suggestions.length === 1 ? "" : "s"}.`
+      response?.message || "Outlook scan failed."
     );
   } catch (e) {
     console.warn("Outlook scan failed:", e);
-    outlookScanState.lastResult = null;
+    const errorMessage = e?.message || "Outlook scan failed.";
+    outlookScanState.lastResult = {
+      status: "error",
+      message: errorMessage,
+      source: String(outlookScanState.progress?.source || "").trim(),
+      timeframe: "",
+      scanDate,
+      suggestions: [],
+      skippedMessages: [],
+    };
     outlookScanState.suggestions = [];
     outlookScanState.skipped = [];
+    outlookScanState.reportStats = {
+      suggestionCount: 0,
+      skippedCount: 0,
+      deliverablesInPeriod:
+        normalizeOutlookScanCount(outlookScanState.progress?.deliverablesInPeriod) ??
+        deliverablesInPeriod,
+      threadsDetected: normalizeOutlookScanCount(
+        outlookScanState.progress?.threadsDetected
+      ),
+      dedupedEmailCount: normalizeOutlookScanCount(
+        outlookScanState.progress?.dedupedEmailCount
+      ),
+      dedupeSkippedEmailCount: normalizeOutlookScanCount(
+        outlookScanState.progress?.dedupeSkippedEmailCount
+      ),
+      source: String(outlookScanState.progress?.source || "").trim(),
+      timeframe: "",
+      scanDate,
+      promptTruncated: false,
+      errorMessage,
+    };
+    setOutlookScanProgress({
+      active: false,
+      stage: "error",
+      message: errorMessage,
+      source: String(outlookScanState.progress?.source || "").trim(),
+      timeframe: "",
+      scanDate,
+      deliverablesInPeriod:
+        normalizeOutlookScanCount(outlookScanState.progress?.deliverablesInPeriod) ??
+        deliverablesInPeriod,
+      threadsDetected: normalizeOutlookScanCount(
+        outlookScanState.progress?.threadsDetected
+      ),
+      dedupedEmailCount: normalizeOutlookScanCount(
+        outlookScanState.progress?.dedupedEmailCount
+      ),
+      dedupeSkippedEmailCount: normalizeOutlookScanCount(
+        outlookScanState.progress?.dedupeSkippedEmailCount
+      ),
+    });
+    outlookScanState.reportOpen = true;
     renderOutlookScanUi();
-    toast(e?.message || "Outlook scan failed.");
+    toast(errorMessage);
   } finally {
     outlookScanState.busy = false;
     renderOutlookScanUi();
@@ -14473,7 +15586,7 @@ function renderWorkroomCadRoutingControl() {
   const container = document.getElementById("workroomCadRouting");
   if (!container) return;
 
-  const { deliverable } = getActiveWorkroomContext();
+  const { project, deliverable } = getActiveWorkroomContext();
   const configuredDisciplines = getWorkroomConfiguredDisciplines();
   const disciplines = getWorkroomAvailableDisciplines();
   if (!deliverable || !disciplines.length) {
@@ -14487,7 +15600,12 @@ function renderWorkroomCadRoutingControl() {
   container.hidden = false;
   container.innerHTML = "";
 
-  container.appendChild(
+  const routingRow = el("div", { className: "workroom-cad-routing-row" });
+
+  const disciplineSection = el("div", {
+    className: "workroom-cad-routing-section workroom-cad-routing-main",
+  });
+  disciplineSection.appendChild(
     el("p", {
       className: "workroom-cad-routing-label",
       textContent: "Deliverable Discipline",
@@ -14528,7 +15646,31 @@ function renderWorkroomCadRoutingControl() {
     group.appendChild(wrapper);
   });
 
-  container.appendChild(group);
+  disciplineSection.appendChild(group);
+  routingRow.appendChild(disciplineSection);
+
+  const emailSection = el("div", {
+    className: "workroom-cad-routing-section workroom-cad-routing-email",
+  });
+  emailSection.appendChild(
+    el("p", {
+      className: "workroom-cad-routing-label",
+      textContent: "Attached Emails",
+    })
+  );
+  const emailSlots = el("div", {
+    className: "workroom-deliverable-email-slots",
+    "aria-label": "Deliverable email links",
+  });
+  renderDeliverableEmailSlots(emailSlots, deliverable, {
+    project,
+    persistNow: true,
+    scope: "workroom",
+  });
+  emailSection.appendChild(emailSlots);
+  routingRow.appendChild(emailSection);
+
+  container.appendChild(routingRow);
   if (configuredDisciplines.length > 1) {
     container.appendChild(
       el("p", {
@@ -19024,7 +20166,35 @@ let currentOnboardingStep = 1;
 const totalOnboardingSteps = 4;
 
 function isNewUser() {
-  return !userSettings.userName || userSettings.userName.trim() === "";
+  if (String(userSettings.userName || "").trim()) return false;
+  return !hasExistingUserData();
+}
+
+function hasExistingUserData() {
+  if (Array.isArray(db) && db.length > 0) return true;
+  if (notesDb && typeof notesDb === "object" && Object.keys(notesDb).length > 0) {
+    return true;
+  }
+  if (
+    timesheetDb &&
+    typeof timesheetDb === "object" &&
+    timesheetDb.weeks &&
+    Object.keys(timesheetDb.weeks).length > 0
+  ) {
+    return true;
+  }
+  if (
+    checklistsDb &&
+    typeof checklistsDb === "object" &&
+    Array.isArray(checklistsDb.checklists) &&
+    checklistsDb.checklists.length > 0
+  ) {
+    return true;
+  }
+  if (googleAuthState.signedIn || microsoftAuthState.signedIn) return true;
+  if (String(userSettings.apiKey || "").trim()) return true;
+  if (String(userSettings.autocadPath || "").trim()) return true;
+  return false;
 }
 
 function showOnboardingModal() {
@@ -19972,10 +21142,16 @@ function initEventListeners() {
   if (outlookScanRunBtn) {
     outlookScanRunBtn.onclick = () => runOutlookInboxScan();
   }
-  const outlookScanTimeframe = document.getElementById("outlookScanTimeframe");
-  if (outlookScanTimeframe) {
-    outlookScanTimeframe.onchange = (event) =>
-      setOutlookScanTimeframe(event?.target?.value || "week");
+  const outlookScanDate = document.getElementById("outlookScanDate");
+  if (outlookScanDate) {
+    outlookScanDate.onchange = (event) =>
+      setOutlookScanDate(event?.target?.value || getTodayLocalDateInputValue());
+  }
+  const outlookScanReport = document.getElementById("outlookScanReport");
+  if (outlookScanReport) {
+    outlookScanReport.addEventListener("toggle", () => {
+      outlookScanState.reportOpen = !!outlookScanReport.open;
+    });
   }
   const headerAccountSignOutBtn = document.getElementById(
     "headerAccountSignOutBtn"
@@ -20307,6 +21483,135 @@ function initEventListeners() {
     "electricalSurvey",
     "Electrical Survey Report"
   );
+
+  const backupDrawingsBtn = document.getElementById("toolBackupDrawings");
+  if (backupDrawingsBtn) {
+    const handler = async () => {
+      if (backupDrawingsBtn.classList.contains("running")) return;
+      backupDrawingsBtn.classList.add("running");
+      const launchContext = resolveCadLaunchContextForTool();
+      const launchSource = String(launchContext?.source || "").trim().toLowerCase();
+
+      try {
+        const selectProjectFolder = async () => {
+          window.updateToolStatus("toolBackupDrawings", "Select project folder...");
+          const selection = await window.pywebview.api.select_folder();
+          if (selection?.status === "error") {
+            throw new Error(selection.message || "Failed to choose a folder.");
+          }
+          if (!selection || selection.status === "cancelled" || !selection.path) {
+            return "";
+          }
+          return String(selection.path || "").trim();
+        };
+
+        let result = null;
+        let selectedProjectPath = "";
+
+        if (launchSource === "workroom") {
+          window.updateToolStatus("toolBackupDrawings", "Resolving project folder...");
+          result = await window.pywebview.api.backup_project_drawings(null, launchContext);
+
+          const needsManualSelection =
+            result?.status !== "success" &&
+            String(result?.code || "").trim().toLowerCase() === "manual_selection_required";
+
+          if (needsManualSelection) {
+            toast("Could not auto-resolve project folder; please select it manually.", 6000);
+            selectedProjectPath = await selectProjectFolder();
+            if (!selectedProjectPath) {
+              result = null;
+            }
+          }
+        } else {
+          selectedProjectPath = await selectProjectFolder();
+        }
+
+        if (selectedProjectPath) {
+          window.updateToolStatus("toolBackupDrawings", "Creating archive backup...");
+          result = await window.pywebview.api.backup_project_drawings(
+            selectedProjectPath,
+            launchContext
+          );
+        }
+
+        if (!result && !selectedProjectPath) {
+          const statusEl = backupDrawingsBtn.querySelector(".tool-card-status");
+          if (statusEl) statusEl.textContent = "";
+          backupDrawingsBtn.classList.remove("running");
+          return;
+        }
+
+        if (result?.status !== "success") {
+          throw new Error(result?.message || "Failed to create drawing backup.");
+        }
+
+        const failedFiles = Array.isArray(result?.failedFiles) ? result.failedFiles : [];
+        const failedFileCount =
+          Number.isFinite(Number(result?.failedFileCount))
+            ? Number(result.failedFileCount)
+            : failedFiles.length;
+        const missingFolders = Array.isArray(result?.missingSourceFolders)
+          ? result.missingSourceFolders
+          : [];
+        const warningParts = [];
+        if (missingFolders.length) {
+          warningParts.push(
+            `${missingFolders.length} missing folder${missingFolders.length === 1 ? "" : "s"}`
+          );
+        }
+        if (failedFileCount > 0) {
+          warningParts.push(
+            `${failedFileCount} failed file${failedFileCount === 1 ? "" : "s"}`
+          );
+        }
+        const hasWarnings = warningParts.length > 0;
+
+        window.updateToolStatus("toolBackupDrawings", "DONE");
+        toast(
+          hasWarnings
+            ? `Drawing backup created with warnings (${warningParts.join(", ")}).`
+            : "Drawing backup created."
+        );
+
+        if (missingFolders.length) {
+          toast(`Missing folders: ${missingFolders.join(", ")}`, 7000);
+        }
+
+        if (failedFiles.length) {
+          const failedPreview = failedFiles
+            .slice(0, 3)
+            .map((entry) => {
+              const sourcePath = String(entry?.source || "");
+              if (!sourcePath) return "";
+              const parts = sourcePath.split(/[\\/]/);
+              return parts[parts.length - 1] || sourcePath;
+            })
+            .filter(Boolean);
+          if (failedPreview.length) {
+            const remainingCount = Math.max(0, failedFileCount - failedPreview.length);
+            const suffix = remainingCount ? ` (+${remainingCount} more)` : "";
+            toast(`Failed files: ${failedPreview.join(", ")}${suffix}`, 9000);
+          }
+        }
+
+        if (result?.archivePath) {
+          await window.pywebview.api.open_path(result.archivePath);
+        }
+      } catch (e) {
+        const message = e?.message || "Failed to create drawing backup.";
+        window.updateToolStatus("toolBackupDrawings", `ERROR: ${message}`);
+      }
+    };
+
+    backupDrawingsBtn.addEventListener("click", handler);
+    backupDrawingsBtn.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        handler();
+      }
+    });
+  }
 
   const copyProjectLocallyBtn = document.getElementById("toolCopyProjectLocally");
   if (copyProjectLocallyBtn) {

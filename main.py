@@ -15,7 +15,7 @@ import sqlite3
 import http.server
 import html
 from pathlib import Path
-from copy import copy
+from copy import copy, deepcopy
 from dotenv import load_dotenv
 import datetime
 import threading
@@ -161,6 +161,7 @@ GOOGLE_OAUTH_TIMEOUT_SECONDS = 180
 MICROSOFT_OAUTH_CLIENT_ID_ENV = "MICROSOFT_OAUTH_CLIENT_ID"
 MICROSOFT_OAUTH_TENANT_ID_ENV = "MICROSOFT_OAUTH_TENANT_ID"
 MICROSOFT_OAUTH_DEFAULT_TENANT = "organizations"
+MICROSOFT_OAUTH_CALLBACK_HOST = "localhost"
 MICROSOFT_OAUTH_CALLBACK_PATH = "/"
 MICROSOFT_OAUTH_TIMEOUT_SECONDS = 180
 MICROSOFT_OAUTH_SCOPES = [
@@ -170,9 +171,29 @@ MICROSOFT_OAUTH_SCOPES = [
     "offline_access",
     "Mail.Read",
 ]
+MICROSOFT_OAUTH_DIAGNOSTIC_SCOPES = [
+    "openid",
+    "profile",
+    "email",
+    "User.Read",
+]
 MICROSOFT_GRAPH_API_BASE = "https://graph.microsoft.com/v1.0"
+OUTLOOK_SCAN_SOURCE_DESKTOP = "desktop-outlook"
+OUTLOOK_SCAN_SOURCE_GRAPH = "microsoft-graph"
+OUTLOOK_MAPI_INBOX_FOLDER_ID = 6
+OUTLOOK_MAPI_PR_INTERNET_MESSAGE_ID = "http://schemas.microsoft.com/mapi/proptag/0x1035001F"
+OUTLOOK_SCAN_DEDUPE_SKIP_REASON_THREAD = (
+    "Removed from the AI batch because this reply only repeated thread history already seen in newer emails."
+)
+OUTLOOK_SCAN_DEDUPE_SKIP_REASON_DUPLICATE = (
+    "Removed from the AI batch because its content duplicated another email in the selected timeframe."
+)
 OUTLOOK_SCAN_FETCH_LIMIT = 200
 OUTLOOK_SCAN_AI_LIMIT = 40
+OUTLOOK_SCAN_PROMPT_MAX_CHARS = 120000
+OUTLOOK_SCAN_PROMPT_EMAIL_BUDGET_CHARS = 90000
+OUTLOOK_SCAN_PROMPT_DELIVERABLE_BUDGET_CHARS = 25000
+OUTLOOK_SCAN_EMAIL_BODY_PROMPT_CHARS = 3000
 FIREBASE_API_KEY_ENV = "FIREBASE_API_KEY"
 FIREBASE_AUTH_DOMAIN_ENV = "FIREBASE_AUTH_DOMAIN"
 FIREBASE_PROJECT_ID_ENV = "FIREBASE_PROJECT_ID"
@@ -220,6 +241,87 @@ def build_default_user_settings():
         'microsoftAuth': None,
         'cloudSync': build_default_cloud_sync_settings(),
     }
+
+
+def _get_legacy_windows_app_data_dir():
+    user_profile = os.getenv('USERPROFILE') or os.path.expanduser('~')
+    appdata_base = os.getenv('APPDATA') or os.path.join(
+        user_profile, 'AppData', 'Roaming')
+    return os.path.join(appdata_base, 'ProjectManagementApp')
+
+
+def _load_legacy_user_settings():
+    if sys.platform != "win32":
+        return None
+    legacy_path = os.path.join(_get_legacy_windows_app_data_dir(), "settings.json")
+    try:
+        with open(legacy_path, 'r', encoding='utf-8') as f:
+            payload = json.load(f)
+        return payload if isinstance(payload, dict) else None
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+
+
+def _merge_missing_user_settings_from_legacy(current_settings, legacy_settings):
+    current = current_settings if isinstance(current_settings, dict) else {}
+    legacy = legacy_settings if isinstance(legacy_settings, dict) else {}
+    if not legacy:
+        return current, False
+
+    merged = deepcopy(current)
+    changed = False
+
+    for key in (
+        "userName",
+        "apiKey",
+        "autocadPath",
+        "theme",
+        "defaultPmInitials",
+        "autocadVersion",
+    ):
+        current_value = str(merged.get(key) or "").strip()
+        legacy_value = str(legacy.get(key) or "").strip()
+        if not current_value and legacy_value:
+            merged[key] = legacy_value
+            changed = True
+
+    current_discipline = merged.get("discipline")
+    legacy_discipline = legacy.get("discipline")
+    if (
+        (not isinstance(current_discipline, list) or not current_discipline)
+        and isinstance(legacy_discipline, list)
+        and legacy_discipline
+    ):
+        merged["discipline"] = deepcopy(legacy_discipline)
+        changed = True
+
+    if (
+        merged.get("showSetupHelp", True) is not False
+        and legacy.get("showSetupHelp") is False
+    ):
+        merged["showSetupHelp"] = False
+        changed = True
+
+    if merged.get("autoPrimary") is not True and legacy.get("autoPrimary") is True:
+        merged["autoPrimary"] = True
+        changed = True
+
+    current_templates = merged.get("lightingTemplates")
+    legacy_templates = legacy.get("lightingTemplates")
+    if (
+        (not isinstance(current_templates, list) or not current_templates)
+        and isinstance(legacy_templates, list)
+        and legacy_templates
+    ):
+        merged["lightingTemplates"] = deepcopy(legacy_templates)
+        changed = True
+
+    for auth_key in ("googleAuth", "microsoftAuth"):
+        if not isinstance(merged.get(auth_key), dict) and isinstance(legacy.get(auth_key), dict):
+            merged[auth_key] = deepcopy(legacy.get(auth_key))
+            changed = True
+
+    return merged, changed
 
 
 def utc_now_iso():
@@ -2192,13 +2294,25 @@ class Api:
         """Reads and returns user settings from settings.json."""
         try:
             with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
+                settings = json.load(f)
         except (FileNotFoundError, json.JSONDecodeError):
-            return build_default_user_settings()
+            settings = build_default_user_settings()
+
+        repaired_settings, repaired = _merge_missing_user_settings_from_legacy(
+            settings,
+            _load_legacy_user_settings(),
+        )
+        if repaired:
+            logging.info("Recovered missing user settings from the legacy AppData settings file.")
+            self.save_user_settings(repaired_settings)
+            return repaired_settings
+        return settings
 
     def save_user_settings(self, data):
         """Saves user settings to settings.json."""
         try:
+            if os.path.exists(SETTINGS_FILE):
+                shutil.copy2(SETTINGS_FILE, SETTINGS_FILE + '.bak')
             with open(SETTINGS_FILE, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
             return {'status': 'success'}
@@ -2784,6 +2898,97 @@ class Api:
     def _get_microsoft_oauth_token_endpoint(self):
         return f"{self._get_microsoft_oauth_authority_base()}/token"
 
+    def _looks_like_microsoft_admin_consent_issue(self, message):
+        lower = str(message or "").strip().lower()
+        if not lower:
+            return False
+        indicators = (
+            "need admin approval",
+            "needs admin approval",
+            "admin approval",
+            "admin consent",
+            "has not consented to use the application",
+            "only an admin can grant",
+            "consent_required",
+            "aadsts65001",
+            "aadsts90094",
+        )
+        return any(indicator in lower for indicator in indicators)
+
+    def _build_microsoft_admin_consent_message(self, detail=""):
+        client_id = self._get_microsoft_oauth_client_id()
+        tenant_id = self._get_microsoft_oauth_tenant_id()
+        target = "this app"
+        if client_id:
+            target = f"this app (client ID {client_id})"
+        requested_scopes = " ".join(self._get_microsoft_oauth_scopes())
+        message = (
+            "Microsoft 365 access for Outlook scan is being blocked by your tenant "
+            "consent policy for "
+            f"{target}."
+        )
+        if tenant_id:
+            message += f" Tenant: {tenant_id}."
+        message += (
+            f" Requested scopes: {requested_scopes}. Review Enterprise applications > "
+            "Consent and permissions > User consent settings and Permission "
+            "classifications. Classify the delegated permissions this app requests as "
+            "low impact where appropriate, especially Mail.Read and offline_access, "
+            "and include User.Read if Microsoft added it to the app registration. "
+            "Use Retry minimal consent in the app to test openid profile email "
+            "User.Read without Mail.Read or offline_access."
+        )
+        return message
+
+    def _get_microsoft_oauth_scopes(self, diagnostic=False):
+        return list(
+            MICROSOFT_OAUTH_DIAGNOSTIC_SCOPES
+            if diagnostic
+            else MICROSOFT_OAUTH_SCOPES
+        )
+
+    def _build_microsoft_local_redirect_uri(self, port):
+        return (
+            f"http://{MICROSOFT_OAUTH_CALLBACK_HOST}:{int(port)}"
+            f"{MICROSOFT_OAUTH_CALLBACK_PATH}"
+        )
+
+    def _get_microsoft_admin_consent_scopes(self):
+        scopes = []
+        seen = set()
+        for raw_scope in self._get_microsoft_oauth_scopes():
+            scope = str(raw_scope or "").strip()
+            if not scope:
+                continue
+            lower = scope.lower()
+            if lower in {"openid", "profile", "email", "offline_access"}:
+                normalized = lower
+            elif scope.startswith("https://"):
+                normalized = scope
+            else:
+                normalized = f"{MICROSOFT_GRAPH_API_BASE.rsplit('/v1.0', 1)[0]}/{scope}"
+            key = normalized.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            scopes.append(normalized)
+        return scopes
+
+    def _build_microsoft_admin_consent_url(self, redirect_uri, state):
+        client_id = self._get_microsoft_oauth_client_id()
+        tenant_id = self._get_microsoft_oauth_tenant_id()
+        return (
+            f"https://login.microsoftonline.com/{tenant_id}/v2.0/adminconsent?"
+            + urlencode(
+                {
+                    "client_id": client_id,
+                    "redirect_uri": redirect_uri,
+                    "scope": " ".join(self._get_microsoft_admin_consent_scopes()),
+                    "state": state,
+                }
+            )
+        )
+
     def _extract_microsoft_error_message(self, response):
         payload = {}
         try:
@@ -2804,6 +3009,8 @@ class Api:
                 "Microsoft sign-in is not configured. Add "
                 f"{MICROSOFT_OAUTH_CLIENT_ID_ENV} to .env and restart the app."
             )
+        if self._looks_like_microsoft_admin_consent_issue(message):
+            return self._build_microsoft_admin_consent_message(message)
         return message
 
     def _build_microsoft_auth_record(self, token_payload, claims_payload, existing_auth=None):
@@ -2845,13 +3052,16 @@ class Api:
             "accessToken": str(token_payload.get("access_token") or "").strip(),
             "refreshToken": refresh_token,
             "tokenType": str(token_payload.get("token_type") or "Bearer").strip() or "Bearer",
-            "scope": str(token_payload.get("scope") or " ".join(MICROSOFT_OAUTH_SCOPES)).strip(),
+            "scope": str(
+                token_payload.get("scope")
+                or " ".join(self._get_microsoft_oauth_scopes())
+            ).strip(),
             "tenantId": str(claims_payload.get("tid") or existing_auth.get("tenantId") or "").strip(),
         }
 
     def _sanitize_microsoft_auth_record(self, auth_record):
         if not isinstance(auth_record, dict):
-            return {
+            auth = {
                 "signedIn": False,
                 "provider": "microsoft",
                 "email": "",
@@ -2862,17 +3072,20 @@ class Api:
                 "tenantId": "",
                 "hasRefreshToken": False,
             }
-        return {
-            "signedIn": True,
-            "provider": str(auth_record.get("provider") or "microsoft").strip() or "microsoft",
-            "email": str(auth_record.get("email") or "").strip(),
-            "displayName": str(auth_record.get("displayName") or "").strip(),
-            "avatarUrl": "",
-            "signedInAt": str(auth_record.get("signedInAt") or "").strip(),
-            "expiresAt": str(auth_record.get("expiresAt") or "").strip(),
-            "tenantId": str(auth_record.get("tenantId") or "").strip(),
-            "hasRefreshToken": bool(str(auth_record.get("refreshToken") or "").strip()),
-        }
+        else:
+            auth = {
+                "signedIn": True,
+                "provider": str(auth_record.get("provider") or "microsoft").strip() or "microsoft",
+                "email": str(auth_record.get("email") or "").strip(),
+                "displayName": str(auth_record.get("displayName") or "").strip(),
+                "avatarUrl": "",
+                "signedInAt": str(auth_record.get("signedInAt") or "").strip(),
+                "expiresAt": str(auth_record.get("expiresAt") or "").strip(),
+                "tenantId": str(auth_record.get("tenantId") or "").strip(),
+                "hasRefreshToken": bool(str(auth_record.get("refreshToken") or "").strip()),
+            }
+        auth["outlookScan"] = self._get_outlook_scan_capability(auth_record)
+        return auth
 
     def _load_microsoft_auth_record(self):
         settings = self.get_user_settings()
@@ -2956,6 +3169,9 @@ class Api:
                 self.server.oauth_result = {
                     "code": (params.get("code") or [""])[0],
                     "state": (params.get("state") or [""])[0],
+                    "admin_consent": (params.get("admin_consent") or [""])[0],
+                    "tenant": (params.get("tenant") or [""])[0],
+                    "scope": (params.get("scope") or [""])[0],
                     "error": (params.get("error") or [""])[0],
                     "error_description": (params.get("error_description") or [""])[0],
                 }
@@ -2978,10 +3194,22 @@ class Api:
                         "#f59e0b" if error_code == "access_denied" else "#ef4444",
                     )
                 else:
-                    page = self.server.owner._build_microsoft_oauth_status_html(
-                        "Microsoft Sign-In Complete",
-                        "Return to the app. Your sign-in will finish automatically.",
-                    )
+                    if (
+                        str(self.server.oauth_result.get("admin_consent") or "")
+                        .strip()
+                        .lower()
+                        == "true"
+                    ):
+                        page = self.server.owner._build_microsoft_oauth_status_html(
+                            "Microsoft Admin Approval Complete",
+                            "Return to the app. Admin approval finished successfully.",
+                            "#10b981",
+                        )
+                    else:
+                        page = self.server.owner._build_microsoft_oauth_status_html(
+                            "Microsoft Sign-In Complete",
+                            "Return to the app. Your sign-in will finish automatically.",
+                        )
 
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -2991,7 +3219,10 @@ class Api:
                 self.server.oauth_event.set()
                 threading.Thread(target=self.server.shutdown, daemon=True).start()
 
-        server = MicrosoftOAuthCallbackServer(("127.0.0.1", 0), MicrosoftOAuthCallbackHandler)
+        server = MicrosoftOAuthCallbackServer(
+            (MICROSOFT_OAUTH_CALLBACK_HOST, 0),
+            MicrosoftOAuthCallbackHandler,
+        )
         server.owner = self
         server.oauth_event = threading.Event()
         server.oauth_result = {}
@@ -3039,7 +3270,7 @@ class Api:
                     "client_id": client_id,
                     "grant_type": "refresh_token",
                     "refresh_token": refresh_token,
-                    "scope": " ".join(MICROSOFT_OAUTH_SCOPES),
+                    "scope": " ".join(self._get_microsoft_oauth_scopes()),
                 },
                 timeout=20,
             )
@@ -3088,6 +3319,211 @@ class Api:
                 "auth": self._sanitize_microsoft_auth_record(None),
             }
 
+    def diagnose_microsoft_consent_policy(self):
+        client_id = self._get_microsoft_oauth_client_id()
+        if not client_id:
+            return {
+                "status": "error",
+                "message": (
+                    "Microsoft sign-in is not configured. Add "
+                    f"{MICROSOFT_OAUTH_CLIENT_ID_ENV} to .env and restart the app."
+                ),
+            }
+
+        diagnostic_scopes = self._get_microsoft_oauth_scopes(diagnostic=True)
+        callback_server = self._start_microsoft_oauth_callback_server()
+        callback_port = callback_server.server_address[1]
+        redirect_uri = self._build_microsoft_local_redirect_uri(callback_port)
+        code_verifier, code_challenge = self._generate_google_pkce_pair()
+        state = secrets.token_urlsafe(32)
+        auth_url = (
+            f"{self._get_microsoft_oauth_auth_endpoint()}?"
+            + urlencode(
+                {
+                    "client_id": client_id,
+                    "redirect_uri": redirect_uri,
+                    "response_type": "code",
+                    "response_mode": "query",
+                    "scope": " ".join(diagnostic_scopes),
+                    "state": state,
+                    "prompt": "select_account",
+                    "code_challenge": code_challenge,
+                    "code_challenge_method": "S256",
+                }
+            )
+        )
+
+        try:
+            open_result = self.open_url(auth_url, browser="edge")
+            if open_result.get("status") != "success":
+                raise RuntimeError(
+                    open_result.get("message")
+                    or "Could not open the browser for the Microsoft consent diagnostic."
+                )
+
+            if not callback_server.oauth_event.wait(MICROSOFT_OAUTH_TIMEOUT_SECONDS):
+                return {
+                    "status": "error",
+                    "message": "Microsoft consent diagnostic timed out. Please try again.",
+                }
+
+            result = callback_server.oauth_result or {}
+            error_code = str(result.get("error") or "").strip().lower()
+            if error_code:
+                error_detail = str(
+                    result.get("error_description") or result.get("error") or ""
+                ).strip()
+                if error_code == "access_denied":
+                    return {
+                        "status": "cancelled",
+                        "message": "Microsoft consent diagnostic was cancelled.",
+                    }
+                if self._looks_like_microsoft_admin_consent_issue(error_detail):
+                    return {
+                        "status": "error",
+                        "message": (
+                            "Reduced-scope Microsoft consent is also blocked. Your "
+                            "tenant likely disallows user consent under the current "
+                            "User consent settings or Permission classifications."
+                        ),
+                    }
+                return {
+                    "status": "error",
+                    "message": error_detail or "Microsoft consent diagnostic failed.",
+                }
+
+            if str(result.get("state") or "").strip() != state:
+                return {
+                    "status": "error",
+                    "message": "Microsoft consent diagnostic returned an invalid state token.",
+                }
+
+            code = str(result.get("code") or "").strip()
+            if not code:
+                return {
+                    "status": "error",
+                    "message": "Microsoft consent diagnostic finished without an authorization code.",
+                }
+
+            token_payload = self._exchange_microsoft_auth_code(
+                client_id,
+                code,
+                code_verifier,
+                redirect_uri,
+            )
+            claims = self._decode_jwt_payload(token_payload.get("id_token"))
+            return {
+                "status": "success",
+                "message": (
+                    "Reduced-scope Microsoft consent succeeded. Basic sign-in works, "
+                    "so tenant policy is likely blocking Mail.Read or offline_access. "
+                    "Update User consent settings and Permission classifications, then "
+                    "retry Connect Outlook."
+                ),
+                "diagnostic": {
+                    "scope": str(
+                        token_payload.get("scope") or " ".join(diagnostic_scopes)
+                    ).strip(),
+                    "email": str(
+                        claims.get("email") or claims.get("preferred_username") or ""
+                    ).strip(),
+                    "displayName": str(claims.get("name") or "").strip(),
+                },
+            }
+        except Exception as e:
+            logging.error(f"Error diagnosing Microsoft consent policy: {e}")
+            return {"status": "error", "message": str(e)}
+        finally:
+            try:
+                callback_server.shutdown()
+            except Exception:
+                pass
+            try:
+                callback_server.server_close()
+            except Exception:
+                pass
+
+    def request_microsoft_admin_consent(self):
+        client_id = self._get_microsoft_oauth_client_id()
+        if not client_id:
+            return {
+                "status": "error",
+                "message": (
+                    "Microsoft sign-in is not configured. Add "
+                    f"{MICROSOFT_OAUTH_CLIENT_ID_ENV} to .env and restart the app."
+                ),
+            }
+
+        callback_server = self._start_microsoft_oauth_callback_server()
+        callback_port = callback_server.server_address[1]
+        redirect_uri = self._build_microsoft_local_redirect_uri(callback_port)
+        state = secrets.token_urlsafe(32)
+        admin_consent_url = self._build_microsoft_admin_consent_url(redirect_uri, state)
+
+        try:
+            open_result = self.open_url(admin_consent_url, browser="edge")
+            if open_result.get("status") != "success":
+                raise RuntimeError(
+                    open_result.get("message")
+                    or "Could not open the browser for Microsoft admin approval."
+                )
+
+            if not callback_server.oauth_event.wait(MICROSOFT_OAUTH_TIMEOUT_SECONDS):
+                return {
+                    "status": "error",
+                    "message": "Microsoft admin approval timed out. Please try again.",
+                }
+
+            result = callback_server.oauth_result or {}
+            error_code = str(result.get("error") or "").strip().lower()
+            if error_code:
+                error_detail = str(
+                    result.get("error_description") or result.get("error") or ""
+                ).strip()
+                if error_code == "access_denied":
+                    return {
+                        "status": "cancelled",
+                        "message": "Microsoft admin approval was cancelled.",
+                    }
+                return {
+                    "status": "error",
+                    "message": error_detail or "Microsoft admin approval did not complete.",
+                }
+
+            if str(result.get("state") or "").strip() != state:
+                return {
+                    "status": "error",
+                    "message": "Microsoft admin approval returned an invalid state token.",
+                }
+
+            if (
+                str(result.get("admin_consent") or "").strip().lower() != "true"
+            ):
+                return {
+                    "status": "error",
+                    "message": "Microsoft admin approval did not complete.",
+                }
+
+            return {
+                "status": "success",
+                "message": (
+                    "Microsoft admin approval completed. Return to the app and connect "
+                    "Outlook again."
+                ),
+            }
+        except Exception as e:
+            logging.error(f"Error requesting Microsoft admin approval: {e}")
+            return {"status": "error", "message": str(e)}
+        finally:
+            try:
+                callback_server.shutdown()
+            except Exception:
+                pass
+            try:
+                callback_server.server_close()
+            except Exception:
+                pass
+
     def sign_in_with_microsoft(self):
         client_id = self._get_microsoft_oauth_client_id()
         if not client_id:
@@ -3102,7 +3538,7 @@ class Api:
         existing_auth = self._load_microsoft_auth_record()
         callback_server = self._start_microsoft_oauth_callback_server()
         callback_port = callback_server.server_address[1]
-        redirect_uri = f"http://127.0.0.1:{callback_port}{MICROSOFT_OAUTH_CALLBACK_PATH}"
+        redirect_uri = self._build_microsoft_local_redirect_uri(callback_port)
         code_verifier, code_challenge = self._generate_google_pkce_pair()
         state = secrets.token_urlsafe(32)
         auth_url = (
@@ -3113,7 +3549,7 @@ class Api:
                     "redirect_uri": redirect_uri,
                     "response_type": "code",
                     "response_mode": "query",
-                    "scope": " ".join(MICROSOFT_OAUTH_SCOPES),
+                    "scope": " ".join(self._get_microsoft_oauth_scopes()),
                     "state": state,
                     "prompt": "select_account",
                     "code_challenge": code_challenge,
@@ -3123,7 +3559,7 @@ class Api:
         )
 
         try:
-            open_result = self.open_url(auth_url)
+            open_result = self.open_url(auth_url, browser="edge")
             if open_result.get("status") != "success":
                 raise RuntimeError(
                     open_result.get("message") or "Could not open the browser for Microsoft sign-in."
@@ -3138,14 +3574,21 @@ class Api:
             result = callback_server.oauth_result or {}
             error_code = str(result.get("error") or "").strip().lower()
             if error_code:
+                error_detail = str(
+                    result.get("error_description") or result.get("error") or ""
+                ).strip()
+                if self._looks_like_microsoft_admin_consent_issue(error_detail):
+                    return {
+                        "status": "error",
+                        "message": self._build_microsoft_admin_consent_message(
+                            error_detail
+                        ),
+                    }
                 if error_code == "access_denied":
                     return {
                         "status": "cancelled",
                         "message": "Microsoft sign-in was cancelled.",
                     }
-                error_detail = str(
-                    result.get("error_description") or result.get("error") or ""
-                ).strip()
                 return {
                     "status": "error",
                     "message": error_detail or "Microsoft sign-in did not complete.",
@@ -3205,26 +3648,444 @@ class Api:
             logging.error(f"Error signing out of Microsoft: {e}")
             return {'status': 'error', 'message': str(e)}
 
-    def _build_outlook_scan_start(self, timeframe):
+    def _normalize_outlook_scan_date(self, scan_date):
+        raw = str(scan_date or "").strip()
+        if not raw:
+            return ""
+        try:
+            selected = datetime.date.fromisoformat(raw)
+        except ValueError:
+            return ""
+        today = datetime.datetime.now().astimezone().date()
+        if selected > today:
+            selected = today
+        return selected.isoformat()
+
+    def _build_outlook_scan_range(self, timeframe="week", scan_date=""):
         now = datetime.datetime.now().astimezone()
+        tzinfo = now.tzinfo
+        normalized_scan_date = self._normalize_outlook_scan_date(scan_date)
+        if normalized_scan_date:
+            selected = datetime.date.fromisoformat(normalized_scan_date)
+            start_local = datetime.datetime.combine(
+                selected,
+                datetime.time.min,
+                tzinfo=tzinfo,
+            )
+            end_local = datetime.datetime.combine(
+                selected,
+                datetime.time.max,
+                tzinfo=tzinfo,
+            )
+            return {
+                "scanDate": normalized_scan_date,
+                "timeframe": "",
+                "startUtc": start_local.astimezone(datetime.timezone.utc),
+                "endUtc": end_local.astimezone(datetime.timezone.utc),
+            }
+
         today = now.date()
-        if str(timeframe or "").strip().lower() == "month":
+        normalized_timeframe = str(timeframe or "week").strip().lower()
+        if normalized_timeframe not in {"week", "month"}:
+            normalized_timeframe = "week"
+        if normalized_timeframe == "month":
             start_local = datetime.datetime.combine(
                 today.replace(day=1),
                 datetime.time.min,
-                tzinfo=now.tzinfo,
+                tzinfo=tzinfo,
             )
-            return start_local.astimezone(datetime.timezone.utc)
-
-        weekday = today.weekday()
-        days_since_sunday = (weekday + 1) % 7
-        start_date = today - datetime.timedelta(days=days_since_sunday)
-        start_local = datetime.datetime.combine(
-            start_date,
-            datetime.time.min,
-            tzinfo=now.tzinfo,
+        else:
+            weekday = today.weekday()
+            days_since_sunday = (weekday + 1) % 7
+            start_date = today - datetime.timedelta(days=days_since_sunday)
+            start_local = datetime.datetime.combine(
+                start_date,
+                datetime.time.min,
+                tzinfo=tzinfo,
+            )
+        end_local = datetime.datetime.combine(
+            today,
+            datetime.time.max,
+            tzinfo=tzinfo,
         )
-        return start_local.astimezone(datetime.timezone.utc)
+        return {
+            "scanDate": "",
+            "timeframe": normalized_timeframe,
+            "startUtc": start_local.astimezone(datetime.timezone.utc),
+            "endUtc": end_local.astimezone(datetime.timezone.utc),
+        }
+
+    def _format_outlook_scan_period_label(self, timeframe="week", scan_date=""):
+        normalized_scan_date = self._normalize_outlook_scan_date(scan_date)
+        if normalized_scan_date:
+            try:
+                selected = datetime.date.fromisoformat(normalized_scan_date)
+                return selected.strftime("%m/%d/%Y")
+            except ValueError:
+                pass
+        return "this month" if str(timeframe or "").strip().lower() == "month" else "this week"
+
+    def _build_outlook_scan_error_result(self, message, timeframe="week", source="", scan_date=""):
+        return {
+            "status": "error",
+            "message": str(message or "").strip() or "Outlook scan failed.",
+            "candidateCount": 0,
+            "scannedCount": 0,
+            "emailsIncludedCount": 0,
+            "deliverablesIncludedCount": 0,
+            "threadsDetected": 0,
+            "dedupedEmailCount": 0,
+            "dedupeSkippedEmailCount": 0,
+            "analysisMode": "batch",
+            "suggestions": [],
+            "skippedMessages": [],
+            "promptTruncated": False,
+            "truncated": False,
+            "timeframe": timeframe,
+            "scanDate": self._normalize_outlook_scan_date(scan_date),
+            "source": str(source or "").strip(),
+        }
+
+    def _count_outlook_scan_project_context_deliverables(self, project_context):
+        total = 0
+        if not isinstance(project_context, list):
+            return total
+        for project in project_context:
+            if not isinstance(project, dict):
+                continue
+            deliverables = project.get("deliverables")
+            if isinstance(deliverables, list):
+                total += len(deliverables)
+        return total
+
+    def _notify_outlook_scan_progress(self, payload):
+        try:
+            if not webview.windows:
+                return
+            payload_json = json.dumps(payload or {}, ensure_ascii=True)
+            webview.windows[0].evaluate_js(
+                f"window.updateOutlookScanProgress({payload_json})"
+            )
+        except Exception as exc:
+            logging.debug(f"_notify_outlook_scan_progress failed: {exc}")
+
+    def _send_outlook_scan_progress(self, stage, message="", **kwargs):
+        payload = {
+            "stage": str(stage or "").strip(),
+            "message": str(message or "").strip(),
+        }
+        allowed_keys = {
+            "active",
+            "source",
+            "timeframe",
+            "scanDate",
+            "totalEmails",
+            "processedEmails",
+            "includedEmails",
+            "skippedEmails",
+            "deliverablesInPeriod",
+            "relevantEmails",
+            "threadsDetected",
+            "dedupedEmailCount",
+            "dedupeSkippedEmailCount",
+        }
+        for key, value in (kwargs or {}).items():
+            if key not in allowed_keys or value is None:
+                continue
+            if key in {
+                "totalEmails",
+                "processedEmails",
+                "includedEmails",
+                "skippedEmails",
+                "deliverablesInPeriod",
+                "relevantEmails",
+                "threadsDetected",
+                "dedupedEmailCount",
+                "dedupeSkippedEmailCount",
+            }:
+                try:
+                    payload[key] = max(int(value), 0)
+                except Exception:
+                    continue
+            else:
+                payload[key] = value
+        if "active" not in payload:
+            payload["active"] = payload["stage"] not in {"done", "error"}
+        self._notify_outlook_scan_progress(payload)
+
+    def _get_outlook_scan_capability(self, auth_record=None):
+        desktop_available, desktop_reason = self._get_desktop_outlook_availability()
+        access_token = str((auth_record or {}).get("accessToken") or "").strip()
+        if desktop_available:
+            preferred_source = OUTLOOK_SCAN_SOURCE_DESKTOP
+        elif access_token:
+            preferred_source = OUTLOOK_SCAN_SOURCE_GRAPH
+        else:
+            preferred_source = "none"
+        return {
+            "preferredSource": preferred_source,
+            "desktopAvailable": desktop_available,
+            "desktopReason": desktop_reason,
+        }
+
+    def _get_desktop_outlook_availability(self):
+        if sys.platform != "win32":
+            return False, "Desktop Outlook inbox scan is only available on Windows."
+        install_path = self._find_desktop_outlook_install_path()
+        if not install_path:
+            return False, "Classic Outlook is not installed on this machine."
+        try:
+            import win32com.client  # noqa: F401
+        except Exception:
+            return False, "Desktop Outlook support requires pywin32."
+        return True, ""
+
+    def _find_desktop_outlook_install_path(self):
+        if sys.platform != "win32":
+            return ""
+
+        candidate_paths = []
+        try:
+            import winreg
+
+            registry_locations = [
+                (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\OUTLOOK.EXE"),
+                (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\OUTLOOK.EXE"),
+                (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths\OUTLOOK.EXE"),
+            ]
+            for hive, subkey in registry_locations:
+                try:
+                    with winreg.OpenKey(hive, subkey) as key:
+                        value = ""
+                        try:
+                            value = winreg.QueryValue(key, None)
+                        except Exception:
+                            try:
+                                value = winreg.QueryValueEx(key, "")[0]
+                            except Exception:
+                                value = ""
+                        value = os.path.abspath(str(value or "").strip()) if value else ""
+                        if value:
+                            candidate_paths.append(value)
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+        program_files_roots = [
+            os.environ.get("ProgramFiles", r"C:\Program Files"),
+            os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
+        ]
+        office_variants = [
+            ("Microsoft Office", "root", "Office16"),
+            ("Microsoft Office", "root", "Office15"),
+            ("Microsoft Office", "Office16"),
+            ("Microsoft Office", "Office15"),
+            ("Microsoft Office", "Office14"),
+        ]
+        for root in program_files_roots:
+            root = str(root or "").strip()
+            if not root:
+                continue
+            for variant in office_variants:
+                candidate_paths.append(os.path.join(root, *variant, "OUTLOOK.EXE"))
+
+        for candidate in candidate_paths:
+            full_path = os.path.abspath(str(candidate or "").strip()) if candidate else ""
+            if full_path and os.path.exists(full_path):
+                return full_path
+        return ""
+
+    def _run_with_outlook_com(self, func):
+        pythoncom = None
+        try:
+            import pythoncom as _pythoncom
+
+            pythoncom = _pythoncom
+            pythoncom.CoInitialize()
+        except Exception:
+            pythoncom = None
+
+        try:
+            return func()
+        finally:
+            if pythoncom is not None:
+                try:
+                    pythoncom.CoUninitialize()
+                except Exception:
+                    pass
+
+    def _get_desktop_outlook_namespace(self):
+        available, reason = self._get_desktop_outlook_availability()
+        if not available:
+            raise RuntimeError(reason or "Desktop Outlook is unavailable.")
+        try:
+            import win32com.client
+        except Exception as exc:
+            raise RuntimeError("Desktop Outlook support requires pywin32.") from exc
+
+        try:
+            application = win32com.client.Dispatch("Outlook.Application")
+            namespace = application.GetNamespace("MAPI")
+            return application, namespace
+        except Exception as exc:
+            raise RuntimeError(f"Could not access Desktop Outlook: {exc}") from exc
+
+    def _coerce_outlook_datetime(self, raw_value):
+        if isinstance(raw_value, datetime.datetime):
+            dt_value = raw_value
+        else:
+            try:
+                dt_value = datetime.datetime.fromtimestamp(float(raw_value))
+            except Exception:
+                return None
+        if dt_value.tzinfo is None:
+            dt_value = dt_value.replace(tzinfo=datetime.datetime.now().astimezone().tzinfo)
+        try:
+            return dt_value.astimezone(datetime.timezone.utc)
+        except Exception:
+            return None
+
+    def _format_outlook_datetime(self, raw_value):
+        dt_value = self._coerce_outlook_datetime(raw_value)
+        if dt_value is None:
+            return ""
+        return dt_value.isoformat().replace("+00:00", "Z")
+
+    def _get_desktop_outlook_internet_message_id(self, mail_item):
+        accessor = getattr(mail_item, "PropertyAccessor", None)
+        if accessor is None:
+            return ""
+        try:
+            return str(accessor.GetProperty(OUTLOOK_MAPI_PR_INTERNET_MESSAGE_ID) or "").strip()
+        except Exception:
+            return ""
+
+    def _build_desktop_outlook_message_summary(self, mail_item):
+        body_text = str(getattr(mail_item, "Body", "") or "").strip()
+        preview = re.sub(r"\s+", " ", body_text).strip()
+        if len(preview) > 500:
+            preview = preview[:497].rstrip() + "..."
+        return {
+            "id": str(getattr(mail_item, "EntryID", "") or "").strip(),
+            "subject": str(getattr(mail_item, "Subject", "") or "").strip(),
+            "bodyPreview": preview,
+            "receivedDateTime": self._format_outlook_datetime(getattr(mail_item, "ReceivedTime", None)),
+            "webLink": "",
+            "internetMessageId": self._get_desktop_outlook_internet_message_id(mail_item),
+            "conversationId": str(getattr(mail_item, "ConversationID", "") or "").strip(),
+            "hasAttachments": bool(int(getattr(getattr(mail_item, "Attachments", None), "Count", 0) or 0)),
+            "source": OUTLOOK_SCAN_SOURCE_DESKTOP,
+            "from": {
+                "name": str(getattr(mail_item, "SenderName", "") or "").strip(),
+                "address": str(getattr(mail_item, "SenderEmailAddress", "") or "").strip(),
+            },
+        }
+
+    def _list_desktop_outlook_inbox_messages(
+        self,
+        timeframe="week",
+        limit=OUTLOOK_SCAN_FETCH_LIMIT,
+        scan_date="",
+    ):
+        scan_range = self._build_outlook_scan_range(timeframe=timeframe, scan_date=scan_date)
+        start_utc = scan_range["startUtc"]
+        end_utc = scan_range["endUtc"]
+        max_items = max(int(limit or 0), 1)
+
+        def _read_messages():
+            _, namespace = self._get_desktop_outlook_namespace()
+            inbox = namespace.GetDefaultFolder(OUTLOOK_MAPI_INBOX_FOLDER_ID)
+            items = inbox.Items
+            try:
+                items.Sort("[ReceivedTime]", True)
+            except Exception:
+                pass
+
+            messages = []
+            has_more = False
+            current = None
+            try:
+                current = items.GetFirst()
+            except Exception:
+                current = None
+
+            while current is not None:
+                message_class = str(getattr(current, "MessageClass", "") or "").strip().lower()
+                if message_class and not message_class.startswith("ipm.note"):
+                    try:
+                        current = items.GetNext()
+                    except Exception:
+                        current = None
+                    continue
+
+                received_dt = self._coerce_outlook_datetime(getattr(current, "ReceivedTime", None))
+                if received_dt is not None and end_utc is not None and received_dt > end_utc:
+                    try:
+                        current = items.GetNext()
+                    except Exception:
+                        current = None
+                    continue
+                if received_dt is not None and received_dt < start_utc:
+                    break
+
+                summary = self._build_desktop_outlook_message_summary(current)
+                if summary.get("id"):
+                    messages.append(summary)
+                    if len(messages) >= max_items:
+                        has_more = True
+                        break
+
+                try:
+                    current = items.GetNext()
+                except Exception:
+                    current = None
+
+            return messages, has_more
+
+        return self._run_with_outlook_com(_read_messages)
+
+    def _get_desktop_outlook_message_body_text(self, message_id):
+        target_id = str(message_id or "").strip()
+        if not target_id:
+            raise RuntimeError("Desktop Outlook message is missing an identifier.")
+
+        def _read_message():
+            _, namespace = self._get_desktop_outlook_namespace()
+            mail_item = namespace.GetItemFromID(target_id)
+            summary = self._build_desktop_outlook_message_summary(mail_item)
+            body_text = str(getattr(mail_item, "Body", "") or "").strip()
+            if not body_text:
+                html_body = str(getattr(mail_item, "HTMLBody", "") or "").strip()
+                if html_body:
+                    body_text = self._html_to_plain_text(html_body)
+            if not body_text:
+                body_text = str(summary.get("bodyPreview") or "").strip()
+            return summary, body_text
+
+        return self._run_with_outlook_com(_read_message)
+
+    def open_outlook_desktop_message(self, message_id):
+        payload = message_id
+        if isinstance(payload, str):
+            payload = {"messageId": payload}
+        if not isinstance(payload, dict):
+            payload = {}
+        target_id = str(payload.get("messageId") or payload.get("id") or "").strip()
+        if not target_id:
+            return {"status": "error", "message": "Missing Outlook desktop message identifier."}
+
+        try:
+            def _open_message():
+                _, namespace = self._get_desktop_outlook_namespace()
+                mail_item = namespace.GetItemFromID(target_id)
+                mail_item.Display()
+
+            self._run_with_outlook_com(_open_message)
+            return {"status": "success"}
+        except Exception as exc:
+            logging.error(f"Error opening Desktop Outlook message: {exc}")
+            return {"status": "error", "message": str(exc)}
 
     def _get_microsoft_graph_headers(self, access_token, prefer_text=False):
         headers = {
@@ -3258,7 +4119,9 @@ class Api:
             "receivedDateTime": str(message.get("receivedDateTime") or "").strip(),
             "webLink": str(message.get("webLink") or "").strip(),
             "internetMessageId": str(message.get("internetMessageId") or "").strip(),
+            "conversationId": str(message.get("conversationId") or "").strip(),
             "hasAttachments": bool(message.get("hasAttachments")),
+            "source": OUTLOOK_SCAN_SOURCE_GRAPH,
             "from": {
                 "name": str(email_address.get("name") or "").strip(),
                 "address": str(email_address.get("address") or "").strip(),
@@ -3292,13 +4155,24 @@ class Api:
             return 0
         return score
 
-    def _list_outlook_inbox_messages(self, access_token, timeframe, limit=OUTLOOK_SCAN_FETCH_LIMIT):
-        start_utc = self._build_outlook_scan_start(timeframe)
+    def _list_outlook_inbox_messages(
+        self,
+        access_token,
+        timeframe="week",
+        limit=OUTLOOK_SCAN_FETCH_LIMIT,
+        scan_date="",
+    ):
+        scan_range = self._build_outlook_scan_range(timeframe=timeframe, scan_date=scan_date)
+        start_utc = scan_range["startUtc"]
+        end_utc = scan_range["endUtc"]
         url = f"{MICROSOFT_GRAPH_API_BASE}/me/mailFolders/inbox/messages"
         params = {
             "$top": 50,
             "$orderby": "receivedDateTime desc",
-            "$filter": f"receivedDateTime ge {start_utc.isoformat().replace('+00:00', 'Z')}",
+            "$filter": (
+                f"receivedDateTime ge {start_utc.isoformat().replace('+00:00', 'Z')} "
+                f"and receivedDateTime le {end_utc.isoformat().replace('+00:00', 'Z')}"
+            ),
             "$select": ",".join(
                 [
                     "id",
@@ -3307,6 +4181,7 @@ class Api:
                     "receivedDateTime",
                     "webLink",
                     "internetMessageId",
+                    "conversationId",
                     "from",
                     "hasAttachments",
                 ]
@@ -3358,10 +4233,12 @@ class Api:
                         "id",
                         "subject",
                         "body",
+                        "uniqueBody",
                         "bodyPreview",
                         "receivedDateTime",
                         "webLink",
                         "internetMessageId",
+                        "conversationId",
                         "from",
                         "hasAttachments",
                     ]
@@ -3369,138 +4246,1088 @@ class Api:
             },
             prefer_text=True,
         )
+        unique_body = payload.get("uniqueBody") if isinstance(payload, dict) else {}
+        unique_body = unique_body if isinstance(unique_body, dict) else {}
         body = payload.get("body") if isinstance(payload, dict) else {}
         body = body if isinstance(body, dict) else {}
-        body_content = str(body.get("content") or "").strip()
+        body_content = str(unique_body.get("content") or "").strip()
+        body_content_type = str(unique_body.get("contentType") or "").strip().lower()
+        if not body_content:
+            body_content = str(body.get("content") or "").strip()
+            body_content_type = str(body.get("contentType") or "").strip().lower()
         if not body_content:
             body_content = str(payload.get("bodyPreview") or "").strip()
-        if body.get("contentType") == "html":
+        if body_content_type == "html":
             body_content = self._html_to_plain_text(body_content)
         return self._build_outlook_message_summary(payload), body_content
 
+    def _trim_outlook_scan_prompt_text(self, value, limit=OUTLOOK_SCAN_EMAIL_BODY_PROMPT_CHARS):
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        text = re.sub(r"\r\n?", "\n", text)
+        text = re.sub(r"[ \t\f\v]+", " ", text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        max_chars = max(int(limit or 0), 0)
+        if not max_chars or len(text) <= max_chars:
+            return text
+        if max_chars <= 3:
+            return text[:max_chars]
+        return text[: max_chars - 3].rstrip() + "..."
+
+    def _normalize_outlook_scan_dedupe_text(self, value):
+        text = str(value or "").replace("\r\n", "\n").replace("\r", "\n")
+        text = text.replace("\xa0", " ")
+        text = re.sub(r"[ \t\f\v]+", " ", text)
+        text = re.sub(r"[ \t]*\n[ \t]*", "\n", text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text.strip()
+
+    def _looks_like_outlook_reply_header_block(self, lines, start_idx):
+        labels = []
+        for idx in range(start_idx, min(start_idx + 6, len(lines))):
+            raw_line = str(lines[idx] or "").strip()
+            if not raw_line:
+                if labels:
+                    break
+                continue
+            match = re.match(r"^(from|sent|to|cc|subject):", raw_line, re.IGNORECASE)
+            if not match:
+                break
+            label = match.group(1).lower()
+            if label not in labels:
+                labels.append(label)
+        return "subject" in labels and ("from" in labels or "sent" in labels)
+
+    def _strip_outlook_reply_history(self, value):
+        text = str(value or "").replace("\r\n", "\n").replace("\r", "\n")
+        if not text.strip():
+            return ""
+        lines = text.split("\n")
+        kept_lines = []
+        for idx, raw_line in enumerate(lines):
+            line = str(raw_line or "")
+            stripped = line.strip()
+            if re.match(
+                r"^-{2,}\s*(original message|forwarded message)\s*-{0,}\s*$",
+                stripped,
+                re.IGNORECASE,
+            ):
+                break
+            if re.match(r"^begin forwarded message:?\s*$", stripped, re.IGNORECASE):
+                break
+            if re.match(r"^on .+ wrote:\s*$", stripped, re.IGNORECASE):
+                break
+            if self._looks_like_outlook_reply_header_block(lines, idx):
+                break
+            if stripped.startswith(">"):
+                continue
+            kept_lines.append(line)
+        cleaned = "\n".join(kept_lines)
+        return self._normalize_outlook_scan_dedupe_text(cleaned)
+
+    def _extract_outlook_scan_unique_body(self, value):
+        text = str(value or "")
+        stripped = self._strip_outlook_reply_history(text)
+        if stripped:
+            text = stripped
+        return self._normalize_outlook_scan_dedupe_text(text)
+
+    def _split_outlook_scan_dedupe_blocks(self, value):
+        text = self._normalize_outlook_scan_dedupe_text(value)
+        if not text:
+            return []
+        blocks = []
+        seen_keys = set()
+        for raw_block in re.split(r"\n\s*\n+", text):
+            block_text = self._normalize_outlook_scan_dedupe_text(raw_block)
+            if not block_text:
+                continue
+            block_key = re.sub(r"\s+", " ", block_text).strip().lower()
+            if not block_key or block_key in seen_keys:
+                continue
+            seen_keys.add(block_key)
+            blocks.append({
+                "text": block_text,
+                "key": block_key,
+            })
+        return blocks
+
+    def _dedupe_outlook_scan_entries(self, hydrated_entries):
+        if not isinstance(hydrated_entries, list):
+            return [], [], {
+                "threadsDetected": 0,
+                "dedupedEmailCount": 0,
+                "dedupeSkippedEmailCount": 0,
+            }
+
+        entries_by_thread = {}
+        threadless_entries = []
+        for entry in hydrated_entries:
+            if not isinstance(entry, dict):
+                continue
+            message = entry.get("message") if isinstance(entry.get("message"), dict) else {}
+            prompt_payload = (
+                entry.get("promptPayload")
+                if isinstance(entry.get("promptPayload"), dict)
+                else {}
+            )
+            conversation_id = str(
+                message.get("conversationId") or prompt_payload.get("conversationId") or ""
+            ).strip()
+            if conversation_id:
+                entries_by_thread.setdefault(conversation_id.lower(), []).append(entry)
+            else:
+                threadless_entries.append(entry)
+
+        deduped_entries = {}
+        skipped_messages = []
+        deduped_email_count = 0
+        dedupe_skipped_email_count = 0
+
+        for thread_entries in entries_by_thread.values():
+            seen_blocks = set()
+            ordered_entries = sorted(
+                thread_entries,
+                key=lambda entry: (
+                    -(entry.get("receivedSort") or 0),
+                    str(entry.get("promptRef") or ""),
+                ),
+            )
+            for entry in ordered_entries:
+                prompt_payload = (
+                    entry.get("promptPayload")
+                    if isinstance(entry.get("promptPayload"), dict)
+                    else {}
+                )
+                raw_body = str(prompt_payload.get("body") or "").strip()
+                normalized_original = self._normalize_outlook_scan_dedupe_text(raw_body)
+                unique_body = self._extract_outlook_scan_unique_body(raw_body)
+                deduped_blocks = []
+                for block in self._split_outlook_scan_dedupe_blocks(unique_body):
+                    if block["key"] in seen_blocks:
+                        continue
+                    seen_blocks.add(block["key"])
+                    deduped_blocks.append(block["text"])
+                deduped_body = "\n\n".join(deduped_blocks).strip()
+                if not deduped_body:
+                    dedupe_skipped_email_count += 1
+                    skipped_messages.append({
+                        "message": entry.get("message") or {},
+                        "reason": OUTLOOK_SCAN_DEDUPE_SKIP_REASON_THREAD,
+                    })
+                    continue
+                normalized_deduped = self._normalize_outlook_scan_dedupe_text(deduped_body)
+                if normalized_deduped and normalized_deduped != normalized_original:
+                    deduped_email_count += 1
+                deduped_entries[str(entry.get("promptRef") or "")] = {
+                    **entry,
+                    "promptPayload": {
+                        **prompt_payload,
+                        "body": deduped_body,
+                    },
+                }
+
+        seen_threadless_bodies = set()
+        for entry in threadless_entries:
+            prompt_payload = (
+                entry.get("promptPayload")
+                if isinstance(entry.get("promptPayload"), dict)
+                else {}
+            )
+            raw_body = str(prompt_payload.get("body") or "").strip()
+            normalized_original = self._normalize_outlook_scan_dedupe_text(raw_body)
+            deduped_body = self._extract_outlook_scan_unique_body(raw_body)
+            normalized_deduped = self._normalize_outlook_scan_dedupe_text(deduped_body)
+            if not normalized_deduped:
+                dedupe_skipped_email_count += 1
+                skipped_messages.append({
+                    "message": entry.get("message") or {},
+                    "reason": OUTLOOK_SCAN_DEDUPE_SKIP_REASON_THREAD,
+                })
+                continue
+            content_key = re.sub(r"\s+", " ", normalized_deduped).strip().lower()
+            if content_key in seen_threadless_bodies:
+                dedupe_skipped_email_count += 1
+                skipped_messages.append({
+                    "message": entry.get("message") or {},
+                    "reason": OUTLOOK_SCAN_DEDUPE_SKIP_REASON_DUPLICATE,
+                })
+                continue
+            seen_threadless_bodies.add(content_key)
+            if normalized_deduped != normalized_original:
+                deduped_email_count += 1
+            deduped_entries[str(entry.get("promptRef") or "")] = {
+                **entry,
+                "promptPayload": {
+                    **prompt_payload,
+                    "body": deduped_body,
+                },
+            }
+
+        ordered_entries = []
+        for entry in hydrated_entries:
+            prompt_ref = str(entry.get("promptRef") or "")
+            if prompt_ref in deduped_entries:
+                ordered_entries.append(deduped_entries[prompt_ref])
+
+        return ordered_entries, skipped_messages, {
+            "threadsDetected": len(entries_by_thread),
+            "dedupedEmailCount": deduped_email_count,
+            "dedupeSkippedEmailCount": dedupe_skipped_email_count,
+        }
+
+    def _normalize_outlook_scan_task_list(self, raw_tasks):
+        normalized_tasks = []
+        if not isinstance(raw_tasks, list):
+            return normalized_tasks
+        for raw_task in raw_tasks:
+            if isinstance(raw_task, dict):
+                text = str(raw_task.get("text") or "").strip()
+                done = bool(raw_task.get("done"))
+                links = raw_task.get("links") if isinstance(raw_task.get("links"), list) else []
+            else:
+                text = str(raw_task or "").strip()
+                done = False
+                links = []
+            if not text:
+                continue
+            normalized_tasks.append({
+                "text": text,
+                "done": done,
+                "links": links,
+            })
+        return normalized_tasks
+
+    def _normalize_outlook_scan_project_context(self, raw_context):
+        if not isinstance(raw_context, list):
+            return []
+
+        normalized = []
+        for raw_project in raw_context:
+            if not isinstance(raw_project, dict):
+                continue
+            deliverables = []
+            raw_deliverables = raw_project.get("deliverables")
+            raw_deliverables = raw_deliverables if isinstance(raw_deliverables, list) else []
+            for raw_deliverable in raw_deliverables:
+                if not isinstance(raw_deliverable, dict):
+                    continue
+                name = str(raw_deliverable.get("name") or "").strip()
+                due = str(raw_deliverable.get("due") or "").strip()
+                status = str(raw_deliverable.get("status") or "").strip()
+                if not (name or due or status):
+                    continue
+                deliverables.append({
+                    "name": name,
+                    "due": due,
+                    "status": status,
+                })
+            deliverables.sort(
+                key=lambda deliverable: (
+                    1 if parse_due_str(deliverable.get("due")) is None else 0,
+                    parse_due_str(deliverable.get("due")) or datetime.datetime.max,
+                    str(deliverable.get("name") or "").lower(),
+                )
+            )
+            project = {
+                "id": str(raw_project.get("id") or "").strip(),
+                "name": str(raw_project.get("name") or "").strip(),
+                "nick": str(raw_project.get("nick") or "").strip(),
+                "path": str(raw_project.get("path") or "").strip(),
+                "deliverables": deliverables,
+            }
+            if any(project.get(key) for key in ("id", "name", "nick", "path")) or deliverables:
+                normalized.append(project)
+
+        normalized.sort(
+            key=lambda project: (
+                min(
+                    (
+                        parse_due_str(deliverable.get("due"))
+                        for deliverable in project.get("deliverables") or []
+                        if parse_due_str(deliverable.get("due")) is not None
+                    ),
+                    default=datetime.datetime.max,
+                ),
+                str(project.get("id") or "").lower(),
+                str(project.get("name") or "").lower(),
+                str(project.get("path") or "").lower(),
+            )
+        )
+        return normalized
+
+    def _select_outlook_scan_prompt_context(
+        self,
+        hydrated_entries,
+        project_context,
+        timeframe="week",
+        scan_date="",
+    ):
+        prioritized_emails = sorted(
+            hydrated_entries,
+            key=lambda entry: (
+                -int(entry.get("score") or 0),
+                -(entry.get("receivedSort") or 0),
+                str(entry.get("promptRef") or ""),
+            ),
+        )
+
+        flat_deliverables = []
+        for project in project_context:
+            for deliverable in project.get("deliverables") or []:
+                flat_deliverables.append({
+                    "projectId": str(project.get("id") or "").strip(),
+                    "projectName": str(project.get("name") or "").strip(),
+                    "projectNick": str(project.get("nick") or "").strip(),
+                    "projectPath": str(project.get("path") or "").strip(),
+                    "deliverable": str(deliverable.get("name") or "").strip(),
+                    "due": str(deliverable.get("due") or "").strip(),
+                    "status": str(deliverable.get("status") or "").strip(),
+                })
+        flat_deliverables.sort(
+            key=lambda deliverable: (
+                1 if parse_due_str(deliverable.get("due")) is None else 0,
+                parse_due_str(deliverable.get("due")) or datetime.datetime.max,
+                str(deliverable.get("projectId") or "").lower(),
+                str(deliverable.get("projectName") or "").lower(),
+                str(deliverable.get("deliverable") or "").lower(),
+            )
+        )
+
+        included_emails = []
+        email_chars = 0
+        skipped_messages = []
+        for entry in prioritized_emails:
+            serialized = json.dumps(
+                entry.get("promptPayload") or {},
+                ensure_ascii=True,
+                separators=(",", ":"),
+            )
+            if included_emails and email_chars + len(serialized) > OUTLOOK_SCAN_PROMPT_EMAIL_BUDGET_CHARS:
+                skipped_messages.append({
+                    "message": entry.get("message") or {},
+                    "reason": "Excluded from the AI batch prompt to keep the scan bounded.",
+                })
+                continue
+            included_emails.append(entry)
+            email_chars += len(serialized)
+
+        included_deliverables = []
+        deliverable_chars = 0
+        for deliverable in flat_deliverables:
+            serialized = json.dumps(
+                deliverable,
+                ensure_ascii=True,
+                separators=(",", ":"),
+            )
+            if included_deliverables and deliverable_chars + len(serialized) > OUTLOOK_SCAN_PROMPT_DELIVERABLE_BUDGET_CHARS:
+                continue
+            included_deliverables.append(deliverable)
+            deliverable_chars += len(serialized)
+
+        prompt_truncated = (
+            len(included_emails) < len(prioritized_emails)
+            or len(included_deliverables) < len(flat_deliverables)
+        )
+
+        while True:
+            prompt = self._build_outlook_scan_batch_prompt(
+                included_emails,
+                included_deliverables,
+                "",
+                [],
+                timeframe,
+                scan_date=scan_date,
+                prompt_truncated=prompt_truncated,
+            )
+            if len(prompt) <= OUTLOOK_SCAN_PROMPT_MAX_CHARS:
+                break
+            if len(included_emails) > 1:
+                removed = included_emails.pop()
+                skipped_messages.append({
+                    "message": removed.get("message") or {},
+                    "reason": "Excluded from the AI batch prompt to keep the scan bounded.",
+                })
+                prompt_truncated = True
+                continue
+            if included_deliverables:
+                included_deliverables.pop()
+                prompt_truncated = True
+                continue
+            break
+
+        included_email_refs = {str(entry.get("promptRef") or "") for entry in included_emails}
+        trimmed_messages = [
+            skipped
+            for skipped in skipped_messages
+            if str(((skipped.get("message") or {}).get("id")) or "").strip()
+        ]
+
+        seen_message_ids = {
+            str(((skipped.get("message") or {}).get("id")) or "").strip().lower()
+            for skipped in trimmed_messages
+        }
+        for entry in prioritized_emails:
+            prompt_ref = str(entry.get("promptRef") or "")
+            message_id = str(((entry.get("message") or {}).get("id")) or "").strip().lower()
+            if prompt_ref in included_email_refs or (message_id and message_id in seen_message_ids):
+                continue
+            trimmed_messages.append({
+                "message": entry.get("message") or {},
+                "reason": "Excluded from the AI batch prompt to keep the scan bounded.",
+            })
+            if message_id:
+                seen_message_ids.add(message_id)
+
+        return included_emails, included_deliverables, prompt_truncated, trimmed_messages
+
+    def _build_outlook_scan_batch_prompt(
+        self,
+        included_emails,
+        included_deliverables,
+        user_name,
+        discipline,
+        timeframe,
+        scan_date="",
+        prompt_truncated=False,
+    ):
+        current_date = datetime.date.today().strftime("%m/%d/%Y")
+        disciplines_str = ", ".join(discipline) if isinstance(discipline, list) else (discipline or "Engineering")
+        period_label = self._format_outlook_scan_period_label(
+            timeframe=timeframe,
+            scan_date=scan_date,
+        )
+        if self._normalize_outlook_scan_date(scan_date):
+            period_instruction = f"received on {period_label}"
+            deliverable_instruction = "due on that same day"
+        else:
+            period_instruction = f"for {period_label}"
+            deliverable_instruction = "due in that same period"
+        email_payload = [
+            entry.get("promptPayload") or {}
+            for entry in included_emails
+            if isinstance(entry, dict)
+        ]
+        deliverable_payload = [
+            deliverable
+            for deliverable in included_deliverables
+            if isinstance(deliverable, dict)
+        ]
+        email_json = json.dumps(email_payload, ensure_ascii=True, separators=(",", ":"))
+        deliverable_json = json.dumps(deliverable_payload, ensure_ascii=True, separators=(",", ":"))
+        truncation_note = (
+            "The provided emails or deliverables were trimmed to fit one AI request. "
+            "Only reason over the included data."
+            if prompt_truncated
+            else "The included emails and deliverables are the full context provided for this scan."
+        )
+        return f"""
+You are an intelligent assistant for {user_name}, a(n) {disciplines_str} engineering project manager.
+Review the batched Outlook emails {period_instruction} and compare them against the current deliverables {deliverable_instruction}.
+Suggest only NEW deliverables that should be added, if any. Do not suggest a deliverable if the same or an equivalent deliverable already appears in CURRENT_DELIVERABLES_IN_PERIOD.
+
+Use only evidence from the included emails. Every suggestion must cite one or more supportingMessageRefs from INCLUDED_EMAILS.
+Each included email body may already have repeated quoted thread history removed. Treat the body as the unique content for that reply when provided.
+Prefer concise, standardized deliverable names when possible (for example: DD60, DD90, CD60, CD90, CD100, CDF, RFI, RFI #2, Submittal, Lighting Submittal, Controls Submittal, Record Set, Record Drawings, IFP, Site Survey, Survey Report, ASR, ASR #2, PCC, PCC #3, Bulletin #2, Coordination, Meeting, Revision).
+Use the provided project identifiers when available. If a project must be inferred from the emails, return the best available id/name/path fields.
+Focus only on the primary {disciplines_str} engineering tasks mentioned. Ignore work for other disciplines.
+Use the current date {current_date} when interpreting due dates. If a due date is not clear, leave it empty.
+{truncation_note}
+
+Return ONLY valid JSON with this exact shape:
+{{"suggestions":[{{"projectId":"","projectName":"","projectNick":"","projectPath":"","deliverable":"","due":"","tasks":[""],"notes":"","supportingMessageRefs":["E001"]}}]}}
+
+If no additions are warranted, return:
+{{"suggestions":[]}}
+
+INCLUDED_EMAILS:
+{email_json}
+
+CURRENT_DELIVERABLES_IN_PERIOD:
+{deliverable_json}
+""".strip()
+
+    def _normalize_outlook_scan_batch_suggestions(self, raw_payload):
+        if isinstance(raw_payload, list):
+            raw_suggestions = raw_payload
+        elif isinstance(raw_payload, dict):
+            if isinstance(raw_payload.get("suggestions"), list):
+                raw_suggestions = raw_payload.get("suggestions") or []
+            elif any(
+                key in raw_payload
+                for key in (
+                    "deliverable",
+                    "deliverableName",
+                    "project",
+                    "projectId",
+                    "projectName",
+                )
+            ):
+                raw_suggestions = [raw_payload]
+            else:
+                raise RuntimeError("AI returned invalid Outlook scan suggestions.")
+        else:
+            raise RuntimeError("AI returned invalid Outlook scan suggestions.")
+
+        if not isinstance(raw_suggestions, list):
+            raise RuntimeError("AI returned invalid Outlook scan suggestions.")
+        if not raw_suggestions:
+            return []
+
+        suggestions = []
+        for raw_suggestion in raw_suggestions:
+            if not isinstance(raw_suggestion, dict):
+                continue
+            project = raw_suggestion.get("project")
+            project = project if isinstance(project, dict) else {}
+            deliverable_payload = raw_suggestion.get("deliverable")
+            deliverable_payload = deliverable_payload if isinstance(deliverable_payload, dict) else {}
+
+            project_info = {
+                "id": str(project.get("id") or raw_suggestion.get("projectId") or "").strip(),
+                "name": str(project.get("name") or raw_suggestion.get("projectName") or "").strip(),
+                "nick": str(project.get("nick") or raw_suggestion.get("projectNick") or "").strip(),
+                "path": str(project.get("path") or raw_suggestion.get("projectPath") or "").strip(),
+            }
+            deliverable_name = str(
+                deliverable_payload.get("name")
+                or raw_suggestion.get("deliverable")
+                or raw_suggestion.get("deliverableName")
+                or raw_suggestion.get("name")
+                or ""
+            ).strip()
+            supporting_refs = (
+                raw_suggestion.get("supportingMessageRefs")
+                or raw_suggestion.get("supportingMessageIds")
+                or raw_suggestion.get("messageRefs")
+                or []
+            )
+            if isinstance(supporting_refs, str):
+                supporting_refs = [supporting_refs]
+            if not isinstance(supporting_refs, list):
+                supporting_refs = []
+            normalized_refs = []
+            seen_refs = set()
+            for raw_ref in supporting_refs:
+                ref = str(raw_ref or "").strip()
+                if not ref or ref in seen_refs:
+                    continue
+                seen_refs.add(ref)
+                normalized_refs.append(ref)
+
+            if not deliverable_name:
+                continue
+            if not any(project_info.values()):
+                continue
+
+            suggestions.append({
+                "project": project_info,
+                "deliverable": {
+                    "name": deliverable_name,
+                    "due": str(deliverable_payload.get("due") or raw_suggestion.get("due") or "").strip(),
+                    "notes": str(deliverable_payload.get("notes") or raw_suggestion.get("notes") or "").strip(),
+                    "tasks": self._normalize_outlook_scan_task_list(
+                        deliverable_payload.get("tasks")
+                        if isinstance(deliverable_payload.get("tasks"), list)
+                        else raw_suggestion.get("tasks")
+                    ),
+                },
+                "supportingMessageRefs": normalized_refs,
+            })
+
+        if suggestions:
+            return suggestions
+        raise RuntimeError("AI returned invalid Outlook scan suggestions.")
+
+    def _request_outlook_scan_batch_suggestions(self, prompt, api_key):
+        final_api_key = self._resolve_google_ai_api_key(api_key)
+        try:
+            self._ensure_aiohttp()
+            client = genai.Client(
+                api_key=final_api_key,
+                http_options=types.HttpOptions(timeout=120000),
+            )
+            response = client.models.generate_content(
+                model="gemini-3-flash-preview",
+                contents=[
+                    types.Content(
+                        role="user",
+                        parts=[types.Part.from_text(text=prompt)],
+                    ),
+                ],
+                config=types.GenerateContentConfig(
+                    temperature=0,
+                    response_mime_type="application/json",
+                ),
+            )
+
+            raw_text = response.text
+            if raw_text is None:
+                if hasattr(response, "parts") and response.parts:
+                    raw_text = "".join(
+                        part.text for part in response.parts
+                        if hasattr(part, "text") and part.text
+                    )
+                if not raw_text:
+                    logging.error(f"AI returned empty Outlook scan response. Full response: {response}")
+                    raise RuntimeError("AI returned an empty Outlook scan response. Please try again.")
+
+            cleaned = raw_text.strip()
+            if not cleaned:
+                raise RuntimeError("AI returned an empty Outlook scan response. Please try again.")
+
+            logging.debug(f"Outlook batch AI response text: {cleaned[:500]}...")
+            return self._normalize_outlook_scan_batch_suggestions(json.loads(cleaned))
+        except json.JSONDecodeError as exc:
+            logging.error(f"Failed to parse Outlook scan AI response as JSON: {exc}")
+            raise RuntimeError("AI returned invalid Outlook scan suggestions JSON. Please try again.")
+        except Exception as exc:
+            msg = str(exc)
+            lower = msg.lower()
+            logging.error(f"Error processing Outlook scan batch with AI: {type(exc).__name__}: {exc}")
+            if (
+                "api key expired" in lower
+                or "api_key_invalid" in lower
+                or "invalid api key" in lower
+            ):
+                raise RuntimeError(
+                    "Your Google API key is expired/invalid. "
+                    "Create a new key in Google AI Studio, update your settings, then try again."
+                )
+            if "model" in lower and ("not found" in lower or "does not exist" in lower):
+                raise RuntimeError(
+                    "AI model not available. The Gemini 3 Flash model may not be accessible with your API key."
+                )
+            if "quota" in lower or "rate limit" in lower:
+                raise RuntimeError("API rate limit exceeded. Please wait a moment and try again.")
+            raise RuntimeError(f"AI error: {msg}")
+
+    def _analyze_outlook_scan_batch(
+        self,
+        message_summaries,
+        body_loader,
+        project_context,
+        api_key,
+        user_name,
+        discipline,
+        timeframe,
+        source,
+        has_more=False,
+        scan_date="",
+    ):
+        hydrated_entries = []
+        skipped_messages = []
+        relevant_email_count = 0
+        total_emails = len(message_summaries) if isinstance(message_summaries, list) else 0
+        deliverables_in_period = self._count_outlook_scan_project_context_deliverables(
+            project_context
+        )
+
+        self._send_outlook_scan_progress(
+            "hydrating",
+            "Reading Outlook emails...",
+            source=source,
+            timeframe=timeframe,
+            scanDate=scan_date,
+            totalEmails=total_emails,
+            processedEmails=0,
+            skippedEmails=0,
+            deliverablesInPeriod=deliverables_in_period,
+        )
+
+        for idx, summary in enumerate(message_summaries):
+            score = self._outlook_message_candidate_score(summary)
+            if score > 0:
+                relevant_email_count += 1
+            try:
+                hydrated_summary, body_text = body_loader(summary)
+                body_content = self._trim_outlook_scan_prompt_text(
+                    body_text or (hydrated_summary or {}).get("bodyPreview") or "",
+                    OUTLOOK_SCAN_EMAIL_BODY_PROMPT_CHARS,
+                )
+                if not body_content:
+                    skipped_messages.append({
+                        "message": hydrated_summary or summary,
+                        "reason": "Message body was empty.",
+                    })
+                    continue
+                received_dt = parse_utc_iso((hydrated_summary or {}).get("receivedDateTime"))
+                received_sort = received_dt.timestamp() if received_dt else 0
+                prompt_ref = f"E{idx + 1:03d}"
+                hydrated_entries.append({
+                    "promptRef": prompt_ref,
+                    "score": score,
+                    "receivedSort": received_sort,
+                    "message": hydrated_summary or summary,
+                    "promptPayload": {
+                        "messageRef": prompt_ref,
+                        "messageId": str(((hydrated_summary or {}).get("id")) or "").strip(),
+                        "internetMessageId": str(((hydrated_summary or {}).get("internetMessageId")) or "").strip(),
+                        "conversationId": str(((hydrated_summary or {}).get("conversationId")) or "").strip(),
+                        "subject": str(((hydrated_summary or {}).get("subject")) or "").strip(),
+                        "from": {
+                            "name": str((((hydrated_summary or {}).get("from") or {}).get("name")) or "").strip(),
+                            "address": str((((hydrated_summary or {}).get("from") or {}).get("address")) or "").strip(),
+                        },
+                        "receivedDateTime": str(((hydrated_summary or {}).get("receivedDateTime")) or "").strip(),
+                        "body": body_content,
+                    },
+                })
+            except Exception as exc:
+                skipped_messages.append({
+                    "message": summary,
+                    "reason": str(exc),
+                })
+            processed_emails = idx + 1
+            if processed_emails == 1 or processed_emails % 10 == 0 or processed_emails == total_emails:
+                self._send_outlook_scan_progress(
+                    "hydrating",
+                    f"Processed {processed_emails} of {total_emails} emails.",
+                    source=source,
+                    timeframe=timeframe,
+                    scanDate=scan_date,
+                    totalEmails=total_emails,
+                    processedEmails=processed_emails,
+                    skippedEmails=len(skipped_messages),
+                    deliverablesInPeriod=deliverables_in_period,
+                    relevantEmails=relevant_email_count,
+                )
+
+        hydrated_entries, dedupe_skipped_messages, dedupe_stats = self._dedupe_outlook_scan_entries(
+            hydrated_entries
+        )
+        skipped_messages.extend(dedupe_skipped_messages)
+
+        included_emails, included_deliverables, prompt_truncated, trimmed_messages = self._select_outlook_scan_prompt_context(
+            hydrated_entries,
+            project_context,
+            timeframe=timeframe,
+            scan_date=scan_date,
+        )
+        skipped_messages.extend(trimmed_messages)
+
+        self._send_outlook_scan_progress(
+            "preparing_ai",
+            "Preparing the batched AI review...",
+            source=source,
+            timeframe=timeframe,
+            scanDate=scan_date,
+            totalEmails=total_emails,
+            processedEmails=total_emails,
+            includedEmails=len(included_emails),
+            skippedEmails=len(skipped_messages),
+            deliverablesInPeriod=deliverables_in_period,
+            relevantEmails=relevant_email_count,
+            threadsDetected=dedupe_stats["threadsDetected"],
+            dedupedEmailCount=dedupe_stats["dedupedEmailCount"],
+            dedupeSkippedEmailCount=dedupe_stats["dedupeSkippedEmailCount"],
+        )
+
+        batch_suggestions = []
+        if included_emails:
+            self._send_outlook_scan_progress(
+                "reviewing_ai",
+                "Reviewing the included emails with AI...",
+                source=source,
+                timeframe=timeframe,
+                scanDate=scan_date,
+                totalEmails=total_emails,
+                processedEmails=total_emails,
+                includedEmails=len(included_emails),
+                skippedEmails=len(skipped_messages),
+                deliverablesInPeriod=deliverables_in_period,
+                relevantEmails=relevant_email_count,
+                threadsDetected=dedupe_stats["threadsDetected"],
+                dedupedEmailCount=dedupe_stats["dedupedEmailCount"],
+                dedupeSkippedEmailCount=dedupe_stats["dedupeSkippedEmailCount"],
+            )
+            prompt = self._build_outlook_scan_batch_prompt(
+                included_emails,
+                included_deliverables,
+                user_name,
+                discipline,
+                timeframe,
+                scan_date=scan_date,
+                prompt_truncated=prompt_truncated,
+            )
+            batch_suggestions = self._request_outlook_scan_batch_suggestions(prompt, api_key)
+
+        self._send_outlook_scan_progress(
+            "matching",
+            "Matching scan results to your current projects...",
+            source=source,
+            timeframe=timeframe,
+            scanDate=scan_date,
+            totalEmails=total_emails,
+            processedEmails=total_emails,
+            includedEmails=len(included_emails),
+            skippedEmails=len(skipped_messages),
+            deliverablesInPeriod=deliverables_in_period,
+            relevantEmails=relevant_email_count,
+            threadsDetected=dedupe_stats["threadsDetected"],
+            dedupedEmailCount=dedupe_stats["dedupedEmailCount"],
+            dedupeSkippedEmailCount=dedupe_stats["dedupeSkippedEmailCount"],
+        )
+
+        messages_by_ref = {
+            str(entry.get("promptRef") or ""): entry.get("message") or {}
+            for entry in included_emails
+        }
+        enriched_suggestions = []
+        for suggestion in batch_suggestions:
+            related_messages = []
+            supporting_message_ids = []
+            seen_ids = set()
+            for ref in suggestion.get("supportingMessageRefs") or []:
+                message = messages_by_ref.get(str(ref or "").strip())
+                if not isinstance(message, dict) or not message:
+                    continue
+                message_id = str(message.get("id") or "").strip()
+                dedupe_key = message_id.lower() if message_id else str(ref or "").strip().lower()
+                if dedupe_key in seen_ids:
+                    continue
+                seen_ids.add(dedupe_key)
+                related_messages.append(message)
+                if message_id:
+                    supporting_message_ids.append(message_id)
+            enriched_suggestions.append({
+                **suggestion,
+                "supportingMessageIds": supporting_message_ids,
+                "relatedMessages": related_messages,
+            })
+
+        result = {
+            "status": "success",
+            "analysisMode": "batch",
+            "candidateCount": len(included_emails),
+            "relevantEmailCount": relevant_email_count,
+            "scannedCount": total_emails,
+            "emailsIncludedCount": len(included_emails),
+            "deliverablesIncludedCount": len(included_deliverables),
+            "suggestions": enriched_suggestions,
+            "skippedMessages": skipped_messages,
+            "promptTruncated": prompt_truncated,
+            "truncated": bool(has_more) or prompt_truncated,
+            "threadsDetected": dedupe_stats["threadsDetected"],
+            "dedupedEmailCount": dedupe_stats["dedupedEmailCount"],
+            "dedupeSkippedEmailCount": dedupe_stats["dedupeSkippedEmailCount"],
+            "timeframe": timeframe,
+            "scanDate": self._normalize_outlook_scan_date(scan_date),
+            "source": source,
+        }
+        selected_label = self._format_outlook_scan_period_label(
+            timeframe=timeframe,
+            scan_date=scan_date,
+        )
+        if total_emails <= 0:
+            completion_message = (
+                "Scan complete. No emails were found for the selected day."
+                if self._normalize_outlook_scan_date(scan_date)
+                else "Scan complete. No emails were found for the selected timeframe."
+            )
+        elif enriched_suggestions:
+            completion_message = (
+                f"Scan complete. Found {len(enriched_suggestions)} deliverable "
+                f"suggestion{'s' if len(enriched_suggestions) != 1 else ''}."
+            )
+        else:
+            completion_message = "Scan complete. No new deliverables were suggested."
+        if self._normalize_outlook_scan_date(scan_date):
+            completion_message += f" Day: {selected_label}."
+        if prompt_truncated:
+            completion_message += " Prompt trimmed to keep the scan bounded."
+        self._send_outlook_scan_progress(
+            "done",
+            completion_message,
+            active=False,
+            source=source,
+            timeframe=timeframe,
+            scanDate=scan_date,
+            totalEmails=total_emails,
+            processedEmails=total_emails,
+            includedEmails=len(included_emails),
+            skippedEmails=len(skipped_messages),
+            deliverablesInPeriod=deliverables_in_period,
+            relevantEmails=relevant_email_count,
+            threadsDetected=dedupe_stats["threadsDetected"],
+            dedupedEmailCount=dedupe_stats["dedupedEmailCount"],
+            dedupeSkippedEmailCount=dedupe_stats["dedupeSkippedEmailCount"],
+        )
+        return result
+
     def scan_outlook_inbox(self, payload, api_key, user_name, discipline):
+        timeframe = "week"
+        scan_date = ""
+        source = ""
         try:
             request_payload = payload or {}
             if isinstance(request_payload, str):
                 request_payload = json.loads(request_payload)
             if not isinstance(request_payload, dict):
                 request_payload = {}
+            raw_scan_date = request_payload.get("scanDate")
+            scan_date = self._normalize_outlook_scan_date(raw_scan_date)
             timeframe = str(request_payload.get("timeframe") or "week").strip().lower()
             if timeframe not in ("week", "month"):
                 timeframe = "week"
+            if not scan_date and (
+                raw_scan_date is not None or "timeframe" not in request_payload
+            ):
+                scan_date = self._normalize_outlook_scan_date(
+                    datetime.datetime.now().astimezone().date().isoformat()
+                )
+            project_context = self._normalize_outlook_scan_project_context(
+                request_payload.get("projectContext")
+            )
+            deliverables_in_period = self._count_outlook_scan_project_context_deliverables(
+                project_context
+            )
+            self._send_outlook_scan_progress(
+                "starting",
+                "Starting Outlook inbox scan...",
+                timeframe=timeframe,
+                scanDate=scan_date,
+                deliverablesInPeriod=deliverables_in_period,
+            )
+
+            desktop_available, desktop_reason = self._get_desktop_outlook_availability()
+            desktop_error = ""
+            if desktop_available:
+                source = OUTLOOK_SCAN_SOURCE_DESKTOP
+                self._send_outlook_scan_progress(
+                    "listing",
+                    "Loading emails from Desktop Outlook...",
+                    source=source,
+                    timeframe=timeframe,
+                    scanDate=scan_date,
+                    deliverablesInPeriod=deliverables_in_period,
+                )
+                try:
+                    message_summaries, has_more = self._list_desktop_outlook_inbox_messages(
+                        timeframe=timeframe,
+                        limit=OUTLOOK_SCAN_FETCH_LIMIT,
+                        scan_date=scan_date,
+                    )
+                    return self._analyze_outlook_scan_batch(
+                        message_summaries,
+                        lambda summary: self._get_desktop_outlook_message_body_text(summary.get("id")),
+                        project_context,
+                        api_key,
+                        user_name,
+                        discipline,
+                        timeframe,
+                        OUTLOOK_SCAN_SOURCE_DESKTOP,
+                        has_more=has_more,
+                        scan_date=scan_date,
+                    )
+                except Exception as exc:
+                    desktop_error = str(exc)
+                    logging.warning(f"Desktop Outlook inbox scan failed; falling back to Microsoft Graph: {exc}")
+                    source = OUTLOOK_SCAN_SOURCE_GRAPH
+                    self._send_outlook_scan_progress(
+                        "fallback",
+                        "Desktop Outlook could not be read. Switching to Microsoft 365.",
+                        source=source,
+                        timeframe=timeframe,
+                        scanDate=scan_date,
+                        deliverablesInPeriod=deliverables_in_period,
+                    )
 
             auth_record = self._refresh_microsoft_auth_record_if_needed(
                 self._load_microsoft_auth_record()
             )
             access_token = str((auth_record or {}).get("accessToken") or "").strip()
             if not access_token:
-                return {
-                    "status": "error",
-                    "message": "Sign in with Microsoft before scanning Outlook inbox messages.",
-                    "items": [],
-                    "candidateCount": 0,
-                    "scannedCount": 0,
-                    "truncated": False,
-                    "timeframe": timeframe,
-                }
+                if desktop_error:
+                    message = (
+                        f"Desktop Outlook is available but could not be read: {desktop_error} "
+                        "Connect Microsoft 365 to use the Graph fallback."
+                    )
+                elif desktop_reason:
+                    message = (
+                        f"{desktop_reason} Connect Microsoft 365 to scan Inbox messages through Microsoft Graph."
+                    )
+                else:
+                    message = "Sign in with Microsoft before scanning Outlook inbox messages."
+                self._send_outlook_scan_progress(
+                    "error",
+                    message,
+                    active=False,
+                    source=source,
+                    timeframe=timeframe,
+                    scanDate=scan_date,
+                    deliverablesInPeriod=deliverables_in_period,
+                )
+                return self._build_outlook_scan_error_result(
+                    message,
+                    timeframe=timeframe,
+                    scan_date=scan_date,
+                )
 
+            source = OUTLOOK_SCAN_SOURCE_GRAPH
+            self._send_outlook_scan_progress(
+                "listing",
+                "Loading emails from Microsoft 365...",
+                source=source,
+                timeframe=timeframe,
+                scanDate=scan_date,
+                deliverablesInPeriod=deliverables_in_period,
+            )
             raw_messages, has_more = self._list_outlook_inbox_messages(
                 access_token,
-                timeframe,
+                timeframe=timeframe,
                 limit=OUTLOOK_SCAN_FETCH_LIMIT,
+                scan_date=scan_date,
             )
             message_summaries = [
                 self._build_outlook_message_summary(message)
                 for message in raw_messages
             ]
-
-            candidate_items = []
-            items = []
-            for summary in message_summaries:
-                score = self._outlook_message_candidate_score(summary)
-                if score <= 0:
-                    items.append({
-                        "message": summary,
-                        "analysisStatus": "skipped",
-                        "analysisError": "Message did not look like project work.",
-                        "extraction": None,
-                    })
-                    continue
-                candidate_items.append(summary)
-
-            truncated = has_more or len(candidate_items) > OUTLOOK_SCAN_AI_LIMIT
-            for summary in candidate_items[:OUTLOOK_SCAN_AI_LIMIT]:
-                try:
-                    hydrated_summary, body_text = self._get_outlook_message_body_text(
-                        access_token,
-                        summary.get("id"),
-                    )
-                    email_text = "\n".join(
-                        [
-                            f"Subject: {hydrated_summary.get('subject') or ''}".strip(),
-                            f"From: {(hydrated_summary.get('from') or {}).get('name') or ''} <{(hydrated_summary.get('from') or {}).get('address') or ''}>".strip(),
-                            f"Received: {hydrated_summary.get('receivedDateTime') or ''}".strip(),
-                            "",
-                            body_text.strip(),
-                        ]
-                    ).strip()
-                    if not email_text:
-                        items.append({
-                            "message": hydrated_summary,
-                            "analysisStatus": "skipped",
-                            "analysisError": "Message body was empty.",
-                            "extraction": None,
-                        })
-                        continue
-                    extraction = self._extract_project_data_from_email_text(
-                        email_text,
-                        api_key,
-                        user_name,
-                        discipline,
-                    )
-                    items.append({
-                        "message": hydrated_summary,
-                        "analysisStatus": "success",
-                        "analysisError": "",
-                        "extraction": extraction,
-                    })
-                except Exception as exc:
-                    items.append({
-                        "message": summary,
-                        "analysisStatus": "error",
-                        "analysisError": str(exc),
-                        "extraction": None,
-                    })
-
-            return {
-                "status": "success",
-                "items": items,
-                "candidateCount": len(candidate_items),
-                "scannedCount": len(message_summaries),
-                "truncated": truncated,
-                "timeframe": timeframe,
-            }
+            return self._analyze_outlook_scan_batch(
+                message_summaries,
+                lambda summary: self._get_outlook_message_body_text(access_token, summary.get("id")),
+                project_context,
+                api_key,
+                user_name,
+                discipline,
+                timeframe,
+                source,
+                has_more=has_more,
+                scan_date=scan_date,
+            )
         except json.JSONDecodeError:
-            return {
-                "status": "error",
-                "message": "Invalid Outlook scan payload.",
-                "items": [],
-                "candidateCount": 0,
-                "scannedCount": 0,
-                "truncated": False,
-                "timeframe": "week",
-            }
+            message = "Invalid Outlook scan payload."
+            self._send_outlook_scan_progress(
+                "error",
+                message,
+                active=False,
+                source=source,
+                timeframe=timeframe,
+                scanDate=scan_date,
+            )
+            return self._build_outlook_scan_error_result(
+                message,
+                timeframe=timeframe,
+                scan_date=scan_date,
+            )
         except Exception as e:
             logging.error(f"Error scanning Outlook inbox: {e}")
-            return {
-                "status": "error",
-                "message": str(e),
-                "items": [],
-                "candidateCount": 0,
-                "scannedCount": 0,
-                "truncated": False,
-                "timeframe": "week",
-            }
+            message = str(e)
+            self._send_outlook_scan_progress(
+                "error",
+                message,
+                active=False,
+                source=source,
+                timeframe=timeframe,
+                scanDate=scan_date,
+            )
+            return self._build_outlook_scan_error_result(
+                message,
+                timeframe=timeframe,
+                source=source,
+                scan_date=scan_date,
+            )
 
     def get_installed_autocad_versions(self):
         """Scans for installed AutoCAD versions in the typical directory."""
@@ -5677,10 +7504,11 @@ Return ONLY the JSON object.
             logging.error(f"Error uninstalling plugins: {e}")
             return {'status': 'error', 'message': str(e)}
 
-    def open_url(self, url):
-        """Opens a URL or protocol link using the OS default handler."""
+    def open_url(self, url, browser=None):
+        """Opens a URL or protocol link using the OS handler or a preferred browser."""
         try:
             target = str(url or "").strip()
+            preferred_browser = str(browser or "").strip().lower()
             if not target:
                 return {'status': 'error', 'message': 'URL is required.'}
 
@@ -5690,7 +7518,14 @@ Return ONLY the JSON object.
                     return self.open_path(local_path)
 
             if sys.platform == "win32":
-                os.startfile(target)
+                if preferred_browser == "edge" and target.lower().startswith(("http://", "https://")):
+                    try:
+                        os.startfile(f"microsoft-edge:{target}")
+                    except OSError:
+                        logging.warning("Could not launch Microsoft Edge directly; falling back to the default browser.")
+                        os.startfile(target)
+                else:
+                    os.startfile(target)
             else:
                 subprocess.run(
                     ['open', target] if sys.platform == "darwin" else ['xdg-open', target],
@@ -6260,6 +8095,142 @@ Return ONLY the JSON object.
             'resolutionMode': 'project_id_ancestor',
             'workroomProjectPath': workroom_project_path,
         }
+
+    def _get_backup_drawings_folder_names(self, settings):
+        required_folders = []
+        seen_required = set()
+        for folder_name in [*self._get_copy_project_disciplines(settings), 'Xrefs']:
+            clean_name = str(folder_name or '').strip()
+            if not clean_name:
+                continue
+            key = clean_name.lower()
+            if key in seen_required:
+                continue
+            seen_required.add(key)
+            required_folders.append(clean_name)
+        return required_folders
+
+    def _build_backup_drawings_timestamp(self, now=None):
+        return (now or datetime.datetime.now()).strftime("%Y%m%d_%H%M%S")
+
+    def _reserve_unique_archive_folder(self, archive_root, timestamp=None):
+        archive_root = os.path.normpath(str(archive_root or '').strip())
+        if not archive_root:
+            raise ValueError("Archive root path is required.")
+
+        archive_root_copy_path = self._to_windows_extended_path(archive_root)
+        os.makedirs(archive_root_copy_path, exist_ok=True)
+
+        base_name = str(timestamp or self._build_backup_drawings_timestamp()).strip()
+        if not base_name:
+            raise ValueError("Archive folder name is required.")
+
+        candidate_index = 1
+        while True:
+            suffix = '' if candidate_index == 1 else f" ({candidate_index})"
+            candidate_path = os.path.join(archive_root, f"{base_name}{suffix}")
+            candidate_copy_path = self._to_windows_extended_path(candidate_path)
+            try:
+                os.makedirs(candidate_copy_path, exist_ok=False)
+                return os.path.normpath(candidate_path)
+            except FileExistsError:
+                candidate_index += 1
+
+    def backup_project_drawings(self, project_root_path=None, launch_context=None):
+        """Copy configured discipline folders and Xrefs into Archive\\<timestamp>."""
+        try:
+            settings = self.get_user_settings()
+            source_resolution = self._resolve_copy_project_source_path(
+                project_root_path, launch_context, settings
+            )
+            if source_resolution.get('status') != 'success':
+                return source_resolution
+
+            normalized_project_root = source_resolution.get('path') or ''
+            resolved_from_workroom = bool(source_resolution.get('resolvedFromWorkroom'))
+            resolution_mode = str(source_resolution.get('resolutionMode') or '').strip()
+            workroom_project_path = str(source_resolution.get('workroomProjectPath') or '').strip()
+
+            if not os.path.isdir(self._to_windows_extended_path(normalized_project_root)):
+                if resolved_from_workroom:
+                    return {
+                        'status': 'error',
+                        'code': 'manual_selection_required',
+                        'message': 'Could not auto-resolve project folder from Project Workroom. Please select it manually.',
+                        'resolvedFromWorkroom': True,
+                        'resolvedProjectRootPath': normalized_project_root,
+                        'resolutionMode': 'project_id_ancestor_not_accessible',
+                        'workroomProjectPath': workroom_project_path,
+                    }
+                return {'status': 'error', 'message': 'Project root path does not exist.'}
+
+            archive_root_path = os.path.normpath(os.path.join(normalized_project_root, 'Archive'))
+            archive_path = self._reserve_unique_archive_folder(archive_root_path)
+            required_folders = self._get_backup_drawings_folder_names(settings)
+
+            copied_folders = []
+            missing_source_folders = []
+            copied_file_count = 0
+            failed_files = []
+
+            for folder_name in required_folders:
+                source_folder = os.path.join(normalized_project_root, folder_name)
+                destination_folder = os.path.join(archive_path, folder_name)
+                if os.path.isdir(self._to_windows_extended_path(source_folder)):
+                    copy_result = self._copy_folder_contents(source_folder, destination_folder)
+                    copied_folders.append(folder_name)
+                    copied_file_count += int(copy_result.get('copiedFileCount', 0) or 0)
+                    failed_files.extend(copy_result.get('failedFiles', []))
+                else:
+                    missing_source_folders.append(folder_name)
+
+            if not copied_folders:
+                shutil.rmtree(self._to_windows_extended_path(archive_path), ignore_errors=True)
+                return {
+                    'status': 'error',
+                    'code': 'nothing_to_backup',
+                    'message': 'No configured discipline folders or Xrefs folder were found to back up.',
+                    'projectRootPath': normalized_project_root,
+                    'resolvedProjectRootPath': normalized_project_root,
+                    'resolvedFromWorkroom': resolved_from_workroom,
+                    'resolutionMode': resolution_mode or 'manual_selection',
+                    'workroomProjectPath': workroom_project_path,
+                    'archiveRootPath': archive_root_path,
+                    'archivePath': archive_path,
+                    'disciplines': self._get_copy_project_disciplines(settings),
+                    'copiedFolders': [],
+                    'missingSourceFolders': missing_source_folders,
+                    'copiedFileCount': 0,
+                    'failedFileCount': 0,
+                    'failedFiles': [],
+                }
+
+            failed_file_count = len(failed_files)
+            has_warnings = bool(missing_source_folders or failed_file_count)
+            message = 'Drawing backup created.'
+            if has_warnings:
+                message = 'Drawing backup created with warnings.'
+
+            return {
+                'status': 'success',
+                'message': message,
+                'projectRootPath': normalized_project_root,
+                'resolvedProjectRootPath': normalized_project_root,
+                'resolvedFromWorkroom': resolved_from_workroom,
+                'resolutionMode': resolution_mode or 'manual_selection',
+                'workroomProjectPath': workroom_project_path,
+                'archiveRootPath': archive_root_path,
+                'archivePath': archive_path,
+                'disciplines': self._get_copy_project_disciplines(settings),
+                'copiedFolders': copied_folders,
+                'missingSourceFolders': missing_source_folders,
+                'copiedFileCount': copied_file_count,
+                'failedFileCount': failed_file_count,
+                'failedFiles': failed_files,
+            }
+        except Exception as e:
+            logging.error(f"Error backing up project drawings: {e}")
+            return {'status': 'error', 'message': str(e)}
 
     def copy_project_locally(self, server_project_path=None, launch_context=None):
         """Copy key project folders from server to local Documents\\Local Projects."""

@@ -12,11 +12,54 @@ $versionPath = Join-Path $PSScriptRoot "VERSION"
 $repoRootVersionPath = Join-Path (Split-Path $PSScriptRoot -Parent) "VERSION"
 $assetPath = Join-Path $PSScriptRoot "dist\\setup\\$assetName"
 $repoRootAssetPath = Join-Path (Split-Path $PSScriptRoot -Parent) "dist\\setup\\$assetName"
+$repoRootEnvPath = Join-Path (Split-Path $PSScriptRoot -Parent) ".env"
+
+function Get-DotEnvValue {
+    param(
+        [string]$EnvPath,
+        [string]$Name
+    )
+
+    if (!(Test-Path $EnvPath)) {
+        return $null
+    }
+
+    foreach ($line in Get-Content -Path $EnvPath) {
+        $trimmedLine = $line.Trim()
+        if (-not $trimmedLine -or $trimmedLine.StartsWith("#")) {
+            continue
+        }
+
+        $match = [regex]::Match($trimmedLine, '^(?<key>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?<value>.*)$')
+        if (-not $match.Success -or $match.Groups["key"].Value -ne $Name) {
+            continue
+        }
+
+        $value = $match.Groups["value"].Value.Trim()
+        if ($value.Length -ge 2) {
+            $firstChar = $value[0]
+            $lastChar = $value[$value.Length - 1]
+            if (($firstChar -eq '"' -and $lastChar -eq '"') -or ($firstChar -eq "'" -and $lastChar -eq "'")) {
+                $value = $value.Substring(1, $value.Length - 2)
+            }
+        }
+
+        return $value
+    }
+
+    return $null
+}
 
 # --- Token ---
 $token = $env:GITHUB_TOKEN
 if (-not $token) {
-    Write-Error "Set environment variable GITHUB_TOKEN to a PAT with repo permissions."
+    $token = Get-DotEnvValue -EnvPath $repoRootEnvPath -Name "GITHUB_TOKEN"
+    if ($token) {
+        $env:GITHUB_TOKEN = $token
+    }
+}
+if (-not $token) {
+    Write-Error "Set GITHUB_TOKEN in the current environment or repo-root .env to a PAT with repo permissions."
     exit 1
 }
 

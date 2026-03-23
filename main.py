@@ -158,28 +158,7 @@ GOOGLE_OAUTH_USERINFO_ENDPOINT = "https://openidconnect.googleapis.com/v1/userin
 GOOGLE_OAUTH_SCOPES = ["openid", "email", "profile"]
 GOOGLE_OAUTH_CALLBACK_PATH = "/"
 GOOGLE_OAUTH_TIMEOUT_SECONDS = 180
-MICROSOFT_OAUTH_CLIENT_ID_ENV = "MICROSOFT_OAUTH_CLIENT_ID"
-MICROSOFT_OAUTH_TENANT_ID_ENV = "MICROSOFT_OAUTH_TENANT_ID"
-MICROSOFT_OAUTH_DEFAULT_TENANT = "organizations"
-MICROSOFT_OAUTH_CALLBACK_HOST = "localhost"
-MICROSOFT_OAUTH_CALLBACK_PATH = "/"
-MICROSOFT_OAUTH_TIMEOUT_SECONDS = 180
-MICROSOFT_OAUTH_SCOPES = [
-    "openid",
-    "profile",
-    "email",
-    "offline_access",
-    "Mail.Read",
-]
-MICROSOFT_OAUTH_DIAGNOSTIC_SCOPES = [
-    "openid",
-    "profile",
-    "email",
-    "User.Read",
-]
-MICROSOFT_GRAPH_API_BASE = "https://graph.microsoft.com/v1.0"
 OUTLOOK_SCAN_SOURCE_DESKTOP = "desktop-outlook"
-OUTLOOK_SCAN_SOURCE_GRAPH = "microsoft-graph"
 OUTLOOK_MAPI_INBOX_FOLDER_ID = 6
 OUTLOOK_MAPI_PR_INTERNET_MESSAGE_ID = "http://schemas.microsoft.com/mapi/proptag/0x1035001F"
 OUTLOOK_SCAN_DEDUPE_SKIP_REASON_THREAD = (
@@ -238,7 +217,6 @@ def build_default_user_settings():
         'workroomAutoSelectCadFiles': True,
         'enableUnderConstructionTools': False,
         'googleAuth': None,
-        'microsoftAuth': None,
         'cloudSync': build_default_cloud_sync_settings(),
     }
 
@@ -316,12 +294,29 @@ def _merge_missing_user_settings_from_legacy(current_settings, legacy_settings):
         merged["lightingTemplates"] = deepcopy(legacy_templates)
         changed = True
 
-    for auth_key in ("googleAuth", "microsoftAuth"):
+    for auth_key in ("googleAuth",):
         if not isinstance(merged.get(auth_key), dict) and isinstance(legacy.get(auth_key), dict):
             merged[auth_key] = deepcopy(legacy.get(auth_key))
             changed = True
 
     return merged, changed
+
+
+def _sanitize_user_settings_payload(settings):
+    normalized = deepcopy(settings) if isinstance(settings, dict) else {}
+    changed = False
+
+    if "microsoftAuth" in normalized:
+        normalized.pop("microsoftAuth", None)
+        changed = True
+
+    defaults = build_default_user_settings()
+    for key, value in defaults.items():
+        if key not in normalized:
+            normalized[key] = deepcopy(value)
+            changed = True
+
+    return normalized, changed
 
 
 def utc_now_iso():
@@ -2298,23 +2293,29 @@ class Api:
         except (FileNotFoundError, json.JSONDecodeError):
             settings = build_default_user_settings()
 
+        settings, sanitized = _sanitize_user_settings_payload(settings)
         repaired_settings, repaired = _merge_missing_user_settings_from_legacy(
             settings,
             _load_legacy_user_settings(),
         )
-        if repaired:
-            logging.info("Recovered missing user settings from the legacy AppData settings file.")
+        repaired_settings, repaired_sanitized = _sanitize_user_settings_payload(
+            repaired_settings
+        )
+        if sanitized or repaired or repaired_sanitized:
+            if repaired:
+                logging.info("Recovered missing user settings from the legacy AppData settings file.")
             self.save_user_settings(repaired_settings)
             return repaired_settings
-        return settings
+        return repaired_settings
 
     def save_user_settings(self, data):
         """Saves user settings to settings.json."""
         try:
+            normalized_data, _ = _sanitize_user_settings_payload(data)
             if os.path.exists(SETTINGS_FILE):
                 shutil.copy2(SETTINGS_FILE, SETTINGS_FILE + '.bak')
             with open(SETTINGS_FILE, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+                json.dump(normalized_data, f, ensure_ascii=False, indent=2)
             return {'status': 'success'}
         except Exception as e:
             logging.error(f"Error saving user settings: {e}")
@@ -2881,773 +2882,6 @@ class Api:
             logging.error(f"Error signing out of Google: {e}")
             return {'status': 'error', 'message': str(e)}
 
-    def _get_microsoft_oauth_client_id(self):
-        return (os.getenv(MICROSOFT_OAUTH_CLIENT_ID_ENV) or "").strip()
-
-    def _get_microsoft_oauth_tenant_id(self):
-        tenant = (os.getenv(MICROSOFT_OAUTH_TENANT_ID_ENV) or "").strip()
-        return tenant or MICROSOFT_OAUTH_DEFAULT_TENANT
-
-    def _get_microsoft_oauth_authority_base(self):
-        tenant_id = self._get_microsoft_oauth_tenant_id()
-        return f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0"
-
-    def _get_microsoft_oauth_auth_endpoint(self):
-        return f"{self._get_microsoft_oauth_authority_base()}/authorize"
-
-    def _get_microsoft_oauth_token_endpoint(self):
-        return f"{self._get_microsoft_oauth_authority_base()}/token"
-
-    def _looks_like_microsoft_admin_consent_issue(self, message):
-        lower = str(message or "").strip().lower()
-        if not lower:
-            return False
-        indicators = (
-            "need admin approval",
-            "needs admin approval",
-            "admin approval",
-            "admin consent",
-            "has not consented to use the application",
-            "only an admin can grant",
-            "consent_required",
-            "aadsts65001",
-            "aadsts90094",
-        )
-        return any(indicator in lower for indicator in indicators)
-
-    def _build_microsoft_admin_consent_message(self, detail=""):
-        client_id = self._get_microsoft_oauth_client_id()
-        tenant_id = self._get_microsoft_oauth_tenant_id()
-        target = "this app"
-        if client_id:
-            target = f"this app (client ID {client_id})"
-        requested_scopes = " ".join(self._get_microsoft_oauth_scopes())
-        message = (
-            "Microsoft 365 access for Outlook scan is being blocked by your tenant "
-            "consent policy for "
-            f"{target}."
-        )
-        if tenant_id:
-            message += f" Tenant: {tenant_id}."
-        message += (
-            f" Requested scopes: {requested_scopes}. Review Enterprise applications > "
-            "Consent and permissions > User consent settings and Permission "
-            "classifications. Classify the delegated permissions this app requests as "
-            "low impact where appropriate, especially Mail.Read and offline_access, "
-            "and include User.Read if Microsoft added it to the app registration. "
-            "Use Retry minimal consent in the app to test openid profile email "
-            "User.Read without Mail.Read or offline_access."
-        )
-        return message
-
-    def _get_microsoft_oauth_scopes(self, diagnostic=False):
-        return list(
-            MICROSOFT_OAUTH_DIAGNOSTIC_SCOPES
-            if diagnostic
-            else MICROSOFT_OAUTH_SCOPES
-        )
-
-    def _build_microsoft_local_redirect_uri(self, port):
-        return (
-            f"http://{MICROSOFT_OAUTH_CALLBACK_HOST}:{int(port)}"
-            f"{MICROSOFT_OAUTH_CALLBACK_PATH}"
-        )
-
-    def _get_microsoft_admin_consent_scopes(self):
-        scopes = []
-        seen = set()
-        for raw_scope in self._get_microsoft_oauth_scopes():
-            scope = str(raw_scope or "").strip()
-            if not scope:
-                continue
-            lower = scope.lower()
-            if lower in {"openid", "profile", "email", "offline_access"}:
-                normalized = lower
-            elif scope.startswith("https://"):
-                normalized = scope
-            else:
-                normalized = f"{MICROSOFT_GRAPH_API_BASE.rsplit('/v1.0', 1)[0]}/{scope}"
-            key = normalized.lower()
-            if key in seen:
-                continue
-            seen.add(key)
-            scopes.append(normalized)
-        return scopes
-
-    def _build_microsoft_admin_consent_url(self, redirect_uri, state):
-        client_id = self._get_microsoft_oauth_client_id()
-        tenant_id = self._get_microsoft_oauth_tenant_id()
-        return (
-            f"https://login.microsoftonline.com/{tenant_id}/v2.0/adminconsent?"
-            + urlencode(
-                {
-                    "client_id": client_id,
-                    "redirect_uri": redirect_uri,
-                    "scope": " ".join(self._get_microsoft_admin_consent_scopes()),
-                    "state": state,
-                }
-            )
-        )
-
-    def _extract_microsoft_error_message(self, response):
-        payload = {}
-        try:
-            payload = response.json() or {}
-        except Exception:
-            payload = {}
-        error_block = payload.get("error")
-        message = str(
-            payload.get("error_description")
-            or (error_block.get("message") if isinstance(error_block, dict) else "")
-            or error_block
-            or response.text
-            or "Microsoft sign-in failed."
-        ).strip()
-        lower = message.lower()
-        if "client_id" in lower and "missing" in lower:
-            return (
-                "Microsoft sign-in is not configured. Add "
-                f"{MICROSOFT_OAUTH_CLIENT_ID_ENV} to .env and restart the app."
-            )
-        if self._looks_like_microsoft_admin_consent_issue(message):
-            return self._build_microsoft_admin_consent_message(message)
-        return message
-
-    def _build_microsoft_auth_record(self, token_payload, claims_payload, existing_auth=None):
-        existing_auth = existing_auth if isinstance(existing_auth, dict) else {}
-        issued_at = datetime.datetime.now(datetime.timezone.utc)
-        expires_in = 0
-        try:
-            expires_in = int(token_payload.get("expires_in") or 0)
-        except Exception:
-            expires_in = 0
-        expires_at = (
-            issued_at + datetime.timedelta(seconds=max(expires_in, 0))
-        ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-        refresh_token = str(token_payload.get("refresh_token") or "").strip()
-        if not refresh_token:
-            refresh_token = str(existing_auth.get("refreshToken") or "").strip()
-        id_token = str(token_payload.get("id_token") or "").strip()
-        if not id_token:
-            id_token = str(existing_auth.get("idToken") or "").strip()
-
-        return {
-            "provider": "microsoft",
-            "subject": str(claims_payload.get("sub") or existing_auth.get("subject") or "").strip(),
-            "email": str(
-                claims_payload.get("email")
-                or claims_payload.get("preferred_username")
-                or existing_auth.get("email")
-                or ""
-            ).strip(),
-            "displayName": str(
-                claims_payload.get("name") or existing_auth.get("displayName") or ""
-            ).strip(),
-            "avatarUrl": "",
-            "signedInAt": str(existing_auth.get("signedInAt") or utc_now_iso()),
-            "tokenIssuedAt": utc_now_iso(),
-            "expiresAt": expires_at,
-            "idToken": id_token,
-            "accessToken": str(token_payload.get("access_token") or "").strip(),
-            "refreshToken": refresh_token,
-            "tokenType": str(token_payload.get("token_type") or "Bearer").strip() or "Bearer",
-            "scope": str(
-                token_payload.get("scope")
-                or " ".join(self._get_microsoft_oauth_scopes())
-            ).strip(),
-            "tenantId": str(claims_payload.get("tid") or existing_auth.get("tenantId") or "").strip(),
-        }
-
-    def _sanitize_microsoft_auth_record(self, auth_record):
-        if not isinstance(auth_record, dict):
-            auth = {
-                "signedIn": False,
-                "provider": "microsoft",
-                "email": "",
-                "displayName": "",
-                "avatarUrl": "",
-                "signedInAt": "",
-                "expiresAt": "",
-                "tenantId": "",
-                "hasRefreshToken": False,
-            }
-        else:
-            auth = {
-                "signedIn": True,
-                "provider": str(auth_record.get("provider") or "microsoft").strip() or "microsoft",
-                "email": str(auth_record.get("email") or "").strip(),
-                "displayName": str(auth_record.get("displayName") or "").strip(),
-                "avatarUrl": "",
-                "signedInAt": str(auth_record.get("signedInAt") or "").strip(),
-                "expiresAt": str(auth_record.get("expiresAt") or "").strip(),
-                "tenantId": str(auth_record.get("tenantId") or "").strip(),
-                "hasRefreshToken": bool(str(auth_record.get("refreshToken") or "").strip()),
-            }
-        auth["outlookScan"] = self._get_outlook_scan_capability(auth_record)
-        return auth
-
-    def _load_microsoft_auth_record(self):
-        settings = self.get_user_settings()
-        auth_record = settings.get("microsoftAuth")
-        return auth_record if isinstance(auth_record, dict) else None
-
-    def _persist_microsoft_auth_record(self, auth_record):
-        settings = self.get_user_settings()
-        settings["microsoftAuth"] = auth_record if isinstance(auth_record, dict) and auth_record else None
-        result = self.save_user_settings(settings)
-        if result.get("status") != "success":
-            raise RuntimeError(result.get("message") or "Failed to save Microsoft sign-in state.")
-        return settings
-
-    def _build_microsoft_oauth_status_html(self, title, body, accent="#2563eb"):
-        safe_title = html.escape(str(title or "").strip() or "Microsoft Sign-In")
-        safe_body = html.escape(str(body or "").strip() or "Return to the app.")
-        return f"""<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{safe_title}</title>
-  <style>
-    body {{
-      margin: 0;
-      min-height: 100vh;
-      display: grid;
-      place-items: center;
-      padding: 24px;
-      background: #0f172a;
-      color: #e2e8f0;
-      font-family: Inter, Segoe UI, sans-serif;
-    }}
-    .card {{
-      width: min(440px, 100%);
-      border-radius: 20px;
-      padding: 28px;
-      background: rgba(15, 23, 42, 0.92);
-      border: 1px solid rgba(148, 163, 184, 0.22);
-      box-shadow: 0 24px 60px rgba(2, 6, 23, 0.45);
-    }}
-    h1 {{
-      margin: 0 0 12px;
-      font-size: 1.45rem;
-      color: {accent};
-    }}
-    p {{
-      margin: 0;
-      line-height: 1.6;
-      color: #cbd5e1;
-    }}
-  </style>
-</head>
-<body>
-  <div class="card">
-    <h1>{safe_title}</h1>
-    <p>{safe_body}</p>
-  </div>
-</body>
-</html>"""
-
-    def _start_microsoft_oauth_callback_server(self):
-        class MicrosoftOAuthCallbackServer(http.server.ThreadingHTTPServer):
-            allow_reuse_address = True
-
-        class MicrosoftOAuthCallbackHandler(http.server.BaseHTTPRequestHandler):
-            def log_message(self, fmt, *args):
-                return
-
-            def do_GET(self):
-                parsed = urlparse(self.path)
-                if parsed.path != MICROSOFT_OAUTH_CALLBACK_PATH:
-                    self.send_response(404)
-                    self.send_header("Content-Type", "text/plain; charset=utf-8")
-                    self.end_headers()
-                    self.wfile.write(b"Not found.")
-                    return
-
-                params = parse_qs(parsed.query or "", keep_blank_values=True)
-                self.server.oauth_result = {
-                    "code": (params.get("code") or [""])[0],
-                    "state": (params.get("state") or [""])[0],
-                    "admin_consent": (params.get("admin_consent") or [""])[0],
-                    "tenant": (params.get("tenant") or [""])[0],
-                    "scope": (params.get("scope") or [""])[0],
-                    "error": (params.get("error") or [""])[0],
-                    "error_description": (params.get("error_description") or [""])[0],
-                }
-
-                error_code = str(self.server.oauth_result.get("error") or "").strip().lower()
-                if error_code:
-                    title = (
-                        "Microsoft Sign-In Cancelled"
-                        if error_code == "access_denied"
-                        else "Microsoft Sign-In Failed"
-                    )
-                    body = (
-                        "You can close this window and return to the app."
-                        if error_code == "access_denied"
-                        else "There was a problem completing Microsoft sign-in. Return to the app for details."
-                    )
-                    page = self.server.owner._build_microsoft_oauth_status_html(
-                        title,
-                        body,
-                        "#f59e0b" if error_code == "access_denied" else "#ef4444",
-                    )
-                else:
-                    if (
-                        str(self.server.oauth_result.get("admin_consent") or "")
-                        .strip()
-                        .lower()
-                        == "true"
-                    ):
-                        page = self.server.owner._build_microsoft_oauth_status_html(
-                            "Microsoft Admin Approval Complete",
-                            "Return to the app. Admin approval finished successfully.",
-                            "#10b981",
-                        )
-                    else:
-                        page = self.server.owner._build_microsoft_oauth_status_html(
-                            "Microsoft Sign-In Complete",
-                            "Return to the app. Your sign-in will finish automatically.",
-                        )
-
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
-                self.send_header("Cache-Control", "no-store")
-                self.end_headers()
-                self.wfile.write(page.encode("utf-8"))
-                self.server.oauth_event.set()
-                threading.Thread(target=self.server.shutdown, daemon=True).start()
-
-        server = MicrosoftOAuthCallbackServer(
-            (MICROSOFT_OAUTH_CALLBACK_HOST, 0),
-            MicrosoftOAuthCallbackHandler,
-        )
-        server.owner = self
-        server.oauth_event = threading.Event()
-        server.oauth_result = {}
-        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
-        server_thread.start()
-        return server
-
-    def _exchange_microsoft_auth_code(self, client_id, code, code_verifier, redirect_uri):
-        response = requests.post(
-            self._get_microsoft_oauth_token_endpoint(),
-            data={
-                "client_id": client_id,
-                "code": code,
-                "code_verifier": code_verifier,
-                "grant_type": "authorization_code",
-                "redirect_uri": redirect_uri,
-            },
-            timeout=20,
-        )
-        if response.status_code != 200:
-            raise RuntimeError(self._extract_microsoft_error_message(response))
-        payload = response.json() or {}
-        if not str(payload.get("access_token") or "").strip():
-            raise RuntimeError("Microsoft sign-in completed without an access token.")
-        return payload
-
-    def _refresh_microsoft_auth_record_if_needed(self, auth_record):
-        if not isinstance(auth_record, dict):
-            return None
-
-        refresh_token = str(auth_record.get("refreshToken") or "").strip()
-        client_id = self._get_microsoft_oauth_client_id()
-        expires_at = parse_utc_iso(auth_record.get("expiresAt"))
-        if not refresh_token or not client_id or not expires_at:
-            return auth_record
-
-        now = datetime.datetime.now(datetime.timezone.utc)
-        if expires_at > now + datetime.timedelta(minutes=5):
-            return auth_record
-
-        try:
-            response = requests.post(
-                self._get_microsoft_oauth_token_endpoint(),
-                data={
-                    "client_id": client_id,
-                    "grant_type": "refresh_token",
-                    "refresh_token": refresh_token,
-                    "scope": " ".join(self._get_microsoft_oauth_scopes()),
-                },
-                timeout=20,
-            )
-            if response.status_code != 200:
-                message = self._extract_microsoft_error_message(response)
-                try:
-                    payload = response.json() or {}
-                except Exception:
-                    payload = {}
-                if str(payload.get("error") or "").strip().lower() == "invalid_grant":
-                    self._persist_microsoft_auth_record(None)
-                    return None
-                logging.warning(f"Could not refresh Microsoft token: {message}")
-                return auth_record
-
-            token_payload = response.json() or {}
-            claims = self._decode_jwt_payload(
-                token_payload.get("id_token") or auth_record.get("idToken")
-            )
-            refreshed_auth = self._build_microsoft_auth_record(
-                token_payload,
-                claims,
-                existing_auth=auth_record,
-            )
-            refreshed_auth["signedInAt"] = str(auth_record.get("signedInAt") or utc_now_iso())
-            self._persist_microsoft_auth_record(refreshed_auth)
-            return refreshed_auth
-        except Exception as exc:
-            logging.warning(f"Could not refresh Microsoft auth state: {exc}")
-            return auth_record
-
-    def get_microsoft_auth_state(self):
-        try:
-            auth_record = self._refresh_microsoft_auth_record_if_needed(
-                self._load_microsoft_auth_record()
-            )
-            return {
-                "status": "success",
-                "auth": self._sanitize_microsoft_auth_record(auth_record),
-            }
-        except Exception as e:
-            logging.error(f"Error loading Microsoft auth state: {e}")
-            return {
-                "status": "error",
-                "message": str(e),
-                "auth": self._sanitize_microsoft_auth_record(None),
-            }
-
-    def diagnose_microsoft_consent_policy(self):
-        client_id = self._get_microsoft_oauth_client_id()
-        if not client_id:
-            return {
-                "status": "error",
-                "message": (
-                    "Microsoft sign-in is not configured. Add "
-                    f"{MICROSOFT_OAUTH_CLIENT_ID_ENV} to .env and restart the app."
-                ),
-            }
-
-        diagnostic_scopes = self._get_microsoft_oauth_scopes(diagnostic=True)
-        callback_server = self._start_microsoft_oauth_callback_server()
-        callback_port = callback_server.server_address[1]
-        redirect_uri = self._build_microsoft_local_redirect_uri(callback_port)
-        code_verifier, code_challenge = self._generate_google_pkce_pair()
-        state = secrets.token_urlsafe(32)
-        auth_url = (
-            f"{self._get_microsoft_oauth_auth_endpoint()}?"
-            + urlencode(
-                {
-                    "client_id": client_id,
-                    "redirect_uri": redirect_uri,
-                    "response_type": "code",
-                    "response_mode": "query",
-                    "scope": " ".join(diagnostic_scopes),
-                    "state": state,
-                    "prompt": "select_account",
-                    "code_challenge": code_challenge,
-                    "code_challenge_method": "S256",
-                }
-            )
-        )
-
-        try:
-            open_result = self.open_url(auth_url, browser="edge")
-            if open_result.get("status") != "success":
-                raise RuntimeError(
-                    open_result.get("message")
-                    or "Could not open the browser for the Microsoft consent diagnostic."
-                )
-
-            if not callback_server.oauth_event.wait(MICROSOFT_OAUTH_TIMEOUT_SECONDS):
-                return {
-                    "status": "error",
-                    "message": "Microsoft consent diagnostic timed out. Please try again.",
-                }
-
-            result = callback_server.oauth_result or {}
-            error_code = str(result.get("error") or "").strip().lower()
-            if error_code:
-                error_detail = str(
-                    result.get("error_description") or result.get("error") or ""
-                ).strip()
-                if error_code == "access_denied":
-                    return {
-                        "status": "cancelled",
-                        "message": "Microsoft consent diagnostic was cancelled.",
-                    }
-                if self._looks_like_microsoft_admin_consent_issue(error_detail):
-                    return {
-                        "status": "error",
-                        "message": (
-                            "Reduced-scope Microsoft consent is also blocked. Your "
-                            "tenant likely disallows user consent under the current "
-                            "User consent settings or Permission classifications."
-                        ),
-                    }
-                return {
-                    "status": "error",
-                    "message": error_detail or "Microsoft consent diagnostic failed.",
-                }
-
-            if str(result.get("state") or "").strip() != state:
-                return {
-                    "status": "error",
-                    "message": "Microsoft consent diagnostic returned an invalid state token.",
-                }
-
-            code = str(result.get("code") or "").strip()
-            if not code:
-                return {
-                    "status": "error",
-                    "message": "Microsoft consent diagnostic finished without an authorization code.",
-                }
-
-            token_payload = self._exchange_microsoft_auth_code(
-                client_id,
-                code,
-                code_verifier,
-                redirect_uri,
-            )
-            claims = self._decode_jwt_payload(token_payload.get("id_token"))
-            return {
-                "status": "success",
-                "message": (
-                    "Reduced-scope Microsoft consent succeeded. Basic sign-in works, "
-                    "so tenant policy is likely blocking Mail.Read or offline_access. "
-                    "Update User consent settings and Permission classifications, then "
-                    "retry Connect Outlook."
-                ),
-                "diagnostic": {
-                    "scope": str(
-                        token_payload.get("scope") or " ".join(diagnostic_scopes)
-                    ).strip(),
-                    "email": str(
-                        claims.get("email") or claims.get("preferred_username") or ""
-                    ).strip(),
-                    "displayName": str(claims.get("name") or "").strip(),
-                },
-            }
-        except Exception as e:
-            logging.error(f"Error diagnosing Microsoft consent policy: {e}")
-            return {"status": "error", "message": str(e)}
-        finally:
-            try:
-                callback_server.shutdown()
-            except Exception:
-                pass
-            try:
-                callback_server.server_close()
-            except Exception:
-                pass
-
-    def request_microsoft_admin_consent(self):
-        client_id = self._get_microsoft_oauth_client_id()
-        if not client_id:
-            return {
-                "status": "error",
-                "message": (
-                    "Microsoft sign-in is not configured. Add "
-                    f"{MICROSOFT_OAUTH_CLIENT_ID_ENV} to .env and restart the app."
-                ),
-            }
-
-        callback_server = self._start_microsoft_oauth_callback_server()
-        callback_port = callback_server.server_address[1]
-        redirect_uri = self._build_microsoft_local_redirect_uri(callback_port)
-        state = secrets.token_urlsafe(32)
-        admin_consent_url = self._build_microsoft_admin_consent_url(redirect_uri, state)
-
-        try:
-            open_result = self.open_url(admin_consent_url, browser="edge")
-            if open_result.get("status") != "success":
-                raise RuntimeError(
-                    open_result.get("message")
-                    or "Could not open the browser for Microsoft admin approval."
-                )
-
-            if not callback_server.oauth_event.wait(MICROSOFT_OAUTH_TIMEOUT_SECONDS):
-                return {
-                    "status": "error",
-                    "message": "Microsoft admin approval timed out. Please try again.",
-                }
-
-            result = callback_server.oauth_result or {}
-            error_code = str(result.get("error") or "").strip().lower()
-            if error_code:
-                error_detail = str(
-                    result.get("error_description") or result.get("error") or ""
-                ).strip()
-                if error_code == "access_denied":
-                    return {
-                        "status": "cancelled",
-                        "message": "Microsoft admin approval was cancelled.",
-                    }
-                return {
-                    "status": "error",
-                    "message": error_detail or "Microsoft admin approval did not complete.",
-                }
-
-            if str(result.get("state") or "").strip() != state:
-                return {
-                    "status": "error",
-                    "message": "Microsoft admin approval returned an invalid state token.",
-                }
-
-            if (
-                str(result.get("admin_consent") or "").strip().lower() != "true"
-            ):
-                return {
-                    "status": "error",
-                    "message": "Microsoft admin approval did not complete.",
-                }
-
-            return {
-                "status": "success",
-                "message": (
-                    "Microsoft admin approval completed. Return to the app and connect "
-                    "Outlook again."
-                ),
-            }
-        except Exception as e:
-            logging.error(f"Error requesting Microsoft admin approval: {e}")
-            return {"status": "error", "message": str(e)}
-        finally:
-            try:
-                callback_server.shutdown()
-            except Exception:
-                pass
-            try:
-                callback_server.server_close()
-            except Exception:
-                pass
-
-    def sign_in_with_microsoft(self):
-        client_id = self._get_microsoft_oauth_client_id()
-        if not client_id:
-            return {
-                "status": "error",
-                "message": (
-                    "Microsoft sign-in is not configured. Add "
-                    f"{MICROSOFT_OAUTH_CLIENT_ID_ENV} to .env and restart the app."
-                ),
-            }
-
-        existing_auth = self._load_microsoft_auth_record()
-        callback_server = self._start_microsoft_oauth_callback_server()
-        callback_port = callback_server.server_address[1]
-        redirect_uri = self._build_microsoft_local_redirect_uri(callback_port)
-        code_verifier, code_challenge = self._generate_google_pkce_pair()
-        state = secrets.token_urlsafe(32)
-        auth_url = (
-            f"{self._get_microsoft_oauth_auth_endpoint()}?"
-            + urlencode(
-                {
-                    "client_id": client_id,
-                    "redirect_uri": redirect_uri,
-                    "response_type": "code",
-                    "response_mode": "query",
-                    "scope": " ".join(self._get_microsoft_oauth_scopes()),
-                    "state": state,
-                    "prompt": "select_account",
-                    "code_challenge": code_challenge,
-                    "code_challenge_method": "S256",
-                }
-            )
-        )
-
-        try:
-            open_result = self.open_url(auth_url, browser="edge")
-            if open_result.get("status") != "success":
-                raise RuntimeError(
-                    open_result.get("message") or "Could not open the browser for Microsoft sign-in."
-                )
-
-            if not callback_server.oauth_event.wait(MICROSOFT_OAUTH_TIMEOUT_SECONDS):
-                return {
-                    "status": "error",
-                    "message": "Microsoft sign-in timed out. Please try again.",
-                }
-
-            result = callback_server.oauth_result or {}
-            error_code = str(result.get("error") or "").strip().lower()
-            if error_code:
-                error_detail = str(
-                    result.get("error_description") or result.get("error") or ""
-                ).strip()
-                if self._looks_like_microsoft_admin_consent_issue(error_detail):
-                    return {
-                        "status": "error",
-                        "message": self._build_microsoft_admin_consent_message(
-                            error_detail
-                        ),
-                    }
-                if error_code == "access_denied":
-                    return {
-                        "status": "cancelled",
-                        "message": "Microsoft sign-in was cancelled.",
-                    }
-                return {
-                    "status": "error",
-                    "message": error_detail or "Microsoft sign-in did not complete.",
-                }
-
-            if str(result.get("state") or "").strip() != state:
-                return {
-                    "status": "error",
-                    "message": "Microsoft sign-in returned an invalid state token.",
-                }
-
-            code = str(result.get("code") or "").strip()
-            if not code:
-                return {
-                    "status": "error",
-                    "message": "Microsoft sign-in finished without an authorization code.",
-                }
-
-            token_payload = self._exchange_microsoft_auth_code(
-                client_id,
-                code,
-                code_verifier,
-                redirect_uri,
-            )
-            claims = self._decode_jwt_payload(token_payload.get("id_token"))
-            auth_record = self._build_microsoft_auth_record(
-                token_payload,
-                claims,
-                existing_auth=existing_auth,
-            )
-            self._persist_microsoft_auth_record(auth_record)
-            return {
-                "status": "success",
-                "auth": self._sanitize_microsoft_auth_record(auth_record),
-            }
-        except Exception as e:
-            logging.error(f"Error signing in with Microsoft: {e}")
-            return {'status': 'error', 'message': str(e)}
-        finally:
-            try:
-                callback_server.shutdown()
-            except Exception:
-                pass
-            try:
-                callback_server.server_close()
-            except Exception:
-                pass
-
-    def sign_out_microsoft(self):
-        try:
-            self._persist_microsoft_auth_record(None)
-            return {
-                "status": "success",
-                "auth": self._sanitize_microsoft_auth_record(None),
-            }
-        except Exception as e:
-            logging.error(f"Error signing out of Microsoft: {e}")
-            return {'status': 'error', 'message': str(e)}
-
     def _normalize_outlook_scan_date(self, scan_date):
         raw = str(scan_date or "").strip()
         if not raw:
@@ -3813,20 +3047,29 @@ class Api:
             payload["active"] = payload["stage"] not in {"done", "error"}
         self._notify_outlook_scan_progress(payload)
 
-    def _get_outlook_scan_capability(self, auth_record=None):
+    def _get_outlook_scan_capability(self):
         desktop_available, desktop_reason = self._get_desktop_outlook_availability()
-        access_token = str((auth_record or {}).get("accessToken") or "").strip()
-        if desktop_available:
-            preferred_source = OUTLOOK_SCAN_SOURCE_DESKTOP
-        elif access_token:
-            preferred_source = OUTLOOK_SCAN_SOURCE_GRAPH
-        else:
-            preferred_source = "none"
         return {
-            "preferredSource": preferred_source,
             "desktopAvailable": desktop_available,
             "desktopReason": desktop_reason,
         }
+
+    def get_outlook_scan_capability(self):
+        try:
+            capability = self._get_outlook_scan_capability()
+            return {
+                "status": "success",
+                "desktopAvailable": capability.get("desktopAvailable", False),
+                "desktopReason": capability.get("desktopReason", ""),
+            }
+        except Exception as e:
+            logging.error(f"Error loading Outlook scan capability: {e}")
+            return {
+                "status": "error",
+                "message": str(e),
+                "desktopAvailable": False,
+                "desktopReason": str(e),
+            }
 
     def _get_desktop_outlook_availability(self):
         if sys.platform != "win32":
@@ -4087,47 +3330,6 @@ class Api:
             logging.error(f"Error opening Desktop Outlook message: {exc}")
             return {"status": "error", "message": str(exc)}
 
-    def _get_microsoft_graph_headers(self, access_token, prefer_text=False):
-        headers = {
-            "Authorization": f"Bearer {access_token}",
-            "Accept": "application/json",
-        }
-        if prefer_text:
-            headers["Prefer"] = 'outlook.body-content-type="text"'
-        return headers
-
-    def _microsoft_graph_get_json(self, url, access_token, params=None, prefer_text=False):
-        response = requests.get(
-            url,
-            headers=self._get_microsoft_graph_headers(access_token, prefer_text=prefer_text),
-            params=params,
-            timeout=20,
-        )
-        if response.status_code != 200:
-            raise RuntimeError(self._extract_microsoft_error_message(response))
-        payload = response.json() or {}
-        return payload if isinstance(payload, dict) else {}
-
-    def _build_outlook_message_summary(self, message):
-        raw_sender = message.get("from") or {}
-        email_address = raw_sender.get("emailAddress") if isinstance(raw_sender, dict) else {}
-        email_address = email_address if isinstance(email_address, dict) else {}
-        return {
-            "id": str(message.get("id") or "").strip(),
-            "subject": str(message.get("subject") or "").strip(),
-            "bodyPreview": str(message.get("bodyPreview") or "").strip(),
-            "receivedDateTime": str(message.get("receivedDateTime") or "").strip(),
-            "webLink": str(message.get("webLink") or "").strip(),
-            "internetMessageId": str(message.get("internetMessageId") or "").strip(),
-            "conversationId": str(message.get("conversationId") or "").strip(),
-            "hasAttachments": bool(message.get("hasAttachments")),
-            "source": OUTLOOK_SCAN_SOURCE_GRAPH,
-            "from": {
-                "name": str(email_address.get("name") or "").strip(),
-                "address": str(email_address.get("address") or "").strip(),
-            },
-        }
-
     def _outlook_message_candidate_score(self, message_summary):
         summary = message_summary if isinstance(message_summary, dict) else {}
         subject = str(summary.get("subject") or "")
@@ -4155,61 +3357,6 @@ class Api:
             return 0
         return score
 
-    def _list_outlook_inbox_messages(
-        self,
-        access_token,
-        timeframe="week",
-        limit=OUTLOOK_SCAN_FETCH_LIMIT,
-        scan_date="",
-    ):
-        scan_range = self._build_outlook_scan_range(timeframe=timeframe, scan_date=scan_date)
-        start_utc = scan_range["startUtc"]
-        end_utc = scan_range["endUtc"]
-        url = f"{MICROSOFT_GRAPH_API_BASE}/me/mailFolders/inbox/messages"
-        params = {
-            "$top": 50,
-            "$orderby": "receivedDateTime desc",
-            "$filter": (
-                f"receivedDateTime ge {start_utc.isoformat().replace('+00:00', 'Z')} "
-                f"and receivedDateTime le {end_utc.isoformat().replace('+00:00', 'Z')}"
-            ),
-            "$select": ",".join(
-                [
-                    "id",
-                    "subject",
-                    "bodyPreview",
-                    "receivedDateTime",
-                    "webLink",
-                    "internetMessageId",
-                    "conversationId",
-                    "from",
-                    "hasAttachments",
-                ]
-            ),
-        }
-        messages = []
-        has_more = False
-        next_url = url
-        next_params = params
-        while next_url and len(messages) < max(int(limit or 0), 1):
-            payload = self._microsoft_graph_get_json(
-                next_url,
-                access_token,
-                params=next_params,
-                prefer_text=False,
-            )
-            batch = payload.get("value") or []
-            if not isinstance(batch, list):
-                batch = []
-            remaining = max(int(limit or 0), 1) - len(messages)
-            messages.extend(batch[:remaining])
-            next_url = str(payload.get("@odata.nextLink") or "").strip()
-            next_params = None
-            has_more = bool(next_url)
-            if not batch:
-                break
-        return messages, has_more
-
     def _html_to_plain_text(self, value):
         raw = str(value or "")
         if not raw:
@@ -4222,44 +3369,6 @@ class Api:
         text = re.sub(r"[ \t\f\v]+", " ", text)
         text = re.sub(r"\r?\n\s*", "\n", text)
         return text.strip()
-
-    def _get_outlook_message_body_text(self, access_token, message_id):
-        payload = self._microsoft_graph_get_json(
-            f"{MICROSOFT_GRAPH_API_BASE}/me/messages/{message_id}",
-            access_token,
-            params={
-                "$select": ",".join(
-                    [
-                        "id",
-                        "subject",
-                        "body",
-                        "uniqueBody",
-                        "bodyPreview",
-                        "receivedDateTime",
-                        "webLink",
-                        "internetMessageId",
-                        "conversationId",
-                        "from",
-                        "hasAttachments",
-                    ]
-                )
-            },
-            prefer_text=True,
-        )
-        unique_body = payload.get("uniqueBody") if isinstance(payload, dict) else {}
-        unique_body = unique_body if isinstance(unique_body, dict) else {}
-        body = payload.get("body") if isinstance(payload, dict) else {}
-        body = body if isinstance(body, dict) else {}
-        body_content = str(unique_body.get("content") or "").strip()
-        body_content_type = str(unique_body.get("contentType") or "").strip().lower()
-        if not body_content:
-            body_content = str(body.get("content") or "").strip()
-            body_content_type = str(body.get("contentType") or "").strip().lower()
-        if not body_content:
-            body_content = str(payload.get("bodyPreview") or "").strip()
-        if body_content_type == "html":
-            body_content = self._html_to_plain_text(body_content)
-        return self._build_outlook_message_summary(payload), body_content
 
     def _trim_outlook_scan_prompt_text(self, value, limit=OUTLOOK_SCAN_EMAIL_BODY_PROMPT_CHARS):
         text = str(value or "").strip()
@@ -5192,64 +4301,9 @@ CURRENT_DELIVERABLES_IN_PERIOD:
             )
 
             desktop_available, desktop_reason = self._get_desktop_outlook_availability()
-            desktop_error = ""
-            if desktop_available:
-                source = OUTLOOK_SCAN_SOURCE_DESKTOP
-                self._send_outlook_scan_progress(
-                    "listing",
-                    "Loading emails from Desktop Outlook...",
-                    source=source,
-                    timeframe=timeframe,
-                    scanDate=scan_date,
-                    deliverablesInPeriod=deliverables_in_period,
-                )
-                try:
-                    message_summaries, has_more = self._list_desktop_outlook_inbox_messages(
-                        timeframe=timeframe,
-                        limit=OUTLOOK_SCAN_FETCH_LIMIT,
-                        scan_date=scan_date,
-                    )
-                    return self._analyze_outlook_scan_batch(
-                        message_summaries,
-                        lambda summary: self._get_desktop_outlook_message_body_text(summary.get("id")),
-                        project_context,
-                        api_key,
-                        user_name,
-                        discipline,
-                        timeframe,
-                        OUTLOOK_SCAN_SOURCE_DESKTOP,
-                        has_more=has_more,
-                        scan_date=scan_date,
-                    )
-                except Exception as exc:
-                    desktop_error = str(exc)
-                    logging.warning(f"Desktop Outlook inbox scan failed; falling back to Microsoft Graph: {exc}")
-                    source = OUTLOOK_SCAN_SOURCE_GRAPH
-                    self._send_outlook_scan_progress(
-                        "fallback",
-                        "Desktop Outlook could not be read. Switching to Microsoft 365.",
-                        source=source,
-                        timeframe=timeframe,
-                        scanDate=scan_date,
-                        deliverablesInPeriod=deliverables_in_period,
-                    )
-
-            auth_record = self._refresh_microsoft_auth_record_if_needed(
-                self._load_microsoft_auth_record()
-            )
-            access_token = str((auth_record or {}).get("accessToken") or "").strip()
-            if not access_token:
-                if desktop_error:
-                    message = (
-                        f"Desktop Outlook is available but could not be read: {desktop_error} "
-                        "Connect Microsoft 365 to use the Graph fallback."
-                    )
-                elif desktop_reason:
-                    message = (
-                        f"{desktop_reason} Connect Microsoft 365 to scan Inbox messages through Microsoft Graph."
-                    )
-                else:
-                    message = "Sign in with Microsoft before scanning Outlook inbox messages."
+            source = OUTLOOK_SCAN_SOURCE_DESKTOP
+            if not desktop_available:
+                message = desktop_reason or "Desktop Outlook is unavailable on this machine."
                 self._send_outlook_scan_progress(
                     "error",
                     message,
@@ -5262,31 +4316,46 @@ CURRENT_DELIVERABLES_IN_PERIOD:
                 return self._build_outlook_scan_error_result(
                     message,
                     timeframe=timeframe,
+                    source=source,
                     scan_date=scan_date,
                 )
 
-            source = OUTLOOK_SCAN_SOURCE_GRAPH
             self._send_outlook_scan_progress(
                 "listing",
-                "Loading emails from Microsoft 365...",
+                "Loading emails from Desktop Outlook...",
                 source=source,
                 timeframe=timeframe,
                 scanDate=scan_date,
                 deliverablesInPeriod=deliverables_in_period,
             )
-            raw_messages, has_more = self._list_outlook_inbox_messages(
-                access_token,
-                timeframe=timeframe,
-                limit=OUTLOOK_SCAN_FETCH_LIMIT,
-                scan_date=scan_date,
-            )
-            message_summaries = [
-                self._build_outlook_message_summary(message)
-                for message in raw_messages
-            ]
+            try:
+                message_summaries, has_more = self._list_desktop_outlook_inbox_messages(
+                    timeframe=timeframe,
+                    limit=OUTLOOK_SCAN_FETCH_LIMIT,
+                    scan_date=scan_date,
+                )
+            except Exception as exc:
+                logging.error(f"Desktop Outlook inbox scan failed: {exc}")
+                message = f"Desktop Outlook could not be read: {exc}"
+                self._send_outlook_scan_progress(
+                    "error",
+                    message,
+                    active=False,
+                    source=source,
+                    timeframe=timeframe,
+                    scanDate=scan_date,
+                    deliverablesInPeriod=deliverables_in_period,
+                )
+                return self._build_outlook_scan_error_result(
+                    message,
+                    timeframe=timeframe,
+                    source=source,
+                    scan_date=scan_date,
+                )
+
             return self._analyze_outlook_scan_batch(
                 message_summaries,
-                lambda summary: self._get_outlook_message_body_text(access_token, summary.get("id")),
+                lambda summary: self._get_desktop_outlook_message_body_text(summary.get("id")),
                 project_context,
                 api_key,
                 user_name,

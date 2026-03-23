@@ -2008,6 +2008,27 @@ mark.search-highlight {
   gap: 0.75rem;
 }
 
+.deliverable-task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.deliverable-task-list .deliverable-task-item {
+  margin: 0;
+}
+
+.deliverable-task-list .task-add-row {
+  margin-top: 0.125rem;
+  padding-left: 0.375rem;
+  padding-right: 0.375rem;
+}
+
+.deliverable-task-list .task-add-input {
+  min-width: 0;
+}
+
 .deliverable-card-header {
   display: flex;
   flex-wrap: wrap;
@@ -2416,12 +2437,60 @@ mark.search-highlight {
   line-height: 1.5;
 }
 
+.email-intake-mode-switch {
+  width: 100%;
+  gap: 0.5rem;
+  padding: 6px;
+}
+
+.email-intake-mode-option {
+  position: relative;
+  flex: 1 1 0;
+}
+
+.email-intake-mode-option input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.email-intake-mode-label {
+  display: block;
+  padding: 0.7rem 0.9rem;
+  border-radius: calc(var(--radius-sm) - 2px);
+  text-align: center;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.email-intake-mode-option input:checked + .email-intake-mode-label {
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+.email-intake-panel[hidden] {
+  display: none !important;
+}
+
+.email-intake-panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.email-intake-scan-status {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
 .outlook-scan-toolbar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 0.75rem;
-  margin-top: 0.9rem;
 }
 
 .outlook-scan-toolbar .input {
@@ -5827,8 +5896,9 @@ dialog::backdrop {
 
 .deliverable-card-header-new {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 0.75rem;
   margin-bottom: 0.625rem;
 }
@@ -5862,6 +5932,43 @@ dialog::backdrop {
   text-decoration: underline;
   text-decoration-style: dotted;
   text-underline-offset: 2px;
+}
+
+.deliverable-task-count-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(96, 165, 250, 0.25);
+  background: rgba(96, 165, 250, 0.12);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.deliverable-task-count-icon {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.deliverable-task-count-value {
+  line-height: 1;
+}
+
+.deliverable-task-count-badge.is-empty {
+  background: var(--bg-tertiary);
+  border-color: var(--glass-border);
+  color: var(--muted);
+}
+
+.deliverable-task-count-badge.is-complete {
+  background: rgba(16, 185, 129, 0.14);
+  border-color: rgba(16, 185, 129, 0.28);
+  color: var(--accent);
 }
 
 /* Inline edit input for deliverable name */
@@ -6060,27 +6167,6 @@ dialog::backdrop {
 }
 
 .deliverable-task-item.undone {
-  color: var(--text);
-}
-
-.deliverable-expand-btn {
-  background: transparent;
-  border: none;
-  color: var(--muted);
-  font-size: 11px;
-  cursor: pointer;
-  padding: 4px 8px;
-  margin-top: 0.25rem;
-  border-radius: 4px;
-  transition: all 0.2s;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  font-weight: 500;
-}
-
-.deliverable-expand-btn:hover {
-  background: var(--bg-tertiary);
   color: var(--text);
 }
 
@@ -6405,6 +6491,8 @@ dialog::backdrop {
 .deliverable-header-left {
   display: flex;
   align-items: center;
+  align-content: center;
+  flex-wrap: wrap;
   gap: 0.75rem;
   flex: 1;
   min-width: 0;
@@ -6417,6 +6505,10 @@ dialog::backdrop {
   justify-content: flex-end;
   gap: 0.45rem;
   margin-left: auto;
+}
+
+.deliverable-card-new.details-collapsed .deliverable-task-count-badge {
+  box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.08);
 }
 
 /* Expand/contract toggle button */

@@ -167,14 +167,7 @@
                                 <line x1="5" y1="12" x2="19" y2="12"></line>
                             </svg>
                         </button>
-                        <button class="icon-btn" id="aiBtn" aria-label="AI Project" title="Create project with AI">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <path
-                                    d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z" />
-                            </svg>
-                        </button>
-                        <button class="icon-btn" id="outlookScanBtn" aria-label="Outlook scan" title="Scan Outlook inbox">
+                        <button class="icon-btn" id="outlookScanBtn" aria-label="Email intake" title="Email intake">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                 <path d="M4 4h16v16H4z"></path>
@@ -1071,62 +1064,71 @@
             </div>
         </div>
     </dialog>
-    <!-- Email Modal -->
-    <dialog id="emailDlg">
-        <div class="modal-header">
-            <div class="title">Create from Email</div>
-            <div class="inline">
-                <button class="btn ghost" onclick="closeDlg('emailDlg')">Cancel</button>
-                <button class="btn-primary" id="btnProcessEmail">Process with AI</button>
-            </div>
-        </div>
-        <div class="modal-body stack">
-            <p class="tiny muted">Paste the full email content below. The AI will extract the project details.</p>
-            <textarea id="emailArea" rows="15" placeholder="Paste email content here…"></textarea>
-            <div id="aiSpinner" class="spinner" style="display:none;">Processing with AI...</div>
-        </div>
-    </dialog>
     <dialog id="outlookScanDlg">
         <div class="modal-header">
-            <div class="title">Outlook Scan</div>
+            <div class="title">Email Intake</div>
             <button class="btn ghost" onclick="closeDlg('outlookScanDlg')">Close</button>
         </div>
         <div class="modal-body stack">
-            <div class="sync-auth-card">
-                <div id="outlookScanAuthStatus" class="sync-auth-status">Not connected</div>
-                <div id="outlookScanAuthDetails" class="tiny muted">
-                    Connect a Microsoft 365 account to scan Inbox messages for missing deliverables.
+            <div class="email-intake-mode-switch radio-group" id="emailIntakeModeGroup" role="radiogroup"
+                aria-label="Email intake mode">
+                <label class="email-intake-mode-option">
+                    <input type="radio" name="emailIntakeMode" id="emailIntakeModePaste" value="paste" checked />
+                    <span class="email-intake-mode-label">Paste Email</span>
+                </label>
+                <label class="email-intake-mode-option">
+                    <input type="radio" name="emailIntakeMode" id="emailIntakeModeScan" value="scan" />
+                    <span class="email-intake-mode-label">Scan Outlook Day</span>
+                </label>
+            </div>
+            <section id="emailIntakePastePanel" class="email-intake-panel stack">
+                <div class="email-intake-panel-head">
+                    <div>
+                        <div class="label">Paste Email</div>
+                        <div class="tiny muted">Paste the full email content below. The AI will extract the project
+                            details.</div>
+                    </div>
+                    <button type="button" class="btn-primary tiny" id="btnProcessEmail">Process with AI</button>
+                </div>
+                <textarea id="emailArea" rows="15" placeholder="Paste email content here..."></textarea>
+                <div id="aiSpinner" class="spinner" hidden>Processing with AI...</div>
+            </section>
+            <section id="emailIntakeScanPanel" class="email-intake-panel stack" hidden>
+                <div class="email-intake-scan-status">
+                    <div id="outlookScanCapabilityStatus" class="sync-auth-status">Checking Desktop Outlook...</div>
+                    <div id="outlookScanCapabilityDetails" class="tiny muted">
+                        Checking whether Desktop Outlook is available on this machine.
+                    </div>
                 </div>
                 <div class="outlook-scan-toolbar">
                     <label class="label" for="outlookScanDate">Day</label>
                     <input id="outlookScanDate" type="date" class="input" />
-                    <button type="button" class="btn tiny" id="outlookScanConnectBtn">Connect Outlook</button>
-                    <button type="button" class="btn tiny" id="outlookScanSignOutBtn">Sign out</button>
-                    <button type="button" class="btn-primary tiny" id="outlookScanRunBtn">Scan inbox</button>
+                    <button type="button" class="btn-primary tiny" id="outlookScanRunBtn">Scan day</button>
                 </div>
-            </div>
-            <div class="outlook-scan-results">
-                <div id="outlookScanProgress" class="outlook-scan-progress">
-                    <div id="outlookScanSummary" class="sync-auth-status">No Outlook scan has been run yet.</div>
-                    <div id="outlookScanMeta" class="tiny muted">Choose a day, then run a scan.</div>
+                <div class="outlook-scan-results">
+                    <div id="outlookScanProgress" class="outlook-scan-progress">
+                        <div id="outlookScanSummary" class="sync-auth-status">No Outlook day scan has been run yet.
+                        </div>
+                        <div id="outlookScanMeta" class="tiny muted">Choose a day, then run a scan.</div>
+                    </div>
+                    <details id="outlookScanReport" class="outlook-scan-report" hidden>
+                        <summary>Scan report</summary>
+                        <div id="outlookScanReportSummary" class="outlook-scan-report-summary"></div>
+                        <div id="outlookScanReportLog" class="outlook-scan-report-log"></div>
+                    </details>
+                    <div id="outlookScanEmpty" class="tiny muted">
+                        Suggestions and skipped emails will appear here after a scan.
+                    </div>
+                    <div class="outlook-scan-section">
+                        <div class="label">Suggested deliverables</div>
+                        <div id="outlookScanSuggestions" class="outlook-scan-list"></div>
+                    </div>
+                    <div class="outlook-scan-section">
+                        <div class="label">Skipped emails</div>
+                        <div id="outlookScanSkipped" class="outlook-scan-skipped-list"></div>
+                    </div>
                 </div>
-                <details id="outlookScanReport" class="outlook-scan-report" hidden>
-                    <summary>Scan report</summary>
-                    <div id="outlookScanReportSummary" class="outlook-scan-report-summary"></div>
-                    <div id="outlookScanReportLog" class="outlook-scan-report-log"></div>
-                </details>
-                <div id="outlookScanEmpty" class="tiny muted">
-                    Suggestions and skipped emails will appear here after a scan.
-                </div>
-                <div class="outlook-scan-section">
-                    <div class="label">Suggested deliverables</div>
-                    <div id="outlookScanSuggestions" class="outlook-scan-list"></div>
-                </div>
-                <div class="outlook-scan-section">
-                    <div class="label">Skipped emails</div>
-                    <div id="outlookScanSkipped" class="outlook-scan-skipped-list"></div>
-                </div>
-            </div>
+            </section>
         </div>
     </dialog>
     <dialog id="aiNoMatchDlg">
@@ -1327,16 +1329,6 @@
                                     Add Firebase config to enable sync.
                                 </div>
                             </div>
-                        </div>
-                        <div class="sync-auth-row" style="margin-top: 0.9rem;">
-                            <div class="sync-auth-copy">
-                                <label class="label" style="margin-bottom: 0.25rem;">Microsoft 365</label>
-                                <div id="settings_microsoftAuthStatus" class="sync-auth-status">Not signed in</div>
-                                <div id="settings_microsoftAuthDetails" class="tiny muted">
-                                    Sign in with Microsoft 365. Configure MICROSOFT_OAUTH_CLIENT_ID and optionally MICROSOFT_OAUTH_TENANT_ID.
-                                </div>
-                            </div>
-                            <button type="button" class="btn tiny" id="settings_microsoftAuthActionBtn">Sign in</button>
                         </div>
                     </div>
                 </div>
@@ -2673,24 +2665,9 @@
             <label class="label">Notes</label>
             <textarea class="d-notes" rows="3" placeholder="Deliverable notes"></textarea>
             <div class="stack">
-                <div class="inline" style="justify-content:space-between">
-                    <div class="title section-header">Tasks</div>
-                    <button type="button" class="btn-accent tiny d-add-task">+ Add Task</button>
-                </div>
+                <div class="title section-header">Tasks</div>
                 <div class="deliverable-task-list stack"></div>
             </div>
-        </div>
-    </template>
-    <template id="task-row-template">
-        <div class="task-row modal-grid" style="align-items:center">
-            <div class="col-8"><input class="t-text" placeholder="Task description"></div>
-            <div class="col-1"><label class="tiny inline checkbox-label"><input type="checkbox" class="t-done"
-                        style="width:auto">
-                    Done</label></div>
-            <div class="col-3 inline" style="justify-content:flex-end; gap:.4rem"><button type="button"
-                    class="btn tiny btn-remove text-danger">Remove</button></div>
-            <div class="col-6"><input class="t-link" placeholder="Optional link or file path"></div>
-            <div class="col-6"><input class="t-link2" placeholder="Second link (optional)"></div>
         </div>
     </template>
     <template id="ref-row-template">

@@ -5957,7 +5957,6 @@ let userSettings = {
   workroomAutoSelectCadFiles: true,
   enableUnderConstructionTools: false,
   googleAuth: null,
-  microsoftAuth: null,
   cloudSync: { ...DEFAULT_CLOUD_SYNC_SETTINGS },
 };
 const DEFAULT_GOOGLE_AUTH_STATE = {
@@ -5970,21 +5969,11 @@ const DEFAULT_GOOGLE_AUTH_STATE = {
   expiresAt: "",
   hasRefreshToken: false,
 };
-const DEFAULT_MICROSOFT_AUTH_STATE = {
-  signedIn: false,
-  provider: "microsoft",
-  email: "",
-  displayName: "",
-  avatarUrl: "",
-  signedInAt: "",
-  expiresAt: "",
-  tenantId: "",
-  hasRefreshToken: false,
-  outlookScan: {
-    preferredSource: "none",
-    desktopAvailable: false,
-    desktopReason: "",
-  },
+const DEFAULT_OUTLOOK_SCAN_CAPABILITY = {
+  loaded: false,
+  loading: false,
+  desktopAvailable: false,
+  desktopReason: "",
 };
 function formatLocalDateInputValue(date = new Date()) {
   const safeDate = date instanceof Date && !isNaN(date) ? date : new Date();
@@ -6138,6 +6127,7 @@ function normalizeOutlookScanProgress(raw = {}, previous = null) {
 }
 
 const DEFAULT_OUTLOOK_SCAN_STATE = {
+  mode: "paste",
   scanDate: getTodayLocalDateInputValue(),
   busy: false,
   lastResult: null,
@@ -6151,11 +6141,8 @@ const DEFAULT_OUTLOOK_SCAN_STATE = {
 };
 let googleAuthState = { ...DEFAULT_GOOGLE_AUTH_STATE };
 let googleAuthBusy = false;
-let microsoftAuthState = { ...DEFAULT_MICROSOFT_AUTH_STATE };
-let microsoftAuthBusy = false;
-let microsoftAuthIssueMessage = "";
-let microsoftAdminConsentRequired = false;
-let microsoftConsentDiagnosticRecommended = false;
+let outlookScanCapabilityState = { ...DEFAULT_OUTLOOK_SCAN_CAPABILITY };
+let emailIntakeBusy = false;
 let outlookScanState = { ...DEFAULT_OUTLOOK_SCAN_STATE };
 let cloudSyncState = { ...DEFAULT_CLOUD_SYNC_STATE };
 let cloudSyncConfig = null;
@@ -6695,79 +6682,25 @@ async function handleGoogleSignOut() {
   }
 }
 
-function normalizeMicrosoftAuthState(raw = {}) {
+function normalizeEmailIntakeMode(value = "") {
+  return String(value || "").trim().toLowerCase() === "scan" ? "scan" : "paste";
+}
+
+function normalizeOutlookScanCapability(raw = {}) {
   return {
-    ...DEFAULT_MICROSOFT_AUTH_STATE,
+    ...DEFAULT_OUTLOOK_SCAN_CAPABILITY,
     ...(raw && typeof raw === "object" ? raw : {}),
-    signedIn: !!raw?.signedIn,
-    provider: String(raw?.provider || "microsoft").trim() || "microsoft",
-    email: String(raw?.email || "").trim(),
-    displayName: String(raw?.displayName || "").trim(),
-    avatarUrl: String(raw?.avatarUrl || "").trim(),
-    signedInAt: String(raw?.signedInAt || "").trim(),
-    expiresAt: String(raw?.expiresAt || "").trim(),
-    tenantId: String(raw?.tenantId || "").trim(),
-    hasRefreshToken: !!raw?.hasRefreshToken,
-    outlookScan: {
-      ...DEFAULT_MICROSOFT_AUTH_STATE.outlookScan,
-      ...(raw?.outlookScan && typeof raw.outlookScan === "object"
-        ? raw.outlookScan
-        : {}),
-      preferredSource:
-        String(raw?.outlookScan?.preferredSource || "none").trim() || "none",
-      desktopAvailable: !!raw?.outlookScan?.desktopAvailable,
-      desktopReason: String(raw?.outlookScan?.desktopReason || "").trim(),
-    },
+    loaded: raw?.loaded !== undefined ? !!raw.loaded : true,
+    loading: !!raw?.loading,
+    desktopAvailable: !!raw?.desktopAvailable,
+    desktopReason: String(raw?.desktopReason || "").trim(),
   };
 }
 
 function getOutlookScanSourceLabel(source = "") {
   const normalized = String(source || "").trim().toLowerCase();
   if (normalized === "desktop-outlook") return "Desktop Outlook";
-  if (normalized === "microsoft-graph") return "Microsoft 365";
   return "Outlook";
-}
-
-function isMicrosoftAdminConsentErrorMessage(message = "") {
-  const normalized = String(message || "").trim().toLowerCase();
-  if (!normalized) return false;
-  return (
-    normalized.includes("entra admin approval") ||
-    normalized.includes("need admin approval") ||
-    normalized.includes("admin approval") ||
-    normalized.includes("admin consent")
-  );
-}
-
-function isMicrosoftConsentPolicyErrorMessage(message = "") {
-  const normalized = String(message || "").trim().toLowerCase();
-  if (!normalized) return false;
-  return (
-    normalized.includes("tenant consent policy") ||
-    normalized.includes("retry minimal consent") ||
-    normalized.includes("permission classifications") ||
-    normalized.includes("user consent settings")
-  );
-}
-
-function setMicrosoftAuthIssue(message = "") {
-  microsoftAuthIssueMessage = String(message || "").trim();
-  microsoftAdminConsentRequired = isMicrosoftAdminConsentErrorMessage(
-    microsoftAuthIssueMessage
-  );
-  microsoftConsentDiagnosticRecommended = isMicrosoftConsentPolicyErrorMessage(
-    microsoftAuthIssueMessage
-  );
-}
-
-function clearMicrosoftAuthIssue() {
-  microsoftAuthIssueMessage = "";
-  microsoftAdminConsentRequired = false;
-  microsoftConsentDiagnosticRecommended = false;
-}
-
-function getMicrosoftAuthDisplayName(state = microsoftAuthState) {
-  return state.displayName || state.email || "Microsoft 365";
 }
 
 function getOutlookScanVisibleSuggestions() {
@@ -7018,11 +6951,18 @@ window.updateOutlookScanProgress = function (payload = {}) {
 
 function renderOutlookScanUi() {
   const toolbarBtn = document.getElementById("outlookScanBtn");
-  const authStatusEl = document.getElementById("outlookScanAuthStatus");
-  const authDetailsEl = document.getElementById("outlookScanAuthDetails");
+  const pasteModeInput = document.getElementById("emailIntakeModePaste");
+  const scanModeInput = document.getElementById("emailIntakeModeScan");
+  const pastePanel = document.getElementById("emailIntakePastePanel");
+  const scanPanel = document.getElementById("emailIntakeScanPanel");
+  const capabilityStatusEl = document.getElementById("outlookScanCapabilityStatus");
+  const capabilityDetailsEl = document.getElementById(
+    "outlookScanCapabilityDetails"
+  );
+  const emailArea = document.getElementById("emailArea");
+  const aiSpinner = document.getElementById("aiSpinner");
+  const processBtn = document.getElementById("btnProcessEmail");
   const scanDateInput = document.getElementById("outlookScanDate");
-  const connectBtn = document.getElementById("outlookScanConnectBtn");
-  const signOutBtn = document.getElementById("outlookScanSignOutBtn");
   const progressEl = document.getElementById("outlookScanProgress");
   const runBtn = document.getElementById("outlookScanRunBtn");
   const summaryEl = document.getElementById("outlookScanSummary");
@@ -7034,16 +6974,12 @@ function renderOutlookScanUi() {
   const skippedEl = document.getElementById("outlookScanSkipped");
   const emptyEl = document.getElementById("outlookScanEmpty");
 
-  const isSignedIn = microsoftAuthState.signedIn;
-  const outlookScanCapability = microsoftAuthState.outlookScan || {};
-  const desktopAvailable = !!outlookScanCapability.desktopAvailable;
-  const desktopReason = String(outlookScanCapability.desktopReason || "").trim();
-  const preferredSource =
-    String(outlookScanCapability.preferredSource || "").trim() || "none";
-  const usingDesktop = preferredSource === "desktop-outlook";
-  const canScan = desktopAvailable || isSignedIn;
-  const busy = microsoftAuthBusy || outlookScanState.busy;
-  const displayName = getMicrosoftAuthDisplayName();
+  const mode = normalizeEmailIntakeMode(outlookScanState.mode);
+  const capability = normalizeOutlookScanCapability(outlookScanCapabilityState);
+  const desktopAvailable = !!capability.desktopAvailable;
+  const desktopReason = String(capability.desktopReason || "").trim();
+  const scanBusy = outlookScanState.busy;
+  const busy = scanBusy || capability.loading;
   const visibleSuggestions = getOutlookScanVisibleSuggestions();
   const skipped = Array.isArray(outlookScanState.skipped)
     ? outlookScanState.skipped
@@ -7056,82 +6992,88 @@ function renderOutlookScanUi() {
     reportModel.timeframe
   );
   const showReport =
-    !busy &&
+    !scanBusy &&
     !!(reportModel.log.length || reportModel.errorMessage || lastResult);
 
   if (toolbarBtn) {
     toolbarBtn.disabled = false;
-    toolbarBtn.title = outlookScanState.busy
-      ? "Outlook scan is running"
-      : microsoftAuthBusy
-        ? "Microsoft sign-in is in progress"
-        : "Scan Outlook inbox";
+    toolbarBtn.title = scanBusy
+      ? "Outlook day scan is running"
+      : emailIntakeBusy
+        ? "AI email intake is running"
+        : capability.loading
+          ? "Checking Desktop Outlook availability"
+          : "Email intake";
   }
-  if (authStatusEl) {
-    authStatusEl.textContent = usingDesktop
-      ? "Using Desktop Outlook"
-      : isSignedIn
-        ? `Connected as ${displayName}`
-        : "Not connected";
+  if (pasteModeInput) {
+    pasteModeInput.checked = mode === "paste";
+    pasteModeInput.disabled = emailIntakeBusy || scanBusy;
   }
-  if (authDetailsEl) {
-    authDetailsEl.textContent = usingDesktop
-      ? microsoftAuthIssueMessage
-        ? `${microsoftAuthIssueMessage} Desktop Outlook is still available on this machine.`
-        : isSignedIn
-          ? `Scanning with the installed Outlook desktop app. Microsoft 365 is connected as ${
-              microsoftAuthState.email || displayName
-            } for fallback.`
-          : "Scanning with the installed Outlook desktop app on this machine. Microsoft sign-in is optional."
-      : isSignedIn
-        ? microsoftAuthState.email || "Microsoft 365 account connected."
-        : microsoftAuthIssueMessage ||
-          desktopReason ||
-          "Connect a Microsoft 365 account to scan Inbox messages for missing deliverables.";
+  if (scanModeInput) {
+    scanModeInput.checked = mode === "scan";
+    scanModeInput.disabled = emailIntakeBusy || scanBusy;
+  }
+  if (pastePanel) {
+    pastePanel.hidden = mode !== "paste";
+  }
+  if (scanPanel) {
+    scanPanel.hidden = mode !== "scan";
+  }
+  if (capabilityStatusEl) {
+    capabilityStatusEl.textContent = capability.loading
+      ? "Checking Desktop Outlook..."
+      : desktopAvailable
+        ? "Desktop Outlook ready"
+        : "Desktop Outlook unavailable";
+  }
+  if (capabilityDetailsEl) {
+    capabilityDetailsEl.textContent = capability.loading
+      ? "Checking whether Desktop Outlook is available on this machine."
+      : desktopAvailable
+        ? "Scan a selected day using the installed Outlook desktop app on this machine."
+        : desktopReason || "Desktop Outlook is unavailable on this machine.";
+  }
+  if (emailArea) {
+    emailArea.disabled = emailIntakeBusy;
+  }
+  if (aiSpinner) {
+    aiSpinner.hidden = !emailIntakeBusy;
+  }
+  if (processBtn) {
+    processBtn.disabled = emailIntakeBusy;
+    processBtn.textContent = emailIntakeBusy
+      ? "Processing..."
+      : "Process with AI";
   }
   if (scanDateInput) {
     scanDateInput.value = normalizeOutlookScanDateInput(outlookScanState.scanDate);
     scanDateInput.max = getTodayLocalDateInputValue();
     scanDateInput.disabled = busy;
   }
-  if (connectBtn) {
-    connectBtn.disabled = busy || isSignedIn;
-    connectBtn.textContent = microsoftAuthBusy
-      ? "Working..."
-      : isSignedIn
-        ? "Connected"
-        : microsoftConsentDiagnosticRecommended
-          ? "Retry minimal consent"
-          : microsoftAdminConsentRequired
-            ? "Admin approval"
-            : desktopAvailable
-              ? "Connect Microsoft 365"
-              : "Connect Outlook";
-  }
-  if (signOutBtn) {
-    signOutBtn.disabled = busy || !isSignedIn;
-    signOutBtn.textContent = microsoftAuthBusy ? "Signing out..." : "Sign out";
-  }
   if (runBtn) {
-    runBtn.disabled = busy || !canScan;
-    runBtn.textContent = outlookScanState.busy ? "Scanning..." : "Scan inbox";
+    runBtn.disabled = busy || !desktopAvailable;
+    runBtn.textContent = scanBusy
+      ? "Scanning..."
+      : capability.loading
+        ? "Checking..."
+        : "Scan day";
   }
   if (progressEl) {
-    progressEl.classList.toggle("is-active", busy || progress.active);
+    progressEl.classList.toggle("is-active", scanBusy || progress.active);
     progressEl.classList.toggle(
       "is-error",
-      !busy && String(lastResult?.status || "").trim().toLowerCase() === "error"
+      !scanBusy && String(lastResult?.status || "").trim().toLowerCase() === "error"
     );
   }
   if (summaryEl) {
-    if (busy || progress.active) {
+    if (scanBusy || progress.active) {
       summaryEl.textContent = getOutlookScanProgressSummary(progress);
     } else if (
       String(lastResult?.status || "").trim().toLowerCase() === "error"
     ) {
       summaryEl.textContent = reportModel.errorMessage || "Outlook scan failed.";
     } else if (!lastResult) {
-      summaryEl.textContent = "No Outlook scan has been run yet.";
+      summaryEl.textContent = "No Outlook day scan has been run yet.";
     } else {
       summaryEl.textContent =
         `${visibleSuggestions.length} suggestion` +
@@ -7140,7 +7082,7 @@ function renderOutlookScanUi() {
     }
   }
   if (metaEl) {
-    if (busy || progress.active) {
+    if (scanBusy || progress.active) {
       const progressParts = buildOutlookScanProgressParts(progress);
       metaEl.textContent =
         progressParts.join(" · ") ||
@@ -7161,7 +7103,11 @@ function renderOutlookScanUi() {
       }
       metaEl.textContent = parts.join(" · ");
     } else if (!lastResult) {
-      metaEl.textContent = "Choose a day, then run a scan.";
+      metaEl.textContent = desktopAvailable
+        ? "Choose a day, then run a scan."
+        : capability.loading
+          ? "Checking whether Desktop Outlook is available."
+          : desktopReason || "Desktop Outlook is unavailable on this machine.";
     } else {
       const deliverableCount =
         reportModel.deliverablesInPeriod ?? lastResult.deliverablesIncludedCount ?? 0;
@@ -7196,16 +7142,7 @@ function renderOutlookScanUi() {
       if (reportModel.source) {
         rows.push(["Source", getOutlookScanSourceLabel(reportModel.source)]);
       }
-      rows.push([
-        "Day",
-        selectedDayLabel,
-      ]);
-      if (reportModel.fallbackUsed) {
-        rows.push([
-          "Fallback",
-          "Desktop Outlook failed and Microsoft 365 was used.",
-        ]);
-      }
+      rows.push(["Day", selectedDayLabel]);
       if (reportModel.totalEmails !== null) {
         rows.push(["Emails found", `${reportModel.totalEmails}`]);
       }
@@ -7389,234 +7326,131 @@ function renderOutlookScanUi() {
 
   if (emptyEl) {
     emptyEl.hidden =
-      busy || showReport || visibleSuggestions.length > 0 || skipped.length > 0;
+      scanBusy || showReport || visibleSuggestions.length > 0 || skipped.length > 0;
   }
 }
 
-function renderMicrosoftAuthUi() {
-  const statusEl = document.getElementById("settings_microsoftAuthStatus");
-  const detailsEl = document.getElementById("settings_microsoftAuthDetails");
-  const actionBtn = document.getElementById("settings_microsoftAuthActionBtn");
-  const displayName = getMicrosoftAuthDisplayName();
-  const isSignedIn = microsoftAuthState.signedIn;
-  const outlookScanCapability = microsoftAuthState.outlookScan || {};
-  const desktopAvailable = !!outlookScanCapability.desktopAvailable;
-
-  if (statusEl) {
-    statusEl.textContent = isSignedIn
-      ? `Signed in as ${displayName}`
-      : desktopAvailable
-        ? "Desktop Outlook available"
-        : "Not signed in";
+async function loadOutlookScanCapability({ silent = false } = {}) {
+  if (!window.pywebview?.api?.get_outlook_scan_capability) {
+    outlookScanCapabilityState = normalizeOutlookScanCapability({
+      loaded: true,
+      desktopAvailable: false,
+      desktopReason: "Outlook day scan is unavailable in this environment.",
+    });
+    renderOutlookScanUi();
+    return outlookScanCapabilityState;
   }
-  if (detailsEl) {
-    detailsEl.textContent = isSignedIn
-      ? microsoftAuthState.email || "Microsoft 365 account connected."
-      : microsoftAuthIssueMessage ||
-        (desktopAvailable
-          ? "Outlook inbox scan can use the installed Outlook app on this machine. Sign in only if you want Microsoft 365 fallback."
-          : "Sign in with Microsoft 365. Configure MICROSOFT_OAUTH_CLIENT_ID and optionally MICROSOFT_OAUTH_TENANT_ID.");
-  }
-  if (actionBtn) {
-    actionBtn.disabled = microsoftAuthBusy;
-    actionBtn.textContent = microsoftAuthBusy
-      ? "Working..."
-      : isSignedIn
-        ? "Open scan"
-        : microsoftConsentDiagnosticRecommended
-          ? "Retry minimal consent"
-          : microsoftAdminConsentRequired
-          ? "Admin approval"
-          : desktopAvailable
-            ? "Sign in (fallback)"
-            : "Sign in";
+  outlookScanCapabilityState = normalizeOutlookScanCapability({
+    ...outlookScanCapabilityState,
+    loaded: true,
+    loading: true,
+  });
+  renderOutlookScanUi();
+  try {
+    const response = await window.pywebview.api.get_outlook_scan_capability();
+    if (response?.status !== "success") {
+      throw new Error(
+        response?.message || "Failed to load Desktop Outlook scan capability."
+      );
+    }
+    outlookScanCapabilityState = normalizeOutlookScanCapability({
+      loaded: true,
+      loading: false,
+      desktopAvailable: response?.desktopAvailable,
+      desktopReason: response?.desktopReason,
+    });
+  } catch (e) {
+    console.warn("Failed to load Outlook scan capability:", e);
+    outlookScanCapabilityState = normalizeOutlookScanCapability({
+      loaded: true,
+      loading: false,
+      desktopAvailable: false,
+      desktopReason: e?.message || "Desktop Outlook capability could not be loaded.",
+    });
+    if (!silent) {
+      toast("Could not load Desktop Outlook availability.");
+    }
   }
   renderOutlookScanUi();
-}
-
-async function loadMicrosoftAuthState({ silent = false } = {}) {
-  if (!window.pywebview?.api?.get_microsoft_auth_state) {
-    microsoftAuthState = normalizeMicrosoftAuthState();
-    renderMicrosoftAuthUi();
-    return microsoftAuthState;
-  }
-  try {
-    const response = await window.pywebview.api.get_microsoft_auth_state();
-    if (response?.status !== "success") {
-      throw new Error(response?.message || "Failed to load Microsoft sign-in state.");
-    }
-    microsoftAuthState = normalizeMicrosoftAuthState(response.auth);
-    if (microsoftAuthState.signedIn) {
-      clearMicrosoftAuthIssue();
-    }
-  } catch (e) {
-    console.warn("Failed to load Microsoft auth state:", e);
-    microsoftAuthState = normalizeMicrosoftAuthState();
-    if (!silent) {
-      toast("Could not load Microsoft sign-in state.");
-    }
-  }
-  renderMicrosoftAuthUi();
-  return microsoftAuthState;
+  return outlookScanCapabilityState;
 }
 
 function resetOutlookScanState() {
   outlookScanState = {
     ...DEFAULT_OUTLOOK_SCAN_STATE,
+    mode: normalizeEmailIntakeMode(outlookScanState.mode),
     scanDate:
       normalizeOutlookScanDateInput(outlookScanState.scanDate) ||
       DEFAULT_OUTLOOK_SCAN_STATE.scanDate,
   };
 }
 
-function openOutlookScanDialog() {
-  renderMicrosoftAuthUi();
-  showDialog(document.getElementById("outlookScanDlg"));
+function setEmailIntakeMode(mode = "paste") {
+  outlookScanState.mode = normalizeEmailIntakeMode(mode);
+  renderOutlookScanUi();
 }
 
-function handleMicrosoftAuthAction() {
-  if (microsoftAuthBusy) return;
-  if (microsoftAuthState.signedIn) {
-    openOutlookScanDialog();
-    return;
+async function openOutlookScanDialog(mode = outlookScanState.mode) {
+  setEmailIntakeMode(mode);
+  const dialog = document.getElementById("outlookScanDlg");
+  if (dialog) {
+    renderOutlookScanUi();
+    showDialog(dialog);
   }
-  if (microsoftConsentDiagnosticRecommended) {
-    handleMicrosoftConsentDiagnostic();
-    return;
-  }
-  if (microsoftAdminConsentRequired) {
-    handleMicrosoftAdminConsent();
-    return;
-  }
-  handleMicrosoftSignIn();
+  await loadOutlookScanCapability({ silent: true });
 }
 
-async function handleMicrosoftConsentDiagnostic() {
-  if (microsoftAuthBusy || !window.pywebview?.api?.diagnose_microsoft_consent_policy) {
-    toast("Microsoft consent diagnostic is unavailable in this environment.");
+async function processEmailIntakePaste() {
+  if (emailIntakeBusy || !window.pywebview?.api?.process_email_with_ai) {
     return;
   }
-  microsoftAuthBusy = true;
-  renderMicrosoftAuthUi();
+  if (!String(userSettings.apiKey || "").trim()) {
+    toast("Setup API Key in Settings first.");
+    return;
+  }
+  const txt = val("emailArea");
+  if (!txt) return;
+  const AI_EMAIL_TIMEOUT_MS = 120000;
+  let timeoutId = null;
+  emailIntakeBusy = true;
+  renderOutlookScanUi();
   try {
-    const response = await window.pywebview.api.diagnose_microsoft_consent_policy();
-    if (response?.status === "success") {
-      microsoftAuthIssueMessage =
-        response.message ||
-        "Reduced-scope Microsoft consent succeeded. Review tenant consent settings, then retry Connect Outlook.";
-      microsoftAdminConsentRequired = false;
-      microsoftConsentDiagnosticRecommended = false;
-      renderMicrosoftAuthUi();
-      openOutlookScanDialog();
-      toast(microsoftAuthIssueMessage);
+    const aiRequest = window.pywebview.api.process_email_with_ai(
+      txt,
+      userSettings.apiKey,
+      userSettings.userName,
+      userSettings.discipline
+    );
+    const timeoutPromise = new Promise((_, reject) => {
+      timeoutId = setTimeout(() => {
+        reject(
+          new Error(
+            `AI request timed out after ${Math.round(
+              AI_EMAIL_TIMEOUT_MS / 1000
+            )} seconds. Please try again.`
+          )
+        );
+      }, AI_EMAIL_TIMEOUT_MS);
+    });
+    const res = await Promise.race([aiRequest, timeoutPromise]);
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+      timeoutId = null;
+    }
+    if (res?.status === "success") {
+      const emailField = document.getElementById("emailArea");
+      if (emailField) emailField.value = "";
+      closeDlg("outlookScanDlg");
+      handleAiProjectResult(res.data || {});
       return;
     }
-    if (response?.status === "cancelled") {
-      toast(response.message || "Microsoft consent diagnostic was cancelled.");
-      return;
-    }
-    throw new Error(response?.message || "Microsoft consent diagnostic failed.");
+    throw new Error(res?.message || "Failed to process email.");
   } catch (e) {
-    console.warn("Microsoft consent diagnostic failed:", e);
-    setMicrosoftAuthIssue(e?.message || "Microsoft consent diagnostic failed.");
-    openOutlookScanDialog();
-    toast(e?.message || "Microsoft consent diagnostic failed.");
+    toast("AI Error: " + (e?.message || "Unknown error."));
   } finally {
-    microsoftAuthBusy = false;
-    renderMicrosoftAuthUi();
-  }
-}
-
-async function handleMicrosoftAdminConsent() {
-  if (microsoftAuthBusy || !window.pywebview?.api?.request_microsoft_admin_consent) {
-    toast("Microsoft admin approval is unavailable in this environment.");
-    return;
-  }
-  microsoftAuthBusy = true;
-  renderMicrosoftAuthUi();
-  try {
-    const response = await window.pywebview.api.request_microsoft_admin_consent();
-    if (response?.status === "success") {
-      clearMicrosoftAuthIssue();
-      renderMicrosoftAuthUi();
-      openOutlookScanDialog();
-      toast(
-        response.message ||
-          "Microsoft admin approval completed. Connect Outlook again."
-      );
-      return;
-    }
-    if (response?.status === "cancelled") {
-      toast(response.message || "Microsoft admin approval was cancelled.");
-      return;
-    }
-    throw new Error(response?.message || "Microsoft admin approval failed.");
-  } catch (e) {
-    console.warn("Microsoft admin approval failed:", e);
-    setMicrosoftAuthIssue(e?.message || "Microsoft admin approval failed.");
-    openOutlookScanDialog();
-    toast(e?.message || "Microsoft admin approval failed.");
-  } finally {
-    microsoftAuthBusy = false;
-    renderMicrosoftAuthUi();
-  }
-}
-
-async function handleMicrosoftSignIn() {
-  if (microsoftAuthBusy || !window.pywebview?.api?.sign_in_with_microsoft) return;
-  microsoftAuthBusy = true;
-  renderMicrosoftAuthUi();
-  try {
-    const response = await window.pywebview.api.sign_in_with_microsoft();
-    if (response?.status === "success") {
-      clearMicrosoftAuthIssue();
-      microsoftAuthState = normalizeMicrosoftAuthState(response.auth);
-      await loadUserSettings();
-      await loadMicrosoftAuthState({ silent: true });
-      renderMicrosoftAuthUi();
-      openOutlookScanDialog();
-      toast(`Connected ${getMicrosoftAuthDisplayName()} to Outlook scan.`);
-      return;
-    }
-    if (response?.status === "cancelled") {
-      toast(response.message || "Microsoft sign-in was cancelled.");
-      return;
-    }
-    throw new Error(response?.message || "Microsoft sign-in failed.");
-  } catch (e) {
-    console.warn("Microsoft sign-in failed:", e);
-    setMicrosoftAuthIssue(e?.message || "Microsoft sign-in failed.");
-    if (microsoftAdminConsentRequired) {
-      openOutlookScanDialog();
-    }
-    toast(e?.message || "Microsoft sign-in failed.");
-  } finally {
-    microsoftAuthBusy = false;
-    renderMicrosoftAuthUi();
-  }
-}
-
-async function handleMicrosoftSignOut() {
-  if (microsoftAuthBusy || !window.pywebview?.api?.sign_out_microsoft) return;
-  microsoftAuthBusy = true;
-  renderMicrosoftAuthUi();
-  try {
-    const response = await window.pywebview.api.sign_out_microsoft();
-    if (response?.status !== "success") {
-      throw new Error(response?.message || "Microsoft sign-out failed.");
-    }
-    resetOutlookScanState();
-    clearMicrosoftAuthIssue();
-    await loadUserSettings();
-    microsoftAuthState = normalizeMicrosoftAuthState(response.auth);
-    renderMicrosoftAuthUi();
-    toast("Signed out of Microsoft.");
-  } catch (e) {
-    console.warn("Microsoft sign-out failed:", e);
-    toast(e?.message || "Microsoft sign-out failed.");
-  } finally {
-    microsoftAuthBusy = false;
-    renderMicrosoftAuthUi();
+    if (timeoutId) clearTimeout(timeoutId);
+    emailIntakeBusy = false;
+    renderOutlookScanUi();
   }
 }
 
@@ -7961,9 +7795,26 @@ function buildOutlookScanDerivedState(result = null) {
 async function runOutlookInboxScan() {
   if (
     outlookScanState.busy ||
-    microsoftAuthBusy ||
+    emailIntakeBusy ||
     !window.pywebview?.api?.scan_outlook_inbox
   ) {
+    return;
+  }
+  if (!String(userSettings.apiKey || "").trim()) {
+    toast("Setup API Key in Settings first.");
+    return;
+  }
+  const capability = outlookScanCapabilityState.loaded
+    ? normalizeOutlookScanCapability(outlookScanCapabilityState)
+    : await loadOutlookScanCapability({ silent: true });
+  if (capability.loading) {
+    return;
+  }
+  if (!capability.desktopAvailable) {
+    toast(
+      capability.desktopReason || "Desktop Outlook is unavailable on this machine."
+    );
+    renderOutlookScanUi();
     return;
   }
   const scanDate = normalizeOutlookScanDateInput(outlookScanState.scanDate);
@@ -10210,10 +10061,7 @@ async function loadUserSettings() {
       userSettings.googleAuth && typeof userSettings.googleAuth === "object"
         ? userSettings.googleAuth
         : null;
-    userSettings.microsoftAuth =
-      userSettings.microsoftAuth && typeof userSettings.microsoftAuth === "object"
-        ? userSettings.microsoftAuth
-        : null;
+    delete userSettings.microsoftAuth;
     userSettings.discipline = normalizeDisciplineList(userSettings.discipline);
     userSettings.cleanDwgOptions = {
       ...DEFAULT_CLEAN_DWG_OPTIONS,
@@ -10244,7 +10092,6 @@ async function loadUserSettings() {
     syncCloudComparableFingerprint("settings");
     syncUnderConstructionToolsAvailability();
     renderGoogleAuthUi();
-    renderMicrosoftAuthUi();
   } catch (e) {
     console.error("Failed to load settings:", e);
   }
@@ -10380,7 +10227,6 @@ async function populateSettingsModal() {
   syncUnderConstructionToolsInputs();
   syncUnderConstructionToolsAvailability();
   renderGoogleAuthUi();
-  renderMicrosoftAuthUi();
 
   await refreshTimesheetsInfo();
 
@@ -11764,6 +11610,76 @@ function getTaskCompletionStats(deliverable) {
   return { total, completed, percentage };
 }
 
+function createDeliverableTaskCountBadge(deliverable) {
+  const badge = el("div", {
+    className: "deliverable-task-count-badge",
+  });
+  const icon = createIcon(CHECK_ICON_PATH, 12);
+  icon.classList.add("deliverable-task-count-icon");
+  const value = el("span", {
+    className: "deliverable-task-count-value",
+  });
+  badge.append(icon, value);
+  const stats = getTaskCompletionStats(deliverable);
+  value.textContent = `${stats.completed}/${stats.total}`;
+  return badge;
+}
+
+function updateDeliverableTaskStats(card, deliverable) {
+  if (!card) return;
+
+  const stats = getTaskCompletionStats(deliverable);
+  const taskSummaryLabel = `${stats.completed} of ${stats.total} tasks complete`;
+
+  const taskCountBadge = card.querySelector(".deliverable-task-count-badge");
+  if (taskCountBadge) {
+    const taskCountValue = taskCountBadge.querySelector(
+      ".deliverable-task-count-value"
+    );
+    if (taskCountValue) {
+      taskCountValue.textContent = `${stats.completed}/${stats.total}`;
+    }
+    taskCountBadge.classList.toggle("is-empty", stats.total === 0);
+    taskCountBadge.classList.toggle(
+      "is-complete",
+      stats.total > 0 && stats.completed === stats.total
+    );
+    taskCountBadge.title = taskSummaryLabel;
+    taskCountBadge.setAttribute("aria-label", taskSummaryLabel);
+  }
+
+  const progressSection = card.querySelector(".deliverable-progress-section");
+  if (progressSection) {
+    const barFill = progressSection.querySelector(".deliverable-progress-bar-fill");
+    const progressText = progressSection.querySelector(".deliverable-progress-text");
+    const percentageSpan = progressSection.querySelector(".percentage");
+    const detailSpan = progressSection.querySelector(".detail");
+    if (barFill) {
+      barFill.style.width = `${stats.percentage}%`;
+    }
+    if (percentageSpan) {
+      percentageSpan.textContent = `${stats.percentage}%`;
+    }
+    if (detailSpan) {
+      detailSpan.textContent =
+        stats.total > 0
+          ? ` complete (${stats.completed}/${stats.total} tasks)`
+          : " (no tasks)";
+    }
+    if (progressText) {
+      progressText.className = `deliverable-progress-text ${
+        stats.percentage >= 50 ? "high" : stats.percentage >= 25 ? "medium" : "low"
+      }`;
+    }
+  }
+
+  const tasksHeading = card.querySelector(".deliverable-tasks-preview-heading");
+  if (tasksHeading) {
+    tasksHeading.textContent =
+      stats.total > 0 ? `Tasks (${stats.completed}/${stats.total}):` : "Tasks:";
+  }
+}
+
 function setEmailButtonBusy(button, busy) {
   if (!button) return;
   button.classList.toggle("is-busy", !!busy);
@@ -12166,6 +12082,8 @@ function createCardHeader(deliverable, isPrimary, card, project) {
   title.appendChild(nameSpan);
 
   leftSection.appendChild(title);
+  const taskCountBadge = createDeliverableTaskCountBadge(deliverable);
+  leftSection.appendChild(taskCountBadge);
 
   // Due date badge - now on the left after title
   if (deliverable.due) {
@@ -12479,32 +12397,16 @@ function createTasksPreview(deliverable, card) {
   });
 
   const list = el("div", { className: "deliverable-tasks-preview-list" });
-  const maxVisible = 3;
 
-  // Helper to update heading and progress bar
+  // Helper to keep header badge, progress, and preview heading in sync.
   const updateStatsDisplay = () => {
-    const newStats = getTaskCompletionStats(deliverable);
-    heading.textContent = deliverable.tasks.length > 0 ? `Tasks (${newStats.completed}/${newStats.total}):` : "Tasks:";
-
-    const progressSection = card.querySelector(".deliverable-progress-section");
-    if (progressSection) {
-      const barFill = progressSection.querySelector(".deliverable-progress-bar-fill");
-      const progressText = progressSection.querySelector(".deliverable-progress-text");
-      const percentageSpan = progressText.querySelector(".percentage");
-      const detailSpan = progressText.querySelector(".detail");
-
-      barFill.style.width = `${newStats.percentage}%`;
-      percentageSpan.textContent = `${newStats.percentage}%`;
-      detailSpan.textContent = newStats.total > 0 ? ` complete (${newStats.completed}/${newStats.total} tasks)` : " (no tasks)";
-      progressText.className = `deliverable-progress-text ${newStats.percentage >= 50 ? "high" : newStats.percentage >= 25 ? "medium" : "low"}`;
-    }
+    updateDeliverableTaskStats(card, deliverable);
   };
 
-  const renderTaskList = (showAll) => {
+  const renderTaskList = () => {
     list.innerHTML = "";
-    const tasksToShow = showAll ? deliverable.tasks : deliverable.tasks.slice(0, maxVisible);
 
-    tasksToShow.forEach((task, index) => {
+    deliverable.tasks.forEach((task, index) => {
       const taskObj = typeof task === "string" ? { text: task, done: false } : task;
       const item = el("div", {
         className: `deliverable-task-item ${taskObj.done ? "done" : "undone"}`
@@ -12525,13 +12427,11 @@ function createTasksPreview(deliverable, card) {
       deleteBtn.addEventListener("click", async (e) => {
         e.stopPropagation();
 
-        // Find actual index in case we're showing limited view
-        const actualIndex = showAll ? index : index;
-        deliverable.tasks.splice(actualIndex, 1);
+        deliverable.tasks.splice(index, 1);
 
-        await save();
         updateStatsDisplay();
-        renderTaskList(showAll && deliverable.tasks.length > maxVisible);
+        await save();
+        renderTaskList();
       });
 
       item.append(iconSpan, textSpan, deleteBtn);
@@ -12545,11 +12445,10 @@ function createTasksPreview(deliverable, card) {
         taskObj.done = !taskObj.done;
 
         // Update the task in the array
-        const actualIndex = showAll ? index : index;
-        if (typeof deliverable.tasks[actualIndex] === "string") {
-          deliverable.tasks[actualIndex] = { text: deliverable.tasks[actualIndex], done: taskObj.done };
+        if (typeof deliverable.tasks[index] === "string") {
+          deliverable.tasks[index] = { text: deliverable.tasks[index], done: taskObj.done };
         } else {
-          deliverable.tasks[actualIndex].done = taskObj.done;
+          deliverable.tasks[index].done = taskObj.done;
         }
 
         // Update UI
@@ -12557,35 +12456,12 @@ function createTasksPreview(deliverable, card) {
         item.classList.toggle("undone", !taskObj.done);
         iconSpan.textContent = taskObj.done ? "✓" : "○";
 
-        await save();
         updateStatsDisplay();
+        await save();
       });
 
       list.appendChild(item);
     });
-
-    // "+N more" button if there are more tasks and we're not showing all
-    if (deliverable.tasks.length > maxVisible && !showAll) {
-      const moreBtn = el("button", {
-        className: "deliverable-expand-btn",
-        textContent: `+${deliverable.tasks.length - maxVisible} more`,
-        onclick: (e) => {
-          e.stopPropagation();
-          renderTaskList(true);
-        }
-      });
-      list.appendChild(moreBtn);
-    } else if (showAll && deliverable.tasks.length > maxVisible) {
-      const lessBtn = el("button", {
-        className: "deliverable-expand-btn",
-        textContent: "Show less",
-        onclick: (e) => {
-          e.stopPropagation();
-          renderTaskList(false);
-        }
-      });
-      list.appendChild(lessBtn);
-    }
 
     // Add new task input at the bottom
     const addTaskRow = el("div", { className: "task-add-row" });
@@ -12596,31 +12472,49 @@ function createTasksPreview(deliverable, card) {
       placeholder: "Add a task..."
     });
 
+    let isCommittingTask = false;
+    const commitPendingTask = async ({ refocus = false } = {}) => {
+      const taskText = taskInput.value.trim();
+      if (!taskText || isCommittingTask) return false;
+
+      isCommittingTask = true;
+      taskInput.value = "";
+      try {
+        deliverable.tasks.push({ text: taskText, done: false });
+
+        updateStatsDisplay();
+        await save();
+
+        renderTaskList();
+
+        if (refocus) {
+          setTimeout(() => {
+            const newTaskInput = list.querySelector(".task-add-input");
+            if (newTaskInput) {
+              newTaskInput.focus();
+              newTaskInput.select();
+            }
+          }, 0);
+        }
+        return true;
+      } finally {
+        isCommittingTask = false;
+      }
+    };
+
     taskInput.addEventListener("keydown", async (e) => {
-      if (e.key === "Enter" && taskInput.value.trim()) {
+      if (e.key === "Enter") {
         e.preventDefault();
         e.stopPropagation();
-
-        const newTask = { text: taskInput.value.trim(), done: false };
-        deliverable.tasks.push(newTask);
-
-        await save();
-        updateStatsDisplay();
-
-        // Re-render showing all if we were showing all, otherwise show limited
-        const shouldShowAll = showAll || deliverable.tasks.length <= maxVisible;
-        renderTaskList(shouldShowAll);
-
-        // Focus the input after re-render for rapid task entry
-        setTimeout(() => {
-          const newTaskInput = list.querySelector(".task-add-input");
-          if (newTaskInput) {
-            newTaskInput.focus();
-            // Select all text for easy replacement
-            newTaskInput.select();
-          }
-        }, 0);
+        await commitPendingTask({ refocus: true });
       }
+    });
+
+    taskInput.addEventListener("blur", () => {
+      if (!taskInput.value.trim()) return;
+      setTimeout(() => {
+        void commitPendingTask({ refocus: false });
+      }, 0);
     });
 
     taskInput.addEventListener("click", (e) => {
@@ -12631,7 +12525,7 @@ function createTasksPreview(deliverable, card) {
     list.appendChild(addTaskRow);
   };
 
-  renderTaskList(false);
+  renderTaskList();
 
   container.append(heading, list);
   return container;
@@ -12691,6 +12585,7 @@ function renderDeliverableCard(deliverable, isPrimary, project) {
   const notesSection = createNotesSection(deliverable, project);
 
   card.append(header, progress, statusSection, tasksPreview, notesSection);
+  updateDeliverableTaskStats(card, deliverable);
   return card;
 }
 
@@ -13653,6 +13548,7 @@ function onSaveProject() {
     return;
   }
 
+  flushPendingModalDeliverableTasks();
   const data = readForm();
   autoSetPrimary(data);
   _aiMatchSnapshot = null;
@@ -13768,12 +13664,8 @@ function addDeliverableCard(deliverable, primaryId, options = {}) {
   // No secondary action needed on primary change anymore
 
   const taskList = card.querySelector(".deliverable-task-list");
-  (deliverable.tasks || []).map(normalizeTask).forEach((task) => {
-    addTaskRowFrom(taskList, task);
-  });
-
-  card.querySelector(".d-add-task").onclick = () =>
-    addTaskRowFrom(taskList, {});
+  card._taskItems = (deliverable.tasks || []).map(normalizeTask);
+  renderModalDeliverableTaskList(card, taskList);
   card.querySelector(".btn-remove").onclick = async () => {
     const cardRefs = getDeliverableCardEmailRefs(card);
     await stageModalManagedEmailRefsForRemoval(
@@ -13784,9 +13676,10 @@ function addDeliverableCard(deliverable, primaryId, options = {}) {
 
   const statusContainer = card.querySelector(".deliverable-status");
   const markTasksDone = () => {
-    taskList
-      .querySelectorAll(".t-done")
-      .forEach((cb) => (cb.checked = true));
+    getModalDeliverableTaskItems(card).forEach((task) => {
+      task.done = true;
+    });
+    renderModalDeliverableTaskList(card, taskList);
   };
   const picker = buildStatusPicker(deliverable.statuses || [], (label, pressed) => {
     if (pressed && (label === "Complete" || label === "Delivered")) {
@@ -13905,6 +13798,166 @@ function readStatusPickerFrom(container) {
   );
 }
 
+function getModalDeliverableTaskItems(card) {
+  if (!card) return [];
+  if (!Array.isArray(card._taskItems)) {
+    card._taskItems = [];
+  }
+  return card._taskItems;
+}
+
+function scrollElementIntoNearestModalBody(element) {
+  if (!element) return;
+  requestAnimationFrame(() => {
+    const modalBody = element.closest(".modal-body");
+    if (!modalBody) return;
+    const elementRect = element.getBoundingClientRect();
+    const modalBodyRect = modalBody.getBoundingClientRect();
+    if (
+      elementRect.top < modalBodyRect.top ||
+      elementRect.bottom > modalBodyRect.bottom
+    ) {
+      element.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+        inline: "nearest",
+      });
+    }
+  });
+}
+
+function focusModalTaskInput(container) {
+  const input = container?.querySelector(".task-add-input");
+  if (!input) return;
+  input.focus();
+  input.select();
+  scrollElementIntoNearestModalBody(input);
+}
+
+function renderModalDeliverableTaskList(card, container, options = {}) {
+  if (!card || !container) return;
+  const { focusInput = false, ensureInputVisible = false } = options;
+  const taskItems = getModalDeliverableTaskItems(card);
+  container.innerHTML = "";
+
+  taskItems.forEach((task, index) => {
+    const item = el("div", {
+      className: `deliverable-task-item ${task.done ? "done" : "undone"}`,
+    });
+    const iconSpan = el("span", {
+      className: "task-icon",
+      textContent: task.done ? "✓" : "○",
+    });
+    const textSpan = el("span", {
+      className: "task-text",
+      textContent: task.text || "Task",
+    });
+    const deleteBtn = el("button", {
+      className: "task-delete-btn",
+      type: "button",
+      title: "Remove task",
+      textContent: "×",
+    });
+
+    deleteBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      taskItems.splice(index, 1);
+      renderModalDeliverableTaskList(card, container);
+    });
+
+    item.append(iconSpan, textSpan, deleteBtn);
+    item.addEventListener("click", (e) => {
+      if (e.target === deleteBtn) return;
+      e.stopPropagation();
+      task.done = !task.done;
+      renderModalDeliverableTaskList(card, container);
+    });
+    container.appendChild(item);
+  });
+
+  const addTaskRow = el("div", { className: "task-add-row modal-task-add-row" });
+  const bulletSpan = el("span", {
+    className: "task-icon task-add-bullet",
+    textContent: "○",
+  });
+  const taskInput = el("input", {
+    className: "task-add-input",
+    type: "text",
+    placeholder: "Add a task...",
+  });
+
+  taskInput.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    e.stopPropagation();
+    commitPendingModalDeliverableTask(card, container, {
+      refocus: true,
+      rerender: true,
+      ensureInputVisible: true,
+    });
+  });
+  taskInput.addEventListener("blur", () => {
+    if (!taskInput.value.trim()) return;
+    setTimeout(() => {
+      commitPendingModalDeliverableTask(card, container, {
+        refocus: false,
+        rerender: true,
+        ensureInputVisible: true,
+      });
+    }, 0);
+  });
+  taskInput.addEventListener("click", (e) => {
+    e.stopPropagation();
+  });
+
+  addTaskRow.append(bulletSpan, taskInput);
+  container.appendChild(addTaskRow);
+
+  if (focusInput) {
+    setTimeout(() => {
+      focusModalTaskInput(container);
+    }, 0);
+  } else if (ensureInputVisible) {
+    scrollElementIntoNearestModalBody(taskInput);
+  }
+}
+
+function commitPendingModalDeliverableTask(card, container, options = {}) {
+  const {
+    refocus = false,
+    rerender = true,
+    ensureInputVisible = true,
+  } = options;
+  const taskInput = container?.querySelector(".task-add-input");
+  if (!card || !container || !taskInput) return false;
+
+  const taskText = taskInput.value.trim();
+  if (!taskText) return false;
+
+  taskInput.value = "";
+  const taskItems = getModalDeliverableTaskItems(card);
+  taskItems.push({ text: taskText, done: false, links: [] });
+
+  if (rerender) {
+    renderModalDeliverableTaskList(card, container, {
+      focusInput: refocus,
+      ensureInputVisible,
+    });
+  }
+  return true;
+}
+
+function flushPendingModalDeliverableTasks() {
+  document.querySelectorAll("#deliverableList .deliverable-card").forEach((card) => {
+    const taskList = card.querySelector(".deliverable-task-list");
+    commitPendingModalDeliverableTask(card, taskList, {
+      refocus: false,
+      rerender: false,
+      ensureInputVisible: false,
+    });
+  });
+}
+
 function readForm() {
   const baseSchedule =
     editIndex >= 0 && db[editIndex] ? db[editIndex].lightingSchedule : null;
@@ -13941,19 +13994,18 @@ function readForm() {
     );
     const emailRefs = getDeliverableCardEmailRefs(card);
 
-    const tasks = [];
-    card.querySelectorAll(".task-row").forEach((row) => {
-      const text = row.querySelector(".t-text").value.trim();
-      if (!text) return;
-      const done = row.querySelector(".t-done").checked;
-      const links = [
-        row.querySelector(".t-link").value.trim(),
-        row.querySelector(".t-link2").value.trim(),
-      ]
-        .filter(Boolean)
-        .map(normalizeLink);
-      tasks.push({ text, done, links });
-    });
+    const tasks = getModalDeliverableTaskItems(card)
+      .map((task) => {
+        const normalizedTask = normalizeTask(task);
+        const text = String(normalizedTask.text || "").trim();
+        if (!text) return null;
+        return {
+          text,
+          done: !!normalizedTask.done,
+          links: normalizedTask.links,
+        };
+      })
+      .filter(Boolean);
 
     const deliverable = normalizeDeliverable({
       id: deliverableId,
@@ -13989,35 +14041,6 @@ function readForm() {
     out.refs.push(link);
   });
   return out;
-}
-
-function addTaskRowFrom(container, t = {}) {
-  const template = document.getElementById("task-row-template");
-  const row = template.content.cloneNode(true).querySelector(".task-row");
-  const textInput = row.querySelector(".t-text");
-
-  textInput.value = t.text || "";
-  row.querySelector(".t-done").checked = !!t.done;
-  row.querySelector(".t-link").value = t.links?.[0]?.raw || "";
-  row.querySelector(".t-link2").value = t.links?.[1]?.raw || "";
-  row.querySelector(".btn-remove").onclick = () => row.remove();
-
-  // Add Enter key handler for rapid task entry
-  textInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && textInput.value.trim()) {
-      e.preventDefault();
-      // Add new task row below and focus it
-      addTaskRowFrom(container, {});
-      // Focus the new row's text input
-      setTimeout(() => {
-        const newRow = row.nextElementSibling;
-        const newInput = newRow?.querySelector(".t-text");
-        if (newInput) newInput.focus();
-      }, 0);
-    }
-  });
-
-  if (container) container.append(row);
 }
 
 function addRefRowFrom(L = {}) {
@@ -20191,7 +20214,7 @@ function hasExistingUserData() {
   ) {
     return true;
   }
-  if (googleAuthState.signedIn || microsoftAuthState.signedIn) return true;
+  if (googleAuthState.signedIn) return true;
   if (String(userSettings.apiKey || "").trim()) return true;
   if (String(userSettings.autocadPath || "").trim()) return true;
   return false;
@@ -21008,9 +21031,6 @@ function initEventListeners() {
     if (!googleAuthBusy) {
       await loadGoogleAuthState({ silent: true });
     }
-    if (!microsoftAuthBusy) {
-      await loadMicrosoftAuthState({ silent: true });
-    }
     checkBundlesForUpdates({ showIndicator: true });
   };
   window.addEventListener("focus", handleAppFocus);
@@ -21116,12 +21136,6 @@ function initEventListeners() {
   if (settingsGoogleAuthActionBtn) {
     settingsGoogleAuthActionBtn.onclick = () => handleGoogleAuthAction();
   }
-  const settingsMicrosoftAuthActionBtn = document.getElementById(
-    "settings_microsoftAuthActionBtn"
-  );
-  if (settingsMicrosoftAuthActionBtn) {
-    settingsMicrosoftAuthActionBtn.onclick = () => handleMicrosoftAuthAction();
-  }
   const googleSignOutBtn = document.getElementById("googleSignOutBtn");
   if (googleSignOutBtn) {
     googleSignOutBtn.onclick = () => handleGoogleSignOut();
@@ -21130,13 +21144,21 @@ function initEventListeners() {
   if (outlookScanBtn) {
     outlookScanBtn.onclick = () => openOutlookScanDialog();
   }
-  const outlookScanConnectBtn = document.getElementById("outlookScanConnectBtn");
-  if (outlookScanConnectBtn) {
-    outlookScanConnectBtn.onclick = () => handleMicrosoftSignIn();
+  const emailIntakeModePaste = document.getElementById("emailIntakeModePaste");
+  if (emailIntakeModePaste) {
+    emailIntakeModePaste.onchange = (event) => {
+      if (event?.target?.checked) setEmailIntakeMode("paste");
+    };
   }
-  const outlookScanSignOutBtn = document.getElementById("outlookScanSignOutBtn");
-  if (outlookScanSignOutBtn) {
-    outlookScanSignOutBtn.onclick = () => handleMicrosoftSignOut();
+  const emailIntakeModeScan = document.getElementById("emailIntakeModeScan");
+  if (emailIntakeModeScan) {
+    emailIntakeModeScan.onchange = (event) => {
+      if (event?.target?.checked) setEmailIntakeMode("scan");
+    };
+  }
+  const btnProcessEmail = document.getElementById("btnProcessEmail");
+  if (btnProcessEmail) {
+    btnProcessEmail.onclick = () => processEmailIntakePaste();
   }
   const outlookScanRunBtn = document.getElementById("outlookScanRunBtn");
   if (outlookScanRunBtn) {
@@ -22289,62 +22311,6 @@ function initEventListeners() {
       closeDlg("autocadSelectDlg");
     });
 
-  const handleAI = () => {
-    if (!userSettings.apiKey) {
-      toast("Setup API Key in Settings first.");
-      return;
-    }
-    document.getElementById("emailArea").value = "";
-    document.getElementById("aiSpinner").style.display = "none";
-    document.getElementById("emailDlg").showModal();
-  };
-  document.getElementById("aiBtn").onclick = handleAI;
-
-  document.getElementById("btnProcessEmail").onclick = async () => {
-    const txt = val("emailArea");
-    if (!txt) return;
-    const aiSpinner = document.getElementById("aiSpinner");
-    const btnProcessEmail = document.getElementById("btnProcessEmail");
-    const AI_EMAIL_TIMEOUT_MS = 120000;
-    let timeoutId = null;
-    aiSpinner.style.display = "flex";
-    if (btnProcessEmail) btnProcessEmail.disabled = true;
-    try {
-      const aiRequest = window.pywebview.api.process_email_with_ai(
-        txt,
-        userSettings.apiKey,
-        userSettings.userName,
-        userSettings.discipline
-      );
-      const timeoutPromise = new Promise((_, reject) => {
-        timeoutId = setTimeout(() => {
-          reject(
-            new Error(
-              `AI request timed out after ${Math.round(
-                AI_EMAIL_TIMEOUT_MS / 1000
-              )} seconds. Please try again.`
-            )
-          );
-        }, AI_EMAIL_TIMEOUT_MS);
-      });
-      const res = await Promise.race([aiRequest, timeoutPromise]);
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-        timeoutId = null;
-      }
-      if (res?.status === "success") {
-        closeDlg("emailDlg");
-        handleAiProjectResult(res.data || {});
-      } else throw new Error(res?.message || "Failed to process email.");
-    } catch (e) {
-      toast("AI Error: " + (e?.message || "Unknown error."));
-    } finally {
-      if (timeoutId) clearTimeout(timeoutId);
-      aiSpinner.style.display = "none";
-      if (btnProcessEmail) btnProcessEmail.disabled = false;
-    }
-  };
-
   const aiNoMatchDlg = document.getElementById("aiNoMatchDlg");
   if (aiNoMatchDlg) {
     aiNoMatchDlg.addEventListener("close", () => {
@@ -22713,7 +22679,6 @@ async function init() {
     updateStickyOffsets();
     refreshAppUpdateStatus();
     await loadGoogleAuthState({ silent: true });
-    await loadMicrosoftAuthState({ silent: true });
     await loadUserSettings();
     initThemeFromPreferences();
     const [

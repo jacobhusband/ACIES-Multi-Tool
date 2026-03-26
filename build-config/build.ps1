@@ -104,6 +104,7 @@ try {
         $removeXrefPathsScriptPath = Join-Path $projectRoot "scripts\removeXREFPaths.ps1"
         $stripRefPathsDllPath = Join-Path $projectRoot "scripts\StripRefPaths.dll"
         $templatesPath = Join-Path $projectRoot "templates"
+        Assert-PathExists -Path $envPath -Message "Required build configuration file not found at $envPath. Create the repo-root .env before building."
         $pyInstallerArgs = @(
             $mainScriptPath, "--noconfirm", "--clean", "--noconsole",
             "--name", "ACIES Scheduler",

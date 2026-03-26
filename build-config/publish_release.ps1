@@ -83,6 +83,7 @@ $projectRoot = Split-Path $PSScriptRoot -Parent
 $buildScriptPath = Join-Path $PSScriptRoot "build.ps1"
 $versionPath = Join-Path $projectRoot "VERSION"
 
+$originalVersionText = $null
 $originalVersion = $null
 $nextVersion = $null
 $tag = $null
@@ -125,7 +126,9 @@ try {
         Write-Host "Local main is ahead of origin/main by $aheadCount commit(s)." -ForegroundColor Gray
     }
 
-    $originalVersion = (Get-Content -Raw $versionPath).Trim()
+    $originalVersionText = [System.IO.File]::ReadAllText($versionPath)
+    $versionLineEnding = if ($originalVersionText.Contains("`r`n")) { "`r`n" } elseif ($originalVersionText.Contains("`n")) { "`n" } else { [System.Environment]::NewLine }
+    $originalVersion = $originalVersionText.Trim()
     if (-not $originalVersion) {
         throw "VERSION file is empty."
     }
@@ -138,7 +141,7 @@ try {
         throw "Tag $tag already exists. Update VERSION or remove the conflicting tag before releasing."
     }
 
-    Write-Utf8NoBomFile -Path $versionPath -Value $nextVersion
+    Write-Utf8NoBomFile -Path $versionPath -Value ($nextVersion + $versionLineEnding)
     $versionUpdated = $true
     Write-Host "Bumped VERSION from $originalVersion to $nextVersion" -ForegroundColor Yellow
 
@@ -166,8 +169,8 @@ try {
     Write-Host "Actions: $repoWebUrl/actions/workflows/release.yml"
     Write-Host "Release: $repoWebUrl/releases/tag/$tag"
 } catch {
-    if ($versionUpdated -and -not $commitCreated -and $null -ne $originalVersion) {
-        Write-Utf8NoBomFile -Path $versionPath -Value $originalVersion
+    if ($versionUpdated -and -not $commitCreated -and $null -ne $originalVersionText) {
+        Write-Utf8NoBomFile -Path $versionPath -Value $originalVersionText
         Write-Host "Restored VERSION to $originalVersion" -ForegroundColor Yellow
     }
 

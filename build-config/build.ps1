@@ -89,26 +89,41 @@ try {
     Push-Location $projectRoot
     try {
         $pyInstallerSpecPath = "build\pyinstaller"
+        $mainScriptPath = Join-Path $projectRoot "main.py"
+        $iconPath = Join-Path $projectRoot "assets\acies.ico"
+        $indexPath = Join-Path $projectRoot "index.html"
+        $stylesPath = Join-Path $projectRoot "styles.css"
+        $scriptPath = Join-Path $projectRoot "script.js"
+        $envPath = Join-Path $projectRoot ".env"
+        $aciesImagePath = Join-Path $projectRoot "assets\acies.png"
+        $mergePdfsScriptPath = Join-Path $projectRoot "scripts\merge_pdfs.py"
+        $detectPdfSizeScriptPath = Join-Path $projectRoot "scripts\detect_pdf_size.py"
+        $plotDwgsScriptPath = Join-Path $projectRoot "scripts\PlotDWGs.ps1"
+        $freezeLayersScriptPath = Join-Path $projectRoot "scripts\FreezeLayersDWGs.ps1"
+        $thawLayersScriptPath = Join-Path $projectRoot "scripts\ThawLayersDWGs.ps1"
+        $removeXrefPathsScriptPath = Join-Path $projectRoot "scripts\removeXREFPaths.ps1"
+        $stripRefPathsDllPath = Join-Path $projectRoot "scripts\StripRefPaths.dll"
+        $templatesPath = Join-Path $projectRoot "templates"
         $pyInstallerArgs = @(
-            "main.py", "--noconfirm", "--clean", "--noconsole",
+            $mainScriptPath, "--noconfirm", "--clean", "--noconsole",
             "--name", "ACIES Scheduler",
             "--specpath", $pyInstallerSpecPath,
-            "--icon=assets\acies.ico",
-            "--add-data", "VERSION;.",
-            "--add-data", "index.html;.",
-            "--add-data", "styles.css;.",
-            "--add-data", "script.js;.",
-            "--add-data", ".env;.",
-            "--add-data", "assets\acies.png;.",
-            "--add-data", "scripts\merge_pdfs.py;scripts",
-            "--add-data", "scripts\detect_pdf_size.py;scripts",
-            "--add-data", "scripts\PlotDWGs.ps1;scripts",
-            "--add-data", "scripts\FreezeLayersDWGs.ps1;scripts",
-            "--add-data", "scripts\ThawLayersDWGs.ps1;scripts",
-            "--add-data", "scripts\removeXREFPaths.ps1;scripts",
-            "--add-data", "scripts\StripRefPaths.dll;scripts",
-            "--add-data", "templates;templates",
-            "--add-data", "WireSizerApplication\dist;WireSizerApplication\dist"
+            "--icon=$iconPath",
+            "--add-data", "$versionPath;.",
+            "--add-data", "$indexPath;.",
+            "--add-data", "$stylesPath;.",
+            "--add-data", "$scriptPath;.",
+            "--add-data", "$envPath;.",
+            "--add-data", "$aciesImagePath;.",
+            "--add-data", "$mergePdfsScriptPath;scripts",
+            "--add-data", "$detectPdfSizeScriptPath;scripts",
+            "--add-data", "$plotDwgsScriptPath;scripts",
+            "--add-data", "$freezeLayersScriptPath;scripts",
+            "--add-data", "$thawLayersScriptPath;scripts",
+            "--add-data", "$removeXrefPathsScriptPath;scripts",
+            "--add-data", "$stripRefPathsDllPath;scripts",
+            "--add-data", "$templatesPath;templates",
+            "--add-data", "$wireSizerDist;WireSizerApplication\dist"
         )
 
         Invoke-CheckedCommand -Description "PyInstaller build" -Command { & $venvPython -m PyInstaller $pyInstallerArgs }

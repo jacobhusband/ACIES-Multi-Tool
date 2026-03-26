@@ -13,4 +13,4 @@ command = ".\\.venv\\Scripts\\python.exe .\\main.py"
 [[actions]]
 name = "Build"
 icon = "run"
-command = ".\\build-config\\build.ps1"
+command = "C:\\Users\\JacobH\\Documents\\dev\\ProjectManagement\\build-config\\build.ps1"

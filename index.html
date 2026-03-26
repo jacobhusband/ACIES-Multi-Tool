@@ -182,14 +182,6 @@
                                 <line x1="6" y1="20" x2="6" y2="14"></line>
                             </svg>
                         </button>
-                        <button class="icon-btn" id="toggleNonPrimaryBtn" aria-label="Toggle non-primary deliverables"
-                            title="Show/Hide non-primary deliverables">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-                                <circle cx="12" cy="12" r="3"></circle>
-                            </svg>
-                        </button>
                         <button class="icon-btn" id="pinUrgentDeliverablesBtn" aria-label="Pin urgent deliverables"
                             title="Pin all overdue and due-today deliverables"></button>
                         <button class="icon-btn" id="projectsHelpBtn" aria-label="Projects help" title="Projects help">
@@ -266,6 +258,36 @@
                                     <button type="button" class="projects-filter-option" data-filter-value="Pending Review" role="menuitemradio" aria-checked="false" tabindex="-1">Pending Review</button>
                                     <button type="button" class="projects-filter-option" data-filter-value="Complete" role="menuitemradio" aria-checked="false" tabindex="-1">Complete</button>
                                     <button type="button" class="projects-filter-option" data-filter-value="Delivered" role="menuitemradio" aria-checked="false" tabindex="-1">Delivered</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="projects-filter-group">
+                            <span class="filter-label" id="deliverablesFilterLabel">Deliverables</span>
+                            <div class="projects-filter-dropdown" data-filter-dropdown="deliverables">
+                                <button
+                                    id="deliverablesFilterTrigger"
+                                    class="projects-filter-trigger"
+                                    type="button"
+                                    aria-labelledby="deliverablesFilterLabel deliverablesFilterTriggerLabel"
+                                    aria-haspopup="menu"
+                                    aria-expanded="false"
+                                    aria-controls="deliverablesFilterMenu"
+                                >
+                                    <span id="deliverablesFilterTriggerLabel" class="projects-filter-trigger-label">Show only primary deliverables</span>
+                                    <svg class="projects-filter-chevron" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                        <polyline points="6 9 12 15 18 9"></polyline>
+                                    </svg>
+                                </button>
+                                <div
+                                    id="deliverablesFilterMenu"
+                                    class="projects-filter-menu"
+                                    role="menu"
+                                    aria-labelledby="deliverablesFilterLabel"
+                                    hidden
+                                >
+                                    <button type="button" class="projects-filter-option" data-filter-value="all" role="menuitemradio" aria-checked="false" tabindex="-1">Show all deliverables</button>
+                                    <button type="button" class="projects-filter-option" data-filter-value="incomplete" role="menuitemradio" aria-checked="false" tabindex="-1">Show all incomplete deliverables</button>
+                                    <button type="button" class="projects-filter-option is-selected" data-filter-value="primary" role="menuitemradio" aria-checked="true" tabindex="-1">Show only primary deliverables</button>
                                 </div>
                             </div>
                         </div>
@@ -2130,32 +2152,37 @@
 
                     <section class="cb-section">
                         <div class="cb-section-title">1. Upload panel photos</div>
-                        <p class="tiny muted">Upload one breaker photo and one directory photo for the active panel tab.
-                        </p>
+                        <p class="tiny muted">Upload one or more breaker photos and one or more directory photos for
+                            the active panel tab.</p>
                         <div class="cb-upload-grid">
                             <div class="cb-upload-card">
-                                <div class="cb-upload-title">Circuit breakers photo</div>
-                                <p class="tiny muted">Clear photo of the breaker labels and handles.</p>
+                                <div class="cb-upload-title">Circuit breaker photos</div>
+                                <p class="tiny muted">Clear photos of the breaker labels and handles. The same panel
+                                    can be split into upper half, middle, and bottom half photos.</p>
                                 <div id="cbBreakerDrop" class="cb-drop-zone" role="button" tabindex="0">
                                     <div class="cb-drop-icon" aria-hidden="true">&#128247;</div>
-                                    <div class="cb-drop-text">Drag &amp; drop a photo or click to select</div>
-                                    <div class="tiny muted">JPG, PNG, HEIC supported</div>
+                                    <div class="cb-drop-text">Drag &amp; drop photos or click to select</div>
+                                    <div class="tiny muted">JPG, PNG, HEIC supported. New selections replace the
+                                        current set.</div>
                                 </div>
                                 <div class="cb-upload-actions">
-                                    <span id="cbBreakerFile" class="cb-file-pill" data-empty="true">No file
+                                    <span id="cbBreakerFile" class="cb-file-pill" data-empty="true">No photos
                                         selected</span>
                                 </div>
                             </div>
                             <div class="cb-upload-card">
-                                <div class="cb-upload-title">Circuit directory photo</div>
-                                <p class="tiny muted">Photo of the directory or schedule labels.</p>
+                                <div class="cb-upload-title">Circuit directory photos</div>
+                                <p class="tiny muted">Photos of the directory or schedule labels. A field directory may
+                                    be split across photos, such as circuits 1-42 on one image and 43-84 on
+                                    another.</p>
                                 <div id="cbDirectoryDrop" class="cb-drop-zone" role="button" tabindex="0">
                                     <div class="cb-drop-icon" aria-hidden="true">&#128194;</div>
-                                    <div class="cb-drop-text">Drag &amp; drop a photo or click to select</div>
-                                    <div class="tiny muted">JPG, PNG, HEIC supported</div>
+                                    <div class="cb-drop-text">Drag &amp; drop photos or click to select</div>
+                                    <div class="tiny muted">JPG, PNG, HEIC supported. New selections replace the
+                                        current set.</div>
                                 </div>
                                 <div class="cb-upload-actions">
-                                    <span id="cbDirectoryFile" class="cb-file-pill" data-empty="true">No file
+                                    <span id="cbDirectoryFile" class="cb-file-pill" data-empty="true">No photos
                                         selected</span>
                                 </div>
                             </div>
@@ -2656,6 +2683,7 @@
                 <div class="deliverable-controls">
                     <label class="tiny checkbox-label"><input type="radio" class="d-primary"
                             style="width:auto">Primary</label>
+                    <div class="deliverable-link-control"></div>
                     <div class="deliverable-email-slots" aria-label="Deliverable email links"></div>
                     <button type="button" class="btn tiny btn-remove text-danger">Remove</button>
                 </div>

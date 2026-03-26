@@ -73,7 +73,9 @@ const LIGHTING_SCHEDULE_DEFAULT_NOTES = [
 ].join("\n");
 const LIGHTING_SCHEDULE_SYNC_SCHEMA_VERSION = "1.0.0";
 const LIGHTING_SCHEDULE_SYNC_FILE_NAME = "T24LightingFixtureSchedule.sync.json";
-const LIGHTING_PROJECT_SEGMENT_REGEX = /^(\d{5,})\s*(?:[-_]\s*)?(.+)$/;
+const PROJECT_ROOT_SEGMENT_REGEX =
+  /^(\d{6})(?!\d)(?:\s*(?:[-_]\s*)?(.*))?$/;
+const LIGHTING_PROJECT_SEGMENT_REGEX = PROJECT_ROOT_SEGMENT_REGEX;
 const TITLE24_SCHEMA_VERSION = "1.0.0";
 const TITLE24_SCOPE_OPTIONS_FILE_PATH =
   "assets/title24/energycodeace.indoor.page1.options.json";
@@ -5687,49 +5689,78 @@ function convertPath(raw) {
   return raw;
 }
 
-function parseProjectFromPath(rawPath) {
-  if (!rawPath) return null;
-  let s = String(rawPath).trim();
-  if (!s) return null;
-  s = s.replace(/^['"]+|['"]+$/g, "");
-  const norm = s.replace(/\\/g, "/").replace(/\/+$/g, "");
-  const parts = norm.split("/").filter(Boolean);
-  for (let i = parts.length - 1; i >= 0; i--) {
-    const segment = parts[i].trim();
-    const match = segment.match(/^(\d{5,})\s*(?:[-_]\s*)?(.+)$/);
-    if (match) {
-      const id = match[1];
-      const name = match[2].trim();
-      if (name) return { id, name };
-    }
+function normalizeWindowsPath(rawPath) {
+  let normalized = String(rawPath || "")
+    .trim()
+    .replace(/^['"]+|['"]+$/g, "")
+    .replace(/\//g, "\\");
+  if (!normalized) return "";
+  if (/^[A-Za-z]:\\?$/.test(normalized)) {
+    return `${normalized.slice(0, 2)}\\`;
   }
-  return null;
+  normalized = normalized.replace(/\\+$/, "");
+  return normalized;
+}
+
+function getWindowsPathLeaf(rawPath) {
+  const normalized = normalizeWindowsPath(rawPath);
+  if (!normalized) return "";
+  const parts = normalized.split("\\");
+  return parts[parts.length - 1] || "";
+}
+
+function getWindowsPathParent(rawPath) {
+  const normalized = normalizeWindowsPath(rawPath);
+  if (!normalized) return "";
+  if (/^[A-Za-z]:\\$/.test(normalized)) return "";
+  if (/^\\\\[^\\]+\\[^\\]+$/.test(normalized)) return "";
+  const idx = normalized.lastIndexOf("\\");
+  if (idx <= 0) return "";
+  return normalized.slice(0, idx);
+}
+
+function findProjectRootPath(rawPath) {
+  let current = normalizeWindowsPath(rawPath);
+  if (!current) return "";
+  while (current) {
+    const folderName = getWindowsPathLeaf(current);
+    if (PROJECT_ROOT_SEGMENT_REGEX.test(folderName)) {
+      return current;
+    }
+    const parent = getWindowsPathParent(current);
+    if (!parent || parent.toLowerCase() === current.toLowerCase()) break;
+    current = parent;
+  }
+  return "";
+}
+
+function normalizeProjectPath(rawPath) {
+  const normalized = normalizeWindowsPath(rawPath);
+  if (!normalized) return "";
+  return findProjectRootPath(normalized) || normalized;
+}
+
+function parseProjectFromPath(rawPath) {
+  const rootPath = findProjectRootPath(rawPath);
+  if (!rootPath) return null;
+  const match = getWindowsPathLeaf(rootPath).match(PROJECT_ROOT_SEGMENT_REGEX);
+  if (!match) return null;
+  return {
+    id: String(match[1] || "").trim(),
+    name: String(match[2] || "").trim(),
+  };
 }
 
 function getProjectBasePath(rawPath) {
-  if (!rawPath) return "";
-  let s = String(rawPath).trim();
-  if (!s) return "";
-  s = s.replace(/^['"]+|['"]+$/g, "");
-  const norm = s.replace(/\\/g, "/").replace(/\/+$/g, "");
-  const parts = norm.split("/").filter(Boolean);
-  if (!parts.length) return "";
-  let baseIndex = -1;
-  for (let i = parts.length - 1; i >= 0; i--) {
-    const segment = parts[i].trim();
-    if (/^(\d{5,})\s*(?:[-_]\s*)?(.+)$/.test(segment)) {
-      baseIndex = i;
-      break;
-    }
-  }
-  let baseParts = parts;
-  if (baseIndex >= 0) {
-    baseParts = parts.slice(0, baseIndex + 1);
-  } else {
-    const last = parts[parts.length - 1];
-    if (/\.[A-Za-z0-9]{1,5}$/.test(last)) baseParts = parts.slice(0, -1);
-  }
-  return baseParts.join("/");
+  const normalized = normalizeWindowsPath(rawPath);
+  if (!normalized) return "";
+  const projectRoot = findProjectRootPath(normalized);
+  if (projectRoot) return projectRoot.replace(/\\/g, "/");
+  const leaf = getWindowsPathLeaf(normalized);
+  const basePath = /\.[A-Za-z0-9]{1,5}$/.test(leaf)
+    ? getWindowsPathParent(normalized)
+    : normalized;
+  return basePath ? basePath.replace(/\\/g, "/") : "";
 }
 
 function getProjectBaseKey(rawPath) {
@@ -5747,11 +5778,21 @@ function applyProjectFromPath(path, { force = false } = {}) {
   const currentId = idInput.value.trim();
   const currentName = nameInput.value.trim();
   const shouldSetId = force || !currentId;
-  const shouldSetName = force || !currentName;
+  const shouldSetName = (force || !currentName) && !!parsed.name;
 
   if (shouldSetId) idInput.value = parsed.id;
   if (shouldSetName) nameInput.value = parsed.name;
   return shouldSetId || shouldSetName;
+}
+
+function normalizeProjectPathInput(pathInput, { forceProjectFields = false } = {}) {
+  if (!pathInput) return "";
+  const rawValue = String(pathInput.value || "");
+  applyProjectFromPath(rawValue, { force: forceProjectFields });
+  const normalized = normalizeProjectPath(rawValue);
+  pathInput.value = normalized;
+  pathInput.title = normalized;
+  return normalized;
 }
 
 function toast(msg, duration = 2500) {
@@ -6172,7 +6213,7 @@ let lastCloudComparableFingerprints = {
   checklists: "",
   timesheets: "",
 };
-let hideNonPrimary = true;
+let deliverablesFilter = "primary";
 let activeNoteTab = null;
 let activeNotebookType = "note";
 let notesSearchQuery = "";
@@ -7272,7 +7313,7 @@ function renderOutlookScanUi() {
         }),
         el("div", {
           className: "outlook-scan-card-notes",
-          textContent: suggestion.notes || "No summary available.",
+          textContent: suggestion.notes || "No additional notes.",
         }),
         el(
           "div",
@@ -10453,6 +10494,78 @@ function normalizeWorkroomCadDiscipline(value, fallback = "") {
   return fallbackMatch || "";
 }
 
+function normalizeDeliverableLinkEntry(entry) {
+  if (!entry) return null;
+
+  const rawInput =
+    typeof entry === "string" ? entry : entry.raw || entry.url || entry.label || "";
+  let raw = String(rawInput || "").trim();
+  if (!raw) return null;
+
+  const localPathFromUrl = fileUrlToLocalPath(raw);
+  if (localPathFromUrl) {
+    raw = normalizeWindowsPath(localPathFromUrl);
+  } else if (/^[A-Za-z]:[\\/]/.test(raw) || /^\\\\/.test(raw)) {
+    raw = normalizeWindowsPath(raw);
+  }
+
+  if (!raw) return null;
+
+  const normalized = normalizeLink(raw);
+  const label = String(
+    typeof entry === "object" && entry?.label ? entry.label : normalized.label || raw
+  ).trim();
+
+  return {
+    raw,
+    url: normalized.url || normalized.raw || raw,
+    label: label || normalized.label || raw,
+  };
+}
+
+function hasMeaningfulDeliverableLinkLabel(link) {
+  if (!link) return false;
+  const label = String(link.label || "").trim();
+  if (!label) return false;
+  const raw = String(link.raw || "").trim();
+  const url = String(link.url || "").trim();
+  return label !== raw && label !== url;
+}
+
+function normalizeDeliverableLinks(links, legacyLinkPath = "") {
+  const normalized = [];
+  const seen = new Map();
+  const candidates = Array.isArray(links) ? [...links] : [];
+
+  if (legacyLinkPath) {
+    candidates.push({ raw: legacyLinkPath });
+  }
+
+  candidates.forEach((entry) => {
+    const next = normalizeDeliverableLinkEntry(entry);
+    if (!next) return;
+
+    const key = `${String(next.raw || "").toLowerCase()}|${String(next.url || "").toLowerCase()}`;
+    if (seen.has(key)) {
+      const existing = seen.get(key);
+      if (
+        hasMeaningfulDeliverableLinkLabel(next) &&
+        !hasMeaningfulDeliverableLinkLabel(existing)
+      ) {
+        existing.label = next.label;
+      } else if (!existing.label && next.label) {
+        existing.label = next.label;
+      }
+      return;
+    }
+
+    seen.set(key, next);
+    normalized.push(next);
+  });
+
+  return normalized;
+}
+
 function normalizeDeliverable(deliverable = {}) {
   const emailRefs = normalizeEmailRefs(deliverable.emailRefs, deliverable.emailRef);
   const out = {
@@ -10472,6 +10585,7 @@ function normalizeDeliverable(deliverable = {}) {
     status: deliverable.status || "",
     emailRefs,
     emailRef: emailRefs[0] || null,
+    links: normalizeDeliverableLinks(deliverable.links, deliverable.linkPath || ""),
     workroomCadDiscipline: normalizeWorkroomCadDiscipline(
       deliverable.workroomCadDiscipline,
       ""
@@ -10500,6 +10614,7 @@ function createDeliverable(seed = {}) {
     status: seed.status || "",
     emailRefs: seedEmailRefs,
     emailRef: seedEmailRefs[0] || null,
+    links: normalizeDeliverableLinks(seed.links, seed.linkPath || ""),
     workroomCadDiscipline: seed.workroomCadDiscipline || "",
   });
 }
@@ -10653,7 +10768,7 @@ function isLegacyProject(project) {
 function getProjectMergeKey(project, index) {
   const id = String(project?.id || "").trim().toLowerCase();
   if (id) return `id:${id}`;
-  const path = String(project?.path || "").trim().toLowerCase();
+  const path = normalizeProjectPath(project?.path || "").toLowerCase();
   if (path) return `path:${path}`;
   const name = String(project?.name || "").trim().toLowerCase();
   if (name) return `name:${name}`;
@@ -10688,6 +10803,7 @@ function mergeProjects(base, incoming) {
   }
   if (!base.notes && incoming.notes) base.notes = incoming.notes;
   base.refs = mergeRefs(base.refs || [], incoming.refs || []);
+  base.links = normalizeDeliverableLinks([...(base.links || []), ...(incoming.links || [])]);
   if (!base.lightingSchedule && incoming.lightingSchedule)
     base.lightingSchedule = incoming.lightingSchedule;
   if (!base.title24 && incoming.title24) base.title24 = incoming.title24;
@@ -10712,13 +10828,14 @@ function convertLegacyProject(legacy) {
     id: String(legacy?.id || "").trim(),
     name: String(legacy?.name || "").trim(),
     nick: String(legacy?.nick || "").trim(),
-    path: String(legacy?.path || "").trim(),
+    path: normalizeProjectPath(legacy?.path || ""),
     localProjectPath: "",
     workroomRootPath: "",
     notes: "",
     refs: Array.isArray(legacy?.refs)
       ? legacy.refs.map(normalizeRef).filter(Boolean)
       : [],
+    links: [],
     deliverables: [deliverable],
     overviewDeliverableId: deliverable.id,
     lightingSchedule: legacy?.lightingSchedule || null,
@@ -10736,13 +10853,14 @@ function normalizeProject(project) {
     id: String(project.id || "").trim(),
     name: String(project.name || "").trim(),
     nick: String(project.nick || "").trim(),
-    path: String(project.path || "").trim(),
-    localProjectPath: String(project.localProjectPath || "").trim(),
-    workroomRootPath: String(project.workroomRootPath || "").trim(),
+    path: normalizeProjectPath(project.path || ""),
+    localProjectPath: normalizeWindowsPath(project.localProjectPath || ""),
+    workroomRootPath: normalizeWindowsPath(project.workroomRootPath || ""),
     notes: project.notes || "",
     refs: Array.isArray(project.refs)
       ? project.refs.map(normalizeRef).filter(Boolean)
       : [],
+    links: normalizeDeliverableLinks(project.links),
     deliverables: Array.isArray(project.deliverables)
       ? project.deliverables.map(normalizeDeliverable)
       : [],
@@ -10802,6 +10920,9 @@ function migrateProjects(raw = []) {
         changed = true;
       }
       project = normalizeProject(item);
+      if (project?.path !== normalizeWindowsPath(item?.path || "")) {
+        changed = true;
+      }
     }
     const key = getProjectMergeKey(project, index);
     if (isLegacy) {
@@ -11284,6 +11405,19 @@ function matchesProjectStatusFilter(deliverable, filter) {
   return hasStatus(deliverable, filter);
 }
 
+function matchesProjectDeliverablesFilter(
+  deliverable,
+  filter,
+  primaryDeliverable
+) {
+  if (filter === "all") return true;
+  if (filter === "incomplete") return !isFinished(deliverable);
+  if (filter === "primary") {
+    return deliverable?.id === primaryDeliverable?.id;
+  }
+  return true;
+}
+
 function matchesDueFilter(deliverable, filter) {
   if (filter === "all") return true;
   const d = parseDueStr(deliverable?.due);
@@ -11328,18 +11462,18 @@ function getLatestDeliverableDueDate(deliverables = []) {
 
 function buildProjectTimeframeNote(
   filter,
-  activeStatusFilter,
+  hasAdditionalFilters,
   primaryMatchesTimeframe
 ) {
   const timeframeLabel = getTimeframeFilterLabel(filter);
   if (!timeframeLabel) return "";
 
   const prefix =
-    activeStatusFilter !== "all"
+    hasAdditionalFilters
       ? `Showing deliverables based on ${timeframeLabel} and the active filters.`
       : `Showing deliverables based on ${timeframeLabel}.`;
 
-  if (activeStatusFilter !== "all" && primaryMatchesTimeframe) {
+  if (hasAdditionalFilters && primaryMatchesTimeframe) {
     return `${prefix} Primary deliverable does not match the current filters.`;
   }
 
@@ -11358,28 +11492,28 @@ function getProjectListRenderContext(project) {
     ? overviewDeliverables.filter((deliverable) =>
         matchesDueFilter(deliverable, dueFilter)
       )
-    : [];
-  const statusMatchingDeliverables = isTimeframeView
-    ? timeframeDeliverables.filter((deliverable) =>
-        matchesProjectStatusFilter(deliverable, statusFilter)
-      )
-    : [];
+    : overviewDeliverables;
+  const statusMatchingDeliverables = timeframeDeliverables.filter(
+    (deliverable) => matchesProjectStatusFilter(deliverable, statusFilter)
+  );
+  const filteredDeliverables = statusMatchingDeliverables.filter((deliverable) =>
+    matchesProjectDeliverablesFilter(
+      deliverable,
+      deliverablesFilter,
+      primaryDeliverable
+    )
+  );
   const visibleDeliverables = isTimeframeView
-    ? statusMatchingDeliverables.slice().sort(compareDeliverablesByDueDesc)
-    : overviewDeliverables.filter((deliverable) => {
-        if (hideNonPrimary && primaryDeliverable?.id) {
-          return deliverable.id === primaryDeliverable.id;
-        }
-        return true;
-      });
-  const matchesFilters = isTimeframeView
-    ? statusMatchingDeliverables.length > 0
-    : matchesProjectStatusFilter(primaryDeliverable, statusFilter);
+    ? filteredDeliverables.slice().sort(compareDeliverablesByDueDesc)
+    : filteredDeliverables;
+  const matchesFilters = visibleDeliverables.length > 0;
   const primaryMatchesTimeframe = isTimeframeView
     ? timeframeDeliverables.some(
         (deliverable) => deliverable.id === primaryDeliverable.id
       )
     : true;
+  const hasAdditionalFilters =
+    statusFilter !== "all" || deliverablesFilter !== "all";
   const primaryVisible = visibleDeliverables.some(
     (deliverable) => deliverable.id === primaryDeliverable.id
   );
@@ -11399,7 +11533,7 @@ function getProjectListRenderContext(project) {
     timeframeNote: showTimeframeNote
       ? buildProjectTimeframeNote(
           dueFilter,
-          statusFilter,
+          hasAdditionalFilters,
           primaryMatchesTimeframe
         )
       : "",
@@ -11409,6 +11543,7 @@ function getProjectListRenderContext(project) {
 function getProjectsFilterValue(filterKey) {
   if (filterKey === "timeframe") return dueFilter || "all";
   if (filterKey === "status") return statusFilter || "all";
+  if (filterKey === "deliverables") return deliverablesFilter || "primary";
   return "all";
 }
 
@@ -11417,6 +11552,8 @@ function setProjectsFilterValue(filterKey, value) {
     dueFilter = value;
   } else if (filterKey === "status") {
     statusFilter = value;
+  } else if (filterKey === "deliverables") {
+    deliverablesFilter = value;
   }
 }
 
@@ -12011,6 +12148,748 @@ function renderDeliverableEmailSlots(container, deliverable, options = {}) {
   }
 }
 
+let openDeliverableLinksContext = null;
+let deliverableLinksPanelElements = null;
+let deliverableLinksPanelPositionRaf = 0;
+let deliverableLinksInputCommitPending = false;
+let deliverableLinksPanelClosePending = false;
+let deliverableLinksPanelActiveHost = null;
+let deliverableLinksPanelActiveOwnerDocument = null;
+let deliverableLinksPanelDetachOutsideListeners = null;
+let deliverableLinksPanelFocusLossFrame = 0;
+
+function updateDeliverableLinksTriggerState(trigger, links) {
+  if (!trigger) return;
+  const normalized = (Array.isArray(links) ? links : [])
+    .map((link) => normalizeDeliverableLinkEntry(link))
+    .filter(Boolean);
+  const count = normalized.length;
+  const preview = normalized
+    .slice(0, 3)
+    .map((link) => link.label || link.raw || link.url)
+    .filter(Boolean)
+    .join(", ");
+  trigger.classList.toggle("is-linked", count > 0);
+  trigger.textContent = "Links";
+  trigger.setAttribute("aria-expanded", String(openDeliverableLinksContext?.trigger === trigger));
+  trigger.setAttribute(
+    "aria-label",
+    count > 0 ? `Manage ${count} link${count === 1 ? "" : "s"}` : "Manage links"
+  );
+  trigger.title = count > 0 ? preview || "Manage links" : "Manage links";
+}
+
+function ensureDeliverableLinksPanel() {
+  if (deliverableLinksPanelElements) return deliverableLinksPanelElements;
+
+  const panel = el("div", {
+    className: "deliverable-links-panel",
+    hidden: true,
+  });
+  const list = el("div", { className: "deliverable-links-list" });
+  const addRow = el("div", { className: "deliverable-links-add-row" });
+  const addBullet = el("span", {
+    className: "task-icon task-add-bullet deliverable-links-add-bullet",
+    textContent: "○",
+  });
+  const fields = el("div", { className: "deliverable-links-add-fields" });
+  addBullet.textContent = "+";
+  const nameInput = el("input", {
+    className: "deliverable-links-add-input deliverable-links-name-input",
+    type: "text",
+    placeholder: "Name (optional)",
+    "aria-label": "Link name",
+  });
+  const linkInput = el("input", {
+    className: "deliverable-links-add-input deliverable-links-link-input",
+    type: "text",
+    placeholder: "Paste a file path or URL...",
+    "aria-label": "Link path or URL",
+  });
+  const scopeControl = el("label", {
+    className: "deliverable-links-scope-control",
+  });
+  const scopeCheckbox = el("input", {
+    className: "deliverable-links-scope-checkbox",
+    type: "checkbox",
+    "aria-label": "Save new link as project-wide",
+  });
+  const scopeText = el("span", {
+    className: "deliverable-links-scope-label",
+    textContent: "Project-wide",
+  });
+
+  scopeControl.append(scopeCheckbox, scopeText);
+  fields.append(nameInput, linkInput, scopeControl);
+  addRow.append(addBullet, fields);
+  panel.append(list, addRow);
+  document.body.appendChild(panel);
+
+  deliverableLinksPanelElements = {
+    panel,
+    list,
+    nameInput,
+    linkInput,
+    scopeCheckbox,
+  };
+
+  const handleInputKeydown = async (e) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    e.stopPropagation();
+    await commitOpenDeliverableLinksInput({ refocus: true });
+  };
+
+  const handleInputClick = (e) => {
+    e.stopPropagation();
+  };
+
+  [nameInput, linkInput].forEach((input) => {
+    input.addEventListener("keydown", handleInputKeydown);
+    input.addEventListener("click", handleInputClick);
+  });
+  scopeCheckbox.addEventListener("click", handleInputClick);
+  scopeCheckbox.addEventListener("change", () => {
+    if (!openDeliverableLinksContext) return;
+    openDeliverableLinksContext.addScope =
+      scopeCheckbox.checked ? "project" : "deliverable";
+  });
+
+  return deliverableLinksPanelElements;
+}
+
+function getPendingDeliverableLinkEntry() {
+  const elements = ensureDeliverableLinksPanel();
+  const raw = String(elements.linkInput.value || "")
+    .split(/\r?\n/)
+    .map((value) => value.trim())
+    .find(Boolean);
+  if (!raw) return null;
+  return normalizeDeliverableLinkEntry({
+    label: String(elements.nameInput.value || "").trim(),
+    raw,
+  });
+}
+
+function clearPendingDeliverableLinkEntry() {
+  const elements = ensureDeliverableLinksPanel();
+  elements.nameInput.value = "";
+  elements.linkInput.value = "";
+}
+
+function focusDeliverableLinksPrimaryInput({ select = true } = {}) {
+  const elements = ensureDeliverableLinksPanel();
+  elements.nameInput.focus();
+  if (select) elements.nameInput.select();
+}
+
+function syncDeliverableLinksAddScopeControl() {
+  const elements = ensureDeliverableLinksPanel();
+  elements.scopeCheckbox.checked =
+    (openDeliverableLinksContext?.addScope || "deliverable") === "project";
+}
+
+function getOpenDeliverableLinksPanelEntries() {
+  if (!openDeliverableLinksContext) return [];
+  return [
+    ...openDeliverableLinksContext.getDeliverableLinks().map((link, index) => ({
+      ...link,
+      scope: "deliverable",
+      index,
+    })),
+    ...openDeliverableLinksContext.getProjectLinks().map((link, index) => ({
+      ...link,
+      scope: "project",
+      index,
+    })),
+  ];
+}
+
+async function updateOpenDeliverableLinksScopes({
+  deliverableLinks = openDeliverableLinksContext?.getDeliverableLinks() || [],
+  projectLinks = openDeliverableLinksContext?.getProjectLinks() || [],
+} = {}) {
+  if (!openDeliverableLinksContext?.updateScopedLinks) return null;
+  return openDeliverableLinksContext.updateScopedLinks({
+    deliverableLinks,
+    projectLinks,
+  });
+}
+
+async function moveOpenDeliverableLinkEntryScope(entry, nextScope) {
+  if (!entry || !openDeliverableLinksContext) return false;
+  const currentScope = entry.scope === "project" ? "project" : "deliverable";
+  const targetScope = nextScope === "project" ? "project" : "deliverable";
+  if (currentScope === targetScope) return false;
+
+  const deliverableLinks = [...openDeliverableLinksContext.getDeliverableLinks()];
+  const projectLinks = [...openDeliverableLinksContext.getProjectLinks()];
+  const sourceLinks = currentScope === "project" ? projectLinks : deliverableLinks;
+  const targetLinks = targetScope === "project" ? projectLinks : deliverableLinks;
+  const [moved] = sourceLinks.splice(entry.index, 1);
+  if (!moved) return false;
+  targetLinks.push(moved);
+
+  await updateOpenDeliverableLinksScopes({
+    deliverableLinks,
+    projectLinks,
+  });
+  renderOpenDeliverableLinksPanel();
+  return true;
+}
+
+async function removeOpenDeliverableLinkEntry(entry) {
+  if (!entry || !openDeliverableLinksContext) return false;
+  const deliverableLinks = [...openDeliverableLinksContext.getDeliverableLinks()];
+  const projectLinks = [...openDeliverableLinksContext.getProjectLinks()];
+  const sourceLinks = entry.scope === "project" ? projectLinks : deliverableLinks;
+  if (entry.index < 0 || entry.index >= sourceLinks.length) return false;
+  sourceLinks.splice(entry.index, 1);
+
+  await updateOpenDeliverableLinksScopes({
+    deliverableLinks,
+    projectLinks,
+  });
+  renderOpenDeliverableLinksPanel();
+  return true;
+}
+
+function getDeliverableLinksPanelHost(trigger) {
+  return trigger?.closest("dialog[open]") || document.body;
+}
+
+function getDeliverableLinksPanelOutsideTargets(trigger) {
+  const ownerDocument = trigger?.ownerDocument || document;
+  const host = getDeliverableLinksPanelHost(trigger);
+  return [...new Set([host, ownerDocument].filter(Boolean))];
+}
+
+function isDeliverableLinksInteractionTarget(target) {
+  if (!(target instanceof Node)) return false;
+  const elements = deliverableLinksPanelElements;
+  if (elements?.panel?.contains(target)) return true;
+  return !!openDeliverableLinksContext?.trigger?.contains(target);
+}
+
+function detachDeliverableLinksOutsideListeners() {
+  if (typeof deliverableLinksPanelDetachOutsideListeners === "function") {
+    deliverableLinksPanelDetachOutsideListeners();
+  }
+  if (deliverableLinksPanelFocusLossFrame) {
+    cancelAnimationFrame(deliverableLinksPanelFocusLossFrame);
+    deliverableLinksPanelFocusLossFrame = 0;
+  }
+  deliverableLinksPanelDetachOutsideListeners = null;
+  deliverableLinksPanelActiveHost = null;
+  deliverableLinksPanelActiveOwnerDocument = null;
+}
+
+function scheduleDeliverableLinksPanelFocusLossCheck() {
+  if (deliverableLinksPanelFocusLossFrame) {
+    cancelAnimationFrame(deliverableLinksPanelFocusLossFrame);
+  }
+
+  const triggerSnapshot = openDeliverableLinksContext?.trigger || null;
+  const ownerDocument =
+    deliverableLinksPanelActiveOwnerDocument || triggerSnapshot?.ownerDocument || document;
+
+  deliverableLinksPanelFocusLossFrame = requestAnimationFrame(() => {
+    deliverableLinksPanelFocusLossFrame = 0;
+    if (!openDeliverableLinksContext || openDeliverableLinksContext.trigger !== triggerSnapshot) {
+      return;
+    }
+    const activeElement = ownerDocument?.activeElement || document.activeElement;
+    if (isDeliverableLinksInteractionTarget(activeElement)) return;
+    void requestDeliverableLinksPanelClose();
+  });
+}
+
+function attachDeliverableLinksOutsideListeners(trigger) {
+  detachDeliverableLinksOutsideListeners();
+
+  const ownerDocument = trigger?.ownerDocument || document;
+  const host = getDeliverableLinksPanelHost(trigger);
+  const outsideTargets = getDeliverableLinksPanelOutsideTargets(trigger);
+  deliverableLinksPanelActiveHost = host;
+  deliverableLinksPanelActiveOwnerDocument = ownerDocument;
+
+  const handleOutsidePointerLike = (e) => {
+    if (!openDeliverableLinksContext) return;
+    if (
+      deliverableLinksPanelActiveHost instanceof HTMLDialogElement &&
+      e.target === deliverableLinksPanelActiveHost
+    ) {
+      void requestDeliverableLinksPanelClose();
+      return;
+    }
+    if (isDeliverableLinksInteractionTarget(e.target)) return;
+    void requestDeliverableLinksPanelClose();
+  };
+
+  const handleOutsideFocusIn = (e) => {
+    if (!openDeliverableLinksContext) return;
+    if (isDeliverableLinksInteractionTarget(e.target)) return;
+    void requestDeliverableLinksPanelClose();
+  };
+
+  const handleEscapeKey = (e) => {
+    if (e.key !== "Escape" || !openDeliverableLinksContext) return;
+    e.preventDefault();
+    void requestDeliverableLinksPanelClose({ focusTrigger: true });
+  };
+
+  const handleFocusOut = () => {
+    if (!openDeliverableLinksContext) return;
+    scheduleDeliverableLinksPanelFocusLossCheck();
+  };
+
+  const handleViewportScroll = (e) => {
+    if (!openDeliverableLinksContext) return;
+    if (isDeliverableLinksInteractionTarget(e.target)) return;
+    void requestDeliverableLinksPanelClose();
+  };
+
+  const handleViewportResize = () => {
+    if (!openDeliverableLinksContext) return;
+    scheduleDeliverableLinksPanelPosition();
+  };
+
+  outsideTargets.forEach((target) => {
+    target.addEventListener("pointerdown", handleOutsidePointerLike, true);
+    target.addEventListener("mousedown", handleOutsidePointerLike, true);
+  });
+  ensureDeliverableLinksPanel().panel.addEventListener("focusout", handleFocusOut);
+  trigger.addEventListener("focusout", handleFocusOut);
+  ownerDocument.addEventListener("focusin", handleOutsideFocusIn, true);
+  ownerDocument.addEventListener("scroll", handleViewportScroll, true);
+  ownerDocument.addEventListener("keydown", handleEscapeKey);
+  ownerDocument.defaultView?.addEventListener("resize", handleViewportResize);
+
+  deliverableLinksPanelDetachOutsideListeners = () => {
+    outsideTargets.forEach((target) => {
+      target.removeEventListener("pointerdown", handleOutsidePointerLike, true);
+      target.removeEventListener("mousedown", handleOutsidePointerLike, true);
+    });
+    ensureDeliverableLinksPanel().panel.removeEventListener("focusout", handleFocusOut);
+    trigger.removeEventListener("focusout", handleFocusOut);
+    ownerDocument.removeEventListener("focusin", handleOutsideFocusIn, true);
+    ownerDocument.removeEventListener("scroll", handleViewportScroll, true);
+    ownerDocument.removeEventListener("keydown", handleEscapeKey);
+    ownerDocument.defaultView?.removeEventListener("resize", handleViewportResize);
+  };
+}
+
+function scheduleDeliverableLinksPanelPosition() {
+  if (!openDeliverableLinksContext || deliverableLinksPanelPositionRaf) return;
+  deliverableLinksPanelPositionRaf = requestAnimationFrame(() => {
+    deliverableLinksPanelPositionRaf = 0;
+    positionOpenDeliverableLinksPanel();
+  });
+}
+
+function positionOpenDeliverableLinksPanel() {
+  const elements = ensureDeliverableLinksPanel();
+  if (!openDeliverableLinksContext) {
+    elements.panel.hidden = true;
+    return;
+  }
+
+  const trigger = openDeliverableLinksContext.trigger;
+  if (!trigger?.isConnected) {
+    void requestDeliverableLinksPanelClose();
+    return;
+  }
+
+  const gap = 8;
+  const rect = trigger.getBoundingClientRect();
+  const panel = elements.panel;
+  panel.hidden = false;
+  panel.style.top = "0px";
+  panel.style.left = "0px";
+  panel.style.visibility = "hidden";
+
+  const panelRect = panel.getBoundingClientRect();
+  let top = rect.bottom + gap;
+  if (top + panelRect.height > window.innerHeight - gap) {
+    top = Math.max(gap, rect.top - panelRect.height - gap);
+  }
+
+  let left = rect.right - panelRect.width;
+  left = Math.max(gap, Math.min(left, window.innerWidth - panelRect.width - gap));
+
+  if (top + panelRect.height > window.innerHeight - gap) {
+    top = Math.max(gap, window.innerHeight - panelRect.height - gap);
+  }
+
+  panel.style.top = `${Math.round(top)}px`;
+  panel.style.left = `${Math.round(left)}px`;
+  panel.style.visibility = "";
+}
+
+async function closeDeliverableLinksPanel({ focusTrigger = false } = {}) {
+  if (deliverableLinksPanelClosePending) return false;
+  const elements = ensureDeliverableLinksPanel();
+  const trigger = openDeliverableLinksContext?.trigger || null;
+  if (!trigger && !openDeliverableLinksContext) {
+    detachDeliverableLinksOutsideListeners();
+    elements.panel.hidden = true;
+    elements.panel.style.visibility = "";
+    return false;
+  }
+
+  deliverableLinksPanelClosePending = true;
+  try {
+    if (getPendingDeliverableLinkEntry()) {
+      await commitOpenDeliverableLinksInput();
+    }
+
+    if (trigger) {
+      trigger.classList.remove("open");
+      trigger.setAttribute("aria-expanded", "false");
+    }
+    openDeliverableLinksContext = null;
+    detachDeliverableLinksOutsideListeners();
+    deliverableLinksInputCommitPending = false;
+    clearPendingDeliverableLinkEntry();
+    elements.panel.hidden = true;
+    elements.panel.style.visibility = "";
+    if (focusTrigger) {
+      trigger?.focus();
+    }
+    return true;
+  } finally {
+    deliverableLinksPanelClosePending = false;
+  }
+}
+
+async function requestDeliverableLinksPanelClose(options = {}) {
+  return closeDeliverableLinksPanel(options);
+}
+
+function renderOpenDeliverableLinksPanel() {
+  const elements = ensureDeliverableLinksPanel();
+  if (!openDeliverableLinksContext) {
+    elements.list.replaceChildren();
+    elements.panel.hidden = true;
+    return;
+  }
+
+  const { list } = elements;
+  syncDeliverableLinksAddScopeControl();
+  const links = getOpenDeliverableLinksPanelEntries();
+  list.replaceChildren();
+
+  if (!links.length) {
+    list.appendChild(
+      el("div", {
+        className: "deliverable-links-empty",
+        textContent:
+          "No links yet. Add a name, choose whether it is project-wide, and paste a file path or URL below.",
+      })
+    );
+  }
+
+  links.forEach((entry) => {
+    const item = el("div", {
+      className: "deliverable-link-item",
+    });
+    const visibleLabel =
+      String(entry.label || entry.raw || entry.url || "Link").trim() || "Link";
+    const visibleMeta = String(
+      entry.raw && entry.label && entry.raw !== entry.label
+        ? entry.raw
+        : entry.url || entry.raw || ""
+    ).trim();
+    const openBtn = el("button", {
+      className: "deliverable-link-open",
+      type: "button",
+      title: entry.raw || entry.url || visibleLabel,
+      "aria-label": `Open ${visibleLabel}`,
+    });
+    const label = el("span", {
+      className: "deliverable-link-label",
+      textContent: visibleLabel,
+    });
+    const meta = el("span", {
+      className: "deliverable-link-meta",
+      textContent: visibleMeta,
+    });
+    const actions = el("div", { className: "deliverable-link-actions" });
+    const scopeControl = el("label", {
+      className: "deliverable-link-scope-control",
+      title:
+        entry.scope === "project"
+          ? "Turn off to make this link deliverable-only"
+          : "Turn on to make this link project-wide",
+    });
+    const scopeCheckbox = el("input", {
+      className: "deliverable-link-scope-checkbox",
+      type: "checkbox",
+      checked: entry.scope === "project",
+      "aria-label": `Set ${visibleLabel} as project-wide`,
+    });
+    const scopeLabel = el("span", {
+      className: "deliverable-link-scope-label",
+      textContent: "Project-wide",
+    });
+    const removeBtn = el("button", {
+      className: "deliverable-link-remove",
+      type: "button",
+      title: "Remove link",
+      "aria-label": `Remove ${visibleLabel}`,
+      textContent: "×",
+    });
+
+    removeBtn.textContent = "Remove";
+    openBtn.append(label);
+    if (visibleMeta) openBtn.append(meta);
+    scopeControl.append(scopeCheckbox, scopeLabel);
+    actions.append(scopeControl, removeBtn);
+
+    openBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      await openDeliverableLinkEntry(entry);
+    });
+
+    scopeCheckbox.addEventListener("click", (e) => {
+      e.stopPropagation();
+    });
+    scopeCheckbox.addEventListener("change", async (e) => {
+      e.stopPropagation();
+      await moveOpenDeliverableLinkEntryScope(
+        entry,
+        scopeCheckbox.checked ? "project" : "deliverable"
+      );
+    });
+
+    removeBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      await removeOpenDeliverableLinkEntry(entry);
+      focusDeliverableLinksPrimaryInput({ select: false });
+    });
+
+    item.append(openBtn, actions);
+    list.appendChild(item);
+  });
+
+  elements.panel.hidden = false;
+  scheduleDeliverableLinksPanelPosition();
+}
+
+async function commitOpenDeliverableLinksInput({ refocus = false } = {}) {
+  if (!openDeliverableLinksContext || deliverableLinksInputCommitPending) return false;
+  const nextEntry = getPendingDeliverableLinkEntry();
+  if (!nextEntry) return false;
+
+  deliverableLinksInputCommitPending = true;
+  clearPendingDeliverableLinkEntry();
+  try {
+    const deliverableLinks = [...openDeliverableLinksContext.getDeliverableLinks()];
+    const projectLinks = [...openDeliverableLinksContext.getProjectLinks()];
+    if ((openDeliverableLinksContext.addScope || "deliverable") === "project") {
+      projectLinks.push(nextEntry);
+    } else {
+      deliverableLinks.push(nextEntry);
+    }
+    await updateOpenDeliverableLinksScopes({
+      deliverableLinks,
+      projectLinks,
+    });
+    renderOpenDeliverableLinksPanel();
+
+    if (refocus) {
+      setTimeout(() => {
+        if (!openDeliverableLinksContext) return;
+        focusDeliverableLinksPrimaryInput();
+      }, 0);
+    }
+    return true;
+  } finally {
+    deliverableLinksInputCommitPending = false;
+  }
+}
+
+async function openDeliverableLinkEntry(linkEntry) {
+  const normalized = normalizeDeliverableLinkEntry(linkEntry);
+  if (!normalized) {
+    toast("No link is set.");
+    return false;
+  }
+
+  const localPath = fileUrlToLocalPath(normalized.url || "");
+  if (localPath) {
+    if (!window.pywebview?.api?.reveal_path) {
+      toast("Reveal path is unavailable.");
+      return false;
+    }
+    try {
+      const response = await window.pywebview.api.reveal_path(localPath);
+      if (response?.status !== "success") {
+        throw new Error(response?.message || "Unable to open linked path.");
+      }
+      toast("Opening path...");
+      return true;
+    } catch (e) {
+      toast("Couldn't open linked path.");
+      return false;
+    }
+  }
+
+  const url = normalized.url || normalized.raw;
+  if (!url) {
+    toast("No link is set.");
+    return false;
+  }
+
+  try {
+    openExternalUrl(url);
+    toast("Opening link...");
+    return true;
+  } catch (e) {
+    toast("Couldn't open link.");
+    return false;
+  }
+}
+
+function openDeliverableLinksPanel(context) {
+  const elements = ensureDeliverableLinksPanel();
+  if (openDeliverableLinksContext?.trigger === context.trigger) {
+    void requestDeliverableLinksPanelClose();
+    return;
+  }
+
+  if (openDeliverableLinksContext?.trigger) {
+    openDeliverableLinksContext.trigger.classList.remove("open");
+    openDeliverableLinksContext.trigger.setAttribute("aria-expanded", "false");
+  }
+
+  openDeliverableLinksContext = context;
+  openDeliverableLinksContext.addScope = "deliverable";
+  const host = getDeliverableLinksPanelHost(context.trigger);
+  if (elements.panel.parentElement !== host) {
+    host.appendChild(elements.panel);
+  }
+  attachDeliverableLinksOutsideListeners(context.trigger);
+  context.trigger.classList.add("open");
+  context.trigger.setAttribute("aria-expanded", "true");
+  clearPendingDeliverableLinkEntry();
+  renderOpenDeliverableLinksPanel();
+  positionOpenDeliverableLinksPanel();
+
+  setTimeout(() => {
+    if (openDeliverableLinksContext?.trigger !== context.trigger) return;
+    focusDeliverableLinksPrimaryInput();
+  }, 0);
+}
+
+function createDeliverableLinksControl(deliverable, options = {}) {
+  const { persistNow = false, modalCard = null, project = null } = options;
+  const control = el("div", { className: "deliverable-link-control" });
+  const trigger = el("button", {
+    className: "deliverable-link-trigger",
+    type: "button",
+    textContent: "Links",
+    "aria-expanded": "false",
+    "aria-haspopup": "dialog",
+  });
+
+  const getDeliverableLinks = () => {
+    const normalized = modalCard
+      ? getDeliverableCardLinks(modalCard)
+      : normalizeDeliverableLinks(deliverable?.links, deliverable?.linkPath || "");
+    deliverable.links = normalized;
+    if (modalCard) setDeliverableCardLinks(modalCard, normalized);
+    return normalized;
+  };
+
+  const getProjectLinks = () => {
+    const normalized = modalCard
+      ? getModalProjectLinks()
+      : normalizeDeliverableLinks(project?.links);
+    if (project) project.links = normalized;
+    if (modalCard) setModalProjectLinks(normalized);
+    return normalized;
+  };
+
+  const updateScopedLinks = async ({
+    deliverableLinks = getDeliverableLinks(),
+    projectLinks = getProjectLinks(),
+  } = {}) => {
+    const normalizedDeliverableLinks = normalizeDeliverableLinks(
+      deliverableLinks,
+      deliverable?.linkPath || ""
+    );
+    const normalizedProjectLinks = normalizeDeliverableLinks(projectLinks);
+    deliverable.links = normalizedDeliverableLinks;
+    if (project) project.links = normalizedProjectLinks;
+    if (modalCard) {
+      setDeliverableCardLinks(modalCard, normalizedDeliverableLinks);
+      setModalProjectLinks(normalizedProjectLinks);
+    }
+    if (persistNow) {
+      await save();
+    }
+    syncState();
+    return {
+      deliverableLinks: normalizedDeliverableLinks,
+      projectLinks: normalizedProjectLinks,
+    };
+  };
+
+  const setDeliverableLinks = async (nextLinks) => {
+    return (
+      await updateScopedLinks({
+        deliverableLinks: nextLinks,
+      })
+    ).deliverableLinks;
+  };
+
+  const setProjectLinks = async (nextLinks) => {
+    return (
+      await updateScopedLinks({
+        projectLinks: nextLinks,
+      })
+    ).projectLinks;
+  };
+
+  const getCombinedLinks = () => {
+    return [...getDeliverableLinks(), ...getProjectLinks()];
+  };
+
+  const syncState = () => {
+    updateDeliverableLinksTriggerState(trigger, getCombinedLinks());
+    if (openDeliverableLinksContext?.trigger === trigger) {
+      renderOpenDeliverableLinksPanel();
+    }
+  };
+
+  trigger.addEventListener("click", (e) => {
+    e.stopPropagation();
+    document
+      .querySelectorAll(".deliverable-status-dropdown.open")
+      .forEach((openDropdown) => {
+        setDeliverableStatusDropdownState(openDropdown, false);
+      });
+    openDeliverableLinksPanel({
+      deliverable,
+      project,
+      modalCard,
+      persistNow,
+      trigger,
+      getDeliverableLinks,
+      setDeliverableLinks,
+      getProjectLinks,
+      setProjectLinks,
+      updateScopedLinks,
+      syncState,
+    });
+  });
+
+  control.appendChild(trigger);
+  syncState();
+  return control;
+}
+
 function createCardHeader(deliverable, isPrimary, card, project) {
   const header = el("div", { className: "deliverable-card-header-new" });
 
@@ -12133,7 +13012,11 @@ function createCardHeader(deliverable, isPrimary, card, project) {
   });
 
   const expandToggle = createExpandToggle(card);
-  actions.append(emailSlots, expandToggle);
+  const linkControl = createDeliverableLinksControl(deliverable, {
+    project,
+    persistNow: true,
+  });
+  actions.append(linkControl, emailSlots, expandToggle);
   header.appendChild(actions);
 
   return header;
@@ -12333,6 +13216,9 @@ function createStatusDropdown(deliverable, project, card) {
         setDeliverableStatusDropdownState(openDropdown, false);
       }
     });
+    if (openDeliverableLinksContext) {
+      void requestDeliverableLinksPanelClose();
+    }
 
     setDeliverableStatusDropdownState(dropdown, isOpen);
   });
@@ -13241,7 +14127,10 @@ function render() {
   const emptyTitle = emptyState?.querySelector("h3");
   const emptyBody = emptyState?.querySelector("p");
   const hasActiveProjectFilters =
-    !!q || dueFilter !== "all" || statusFilter !== "all";
+    !!q ||
+    dueFilter !== "all" ||
+    statusFilter !== "all" ||
+    deliverablesFilter === "incomplete";
   if (emptyTitle) {
     emptyTitle.textContent = hasActiveProjectFilters
       ? "No matching projects"
@@ -13503,6 +14392,7 @@ function createBlankProject() {
     workroomRootPath: "",
     notes: "",
     refs: [],
+    links: [],
     deliverables: [deliverable],
     overviewDeliverableId: deliverable.id,
     lightingSchedule: createDefaultLightingSchedule(),
@@ -13573,19 +14463,23 @@ function fillForm(project) {
   document.getElementById("f_nick").value = p.nick || "";
   document.getElementById("f_notes").value = p.notes || "";
   document.getElementById("f_path").value = p.path || "";
+  document.getElementById("f_path").title = p.path || "";
 
   const deliverableList = document.getElementById("deliverableList");
   deliverableList.innerHTML = "";
+  setModalProjectDraft(p);
   const sortedDeliverables = p.deliverables.slice();
   sortDeliverablesByPrimaryThenDueDesc(
     sortedDeliverables,
     p.overviewDeliverableId
   );
   sortedDeliverables.forEach((deliverable) =>
-    addDeliverableCard(deliverable, p.overviewDeliverableId)
+    addDeliverableCard(deliverable, p.overviewDeliverableId, { projectDraft: p })
   );
   if (!deliverableList.children.length) {
-    addDeliverableCard(createDeliverable(), p.overviewDeliverableId);
+    addDeliverableCard(createDeliverable(), p.overviewDeliverableId, {
+      projectDraft: p,
+    });
   }
   if (!deliverableList.querySelector(".d-primary:checked")) {
     const firstPrimary = deliverableList.querySelector(".d-primary");
@@ -13627,11 +14521,71 @@ function setDeliverableCardEmailRefs(card, emailRefs) {
   card.dataset.emailRef = JSON.stringify(normalized[0]);
 }
 
+function getDeliverableCardLinks(card) {
+  if (!card) return [];
+  if (!Array.isArray(card._linkItems)) {
+    let parsed = [];
+    try {
+      parsed = JSON.parse(card.dataset.links || "[]");
+    } catch {
+      parsed = [];
+    }
+    card._linkItems = normalizeDeliverableLinks(parsed);
+  }
+  return normalizeDeliverableLinks(card._linkItems);
+}
+
+function setDeliverableCardLinks(card, links) {
+  if (!card) return;
+  const normalized = normalizeDeliverableLinks(links);
+  card._linkItems = normalized;
+  if (!normalized.length) {
+    delete card.dataset.links;
+    return;
+  }
+  card.dataset.links = JSON.stringify(normalized);
+}
+
+function getModalProjectDraft() {
+  const list = document.getElementById("deliverableList");
+  if (!list) return null;
+  if (!list._projectDraft || typeof list._projectDraft !== "object") {
+    list._projectDraft = { links: [] };
+  }
+  if (!Array.isArray(list._projectDraft.links)) {
+    list._projectDraft.links = [];
+  }
+  list._projectDraft.links = normalizeDeliverableLinks(list._projectDraft.links);
+  return list._projectDraft;
+}
+
+function setModalProjectDraft(project) {
+  const list = document.getElementById("deliverableList");
+  if (!list) return null;
+  list._projectDraft = project && typeof project === "object" ? project : { links: [] };
+  if (!Array.isArray(list._projectDraft.links)) {
+    list._projectDraft.links = [];
+  }
+  list._projectDraft.links = normalizeDeliverableLinks(list._projectDraft.links);
+  return list._projectDraft;
+}
+
+function getModalProjectLinks() {
+  return normalizeDeliverableLinks(getModalProjectDraft()?.links);
+}
+
+function setModalProjectLinks(links) {
+  const draft = getModalProjectDraft();
+  if (!draft) return [];
+  draft.links = normalizeDeliverableLinks(links);
+  return draft.links;
+}
+
 function addDeliverableCard(deliverable, primaryId, options = {}) {
   const list = document.getElementById("deliverableList");
   const template = document.getElementById("deliverable-card-template");
   if (!list || !template) return;
-  const { insertAtTop = false } = options;
+  const { insertAtTop = false, projectDraft = getModalProjectDraft() } = options;
 
   const card = template.content
     .cloneNode(true)
@@ -13640,6 +14594,8 @@ function addDeliverableCard(deliverable, primaryId, options = {}) {
   card.dataset.deliverableId = deliverableId;
   syncDeliverableEmailRefs(deliverable);
   setDeliverableCardEmailRefs(card, deliverable.emailRefs);
+  deliverable.links = normalizeDeliverableLinks(deliverable.links, deliverable.linkPath || "");
+  setDeliverableCardLinks(card, deliverable.links);
 
   card.querySelector(".d-name").value = deliverable.name || "";
   card.querySelector(".d-due").value = deliverable.due || "";
@@ -13660,6 +14616,16 @@ function addDeliverableCard(deliverable, primaryId, options = {}) {
       scope: "edit-modal",
     });
   }
+  const linkControlHost = card.querySelector(".deliverable-link-control");
+  if (linkControlHost) {
+    linkControlHost.replaceChildren(
+      createDeliverableLinksControl(deliverable, {
+        persistNow: false,
+        modalCard: card,
+        project: projectDraft,
+      })
+    );
+  }
 
   // No secondary action needed on primary change anymore
 
@@ -13671,6 +14637,9 @@ function addDeliverableCard(deliverable, primaryId, options = {}) {
     await stageModalManagedEmailRefsForRemoval(
       cardRefs.length ? cardRefs : deliverable.emailRefs
     );
+    if (openDeliverableLinksContext?.modalCard === card) {
+      void requestDeliverableLinksPanelClose();
+    }
     card.remove();
   };
 
@@ -13973,10 +14942,11 @@ function readForm() {
     name: val("f_name"),
     nick: val("f_nick"),
     notes: val("f_notes"),
-    path: val("f_path"),
-    localProjectPath: String(existingProject?.localProjectPath || "").trim(),
-    workroomRootPath: String(existingProject?.workroomRootPath || "").trim(),
+    path: normalizeProjectPath(val("f_path")),
+    localProjectPath: normalizeWindowsPath(existingProject?.localProjectPath || ""),
+    workroomRootPath: normalizeWindowsPath(existingProject?.workroomRootPath || ""),
     refs: [],
+    links: getModalProjectLinks(),
     deliverables: [],
     overviewDeliverableId: "",
     pinned: !!existingProject?.pinned,
@@ -13993,6 +14963,7 @@ function readForm() {
       card.querySelector(".deliverable-status")
     );
     const emailRefs = getDeliverableCardEmailRefs(card);
+    const links = getDeliverableCardLinks(card);
 
     const tasks = getModalDeliverableTaskItems(card)
       .map((task) => {
@@ -14016,6 +14987,7 @@ function readForm() {
       statuses,
       emailRefs,
       emailRef: emailRefs[0] || null,
+      links,
     });
 
     out.deliverables.push(deliverable);
@@ -14058,6 +15030,7 @@ window.addDeliverable = () => {
     mostRecentCard && isDeliverableCardComplete(mostRecentCard);
   const newCard = addDeliverableCard(createDeliverable(), null, {
     insertAtTop: true,
+    projectDraft: getModalProjectDraft(),
   });
   if (shouldSetPrimary && newCard) setPrimaryDeliverableCard(newCard);
 };
@@ -15282,13 +16255,7 @@ function getWorkroomProjectHeaderText(project) {
 }
 
 function normalizeWorkroomFolderPath(rawPath) {
-  let normalized = String(rawPath || "").trim().replace(/\//g, "\\");
-  if (!normalized) return "";
-  if (/^[A-Za-z]:\\?$/.test(normalized)) {
-    return `${normalized.slice(0, 2)}\\`;
-  }
-  normalized = normalized.replace(/\\+$/, "");
-  return normalized;
+  return normalizeWindowsPath(rawPath);
 }
 
 function setWorkroomDiscoveredCadFilePaths(paths = []) {
@@ -15325,40 +16292,19 @@ async function traceCadAutoSelect(eventName, fields = {}) {
 }
 
 function getWorkroomPathFolderName(rawPath) {
-  const normalized = normalizeWorkroomFolderPath(rawPath);
-  if (!normalized) return "";
-  const parts = normalized.split("\\");
-  return parts[parts.length - 1] || "";
+  return getWindowsPathLeaf(rawPath);
 }
 
 function getWorkroomPathParent(rawPath) {
-  const normalized = normalizeWorkroomFolderPath(rawPath);
-  if (!normalized) return "";
-  if (/^[A-Za-z]:\\$/.test(normalized)) return "";
-  if (/^\\\\[^\\]+\\[^\\]+$/.test(normalized)) return "";
-  const idx = normalized.lastIndexOf("\\");
-  if (idx <= 0) return "";
-  return normalized.slice(0, idx);
+  return getWindowsPathParent(rawPath);
 }
 
 function findWorkroomProjectRootById(projectPath) {
-  let current = normalizeWorkroomFolderPath(projectPath);
-  if (!current) return "";
-  while (current) {
-    const folderName = getWorkroomPathFolderName(current);
-    if (/^\d{6}(?!\d)/.test(folderName)) {
-      return current;
-    }
-    const parent = getWorkroomPathParent(current);
-    if (!parent) break;
-    if (parent.toLowerCase() === current.toLowerCase()) break;
-    current = parent;
-  }
-  return "";
+  return findProjectRootPath(projectPath);
 }
 
 function getDefaultWorkroomRootFolderPath(project) {
-  const projectPath = normalizeWorkroomFolderPath(project?.path || "");
+  const projectPath = normalizeProjectPath(project?.path || "");
   if (!projectPath) return "";
   const rootFromId = findWorkroomProjectRootById(projectPath);
   return rootFromId || projectPath;
@@ -15371,9 +16317,9 @@ function getWorkroomRootFolderPath(project) {
 }
 
 function getWorkroomServerProjectPath(project) {
-  const projectPath = normalizeWorkroomFolderPath(project?.path || "");
+  const projectPath = normalizeProjectPath(project?.path || "");
   if (!projectPath) return "";
-  return findWorkroomProjectRootById(projectPath);
+  return findWorkroomProjectRootById(projectPath) || projectPath;
 }
 
 function setWorkroomRootFolderOverride(project, nextPath, { saveNow = true } = {}) {
@@ -17770,10 +18716,66 @@ function createCircuitBreakerPanel() {
     id: generateCircuitBreakerPanelId(),
     label: `Panel ${number}`,
     panelName: "",
-    breakerPath: "",
-    directoryPath: "",
-    breakerFile: null,
-    directoryFile: null,
+    breakerPaths: [],
+    directoryPaths: [],
+    breakerFiles: [],
+    directoryFiles: [],
+  };
+}
+
+function normalizeCircuitBreakerPaths(paths) {
+  if (!Array.isArray(paths)) {
+    paths = paths ? [paths] : [];
+  }
+  return paths
+    .map((path) => String(path || "").trim())
+    .filter(Boolean);
+}
+
+function normalizeCircuitBreakerFiles(files) {
+  if (!files) return [];
+  if (Array.isArray(files)) return files.filter(Boolean);
+  if (typeof files.length === "number") {
+    return Array.from(files).filter(Boolean);
+  }
+  return [files].filter(Boolean);
+}
+
+function hasCircuitBreakerPhotoSelection(paths = [], files = []) {
+  return (
+    normalizeCircuitBreakerPaths(paths).length > 0 ||
+    normalizeCircuitBreakerFiles(files).length > 0
+  );
+}
+
+function getCircuitBreakerPhotoNames(paths = [], files = []) {
+  const names = normalizeCircuitBreakerPaths(paths).map((path) => {
+    const parts = String(path).split(/[\\/]/);
+    return parts[parts.length - 1] || path;
+  });
+  normalizeCircuitBreakerFiles(files).forEach((file) => {
+    names.push(file.name || "upload");
+  });
+  return names;
+}
+
+function getCircuitBreakerPhotoSummary(paths = [], files = []) {
+  const names = getCircuitBreakerPhotoNames(paths, files);
+  if (!names.length) {
+    return {
+      label: "No photos selected",
+      title: "",
+    };
+  }
+  if (names.length === 1) {
+    return {
+      label: names[0],
+      title: names[0],
+    };
+  }
+  return {
+    label: `${names.length} photos selected`,
+    title: names.join("\n"),
   };
 }
 
@@ -17807,8 +18809,8 @@ function getCircuitBreakerPanelDisplayName(panel) {
 function isCircuitBreakerPanelReady(panel) {
   if (!panel) return false;
   return Boolean(
-    (panel.breakerPath || panel.breakerFile) &&
-    (panel.directoryPath || panel.directoryFile)
+    hasCircuitBreakerPhotoSelection(panel.breakerPaths, panel.breakerFiles) &&
+    hasCircuitBreakerPhotoSelection(panel.directoryPaths, panel.directoryFiles)
   );
 }
 
@@ -17884,13 +18886,6 @@ function getCircuitBreakerOutputExtensionFromPath(path) {
     return ext;
   }
   return "";
-}
-
-function getCircuitBreakerFileLabel(path, file) {
-  if (file?.name) return file.name;
-  if (!path) return "No file selected";
-  const parts = String(path).split(/[\\/]/);
-  return parts[parts.length - 1] || path;
 }
 
 function setCircuitBreakerStatus(message, isError = false) {
@@ -17980,24 +18975,34 @@ function updateCircuitBreakerUi() {
   renderCircuitBreakerPanelTabs();
 
   if (breakerFile) {
-    const label = getCircuitBreakerFileLabel(
-      activePanel?.breakerPath,
-      activePanel?.breakerFile
+    const summary = getCircuitBreakerPhotoSummary(
+      activePanel?.breakerPaths,
+      activePanel?.breakerFiles
     );
-    breakerFile.textContent = label;
+    breakerFile.textContent = summary.label;
+    breakerFile.title = summary.title || summary.label;
     breakerFile.dataset.empty =
-      activePanel && (activePanel.breakerPath || activePanel.breakerFile)
+      activePanel &&
+      hasCircuitBreakerPhotoSelection(
+        activePanel.breakerPaths,
+        activePanel.breakerFiles
+      )
         ? "false"
         : "true";
   }
   if (directoryFile) {
-    const label = getCircuitBreakerFileLabel(
-      activePanel?.directoryPath,
-      activePanel?.directoryFile
+    const summary = getCircuitBreakerPhotoSummary(
+      activePanel?.directoryPaths,
+      activePanel?.directoryFiles
     );
-    directoryFile.textContent = label;
+    directoryFile.textContent = summary.label;
+    directoryFile.title = summary.title || summary.label;
     directoryFile.dataset.empty =
-      activePanel && (activePanel.directoryPath || activePanel.directoryFile)
+      activePanel &&
+      hasCircuitBreakerPhotoSelection(
+        activePanel.directoryPaths,
+        activePanel.directoryFiles
+      )
         ? "false"
         : "true";
   }
@@ -18067,14 +19072,22 @@ function updateCircuitBreakerUi() {
 
   if (breakerDrop) {
     breakerDrop.dataset.hasFile =
-      activePanel && (activePanel.breakerPath || activePanel.breakerFile)
+      activePanel &&
+      hasCircuitBreakerPhotoSelection(
+        activePanel.breakerPaths,
+        activePanel.breakerFiles
+      )
         ? "true"
         : "false";
     breakerDrop.classList.toggle("is-disabled", circuitBreakerState.running);
   }
   if (directoryDrop) {
     directoryDrop.dataset.hasFile =
-      activePanel && (activePanel.directoryPath || activePanel.directoryFile)
+      activePanel &&
+      hasCircuitBreakerPhotoSelection(
+        activePanel.directoryPaths,
+        activePanel.directoryFiles
+      )
         ? "true"
         : "false";
     directoryDrop.classList.toggle("is-disabled", circuitBreakerState.running);
@@ -18100,7 +19113,7 @@ function updateCircuitBreakerUi() {
     );
   } else {
     setCircuitBreakerStatus(
-      `${counts.ready}/${counts.total} panel${counts.total === 1 ? "" : "s"} ready. Each panel needs breaker and directory photos.`
+      `${counts.ready}/${counts.total} panel${counts.total === 1 ? "" : "s"} ready. Each panel needs at least one breaker photo and at least one directory photo.`
     );
   }
 }
@@ -18118,15 +19131,30 @@ function resetCircuitBreakerForm() {
   updateCircuitBreakerUi();
 }
 
-function setCircuitBreakerFile(kind, file) {
+function setCircuitBreakerFiles(kind, files) {
   const panel = getActiveCircuitBreakerPanel();
   if (!panel) return;
+  const nextFiles = normalizeCircuitBreakerFiles(files);
   if (kind === "breaker") {
-    panel.breakerFile = file || null;
-    if (file) panel.breakerPath = "";
+    panel.breakerFiles = nextFiles;
+    panel.breakerPaths = [];
   } else {
-    panel.directoryFile = file || null;
-    if (file) panel.directoryPath = "";
+    panel.directoryFiles = nextFiles;
+    panel.directoryPaths = [];
+  }
+  updateCircuitBreakerUi();
+}
+
+function setCircuitBreakerPaths(kind, paths) {
+  const panel = getActiveCircuitBreakerPanel();
+  if (!panel) return;
+  const nextPaths = normalizeCircuitBreakerPaths(paths);
+  if (kind === "breaker") {
+    panel.breakerPaths = nextPaths;
+    panel.breakerFiles = [];
+  } else {
+    panel.directoryPaths = nextPaths;
+    panel.directoryFiles = [];
   }
   updateCircuitBreakerUi();
 }
@@ -18140,21 +19168,14 @@ async function selectCircuitBreakerImage(kind) {
   }
   try {
     const result = await window.pywebview.api.select_files({
-      allow_multiple: false,
+      allow_multiple: true,
       file_types: ["Image Files (*.jpg;*.jpeg;*.png;*.bmp;*.gif;*.tif;*.tiff)"],
     });
     if (result.status === "success" && result.paths?.length) {
-      if (kind === "breaker") {
-        panel.breakerPath = result.paths[0];
-        panel.breakerFile = null;
-      } else {
-        panel.directoryPath = result.paths[0];
-        panel.directoryFile = null;
-      }
-      updateCircuitBreakerUi();
+      setCircuitBreakerPaths(kind, result.paths);
     }
   } catch (e) {
-    toast("Error selecting photo.");
+    toast("Error selecting photos.");
   }
 }
 
@@ -18223,9 +19244,10 @@ function openCircuitBreakerFilePicker(kind) {
   const input = document.createElement("input");
   input.type = "file";
   input.accept = "image/*";
+  input.multiple = true;
   input.onchange = () => {
-    const file = input.files && input.files[0];
-    if (file) setCircuitBreakerFile(kind, file);
+    const files = Array.from(input.files || []);
+    if (files.length) setCircuitBreakerFiles(kind, files);
   };
   input.click();
 }
@@ -18234,8 +19256,8 @@ function handleCircuitBreakerDrop(kind, e, zone) {
   e.preventDefault();
   if (zone) zone.classList.remove("is-dragover");
   if (circuitBreakerState.running) return;
-  const file = e.dataTransfer?.files?.[0];
-  if (file) setCircuitBreakerFile(kind, file);
+  const files = Array.from(e.dataTransfer?.files || []);
+  if (files.length) setCircuitBreakerFiles(kind, files);
 }
 
 function handleCircuitBreakerDragOver(e, zone) {
@@ -18262,6 +19284,13 @@ async function fileToUploadPayload(file) {
   if (!file) return null;
   const dataUrl = await readFileAsDataUrl(file);
   return { name: file.name || "upload", dataUrl };
+}
+
+async function filesToUploadPayloads(files) {
+  const payloads = await Promise.all(
+    normalizeCircuitBreakerFiles(files).map((file) => fileToUploadPayload(file))
+  );
+  return payloads.filter(Boolean);
 }
 
 async function runCircuitBreakerInBackground() {
@@ -18298,17 +19327,15 @@ async function runCircuitBreakerInBackground() {
 
   const panels = [];
   for (const panel of circuitBreakerState.panels) {
+    const breakerUploads = await filesToUploadPayloads(panel.breakerFiles);
+    const directoryUploads = await filesToUploadPayloads(panel.directoryFiles);
     panels.push({
       panelId: panel.id,
       panelName: panel.panelName?.trim() || panel.label || "PANEL",
-      breakerPath: panel.breakerPath || "",
-      directoryPath: panel.directoryPath || "",
-      breakerUploads: panel.breakerFile
-        ? [await fileToUploadPayload(panel.breakerFile)]
-        : [],
-      directoryUploads: panel.directoryFile
-        ? [await fileToUploadPayload(panel.directoryFile)]
-        : [],
+      breakerPaths: [...normalizeCircuitBreakerPaths(panel.breakerPaths)],
+      directoryPaths: [...normalizeCircuitBreakerPaths(panel.directoryPaths)],
+      breakerUploads,
+      directoryUploads,
     });
   }
 
@@ -18319,12 +19346,12 @@ async function runCircuitBreakerInBackground() {
     outputExtension:
       circuitBreakerState.outputMode === "new"
         ? normalizeCircuitBreakerOutputExtension(
-          circuitBreakerState.newOutputExtension
-        )
+            circuitBreakerState.newOutputExtension
+          )
         : "",
     panels,
-    breakerPath: firstPanel.breakerPath || "",
-    directoryPath: firstPanel.directoryPath || "",
+    breakerPaths: firstPanel.breakerPaths || [],
+    directoryPaths: firstPanel.directoryPaths || [],
     breakerUploads: firstPanel.breakerUploads || [],
     directoryUploads: firstPanel.directoryUploads || [],
     panelName: firstPanel.panelName || "",
@@ -21038,23 +22065,6 @@ function initEventListeners() {
     if (!document.hidden) handleAppFocus();
   });
 
-  const toggleNonPrimaryBtn = document.getElementById("toggleNonPrimaryBtn");
-  const updateToggleNonPrimaryState = () => {
-    if (!toggleNonPrimaryBtn) return;
-    toggleNonPrimaryBtn.classList.toggle("is-active", hideNonPrimary);
-    toggleNonPrimaryBtn.setAttribute("aria-pressed", String(hideNonPrimary));
-    toggleNonPrimaryBtn.title = hideNonPrimary
-      ? "Show all deliverables"
-      : "Hide non-primary deliverables";
-  };
-  if (toggleNonPrimaryBtn) {
-    updateToggleNonPrimaryState();
-    toggleNonPrimaryBtn.onclick = () => {
-      hideNonPrimary = !hideNonPrimary;
-      updateToggleNonPrimaryState();
-      render();
-    };
-  }
   document.getElementById("toolsHelpBtn").onclick = () =>
     openExternalUrl(HELP_LINKS.tools);
   document.getElementById("pluginsHelpBtn").onclick = () =>
@@ -21286,17 +22296,27 @@ function initEventListeners() {
   const editDlg = document.getElementById("editDlg");
   if (editDlg) {
     editDlg.addEventListener("close", () => {
+      if (openDeliverableLinksContext?.trigger?.closest("#editDlg")) {
+        void requestDeliverableLinksPanelClose();
+      }
       if (modalEmailSession.active) flushModalEmailSession(false);
     });
   }
 
   const pathInput = document.getElementById("f_path");
   if (pathInput) {
-    pathInput.addEventListener("input", () =>
-      applyProjectFromPath(pathInput.value)
-    );
+    pathInput.addEventListener("input", () => {
+      pathInput.title = pathInput.value;
+      applyProjectFromPath(pathInput.value);
+    });
     pathInput.addEventListener("paste", () => {
-      setTimeout(() => applyProjectFromPath(pathInput.value, { force: true }), 0);
+      setTimeout(
+        () => normalizeProjectPathInput(pathInput, { forceProjectFields: true }),
+        0
+      );
+    });
+    pathInput.addEventListener("blur", () => {
+      normalizeProjectPathInput(pathInput);
     });
   }
 
@@ -21507,6 +22527,18 @@ function initEventListeners() {
   );
 
   const backupDrawingsBtn = document.getElementById("toolBackupDrawings");
+  if (backupDrawingsBtn) {
+    const generalToolsGrid = Array.from(document.querySelectorAll(".tools-section"))
+      .find(
+        (section) =>
+          section.querySelector(".tools-section-title")?.textContent?.trim() === "General"
+      )
+      ?.querySelector(".tools-grid");
+    if (generalToolsGrid && backupDrawingsBtn.parentElement !== generalToolsGrid) {
+      generalToolsGrid.appendChild(backupDrawingsBtn);
+    }
+  }
+
   if (backupDrawingsBtn) {
     const handler = async () => {
       if (backupDrawingsBtn.classList.contains("running")) return;

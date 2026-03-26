@@ -172,7 +172,14 @@ OUTLOOK_SCAN_AI_LIMIT = 40
 OUTLOOK_SCAN_PROMPT_MAX_CHARS = 120000
 OUTLOOK_SCAN_PROMPT_EMAIL_BUDGET_CHARS = 90000
 OUTLOOK_SCAN_PROMPT_DELIVERABLE_BUDGET_CHARS = 25000
-OUTLOOK_SCAN_EMAIL_BODY_PROMPT_CHARS = 3000
+OUTLOOK_SCAN_EMAIL_BODY_PROMPT_CHARS = 1200
+OUTLOOK_SCAN_RETRY_AI_LIMIT = 20
+OUTLOOK_SCAN_RETRY_PROMPT_EMAIL_BUDGET_CHARS = 45000
+OUTLOOK_SCAN_RETRY_EMAIL_BODY_PROMPT_CHARS = 600
+OUTLOOK_SCAN_PROMPT_SKIP_REASON = "Excluded from the AI batch prompt to keep the scan bounded."
+OUTLOOK_SCAN_RETRY_SKIP_REASON = (
+    "Excluded from the reduced AI retry batch after the first request timed out."
+)
 FIREBASE_API_KEY_ENV = "FIREBASE_API_KEY"
 FIREBASE_AUTH_DOMAIN_ENV = "FIREBASE_AUTH_DOMAIN"
 FIREBASE_PROJECT_ID_ENV = "FIREBASE_PROJECT_ID"
@@ -815,7 +822,9 @@ LIGHTING_SCHEDULE_DEFAULT_NOTES = "\n".join([
     "1.  CONFIRM THE DRIVER TYPE WITH VENDOR. LIGHT DRIVER SHALL BE COMPATIBLE WITH THE DIMMER. REFER TO THE SENSOR SCHEDULE FOR DETAILS.",
     "2.  COORDINATE THE FINAL MANUFACTURER AND MODEL WITH ARCHITECT.",
 ])
-LIGHTING_PROJECT_SEGMENT_REGEX = re.compile(r"^(\d{5,})\s*(?:[-_]\s*)?(.+)$")
+LIGHTING_PROJECT_SEGMENT_REGEX = re.compile(
+    r"^(\d{6})(?!\d)(?:\s*(?:[-_]\s*)?(.*))?$"
+)
 
 
 def _normalize_sync_dwg_path(dwg_path):
@@ -3442,6 +3451,240 @@ class Api:
             text = stripped
         return self._normalize_outlook_scan_dedupe_text(text)
 
+    def _looks_like_outlook_banner_block(self, value):
+        block = self._normalize_outlook_scan_dedupe_text(value)
+        if not block:
+            return False
+        lower = block.lower()
+        if (
+            "external email" in lower
+            or "this email originated from outside" in lower
+            or "use caution with links" in lower
+        ):
+            return len(block.split("\n")) <= 4
+        return False
+
+    def _looks_like_outlook_device_footer_line(self, value):
+        line = str(value or "").strip().lower()
+        if not line:
+            return False
+        return bool(
+            re.match(r"^sent from my (iphone|ipad|android|mobile device).*$", line)
+            or re.match(r"^get outlook for (ios|android)$", line)
+            or line == "sent from outlook for ios"
+        )
+
+    def _looks_like_outlook_signature_intro_line(self, value):
+        line = str(value or "").strip()
+        lower = line.lower()
+        if not lower:
+            return False
+        if line in {"--", "__", "___"}:
+            return True
+        if self._looks_like_outlook_device_footer_line(lower):
+            return True
+        return bool(
+            re.match(
+                r"^(thanks|thanks again|many thanks|thank you|best|best regards|kind regards|warm regards|regards|sincerely|respectfully|cheers|all the best)[,!.]?$",
+                lower,
+            )
+        )
+
+    def _looks_like_outlook_disclaimer_block(self, value):
+        block = self._normalize_outlook_scan_dedupe_text(value)
+        if not block:
+            return False
+        if self._looks_like_outlook_banner_block(block):
+            return True
+        lines = [str(line or "").strip() for line in block.split("\n") if str(line or "").strip()]
+        if lines and all(self._looks_like_outlook_device_footer_line(line) for line in lines):
+            return True
+        lower = block.lower()
+        phrases = (
+            "this email and any attachments",
+            "this message and any attachments",
+            "intended only for the named recipient",
+            "intended only for the addressee",
+            "intended only for the person",
+            "if you are not the intended recipient",
+            "please delete this email",
+            "please notify the sender",
+            "confidential",
+            "privileged",
+            "disclosure",
+            "do not disseminate",
+            "do not copy",
+            "do not distribute",
+            "views or opinions expressed",
+            "environment before printing",
+        )
+        matches = sum(1 for phrase in phrases if phrase in lower)
+        return matches >= 2 or (
+            matches >= 1
+            and len(block) >= 80
+            and ("recipient" in lower or "confidential" in lower or "privileged" in lower)
+        )
+
+    def _looks_like_outlook_signature_block(self, value):
+        block = self._normalize_outlook_scan_dedupe_text(value)
+        if not block:
+            return False
+        lines = [str(line or "").strip() for line in block.split("\n") if str(line or "").strip()]
+        if not lines or len(lines) > 8:
+            return False
+        if self._looks_like_outlook_signature_intro_line(lines[0]):
+            return True
+        lower = block.lower()
+        short_lines = sum(1 for line in lines if len(line) <= 60)
+        has_contact = bool(
+            re.search(r"@|https?://|www\.|\b(?:cell|mobile|office|direct|phone|tel|fax)\b", lower)
+        )
+        title_hits = sum(
+            1
+            for keyword_pattern in (
+                r"\bproject manager\b",
+                r"\bmanager\b",
+                r"\bengineer\b",
+                r"\bdesigner\b",
+                r"\bprincipal\b",
+                r"\bassociate\b",
+                r"\bcoordinator\b",
+                r"\bdirector\b",
+                r"\bconsultant\b",
+                r"\bengineering\b",
+                r"\bsolutions\b",
+                r"\binc\.?\b",
+                r"\bllc\b",
+            )
+            if re.search(keyword_pattern, lower)
+        )
+        if has_contact and short_lines >= max(2, len(lines) - 1):
+            return True
+        return title_hits >= 2 and short_lines >= max(2, len(lines) - 1)
+
+    def _strip_outlook_noise_blocks(self, value):
+        blocks = [
+            self._normalize_outlook_scan_dedupe_text(raw_block)
+            for raw_block in re.split(r"\n\s*\n+", str(value or ""))
+        ]
+        blocks = [block for block in blocks if block]
+        while blocks and self._looks_like_outlook_banner_block(blocks[0]):
+            blocks.pop(0)
+        while len(blocks) > 1 and (
+            self._looks_like_outlook_disclaimer_block(blocks[-1])
+            or self._looks_like_outlook_signature_block(blocks[-1])
+        ):
+            blocks.pop()
+        return "\n\n".join(blocks).strip()
+
+    def _strip_outlook_signature_lines(self, value):
+        normalized = self._normalize_outlook_scan_dedupe_text(value)
+        if not normalized:
+            return ""
+        lines = normalized.split("\n")
+        non_empty_indexes = [idx for idx, line in enumerate(lines) if str(line or "").strip()]
+        if len(non_empty_indexes) < 2:
+            return normalized
+        search_start = max(0, non_empty_indexes[max(len(non_empty_indexes) - 8, 0)])
+        for idx in range(search_start, len(lines)):
+            if not self._looks_like_outlook_signature_intro_line(lines[idx]):
+                continue
+            candidate = self._normalize_outlook_scan_dedupe_text("\n".join(lines[:idx]))
+            if candidate:
+                return candidate
+        return normalized
+
+    def _build_outlook_scan_analysis_body(self, value):
+        unique_body = self._extract_outlook_scan_unique_body(value)
+        if not unique_body:
+            return ""
+        cleaned = self._strip_outlook_noise_blocks(unique_body)
+        cleaned = self._strip_outlook_signature_lines(cleaned)
+        cleaned = self._strip_outlook_noise_blocks(cleaned)
+        cleaned = self._normalize_outlook_scan_dedupe_text(cleaned)
+        return cleaned or unique_body
+
+    def _build_outlook_scan_prompt_payload(
+        self,
+        entry,
+        body_limit=OUTLOOK_SCAN_EMAIL_BODY_PROMPT_CHARS,
+    ):
+        entry = entry if isinstance(entry, dict) else {}
+        message = entry.get("message") if isinstance(entry.get("message"), dict) else {}
+        existing_payload = (
+            entry.get("promptPayload") if isinstance(entry.get("promptPayload"), dict) else {}
+        )
+        prompt_ref = str(entry.get("promptRef") or existing_payload.get("messageRef") or "").strip()
+        body_source = str(
+            entry.get("analysisBody") or existing_payload.get("body") or ""
+        ).strip()
+        message_from = message.get("from") if isinstance(message.get("from"), dict) else {}
+        payload_from = (
+            existing_payload.get("from") if isinstance(existing_payload.get("from"), dict) else {}
+        )
+        return {
+            "messageRef": prompt_ref,
+            "subject": str(message.get("subject") or existing_payload.get("subject") or "").strip(),
+            "from": {
+                "name": str(message_from.get("name") or payload_from.get("name") or "").strip(),
+            },
+            "receivedDateTime": str(
+                message.get("receivedDateTime") or existing_payload.get("receivedDateTime") or ""
+            ).strip(),
+            "body": self._trim_outlook_scan_prompt_text(body_source, body_limit),
+        }
+
+    def _build_outlook_scan_prompt_config(self, reduced=False):
+        if reduced:
+            return {
+                "bodyLimit": OUTLOOK_SCAN_RETRY_EMAIL_BODY_PROMPT_CHARS,
+                "emailBudgetChars": OUTLOOK_SCAN_RETRY_PROMPT_EMAIL_BUDGET_CHARS,
+                "maxEmails": OUTLOOK_SCAN_RETRY_AI_LIMIT,
+                "skipReason": OUTLOOK_SCAN_RETRY_SKIP_REASON,
+            }
+        return {
+            "bodyLimit": OUTLOOK_SCAN_EMAIL_BODY_PROMPT_CHARS,
+            "emailBudgetChars": OUTLOOK_SCAN_PROMPT_EMAIL_BUDGET_CHARS,
+            "maxEmails": OUTLOOK_SCAN_AI_LIMIT,
+            "skipReason": OUTLOOK_SCAN_PROMPT_SKIP_REASON,
+        }
+
+    def _is_outlook_scan_timeout_error(self, error):
+        message = str(error or "").strip().lower()
+        return (
+            "deadline_exceeded" in message
+            or "deadline exceeded" in message
+            or "deadline expired" in message
+            or "timed out" in message
+            or "timeout" in message
+            or ("504" in message and "deadline" in message)
+        )
+
+    def _dedupe_outlook_scan_skipped_messages(self, skipped_messages):
+        if not isinstance(skipped_messages, list):
+            return []
+        deduped = []
+        seen = set()
+        for skipped in skipped_messages:
+            if not isinstance(skipped, dict):
+                continue
+            message = skipped.get("message") if isinstance(skipped.get("message"), dict) else {}
+            reason = str(skipped.get("reason") or "").strip()
+            if reason == OUTLOOK_SCAN_RETRY_SKIP_REASON:
+                reason = OUTLOOK_SCAN_PROMPT_SKIP_REASON
+            message_id = str(message.get("id") or "").strip().lower()
+            subject = str(message.get("subject") or "").strip().lower()
+            message_key = message_id or subject or json.dumps(message, ensure_ascii=True, sort_keys=True)
+            key = (message_key, reason)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append({
+                "message": message,
+                "reason": reason,
+            })
+        return deduped
+
     def _split_outlook_scan_dedupe_blocks(self, value):
         text = self._normalize_outlook_scan_dedupe_text(value)
         if not text:
@@ -3509,7 +3752,7 @@ class Api:
                     if isinstance(entry.get("promptPayload"), dict)
                     else {}
                 )
-                raw_body = str(prompt_payload.get("body") or "").strip()
+                raw_body = str(entry.get("analysisBody") or prompt_payload.get("body") or "").strip()
                 normalized_original = self._normalize_outlook_scan_dedupe_text(raw_body)
                 unique_body = self._extract_outlook_scan_unique_body(raw_body)
                 deduped_blocks = []
@@ -3531,10 +3774,7 @@ class Api:
                     deduped_email_count += 1
                 deduped_entries[str(entry.get("promptRef") or "")] = {
                     **entry,
-                    "promptPayload": {
-                        **prompt_payload,
-                        "body": deduped_body,
-                    },
+                    "analysisBody": deduped_body,
                 }
 
         seen_threadless_bodies = set()
@@ -3544,7 +3784,7 @@ class Api:
                 if isinstance(entry.get("promptPayload"), dict)
                 else {}
             )
-            raw_body = str(prompt_payload.get("body") or "").strip()
+            raw_body = str(entry.get("analysisBody") or prompt_payload.get("body") or "").strip()
             normalized_original = self._normalize_outlook_scan_dedupe_text(raw_body)
             deduped_body = self._extract_outlook_scan_unique_body(raw_body)
             normalized_deduped = self._normalize_outlook_scan_dedupe_text(deduped_body)
@@ -3568,10 +3808,7 @@ class Api:
                 deduped_email_count += 1
             deduped_entries[str(entry.get("promptRef") or "")] = {
                 **entry,
-                "promptPayload": {
-                    **prompt_payload,
-                    "body": deduped_body,
-                },
+                "analysisBody": deduped_body,
             }
 
         ordered_entries = []
@@ -3672,6 +3909,10 @@ class Api:
         project_context,
         timeframe="week",
         scan_date="",
+        body_limit=OUTLOOK_SCAN_EMAIL_BODY_PROMPT_CHARS,
+        email_budget_chars=OUTLOOK_SCAN_PROMPT_EMAIL_BUDGET_CHARS,
+        max_emails=OUTLOOK_SCAN_AI_LIMIT,
+        skip_reason=OUTLOOK_SCAN_PROMPT_SKIP_REASON,
     ):
         prioritized_emails = sorted(
             hydrated_entries,
@@ -3708,18 +3949,28 @@ class Api:
         email_chars = 0
         skipped_messages = []
         for entry in prioritized_emails:
-            serialized = json.dumps(
-                entry.get("promptPayload") or {},
-                ensure_ascii=True,
-                separators=(",", ":"),
-            )
-            if included_emails and email_chars + len(serialized) > OUTLOOK_SCAN_PROMPT_EMAIL_BUDGET_CHARS:
+            max_email_count = max(int(max_emails or 0), 0)
+            if max_email_count and len(included_emails) >= max_email_count:
                 skipped_messages.append({
                     "message": entry.get("message") or {},
-                    "reason": "Excluded from the AI batch prompt to keep the scan bounded.",
+                    "reason": skip_reason,
                 })
                 continue
-            included_emails.append(entry)
+            prompt_payload = self._build_outlook_scan_prompt_payload(
+                entry,
+                body_limit=body_limit,
+            )
+            serialized = json.dumps(prompt_payload, ensure_ascii=True, separators=(",", ":"))
+            if included_emails and email_chars + len(serialized) > email_budget_chars:
+                skipped_messages.append({
+                    "message": entry.get("message") or {},
+                    "reason": skip_reason,
+                })
+                continue
+            included_emails.append({
+                **entry,
+                "promptPayload": prompt_payload,
+            })
             email_chars += len(serialized)
 
         included_deliverables = []
@@ -3756,7 +4007,7 @@ class Api:
                 removed = included_emails.pop()
                 skipped_messages.append({
                     "message": removed.get("message") or {},
-                    "reason": "Excluded from the AI batch prompt to keep the scan bounded.",
+                    "reason": skip_reason,
                 })
                 prompt_truncated = True
                 continue
@@ -3784,7 +4035,7 @@ class Api:
                 continue
             trimmed_messages.append({
                 "message": entry.get("message") or {},
-                "reason": "Excluded from the AI batch prompt to keep the scan bounded.",
+                "reason": skip_reason,
             })
             if message_id:
                 seen_message_ids.add(message_id)
@@ -3803,6 +4054,9 @@ class Api:
     ):
         current_date = datetime.date.today().strftime("%m/%d/%Y")
         disciplines_str = ", ".join(discipline) if isinstance(discipline, list) else (discipline or "Engineering")
+        task_notes_contract = self._build_deliverable_task_notes_prompt_contract(
+            disciplines_str,
+        )
         period_label = self._format_outlook_scan_period_label(
             timeframe=timeframe,
             scan_date=scan_date,
@@ -3837,11 +4091,12 @@ Review the batched Outlook emails {period_instruction} and compare them against 
 Suggest only NEW deliverables that should be added, if any. Do not suggest a deliverable if the same or an equivalent deliverable already appears in CURRENT_DELIVERABLES_IN_PERIOD.
 
 Use only evidence from the included emails. Every suggestion must cite one or more supportingMessageRefs from INCLUDED_EMAILS.
-Each included email body may already have repeated quoted thread history removed. Treat the body as the unique content for that reply when provided.
+Each included email body is a reduced plain-text thread view. Quoted history, signatures, device footers, and disclaimer boilerplate may already be removed. Treat the body as the unique useful text for that reply when provided.
 Prefer concise, standardized deliverable names when possible (for example: DD60, DD90, CD60, CD90, CD100, CDF, RFI, RFI #2, Submittal, Lighting Submittal, Controls Submittal, Record Set, Record Drawings, IFP, Site Survey, Survey Report, ASR, ASR #2, PCC, PCC #3, Bulletin #2, Coordination, Meeting, Revision).
 Use the provided project identifiers when available. If a project must be inferred from the emails, return the best available id/name/path fields.
 Focus only on the primary {disciplines_str} engineering tasks mentioned. Ignore work for other disciplines.
 Use the current date {current_date} when interpreting due dates. If a due date is not clear, leave it empty.
+{task_notes_contract}
 {truncation_note}
 
 Return ONLY valid JSON with this exact shape:
@@ -4051,9 +4306,8 @@ CURRENT_DELIVERABLES_IN_PERIOD:
                 relevant_email_count += 1
             try:
                 hydrated_summary, body_text = body_loader(summary)
-                body_content = self._trim_outlook_scan_prompt_text(
-                    body_text or (hydrated_summary or {}).get("bodyPreview") or "",
-                    OUTLOOK_SCAN_EMAIL_BODY_PROMPT_CHARS,
+                body_content = self._build_outlook_scan_analysis_body(
+                    body_text or (hydrated_summary or {}).get("bodyPreview") or ""
                 )
                 if not body_content:
                     skipped_messages.append({
@@ -4069,19 +4323,7 @@ CURRENT_DELIVERABLES_IN_PERIOD:
                     "score": score,
                     "receivedSort": received_sort,
                     "message": hydrated_summary or summary,
-                    "promptPayload": {
-                        "messageRef": prompt_ref,
-                        "messageId": str(((hydrated_summary or {}).get("id")) or "").strip(),
-                        "internetMessageId": str(((hydrated_summary or {}).get("internetMessageId")) or "").strip(),
-                        "conversationId": str(((hydrated_summary or {}).get("conversationId")) or "").strip(),
-                        "subject": str(((hydrated_summary or {}).get("subject")) or "").strip(),
-                        "from": {
-                            "name": str((((hydrated_summary or {}).get("from") or {}).get("name")) or "").strip(),
-                            "address": str((((hydrated_summary or {}).get("from") or {}).get("address")) or "").strip(),
-                        },
-                        "receivedDateTime": str(((hydrated_summary or {}).get("receivedDateTime")) or "").strip(),
-                        "body": body_content,
-                    },
+                    "analysisBody": body_content,
                 })
             except Exception as exc:
                 skipped_messages.append({
@@ -4108,13 +4350,19 @@ CURRENT_DELIVERABLES_IN_PERIOD:
         )
         skipped_messages.extend(dedupe_skipped_messages)
 
+        prompt_config = self._build_outlook_scan_prompt_config()
         included_emails, included_deliverables, prompt_truncated, trimmed_messages = self._select_outlook_scan_prompt_context(
             hydrated_entries,
             project_context,
             timeframe=timeframe,
             scan_date=scan_date,
+            body_limit=prompt_config["bodyLimit"],
+            email_budget_chars=prompt_config["emailBudgetChars"],
+            max_emails=prompt_config["maxEmails"],
+            skip_reason=prompt_config["skipReason"],
         )
         skipped_messages.extend(trimmed_messages)
+        skipped_messages = self._dedupe_outlook_scan_skipped_messages(skipped_messages)
 
         self._send_outlook_scan_progress(
             "preparing_ai",
@@ -4160,7 +4408,61 @@ CURRENT_DELIVERABLES_IN_PERIOD:
                 scan_date=scan_date,
                 prompt_truncated=prompt_truncated,
             )
-            batch_suggestions = self._request_outlook_scan_batch_suggestions(prompt, api_key)
+            try:
+                batch_suggestions = self._request_outlook_scan_batch_suggestions(prompt, api_key)
+            except RuntimeError as exc:
+                if not self._is_outlook_scan_timeout_error(exc):
+                    raise
+                retry_prompt_config = self._build_outlook_scan_prompt_config(reduced=True)
+                included_emails, included_deliverables, retry_prompt_truncated, retry_trimmed_messages = self._select_outlook_scan_prompt_context(
+                    hydrated_entries,
+                    project_context,
+                    timeframe=timeframe,
+                    scan_date=scan_date,
+                    body_limit=retry_prompt_config["bodyLimit"],
+                    email_budget_chars=retry_prompt_config["emailBudgetChars"],
+                    max_emails=retry_prompt_config["maxEmails"],
+                    skip_reason=retry_prompt_config["skipReason"],
+                )
+                skipped_messages.extend(retry_trimmed_messages)
+                skipped_messages = self._dedupe_outlook_scan_skipped_messages(skipped_messages)
+                prompt_truncated = prompt_truncated or retry_prompt_truncated
+                self._send_outlook_scan_progress(
+                    "reviewing_ai",
+                    "AI request timed out. Retrying with a reduced text-only batch...",
+                    source=source,
+                    timeframe=timeframe,
+                    scanDate=scan_date,
+                    totalEmails=total_emails,
+                    processedEmails=total_emails,
+                    includedEmails=len(included_emails),
+                    skippedEmails=len(skipped_messages),
+                    deliverablesInPeriod=deliverables_in_period,
+                    relevantEmails=relevant_email_count,
+                    threadsDetected=dedupe_stats["threadsDetected"],
+                    dedupedEmailCount=dedupe_stats["dedupedEmailCount"],
+                    dedupeSkippedEmailCount=dedupe_stats["dedupeSkippedEmailCount"],
+                )
+                retry_prompt = self._build_outlook_scan_batch_prompt(
+                    included_emails,
+                    included_deliverables,
+                    user_name,
+                    discipline,
+                    timeframe,
+                    scan_date=scan_date,
+                    prompt_truncated=prompt_truncated,
+                )
+                try:
+                    batch_suggestions = self._request_outlook_scan_batch_suggestions(
+                        retry_prompt,
+                        api_key,
+                    )
+                except RuntimeError as retry_exc:
+                    if self._is_outlook_scan_timeout_error(retry_exc):
+                        raise RuntimeError(
+                            "AI timed out while reviewing Outlook emails, even after retrying with a reduced text-only batch. Try scanning a quieter day or narrowing the email set."
+                        ) from retry_exc
+                    raise
 
         self._send_outlook_scan_progress(
             "matching",
@@ -4527,7 +4829,7 @@ CURRENT_DELIVERABLES_IN_PERIOD:
             logging.error(f"Error getting chat response from AI: {e}")
             return {'status': 'error', 'response': f"An AI error occurred: {msg}"}
 
-    def process_email_with_ai(self, email_text, api_key, user_name, discipline):
+    def _process_email_with_ai_legacy(self, email_text, api_key, user_name, discipline):
         """
         Processes email text using Google GenAI to extract project details.
         """
@@ -4544,6 +4846,10 @@ CURRENT_DELIVERABLES_IN_PERIOD:
         current_date = datetime.date.today().strftime("%m/%d/%Y")
         disciplines_str = ', '.join(discipline) if isinstance(
             discipline, list) else (discipline or 'Engineering')
+        task_notes_contract = self._build_deliverable_task_notes_prompt_contract(
+            disciplines_str,
+            include_json_field_names=False,
+        )
         prompt = f"""
 You are an intelligent assistant for {user_name}, a(n) {disciplines_str} engineering project manager. Your task is to analyze an email and extract specific project details. Focus ONLY on the primary {disciplines_str} engineering tasks mentioned. Ignore tasks for other disciplines.
 Analyze the following email text and extract the information into a valid JSON object with the following keys: "id", "name", "due", "path", "deliverable", "tasks", "notes".
@@ -4552,8 +4858,7 @@ Analyze the following email text and extract the information into a valid JSON o
 - "due": Find the due date and format it as "MM/DD/YY". The current date is {current_date}. If the year is not specified in the email, assume the current year or the next year if the date would be in the past. Ensure the due date is on or after today. If multiple dates, choose the most relevant upcoming one.
 - "path": Find the main project file path (e.g., "M:\\\\Gensler\\\\...").
 - "deliverable": Infer the deliverable name from the email if possible. Prefer concise, standardized names when present (for example: DD60, DD90, CD60, CD90, CD100, CDF, RFI, RFI #2, Submittal, Lighting Submittal, Controls Submittal, Record Set, Record Drawings, IFP, Site Survey, Survey Report, ASR, ASR #2, PCC, PCC #3, Bulletin #2, Coordination, Meeting, Revision). If no deliverable is clear, leave it empty.
-- "tasks": Create a JSON array of strings listing only the key {disciplines_str} engineering action items. Be concise. Examples: ["Update CAD per architect's comments", "Fill out permit forms", "Prepare binded CADs for IFP submission"].
-- "notes": Provide a brief, one-sentence summary of the email's main request.
+{task_notes_contract}
 If a piece of information is not found, the value should be an empty string "" for strings, or an empty array [] for tasks.
 Here is the email:
 ---
@@ -4664,6 +4969,10 @@ Return ONLY the JSON object.
         current_date = datetime.date.today().strftime("%m/%d/%Y")
         disciplines_str = ', '.join(discipline) if isinstance(
             discipline, list) else (discipline or 'Engineering')
+        task_notes_contract = self._build_deliverable_task_notes_prompt_contract(
+            disciplines_str,
+            include_json_field_names=False,
+        )
         return f"""
 You are an intelligent assistant for {user_name}, a(n) {disciplines_str} engineering project manager. Your task is to analyze an email and extract specific project details. Focus ONLY on the primary {disciplines_str} engineering tasks mentioned. Ignore tasks for other disciplines.
 Analyze the following email text and extract the information into a valid JSON object with the following keys: "id", "name", "due", "path", "deliverable", "tasks", "notes".
@@ -4672,8 +4981,7 @@ Analyze the following email text and extract the information into a valid JSON o
 - "due": Find the due date and format it as "MM/DD/YY". The current date is {current_date}. If the year is not specified in the email, assume the current year or the next year if the date would be in the past. Ensure the due date is on or after today. If multiple dates, choose the most relevant upcoming one.
 - "path": Find the main project file path (e.g., "M:\\\\Gensler\\\\...").
 - "deliverable": Infer the deliverable name from the email if possible. Prefer concise, standardized names when present (for example: DD60, DD90, CD60, CD90, CD100, CDF, RFI, RFI #2, Submittal, Lighting Submittal, Controls Submittal, Record Set, Record Drawings, IFP, Site Survey, Survey Report, ASR, ASR #2, PCC, PCC #3, Bulletin #2, Coordination, Meeting, Revision). If no deliverable is clear, leave it empty.
-- "tasks": Create a JSON array of strings listing only the key {disciplines_str} engineering action items. Be concise. Examples: ["Update CAD per architect's comments", "Fill out permit forms", "Prepare binded CADs for IFP submission"].
-- "notes": Provide a brief, one-sentence summary of the email's main request.
+{task_notes_contract}
 If a piece of information is not found, the value should be an empty string "" for strings, or an empty array [] for tasks.
 Here is the email:
 ---
@@ -4714,6 +5022,18 @@ Return ONLY the JSON object.
                 })
         project_data["tasks"] = normalized_tasks
         return project_data
+
+    def _build_deliverable_task_notes_prompt_contract(
+        self,
+        disciplines_str,
+        include_json_field_names=True,
+    ):
+        tasks_label = '"tasks"' if include_json_field_names else 'tasks'
+        notes_label = '"notes"' if include_json_field_names else 'notes'
+        return "\n".join([
+            f'- {tasks_label}: Create a JSON array of strings listing every actionable {disciplines_str} engineering step needed to complete the deliverable. Include revisions, submissions, coordination, and follow-up work. Be concise. Example: ["Revise lighting plans per architect comments", "Update panel schedules", "Issue updated PDF set for resubmittal"].',
+            f'- {notes_label}: Provide only non-actionable context the user should note, such as constraints, approvals, dependencies, reminders, delivery method, or special instructions. Do NOT put action items, next steps, or completion work in {notes_label}. Example: "Awaiting architect approval before final issue." If there is no notable non-actionable context, return "".',
+        ])
 
     def _extract_project_data_from_email_text(self, email_text, api_key, user_name, discipline):
         final_api_key = self._resolve_google_ai_api_key(api_key)
@@ -6878,6 +7198,61 @@ Return ONLY the JSON object.
             logging.error(f"Error opening path: {e}")
             return {'status': 'error', 'message': str(e)}
 
+    def reveal_path(self, path):
+        """Reveals a file or folder in the system file explorer."""
+        try:
+            raw_path = str(path or '').strip()
+            if not raw_path:
+                return {'status': 'error', 'message': 'Path is required.'}
+
+            normalized_path = os.path.normpath(raw_path)
+            target_exists = os.path.exists(normalized_path)
+            parent_path = os.path.dirname(normalized_path)
+            parent_exists = bool(parent_path) and os.path.exists(parent_path)
+
+            if sys.platform == "win32":
+                if target_exists and os.path.isfile(normalized_path):
+                    subprocess.run(
+                        ["explorer.exe", "/select,", normalized_path],
+                        check=False,
+                    )
+                    return {
+                        'status': 'success',
+                        'mode': 'select-file',
+                        'path': normalized_path,
+                    }
+                if target_exists and os.path.isdir(normalized_path):
+                    os.startfile(normalized_path)
+                    return {
+                        'status': 'success',
+                        'mode': 'open-directory',
+                        'path': normalized_path,
+                    }
+                if parent_exists:
+                    os.startfile(parent_path)
+                    return {
+                        'status': 'success',
+                        'mode': 'open-parent',
+                        'path': parent_path,
+                    }
+                return {
+                    'status': 'error',
+                    'message': 'Path and parent do not exist.',
+                }
+
+            fallback_path = normalized_path if target_exists else parent_path
+            if not fallback_path or not os.path.exists(fallback_path):
+                return {'status': 'error', 'message': 'Path and parent do not exist.'}
+
+            subprocess.run(
+                ['open', fallback_path] if sys.platform == "darwin" else ['xdg-open', fallback_path],
+                check=False,
+            )
+            return {'status': 'success', 'mode': 'open-path', 'path': fallback_path}
+        except Exception as e:
+            logging.error(f"Error revealing path: {e}")
+            return {'status': 'error', 'message': str(e)}
+
     def open_directory_strict(self, path):
         """Opens an existing directory without falling back to parent paths."""
         try:
@@ -7599,10 +7974,23 @@ Return ONLY the JSON object.
             logging.error(f"Failed to notify Panel Schedule AI result: {e}")
 
     def _normalize_panel_schedule_paths(self, value):
-        if isinstance(value, (list, tuple)):
-            return [str(v) for v in value if v]
-        if value:
-            return [str(value)]
+        values = value if isinstance(value, (list, tuple)) else [value]
+        normalized = []
+        for raw in values:
+            path = str(raw or '').strip()
+            if path:
+                normalized.append(path)
+        return normalized
+
+    def _get_panel_schedule_path_value(self, data, plural_keys, singular_keys):
+        if not isinstance(data, dict):
+            return None
+        for key in plural_keys:
+            if key in data:
+                return data.get(key)
+        for key in singular_keys:
+            if key in data:
+                return data.get(key)
         return []
 
     def _decode_data_url(self, data_url):
@@ -7783,6 +8171,44 @@ Return ONLY the JSON object.
             except Exception:
                 pass
 
+    def _build_panel_schedule_prompt(self, panel_name, num_breaker_imgs, num_dir_imgs):
+        return f"""
+Analyze these electrical panel photos for Panel: {panel_name}.
+
+You are provided with {num_breaker_imgs} images of the CIRCUIT BREAKERS (first {num_breaker_imgs} images)
+and {num_dir_imgs} images of the CIRCUIT DIRECTORY (last {num_dir_imgs} images).
+
+IMAGE INTERPRETATION RULES
+- All breaker images belong to the SAME panel.
+- All directory images belong to the SAME panel.
+- Breaker coverage may be split across multiple photos of the same panel, such as upper half, middle, and bottom half images.
+- Directory coverage may be split across multiple photos, such as circuits 1-42 on one image and 43-84 on another.
+- Merge partial and overlapping views into one complete understanding of the panel.
+- Do not treat split photos as separate panels.
+- Reconcile overlapping information by using visible circuit numbers, breaker positions, and the clearest label text.
+- Breaker images come first. Directory images come last.
+- Do not assume each image shows the entire panel or a complete directory by itself.
+
+TASK 1: HEADER
+- Extract Voltage, Bus Rating, Wire, Phase, Mounting, Enclosure.
+- Look at the directory images or labels on the panel across all images.
+
+TASK 2: CIRCUITS & POLES
+- Identify every breaker visible across the Breaker Images.
+- Use visible breaker positions and circuit numbering to merge split sections from multiple photos.
+- CRITICAL: Determine the 'poles' (1, 2, or 3).
+    - A 1-pole breaker takes up 1 circuit space.
+    - A 2-pole breaker has a tied handle and takes up 2 vertical circuit spaces (e.g. 1 & 3).
+    - A 3-pole breaker has a tied handle and takes up 3 vertical circuit spaces (e.g. 1, 3, & 5).
+- Provide the circuit_number as the TOP-most circuit number the breaker occupies.
+- Extract Amperage and Load Description from the labels (Breaker Images) or circuit directory (Directory Images).
+- Resolve ditto marks (") if seen in the directory.
+- If the same circuit appears in overlapping photos, combine the evidence and keep one final record.
+
+TASK 3: LOAD TYPES
+- LIGHTING -> 'C', RECEPTACLES -> 'G', MOTORS/HVAC -> 'M', KITCHEN -> 'K', DEDICATED -> 'D'
+""".strip()
+
     def _analyze_panel_schedule_images(self, panel_name, breaker_paths, directory_paths):
         api_key = self._resolve_panel_schedule_api_key()
         if not api_key:
@@ -7795,30 +8221,9 @@ Return ONLY the JSON object.
 
         num_breaker_imgs = len(breaker_paths)
         num_dir_imgs = len(directory_paths)
-
-        prompt = f"""
-Analyze these electrical panel photos for Panel: {panel_name}.
-
-You are provided with {num_breaker_imgs} images of the CIRCUIT BREAKERS (first {num_breaker_imgs} images)
-and {num_dir_imgs} images of the CIRCUIT DIRECTORY (last {num_dir_imgs} images).
-
-TASK 1: HEADER
-- Extract Voltage, Bus Rating, Wire, Phase, Mounting, Enclosure.
-- Look at the directory images or labels on the panel.
-
-TASK 2: CIRCUITS & POLES
-- Identify every breaker visible in the Breaker Images.
-- CRITICAL: Determine the 'poles' (1, 2, or 3).
-    - A 1-pole breaker takes up 1 circuit space.
-    - A 2-pole breaker has a tied handle and takes up 2 vertical circuit spaces (e.g. 1 & 3).
-    - A 3-pole breaker has a tied handle and takes up 3 vertical circuit spaces (e.g. 1, 3, & 5).
-- Provide the circuit_number as the TOP-most circuit number the breaker occupies.
-- Extract Amperage and Load Description from the labels (Breaker Images) or circuit directory (Directory Images).
-- Resolve ditto marks (") if seen in the directory.
-
-TASK 3: LOAD TYPES
-- LIGHTING -> 'C', RECEPTACLES -> 'G', MOTORS/HVAC -> 'M', KITCHEN -> 'K', DEDICATED -> 'D'
-""".strip()
+        prompt = self._build_panel_schedule_prompt(
+            panel_name, num_breaker_imgs, num_dir_imgs
+        )
 
         gemini_images = []
         try:
@@ -7933,10 +8338,18 @@ TASK 3: LOAD TYPES
                     'panel_id': panel_id,
                     'panel_name': panel_name,
                     'breaker_paths': self._normalize_panel_schedule_paths(
-                        raw_panel.get('breakerPaths') or raw_panel.get('breakerPath')
+                        self._get_panel_schedule_path_value(
+                            raw_panel,
+                            ('breakerPaths', 'breaker_paths'),
+                            ('breakerPath', 'breaker_path'),
+                        )
                     ),
                     'directory_paths': self._normalize_panel_schedule_paths(
-                        raw_panel.get('directoryPaths') or raw_panel.get('directoryPath')
+                        self._get_panel_schedule_path_value(
+                            raw_panel,
+                            ('directoryPaths', 'directory_paths'),
+                            ('directoryPath', 'directory_path'),
+                        )
                     ),
                     'breaker_uploads': raw_panel.get('breakerUploads') or raw_panel.get('breaker_uploads') or [],
                     'directory_uploads': raw_panel.get('directoryUploads') or raw_panel.get('directory_uploads') or [],
@@ -7950,10 +8363,18 @@ TASK 3: LOAD TYPES
                 'panel_id': 'panel_1',
                 'panel_name': panel_name,
                 'breaker_paths': self._normalize_panel_schedule_paths(
-                    data.get('breakerPaths') or data.get('breakerPath')
+                    self._get_panel_schedule_path_value(
+                        data,
+                        ('breakerPaths', 'breaker_paths'),
+                        ('breakerPath', 'breaker_path'),
+                    )
                 ),
                 'directory_paths': self._normalize_panel_schedule_paths(
-                    data.get('directoryPaths') or data.get('directoryPath')
+                    self._get_panel_schedule_path_value(
+                        data,
+                        ('directoryPaths', 'directory_paths'),
+                        ('directoryPath', 'directory_path'),
+                    )
                 ),
                 'breaker_uploads': data.get('breakerUploads') or data.get('breaker_uploads') or [],
                 'directory_uploads': data.get('directoryUploads') or data.get('directory_uploads') or [],
@@ -7987,7 +8408,9 @@ TASK 3: LOAD TYPES
                     temp_paths.extend(created)
 
                 if not breaker_paths or not directory_paths:
-                    raise ValueError("Both a breaker photo and a directory photo are required.")
+                    raise ValueError(
+                        "At least one breaker photo and at least one directory photo are required."
+                    )
 
                 try:
                     panel_data = self._analyze_panel_schedule_images(

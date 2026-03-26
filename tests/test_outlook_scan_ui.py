@@ -57,6 +57,7 @@ class OutlookScanUiTests(unittest.TestCase):
         self.assertIn("async function processEmailIntakePaste() {", script)
         self.assertIn('closeDlg("outlookScanDlg");', script)
         self.assertIn("handleAiProjectResult(res.data || {});", script)
+        self.assertIn('textContent: suggestion.notes || "No additional notes."', script)
         self.assertIn('outlookScanBtn.onclick = () => openOutlookScanDialog();', script)
         self.assertIn('btnProcessEmail.onclick = () => processEmailIntakePaste();', script)
         self.assertIn('setEmailIntakeMode("paste")', script)
@@ -70,6 +71,7 @@ class OutlookScanUiTests(unittest.TestCase):
         self.assertNotIn("handleMicrosoftSignIn", script)
         self.assertNotIn("handleMicrosoftSignOut", script)
         self.assertNotIn('closeDlg("emailDlg")', script)
+        self.assertNotIn("No summary available.", script)
 
     def test_email_intake_styles_exist(self):
         css = STYLES_CSS_PATH.read_text(encoding="utf-8")

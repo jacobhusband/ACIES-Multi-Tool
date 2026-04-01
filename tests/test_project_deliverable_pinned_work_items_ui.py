@@ -19,11 +19,17 @@ class ProjectDeliverablePinnedWorkItemsUiTests(unittest.TestCase):
             "function createWorkItemPinButton({",
             "function renderDeliverablePinnedPreview(container, deliverable) {",
             "function updateDeliverableWorkItemUi(card, deliverable) {",
+            "function createPinnedWorkItemAttachments(previewItem = {}) {",
             'className: "deliverable-pinned-preview"',
             'titleUnpinned: "Pin task",',
             'titleUnpinned: "Pin note",',
             "pinned: !!task?.pinned,",
             "pinned: !!noteItem?.pinned,",
+            "links: normalizeTaskLinks(item.links),",
+            "emailRefs: normalizeEmailRefs(item.emailRefs),",
+            'className: "deliverable-pinned-item-attachments"',
+            'className: "deliverable-pinned-link"',
+            'className: "deliverable-pinned-email-btn"',
         ):
             self.assertIn(expected, script)
 
@@ -38,8 +44,12 @@ class ProjectDeliverablePinnedWorkItemsUiTests(unittest.TestCase):
             ".deliverable-pinned-preview-heading {",
             ".deliverable-pinned-preview-list {",
             ".deliverable-pinned-item {",
+            ".deliverable-pinned-item-body {",
             ".deliverable-pinned-item-kind {",
             ".deliverable-pinned-item-text {",
+            ".deliverable-pinned-item-attachments {",
+            ".deliverable-pinned-link,",
+            ".deliverable-pinned-email-btn {",
         ):
             self.assertIn(expected, css)
 

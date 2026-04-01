@@ -22,11 +22,15 @@ class WorkroomDeliverableNotesUiTests(unittest.TestCase):
         for expected in (
             'const addNoteBtn = document.getElementById("workroomAddNoteBtn");',
             'const container = document.getElementById("workroomNotesContainer");',
-            'deliverable.noteItems.push({ text: "New note", pinned: false });',
+            'deliverable.noteItems.push({',
             'className: "workroom-note-text-input",',
             'titleUnpinned: "Pin note",',
             'titleUnpinned: "Pin task",',
             'className: "checklist-task-actions"',
+            'className: "checklist-task-content"',
+            "createWorkItemAttachmentControls({",
+            'scope: "workroom",',
+            "emailRefs: [],",
         ):
             self.assertIn(expected, script)
 
@@ -39,6 +43,7 @@ class WorkroomDeliverableNotesUiTests(unittest.TestCase):
             ".workroom-note-text-input {",
             ".checklist-task-actions {",
             ".checklist-work-item-pin {",
+            ".checklist-task-content {",
         ):
             self.assertIn(expected, css)
 

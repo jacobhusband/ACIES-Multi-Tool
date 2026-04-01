@@ -829,6 +829,15 @@ LIGHTING_PROJECT_SEGMENT_REGEX = re.compile(
     r"^(\d{6})(?!\d)(?:\s*(?:[-_]\s*)?(.*))?$"
 )
 SURVEY_REPORT_SCHEMA_VERSION = "1.0.0"
+SURVEY_FINDINGS_SECTION_KEYS = (
+    "power",
+    "distribution",
+    "panels",
+    "lighting",
+    "dataTelephone",
+)
+SURVEY_ARCH_FOLDER_DATE_REGEX = re.compile(r"^\s*(\d{4})[-._](\d{2})[-._](\d{2})\b")
+SURVEY_EXISTING_FLOOR_PLAN_REGEX = re.compile(r"\bexisting\s+floor\s+plan\b", re.IGNORECASE)
 UTILITY_PLAN_LABEL_FONT_SIZE = 18
 UTILITY_PLAN_LABEL_PADDING_X = 10
 UTILITY_PLAN_LABEL_PADDING_Y = 8
@@ -1447,9 +1456,76 @@ def _create_default_survey_report_draft(project_id=""):
             "exportFolderPath": "",
             "floors": [_create_default_utility_plan_floor()],
         },
-        "findings": {},
+        "findings": {
+            "sections": {
+                key: ""
+                for key in SURVEY_FINDINGS_SECTION_KEYS
+            },
+        },
         "recommendations": {"items": []},
         "photos": {"items": []},
+    }
+
+
+def _create_default_survey_photo_item(seed=None, order=0):
+    seed = seed if isinstance(seed, dict) else {}
+    index = max(0, int(_normalize_survey_report_number(seed.get("order"), order)))
+    return {
+        "id": str(seed.get("id") or f"photo_{uuid.uuid4().hex[:10]}").strip() or f"photo_{uuid.uuid4().hex[:10]}",
+        "order": index,
+        "label": f"E{index + 1}",
+        "filePath": os.path.normpath(str(seed.get("filePath") or "").strip())
+        if str(seed.get("filePath") or "").strip()
+        else "",
+        "description": str(seed.get("description") or "").strip(),
+    }
+
+
+def _normalize_survey_report_photos(raw_section):
+    section = raw_section if isinstance(raw_section, dict) else {}
+    items = [
+        _create_default_survey_photo_item(item, order=index)
+        for index, item in enumerate(section.get("items") or [])
+        if isinstance(item, dict)
+    ]
+    items = sorted(items, key=lambda item: (int(item.get("order", 0)), str(item.get("label") or "").lower()))
+    for index, item in enumerate(items):
+        item["order"] = index
+        item["label"] = f"E{index + 1}"
+    return {"items": items}
+
+
+def _create_default_survey_recommendation_item(seed=None, order=0):
+    seed = seed if isinstance(seed, dict) else {}
+    return {
+        "id": str(seed.get("id") or f"recommendation_{uuid.uuid4().hex[:10]}").strip()
+        or f"recommendation_{uuid.uuid4().hex[:10]}",
+        "order": max(0, int(_normalize_survey_report_number(seed.get("order"), order))),
+        "text": str(seed.get("text") or "").strip(),
+    }
+
+
+def _normalize_survey_report_recommendations(raw_section):
+    section = raw_section if isinstance(raw_section, dict) else {}
+    items = [
+        _create_default_survey_recommendation_item(item, order=index)
+        for index, item in enumerate(section.get("items") or [])
+        if isinstance(item, dict)
+    ]
+    items = sorted(items, key=lambda item: (int(item.get("order", 0)), str(item.get("text") or "").lower()))
+    for index, item in enumerate(items):
+        item["order"] = index
+    return {"items": items}
+
+
+def _normalize_survey_report_findings(raw_section):
+    section = raw_section if isinstance(raw_section, dict) else {}
+    raw_sections = section.get("sections") if isinstance(section.get("sections"), dict) else section
+    return {
+        "sections": {
+            key: str(raw_sections.get(key) or "").strip()
+            for key in SURVEY_FINDINGS_SECTION_KEYS
+        },
     }
 
 
@@ -1480,6 +1556,11 @@ def _normalize_survey_report_payload(payload, project_id=""):
         "exportFolderPath": os.path.normpath(export_folder_path) if export_folder_path else "",
         "floors": floors,
     }
+    base["photos"] = _normalize_survey_report_photos(payload.get("photos"))
+    base["findings"] = _normalize_survey_report_findings(payload.get("findings"))
+    base["recommendations"] = _normalize_survey_report_recommendations(
+        payload.get("recommendations")
+    )
     return base
 
 
@@ -1679,6 +1760,70 @@ def _render_pdf_page_preview_payload(pdf_path, page_number=0, max_dimension=UTIL
             "previewHeight": int(pix.height),
             "dataUrl": f"data:image/png;base64,{encoded}",
         }
+
+
+def _parse_survey_arch_folder_date(folder_name):
+    match = SURVEY_ARCH_FOLDER_DATE_REGEX.match(str(folder_name or "").strip())
+    if not match:
+        return (0, 0, 0)
+    return tuple(int(match.group(index) or 0) for index in range(1, 4))
+
+
+def _build_survey_arch_pdf_candidate(pdf_path):
+    normalized_path = os.path.normpath(str(pdf_path or "").strip())
+    if not normalized_path or not os.path.isfile(normalized_path):
+        return None
+    if os.path.splitext(normalized_path)[1].lower() != ".pdf":
+        return None
+
+    try:
+        stat = os.stat(normalized_path)
+    except OSError:
+        return None
+
+    page_count = 0
+    detected_page_number = None
+    try:
+        with fitz.open(normalized_path) as doc:
+            page_count = int(doc.page_count or 0)
+            for page_index in range(page_count):
+                try:
+                    page_text = doc.load_page(page_index).get_text("text") or ""
+                except Exception:
+                    page_text = ""
+                if SURVEY_EXISTING_FLOOR_PLAN_REGEX.search(page_text):
+                    detected_page_number = page_index
+                    break
+    except Exception:
+        return None
+
+    parent_folder = os.path.basename(os.path.dirname(normalized_path)).strip()
+    return {
+        "path": normalized_path,
+        "directory": os.path.dirname(normalized_path),
+        "parentFolderName": parent_folder,
+        "parentFolderDate": _parse_survey_arch_folder_date(parent_folder),
+        "pageCount": page_count,
+        "detectedPageNumber": detected_page_number,
+        "hasExistingFloorPlan": detected_page_number is not None,
+        "sizeBytes": int(stat.st_size or 0),
+        "modifiedAtEpoch": float(stat.st_mtime or 0.0),
+    }
+
+
+def _score_survey_arch_pdf_candidate(candidate):
+    if not isinstance(candidate, dict):
+        return (0, 0, 0, 0.0, 0, 0)
+    year, month, day = candidate.get("parentFolderDate") or (0, 0, 0)
+    parent_date_score = int(year or 0) * 10000 + int(month or 0) * 100 + int(day or 0)
+    return (
+        1 if candidate.get("hasExistingFloorPlan") else 0,
+        parent_date_score,
+        1 if int(candidate.get("pageCount") or 0) > 2 else 0,
+        float(candidate.get("modifiedAtEpoch") or 0.0),
+        int(candidate.get("sizeBytes") or 0),
+        int(candidate.get("pageCount") or 0),
+    )
 
 
 def _clamp_utility_plan_rect_to_page(rect, page_width, page_height, default_full_page=False):
@@ -5838,13 +5983,84 @@ Return ONLY the JSON object.
             logging.error(f"Error saving survey report draft: {e}")
             return {'status': 'error', 'message': str(e)}
 
-    def select_utility_plan_pdf(self):
+    def discover_survey_arch_pdf(self, project_path):
+        """Locate the best architectural PDF for a survey utility plan."""
+        try:
+            normalized_project_path = os.path.normpath(str(project_path or "").strip()) if str(project_path or "").strip() else ""
+            if not normalized_project_path:
+                raise ValueError("Project path is required.")
+
+            project_root_path = self._find_workroom_project_root_by_id(normalized_project_path)
+            resolved_project_path = project_root_path or normalized_project_path
+            arch_resolution = self._resolve_workroom_discipline_folder(resolved_project_path, "Arch")
+            arch_folder_path = arch_resolution.get("resolved_folder") or ""
+            if not arch_folder_path or not os.path.isdir(arch_folder_path):
+                checked = arch_resolution.get("candidates") or []
+                checked_text = "; ".join(checked) if checked else "none"
+                return {
+                    "status": "error",
+                    "projectRootPath": project_root_path,
+                    "archFolderPath": "",
+                    "pdfPath": "",
+                    "detectedPageNumber": None,
+                    "detectionMode": "arch_folder_not_found",
+                    "message": f"Arch folder not found. Checked: {checked_text}",
+                }
+
+            candidates = []
+            for candidate_path in Path(arch_folder_path).rglob("*.pdf"):
+                candidate = _build_survey_arch_pdf_candidate(candidate_path)
+                if candidate:
+                    candidates.append(candidate)
+
+            if not candidates:
+                return {
+                    "status": "error",
+                    "projectRootPath": project_root_path,
+                    "archFolderPath": arch_folder_path,
+                    "pdfPath": "",
+                    "detectedPageNumber": None,
+                    "detectionMode": "no_pdf_candidates",
+                    "message": "No architectural PDFs were found in the Arch folder.",
+                }
+
+            candidates.sort(key=_score_survey_arch_pdf_candidate, reverse=True)
+            best = candidates[0]
+            detection_mode = (
+                "existing_floor_plan_text"
+                if best.get("hasExistingFloorPlan")
+                else "ranked_pdf_fallback"
+            )
+            detected_page_number = best.get("detectedPageNumber")
+            message = (
+                f"Auto-located {os.path.basename(best.get('path') or '')}"
+                f"{f' on page {int(detected_page_number) + 1}' if detected_page_number is not None else ''}."
+            )
+            return {
+                "status": "success",
+                "projectRootPath": project_root_path,
+                "archFolderPath": arch_folder_path,
+                "pdfPath": best.get("path") or "",
+                "detectedPageNumber": detected_page_number,
+                "detectionMode": detection_mode,
+                "candidateCount": len(candidates),
+                "message": message,
+            }
+        except Exception as e:
+            logging.error(f"Error discovering survey Arch PDF: {e}")
+            return {"status": "error", "message": str(e)}
+
+    def select_utility_plan_pdf(self, default_directory=""):
         """Shows file dialog for selecting a source PDF."""
         try:
             window = webview.windows[0]
+            start_directory = os.path.normpath(str(default_directory or "").strip()) if str(default_directory or "").strip() else ""
+            if start_directory and not os.path.isdir(start_directory):
+                start_directory = ""
             file_paths = window.create_file_dialog(
                 webview.OPEN_DIALOG,
                 allow_multiple=False,
+                directory=start_directory or None,
                 file_types=(
                     'PDF Files (*.pdf)',
                     'All Files (*.*)',

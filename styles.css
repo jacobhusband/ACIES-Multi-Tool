@@ -4173,6 +4173,15 @@ dialog.utility-plan-dialog {
   height: 100%;
 }
 
+.utility-plan-shell.is-embedded {
+  height: auto;
+  min-height: 0;
+  border: 1px solid var(--glass-border);
+  border-radius: 22px;
+  background: linear-gradient(180deg, var(--surface) 0%, var(--bg-secondary) 100%);
+  overflow: hidden;
+}
+
 .utility-plan-header {
   display: flex;
   align-items: center;
@@ -4196,6 +4205,20 @@ dialog.utility-plan-dialog {
   gap: 0.75rem;
 }
 
+.utility-plan-shell.is-embedded .utility-plan-header {
+  padding: 1rem 1.15rem;
+  background: linear-gradient(180deg, rgba(148, 163, 184, 0.08) 0%, rgba(148, 163, 184, 0.03) 100%);
+}
+
+.utility-plan-shell.is-embedded #utilityPlanHeaderTitle {
+  font-size: 1.18rem;
+}
+
+.utility-plan-shell.is-embedded #utilityPlanCloseBtn,
+.utility-plan-shell.is-embedded #utilityPlanProjectPanel {
+  display: none !important;
+}
+
 .utility-plan-status {
   max-width: 420px;
   text-align: right;
@@ -4209,6 +4232,11 @@ dialog.utility-plan-dialog {
   gap: 1rem;
   padding: 1rem 1.25rem 1.25rem;
   background: var(--bg);
+}
+
+.utility-plan-shell.is-embedded .utility-plan-body {
+  background: transparent;
+  padding: 1rem 1.15rem 1.15rem;
 }
 
 .utility-plan-sidebar,
@@ -4270,6 +4298,34 @@ dialog.utility-plan-dialog {
 
 .utility-plan-helper {
   line-height: 1.35;
+}
+
+.utility-plan-file-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.utility-plan-detection-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.68rem 0.75rem;
+  border-radius: 12px;
+  border: 1px solid rgba(16, 185, 129, 0.22);
+  background: rgba(16, 185, 129, 0.08);
+}
+
+.utility-plan-detection-label {
+  color: var(--accent);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.utility-plan-detection-message {
+  line-height: 1.45;
 }
 
 .utility-plan-floor-list {
@@ -4484,6 +4540,10 @@ dialog.utility-plan-dialog {
 
 @media (max-width: 980px) {
   .utility-plan-body {
+    grid-template-columns: 1fr;
+  }
+
+  .utility-plan-shell.is-embedded .utility-plan-body {
     grid-template-columns: 1fr;
   }
 
@@ -6537,8 +6597,7 @@ dialog::backdrop {
 
 .deliverable-task-item.done {
   color: var(--muted);
-  text-decoration: line-through;
-  opacity: 0.7;
+  opacity: 0.85;
 }
 
 .deliverable-task-item.undone {
@@ -7046,8 +7105,12 @@ dialog::backdrop {
 /* Task text takes up remaining space */
 .deliverable-task-item .task-text,
 .deliverable-note-item .note-text {
-  flex: 1;
   min-width: 0;
+}
+
+.deliverable-task-item.done .task-text {
+  text-decoration: line-through;
+  opacity: 0.7;
 }
 
 /* Task delete button - hidden by default, shown on hover */
@@ -7074,6 +7137,47 @@ dialog::backdrop {
   gap: 0.25rem;
   margin-left: auto;
   flex-shrink: 0;
+}
+
+.work-item-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.work-item-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.work-item-link-control .deliverable-link-trigger {
+  min-height: 24px;
+  padding: 0.15rem 0.55rem;
+  font-size: 11px;
+}
+
+.work-item-email-slots {
+  gap: 0.25rem;
+}
+
+.work-item-attachments .deliverable-email-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+}
+
+.work-item-attachments .deliverable-email-btn svg {
+  width: 12px;
+  height: 12px;
+}
+
+.work-item-attachments .deliverable-email-remove {
+  top: -4px;
+  right: -4px;
 }
 
 .work-item-pin-btn {
@@ -7189,6 +7293,14 @@ dialog::backdrop {
   line-height: 1.35;
 }
 
+.deliverable-pinned-item-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
 .deliverable-pinned-item-kind {
   flex-shrink: 0;
   min-width: 34px;
@@ -7206,6 +7318,42 @@ dialog::backdrop {
 .deliverable-pinned-item.done .deliverable-pinned-item-text {
   text-decoration: line-through;
   opacity: 0.7;
+}
+
+.deliverable-pinned-item-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.deliverable-pinned-link,
+.deliverable-pinned-email-btn {
+  border: 1px solid var(--glass-border);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border-radius: 999px;
+  padding: 0.15rem 0.55rem;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.2;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.deliverable-pinned-link:hover,
+.deliverable-pinned-email-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.deliverable-pinned-email-btn svg {
+  width: 12px;
+  height: 12px;
 }
 
 /* Header left section - contains title and due date */
@@ -8692,6 +8840,7 @@ input.input-warning {
   align-items: center;
   gap: 0.35rem;
   margin-left: auto;
+  margin-top: 0.1rem;
 }
 
 .checklist-work-item-pin {
@@ -8699,9 +8848,17 @@ input.input-warning {
   height: 24px;
 }
 
+.checklist-task-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
 .workroom-note-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 0.5rem;
   padding: 0.5rem;
   background: var(--bg-tertiary);
@@ -10115,6 +10272,272 @@ input.input-warning {
   gap: 0.5rem;
 }
 
+.workroom-modal.is-survey-phase .workroom-body {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.workroom-modal.is-survey-phase .workroom-tools-column {
+  display: none !important;
+}
+
+.workroom-survey-step-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+  width: 100%;
+}
+
+.workroom-survey-step {
+  border: 1px solid var(--glass-border);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.02) 0%, rgba(148, 163, 184, 0.04) 100%);
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  min-height: 72px;
+  padding: 0.9rem 1rem;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.2s ease, transform 0.2s ease, background 0.2s ease;
+}
+
+.workroom-survey-step:hover,
+.workroom-survey-step:focus-visible {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.workroom-survey-step.is-active {
+  border-color: rgba(16, 185, 129, 0.35);
+  background: rgba(16, 185, 129, 0.12);
+}
+
+.workroom-survey-step-index {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(148, 163, 184, 0.16);
+  font-size: 0.88rem;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+
+.workroom-survey-step.is-active .workroom-survey-step-index {
+  background: var(--accent);
+  color: #07120d;
+}
+
+.workroom-survey-step-label {
+  font-size: 0.92rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.workroom-survey-page-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-height: 0;
+  flex: 1 1 auto;
+  border: 1px solid var(--glass-border);
+  border-radius: 22px;
+  background: linear-gradient(180deg, var(--surface) 0%, var(--bg-secondary) 100%);
+  padding: 1.1rem 1.15rem 1.15rem;
+}
+
+.workroom-survey-page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding-bottom: 0.95rem;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.workroom-survey-page-title-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.26rem;
+  min-width: 0;
+}
+
+.workroom-survey-page-eyebrow {
+  color: var(--accent);
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.workroom-survey-page-title {
+  color: var(--text);
+  font-size: 1.42rem;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.workroom-survey-page-description {
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+  line-height: 1.55;
+  max-width: 880px;
+}
+
+.workroom-survey-page-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  min-height: 0;
+}
+
+.workroom-survey-inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.workroom-survey-utility-host {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.workroom-survey-loading {
+  min-height: 180px;
+}
+
+.workroom-survey-photo-list,
+.workroom-survey-recommendations-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.workroom-survey-photo-card,
+.workroom-survey-recommendation-row,
+.workroom-survey-section-card {
+  border: 1px solid var(--glass-border);
+  border-radius: 18px;
+  background: rgba(148, 163, 184, 0.05);
+  padding: 0.9rem 0.95rem;
+}
+
+.workroom-survey-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.workroom-survey-card-title-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+}
+
+.workroom-survey-card-eyebrow {
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.workroom-survey-card-title {
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.workroom-survey-file-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.55rem;
+  align-items: center;
+  margin-top: 0.8rem;
+}
+
+.workroom-survey-path-input {
+  width: 100%;
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  background: var(--input-bg);
+  color: var(--text);
+  padding: 0.56rem 0.7rem;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 0.8rem;
+}
+
+.workroom-survey-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.32rem;
+  margin-top: 0.8rem;
+}
+
+.workroom-survey-field-label {
+  color: var(--text);
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.workroom-survey-field-help {
+  color: var(--text-secondary);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.workroom-survey-textarea {
+  width: 100%;
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  background: var(--input-bg);
+  color: var(--text);
+  padding: 0.72rem 0.8rem;
+  font-size: 0.86rem;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.workroom-survey-textarea-lg {
+  min-height: 220px;
+}
+
+.workroom-survey-findings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.85rem;
+}
+
+.workroom-survey-recommendation-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.75rem;
+  align-items: flex-start;
+}
+
+.workroom-survey-recommendation-index {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(16, 185, 129, 0.12);
+  color: var(--text);
+  font-size: 0.84rem;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+
 .workroom-survey-checklist {
   display: flex;
   flex-direction: column;
@@ -10177,6 +10600,26 @@ input.input-warning {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-secondary);
+}
+
+@media (max-width: 1100px) {
+  .workroom-survey-step-row,
+  .workroom-survey-findings-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .workroom-survey-step-row,
+  .workroom-survey-findings-grid,
+  .workroom-survey-file-row,
+  .workroom-survey-recommendation-row {
+    grid-template-columns: 1fr;
+  }
+
+  .workroom-survey-step {
+    min-height: 62px;
+  }
 }
 
 .workroom-scope-content,
@@ -10332,15 +10775,45 @@ input.input-warning {
 }
 
 .workroom-tasks-container .checklist-task-row {
+  align-items: flex-start;
   gap: 0.26rem;
   padding: 0;
   margin-bottom: 0;
   border-radius: 4px;
 }
 
+.workroom-tasks-container .checklist-task-content,
+.workroom-notes-container .checklist-task-content {
+  gap: 0.18rem;
+}
+
 .workroom-tasks-container .checklist-task-text-input {
   padding: 0.16rem 0.38rem;
   font-size: 0.72rem;
+}
+
+.workroom-tasks-container .work-item-attachments,
+.workroom-notes-container .work-item-attachments {
+  gap: 0.22rem;
+}
+
+.workroom-tasks-container .work-item-link-control .deliverable-link-trigger,
+.workroom-notes-container .work-item-link-control .deliverable-link-trigger {
+  min-height: 20px;
+  padding: 0.1rem 0.45rem;
+  font-size: 10px;
+}
+
+.workroom-tasks-container .work-item-attachments .deliverable-email-btn,
+.workroom-notes-container .work-item-attachments .deliverable-email-btn {
+  width: 20px;
+  height: 20px;
+}
+
+.workroom-tasks-container .work-item-attachments .deliverable-email-btn svg,
+.workroom-notes-container .work-item-attachments .deliverable-email-btn svg {
+  width: 10px;
+  height: 10px;
 }
 
 .workroom-tasks-container .checklist-task-remove {

@@ -2365,11 +2365,11 @@
     </dialog>
 
     <dialog id="utilityPlanEditorDlg" class="utility-plan-dialog">
-        <div class="utility-plan-shell">
+        <div id="utilityPlanShell" class="utility-plan-shell">
             <div class="utility-plan-header">
                 <div class="utility-plan-title">
-                    <div class="title">Utility Plan Editor</div>
-                    <p class="tiny muted">Crop floor plans from a PDF, add electrical callouts, and export PNGs.</p>
+                    <div id="utilityPlanHeaderTitle" class="title">Utility Plan Editor</div>
+                    <p id="utilityPlanHeaderSubtitle" class="tiny muted">Crop floor plans from a PDF, add electrical callouts, and export PNGs.</p>
                 </div>
                 <div class="utility-plan-header-actions">
                     <div id="utilityPlanStatus" class="utility-plan-status tiny muted">Select a project to begin.</div>
@@ -2379,7 +2379,7 @@
             </div>
             <div class="utility-plan-body">
                 <aside class="utility-plan-sidebar">
-                    <section class="utility-plan-panel">
+                    <section id="utilityPlanProjectPanel" class="utility-plan-panel">
                         <div class="utility-plan-panel-title">Project</div>
                         <div class="utility-plan-field">
                             <label class="label" for="utilityPlanProjectSearch">Search Projects</label>
@@ -2401,6 +2401,13 @@
                             <button class="btn tiny ghost" id="utilityPlanClearPdfBtn" type="button">Clear</button>
                         </div>
                         <div id="utilityPlanPdfMeta" class="tiny muted utility-plan-helper">No PDF selected.</div>
+                        <div id="utilityPlanDetectionBanner" class="utility-plan-detection-banner" hidden>
+                            <div class="utility-plan-detection-label">Auto-Locate</div>
+                            <div id="utilityPlanDetectionMessage" class="tiny muted utility-plan-detection-message"></div>
+                        </div>
+                        <div class="utility-plan-file-actions">
+                            <button class="btn tiny ghost" id="utilityPlanRefreshDetectionBtn" type="button">Refresh Auto-Locate</button>
+                        </div>
                     </section>
 
                     <section class="utility-plan-panel utility-plan-floor-panel">
@@ -2679,8 +2686,8 @@
                             <div class="workroom-page-shell workroom-survey-shell">
                                 <div class="workroom-page-shell-header">
                                     <div class="workroom-page-shell-title-wrap">
-                                        <div class="workroom-page-shell-title">Survey Report</div>
-                                        <div class="tiny muted">Launch the field report and confirm the reference package before pre-design starts.</div>
+                                        <div class="workroom-page-shell-title">Survey Report Creator</div>
+                                        <div class="tiny muted">Build the survey report one section at a time before moving into pre-design.</div>
                                     </div>
                                     <div class="workroom-survey-actions">
                                         <button class="btn workroom-survey-launch-btn" id="workroomSurveyLaunchBtn"

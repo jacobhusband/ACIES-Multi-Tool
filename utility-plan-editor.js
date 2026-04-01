@@ -164,6 +164,80 @@ function createDefaultUtilityPlanFloor(seed = {}) {
   };
 }
 
+function generateSurveyPhotoId() {
+  return `survey_photo_${Math.random().toString(36).slice(2, 11)}`;
+}
+
+function generateSurveyRecommendationId() {
+  return `survey_recommendation_${Math.random().toString(36).slice(2, 11)}`;
+}
+
+function createDefaultSurveyPhotoItem(seed = {}, order = 0) {
+  const normalizedOrder = Math.max(
+    0,
+    Math.trunc(normalizeUtilityPlanNumber(seed?.order, order))
+  );
+  return {
+    id: String(seed?.id || generateSurveyPhotoId()).trim() || generateSurveyPhotoId(),
+    order: normalizedOrder,
+    label: `E${normalizedOrder + 1}`,
+    filePath: normalizeWindowsPath(seed?.filePath || ""),
+    description: String(seed?.description || "").trim(),
+  };
+}
+
+function normalizeSurveyPhotoItems(items = []) {
+  const normalized = (Array.isArray(items) ? items : [])
+    .filter((item) => item && typeof item === "object")
+    .map((item, index) => createDefaultSurveyPhotoItem(item, index))
+    .sort((a, b) => {
+      const orderDiff = Number(a.order || 0) - Number(b.order || 0);
+      if (orderDiff !== 0) return orderDiff;
+      return String(a.description || "").localeCompare(String(b.description || ""));
+    });
+  normalized.forEach((item, index) => {
+    item.order = index;
+    item.label = `E${index + 1}`;
+  });
+  return normalized;
+}
+
+function createDefaultSurveyRecommendationItem(seed = {}, order = 0) {
+  return {
+    id:
+      String(seed?.id || generateSurveyRecommendationId()).trim() ||
+      generateSurveyRecommendationId(),
+    order: Math.max(0, Math.trunc(normalizeUtilityPlanNumber(seed?.order, order))),
+    text: String(seed?.text || "").trim(),
+  };
+}
+
+function normalizeSurveyRecommendationItems(items = []) {
+  const normalized = (Array.isArray(items) ? items : [])
+    .filter((item) => item && typeof item === "object")
+    .map((item, index) => createDefaultSurveyRecommendationItem(item, index))
+    .sort((a, b) => {
+      const orderDiff = Number(a.order || 0) - Number(b.order || 0);
+      if (orderDiff !== 0) return orderDiff;
+      return String(a.text || "").localeCompare(String(b.text || ""));
+    });
+  normalized.forEach((item, index) => {
+    item.order = index;
+  });
+  return normalized;
+}
+
+function createDefaultSurveyFindingsSections(seed = {}) {
+  const sections = seed && typeof seed === "object" ? seed : {};
+  return {
+    power: String(sections.power || "").trim(),
+    distribution: String(sections.distribution || "").trim(),
+    panels: String(sections.panels || "").trim(),
+    lighting: String(sections.lighting || "").trim(),
+    dataTelephone: String(sections.dataTelephone || "").trim(),
+  };
+}
+
 function createDefaultSurveyReportDraft(projectId = "") {
   return {
     schemaVersion: UTILITY_PLAN_SCHEMA_VERSION,
@@ -173,7 +247,7 @@ function createDefaultSurveyReportDraft(projectId = "") {
       exportFolderPath: "",
       floors: [createDefaultUtilityPlanFloor()],
     },
-    findings: {},
+    findings: { sections: createDefaultSurveyFindingsSections() },
     recommendations: { items: [] },
     photos: { items: [] },
   };
@@ -224,6 +298,17 @@ function normalizeSurveyReportDraft(rawDraft, projectId = "") {
       exportFolderPath: normalizeWindowsPath(utilityPlan.exportFolderPath || ""),
       floors,
     },
+    photos: {
+      items: normalizeSurveyPhotoItems(draft?.photos?.items),
+    },
+    findings: {
+      sections: createDefaultSurveyFindingsSections(
+        draft?.findings?.sections || draft?.findings || {}
+      ),
+    },
+    recommendations: {
+      items: normalizeSurveyRecommendationItems(draft?.recommendations?.items),
+    },
     version: normalizeUtilityPlanNumber(draft.version, 0),
     updatedAtUtc: String(draft.updatedAtUtc || "").trim(),
     updatedBy: String(draft.updatedBy || "").trim(),
@@ -264,9 +349,84 @@ function buildCanonicalSurveyReportDraft(draft) {
         lastExportedAtUtc: String(floor.lastExportedAtUtc || "").trim(),
       })),
     },
-    findings: {},
-    recommendations: { items: [] },
-    photos: { items: [] },
+    photos: {
+      items: normalized.photos.items.map((item, index) => ({
+        id: String(item.id || "").trim() || generateSurveyPhotoId(),
+        order: index,
+        label: `E${index + 1}`,
+        filePath: normalizeWindowsPath(item.filePath || ""),
+        description: String(item.description || "").trim(),
+      })),
+    },
+    findings: {
+      sections: createDefaultSurveyFindingsSections(normalized.findings.sections),
+    },
+    recommendations: {
+      items: normalized.recommendations.items.map((item, index) => ({
+        id:
+          String(item.id || "").trim() || generateSurveyRecommendationId(),
+        order: index,
+        text: String(item.text || "").trim(),
+      })),
+    },
+  };
+}
+
+function getUtilityPlanShell() {
+  return document.getElementById("utilityPlanShell");
+}
+
+function isUtilityPlanEmbeddedInWorkroom() {
+  return utilityPlanState.hostMode === "workroom";
+}
+
+function setUtilityPlanShellHost(mode = "dialog", hostEl = null) {
+  const shell = getUtilityPlanShell();
+  const dialog = document.getElementById("utilityPlanEditorDlg");
+  const nextMode = mode === "workroom" ? "workroom" : "dialog";
+  if (!shell || !dialog) return;
+
+  if (nextMode === "workroom" && hostEl) {
+    if (shell.parentElement !== hostEl) {
+      hostEl.appendChild(shell);
+    }
+  } else if (shell.parentElement !== dialog) {
+    dialog.appendChild(shell);
+  }
+
+  utilityPlanState.hostMode = nextMode;
+  shell.classList.toggle("is-embedded", nextMode === "workroom");
+
+  const titleEl = document.getElementById("utilityPlanHeaderTitle");
+  const subtitleEl = document.getElementById("utilityPlanHeaderSubtitle");
+  const browseBtn = document.getElementById("utilityPlanBrowsePdfBtn");
+  if (titleEl) {
+    titleEl.textContent = nextMode === "workroom" ? "Utility Plan" : "Utility Plan Editor";
+  }
+  if (subtitleEl) {
+    subtitleEl.textContent =
+      nextMode === "workroom"
+        ? "Use the architectural floor plan as the base, add electrical callouts, and export PNGs."
+        : "Crop floor plans from a PDF, add electrical callouts, and export PNGs.";
+  }
+  if (browseBtn) {
+    browseBtn.textContent = nextMode === "workroom" ? "Change PDF" : "Browse PDF";
+  }
+}
+
+function normalizeUtilityPlanDiscovery(data = {}) {
+  const payload = data && typeof data === "object" ? data : {};
+  return {
+    status: String(payload.status || "").trim() || "idle",
+    projectRootPath: normalizeWindowsPath(payload.projectRootPath || ""),
+    archFolderPath: normalizeWindowsPath(payload.archFolderPath || ""),
+    pdfPath: normalizeWindowsPath(payload.pdfPath || ""),
+    detectedPageNumber:
+      payload.detectedPageNumber == null
+        ? null
+        : Math.max(0, Math.trunc(normalizeUtilityPlanNumber(payload.detectedPageNumber, 0))),
+    detectionMode: String(payload.detectionMode || "").trim(),
+    message: String(payload.message || "").trim(),
   };
 }
 
@@ -316,6 +476,25 @@ function setUtilityPlanStatus(message) {
   if (statusEl) {
     statusEl.textContent = utilityPlanStatusMessage || "Ready.";
   }
+}
+
+function renderUtilityPlanDetectionBanner() {
+  const banner = document.getElementById("utilityPlanDetectionBanner");
+  const messageEl = document.getElementById("utilityPlanDetectionMessage");
+  const refreshBtn = document.getElementById("utilityPlanRefreshDetectionBtn");
+  if (!banner || !messageEl) return;
+  const discovery = utilityPlanState.archDiscovery;
+  const message = String(discovery?.message || "").trim();
+  banner.hidden = !message;
+  messageEl.textContent = message;
+  if (refreshBtn) {
+    refreshBtn.hidden = !getActiveUtilityPlanProject();
+  }
+}
+
+function setUtilityPlanArchDiscovery(data = null) {
+  utilityPlanState.archDiscovery = data ? normalizeUtilityPlanDiscovery(data) : null;
+  renderUtilityPlanDetectionBanner();
 }
 
 function ensureUtilityPlanActiveFloor() {
@@ -706,6 +885,186 @@ async function loadUtilityPlanPdfInfo(pdfPath) {
   return response.data;
 }
 
+function getUtilityPlanProjectRootPath(project) {
+  const candidates = [
+    typeof getWorkroomRootFolderPath === "function"
+      ? getWorkroomRootFolderPath(project)
+      : project?.workroomRootPath,
+    typeof getWorkroomServerProjectPath === "function"
+      ? getWorkroomServerProjectPath(project)
+      : project?.path,
+    project?.path,
+    project?.workroomRootPath,
+    project?.localProjectPath,
+  ];
+  return (
+    candidates
+      .map((value) => normalizeProjectPath(value || ""))
+      .find(Boolean) || ""
+  );
+}
+
+function getUtilityPlanPdfPickerDefaultDirectory() {
+  const draft = utilityPlanState.draft;
+  const discoveryFolder = normalizeWindowsPath(
+    utilityPlanState.archDiscovery?.archFolderPath || ""
+  );
+  const currentPdfFolder = normalizeWindowsPath(
+    getFolderFromPath(draft?.utilityPlan?.sourcePdfPath || "")
+  );
+  return discoveryFolder || currentPdfFolder || "";
+}
+
+async function applyUtilityPlanSourcePdf(nextPath, { detectedPageNumber = null } = {}) {
+  const draft = utilityPlanState.draft;
+  if (!draft) {
+    throw new Error("Select a project first.");
+  }
+  const normalizedPath = normalizeWindowsPath(nextPath || "");
+  if (!normalizedPath) {
+    throw new Error("A source PDF path is required.");
+  }
+
+  const previousPath = normalizeWindowsPath(draft.utilityPlan.sourcePdfPath);
+  const pdfInfo = await loadUtilityPlanPdfInfo(normalizedPath);
+  const nextPageNumber =
+    detectedPageNumber == null
+      ? 0
+      : Math.min(
+          Math.max(Math.trunc(normalizeUtilityPlanNumber(detectedPageNumber, 0)), 0),
+          Math.max(0, Number(pdfInfo.pageCount || 1) - 1)
+        );
+  const sourceChanged = previousPath !== normalizedPath;
+
+  draft.utilityPlan.sourcePdfPath = normalizedPath;
+  draft.utilityPlan.exportFolderPath =
+    draft.utilityPlan.exportFolderPath || getFolderFromPath(normalizedPath);
+  draft.utilityPlan.floors = draft.utilityPlan.floors.map((floor, index) => {
+    const clampedPageNumber = sourceChanged
+      ? nextPageNumber
+      : Math.min(
+          Math.max(Number(floor.pageNumber || 0), 0),
+          Math.max(0, Number(pdfInfo.pageCount || 1) - 1)
+        );
+    const pageSize =
+      pdfInfo.pages[clampedPageNumber] || pdfInfo.pages[0] || { width: 0, height: 0 };
+    return createDefaultUtilityPlanFloor({
+      id: floor.id,
+      label: floor.label || `Floor ${index + 1}`,
+      order: index,
+      pageNumber: clampedPageNumber,
+      cropRect: sourceChanged
+        ? {
+            x: 0,
+            y: 0,
+            width: pageSize.width || 0,
+            height: pageSize.height || 0,
+          }
+        : floor.cropRect,
+      callouts: sourceChanged ? [] : floor.callouts,
+      exportPath: sourceChanged ? "" : floor.exportPath,
+      lastExportedAtUtc: sourceChanged ? "" : floor.lastExportedAtUtc,
+    });
+  });
+  utilityPlanState.pdfInfo = pdfInfo;
+  utilityPlanState.activeCalloutId = "";
+  ensureUtilityPlanActiveFloor();
+  renderUtilityPlanEditorUi();
+  await loadUtilityPlanPreviewForActiveFloor({ resetView: true });
+  queueUtilityPlanSave();
+  return pdfInfo;
+}
+
+async function runUtilityPlanArchAutoLocate({ force = false, quiet = false } = {}) {
+  const project = getActiveUtilityPlanProject();
+  const draft = utilityPlanState.draft;
+  if (!project || !draft || !window.pywebview?.api?.discover_survey_arch_pdf) {
+    return null;
+  }
+
+  const projectRootPath = getUtilityPlanProjectRootPath(project);
+  if (!projectRootPath) {
+    if (!quiet) {
+      setUtilityPlanStatus("Project path is missing, so auto-locate could not run.");
+    }
+    return null;
+  }
+
+  const currentPath = normalizeWindowsPath(draft.utilityPlan.sourcePdfPath || "");
+  let shouldAutoApply = force || !currentPath;
+  if (currentPath && !force) {
+    try {
+      await loadUtilityPlanPdfInfo(currentPath);
+      shouldAutoApply = false;
+    } catch {
+      shouldAutoApply = true;
+    }
+  }
+
+  const response = await window.pywebview.api.discover_survey_arch_pdf(projectRootPath);
+  const discovery = normalizeUtilityPlanDiscovery(response);
+  if (response?.status !== "success" || !discovery.pdfPath) {
+    setUtilityPlanArchDiscovery({
+      ...discovery,
+      status: response?.status || discovery.status || "error",
+      message:
+        String(response?.message || discovery.message || "").trim() ||
+        "No architectural PDF could be auto-located.",
+    });
+    if (!quiet) {
+      setUtilityPlanStatus(
+        String(response?.message || "No architectural PDF could be auto-located.")
+      );
+    }
+    return null;
+  }
+
+  const pageLabel =
+    discovery.detectedPageNumber == null
+      ? ""
+      : ` Page ${discovery.detectedPageNumber + 1} contains Existing Floor Plan.`;
+  setUtilityPlanArchDiscovery({
+    ...discovery,
+    message:
+      discovery.message ||
+      `Auto-located ${getWindowsPathLeaf(discovery.pdfPath)}.${pageLabel}`,
+  });
+
+  if (!shouldAutoApply) {
+    if (!quiet) setUtilityPlanStatus("Architectural PDF auto-locate refreshed.");
+    return discovery;
+  }
+
+  const hasAnnotations = draft.utilityPlan.floors.some(
+    (floor) =>
+      floor.callouts.length > 0 ||
+      (floor.cropRect.width > 0 && floor.cropRect.height > 0)
+  );
+  if (force && hasAnnotations && currentPath && currentPath !== discovery.pdfPath) {
+    const proceed = confirm(
+      "Auto-locate found a different architectural PDF. Switching PDFs will reset crop boxes and callouts for all floors.\n\nPress OK to continue."
+    );
+    if (!proceed) {
+      if (!quiet) setUtilityPlanStatus("Auto-locate kept the current PDF.");
+      return discovery;
+    }
+  }
+
+  await applyUtilityPlanSourcePdf(discovery.pdfPath, {
+    detectedPageNumber: discovery.detectedPageNumber,
+  });
+  if (!quiet) {
+    setUtilityPlanStatus(
+      `Using ${getWindowsPathLeaf(discovery.pdfPath)}${
+        discovery.detectedPageNumber == null
+          ? ""
+          : ` · Page ${discovery.detectedPageNumber + 1}`
+      }.`
+    );
+  }
+  return discovery;
+}
+
 async function loadUtilityPlanPreviewForActiveFloor({ resetView = false } = {}) {
   const draft = utilityPlanState.draft;
   const floor = ensureUtilityPlanActiveFloor();
@@ -764,6 +1123,7 @@ async function setUtilityPlanProject(index, { quiet = false } = {}) {
     utilityPlanState.activeFloorId = "";
     utilityPlanState.activeCalloutId = "";
     utilityPlanState.pdfInfo = null;
+    setUtilityPlanArchDiscovery(null);
     clearUtilityPlanPreview();
     renderUtilityPlanEditorUi();
     return;
@@ -773,6 +1133,7 @@ async function setUtilityPlanProject(index, { quiet = false } = {}) {
   utilityPlanState.activeCalloutId = "";
   utilityPlanState.interaction = null;
   utilityPlanState.pdfInfo = null;
+  setUtilityPlanArchDiscovery(null);
   const project = db[index];
   const projectId = getUtilityPlanProjectId(project);
   applyLoadedUtilityPlanDraft(null, projectId);
@@ -946,6 +1307,7 @@ function renderUtilityPlanFormControls() {
   const floor = getActiveUtilityPlanFloor();
   const callout = getSelectedUtilityPlanCallout();
   const pdfInfo = utilityPlanState.pdfInfo;
+  const project = getActiveUtilityPlanProject();
   const sourcePdfInput = document.getElementById("utilityPlanSourcePdfPath");
   const exportFolderInput = document.getElementById(
     "utilityPlanExportFolderPath"
@@ -1026,6 +1388,7 @@ function renderUtilityPlanFormControls() {
     "utilityPlanBrowseExportFolderBtn",
     "utilityPlanExportCurrentBtn",
     "utilityPlanExportAllBtn",
+    "utilityPlanRefreshDetectionBtn",
   ];
   disabledWithoutDraft.forEach((id) => {
     const btn = document.getElementById(id);
@@ -1035,6 +1398,9 @@ function renderUtilityPlanFormControls() {
   const deleteBtn = document.getElementById("utilityPlanDeleteCalloutBtn");
   if (duplicateBtn) duplicateBtn.disabled = !callout;
   if (deleteBtn) deleteBtn.disabled = !callout;
+  const refreshBtn = document.getElementById("utilityPlanRefreshDetectionBtn");
+  if (refreshBtn) refreshBtn.disabled = !project;
+  renderUtilityPlanDetectionBanner();
 }
 
 function renderUtilityPlanViewport() {
@@ -1061,6 +1427,7 @@ function renderUtilityPlanEditorUi() {
   renderUtilityPlanToolbar();
   renderUtilityPlanFormControls();
   renderUtilityPlanViewport();
+  renderUtilityPlanDetectionBanner();
 
   if (!utilityPlanStatusMessage) {
     const project = getActiveUtilityPlanProject();
@@ -1422,7 +1789,9 @@ async function browseUtilityPlanSourcePdf() {
         floor.callouts.length > 0 ||
         (floor.cropRect.width > 0 && floor.cropRect.height > 0)
     );
-    const response = await window.pywebview.api.select_utility_plan_pdf();
+    const response = await window.pywebview.api.select_utility_plan_pdf(
+      getUtilityPlanPdfPickerDefaultDirectory()
+    );
     if (response?.status !== "success" || !response.path) return;
     const nextPath = normalizeWindowsPath(response.path);
     const previousPath = normalizeWindowsPath(draft.utilityPlan.sourcePdfPath);
@@ -1432,33 +1801,15 @@ async function browseUtilityPlanSourcePdf() {
       );
       if (!proceed) return;
     }
-    const pdfInfo = await loadUtilityPlanPdfInfo(nextPath);
-    draft.utilityPlan.sourcePdfPath = nextPath;
-    draft.utilityPlan.exportFolderPath =
-      draft.utilityPlan.exportFolderPath || getFolderFromPath(nextPath);
-    draft.utilityPlan.floors = draft.utilityPlan.floors.map((floor, index) => ({
-      ...createDefaultUtilityPlanFloor({
-        id: floor.id,
-        label: floor.label || `Floor ${index + 1}`,
-        order: index,
-        pageNumber: Math.min(
-          Math.max(Number(floor.pageNumber || 0), 0),
-          Math.max(0, pdfInfo.pageCount - 1)
-        ),
-        cropRect: {
-          x: 0,
-          y: 0,
-          width: pdfInfo.pages[0]?.width || 0,
-          height: pdfInfo.pages[0]?.height || 0,
-        },
-        callouts: previousPath && previousPath !== nextPath ? [] : floor.callouts,
-      }),
-    }));
-    utilityPlanState.pdfInfo = pdfInfo;
-    ensureUtilityPlanActiveFloor();
-    renderUtilityPlanEditorUi();
-    await loadUtilityPlanPreviewForActiveFloor({ resetView: true });
+    await applyUtilityPlanSourcePdf(nextPath);
     queueUtilityPlanSave();
+    setUtilityPlanArchDiscovery({
+      status: "success",
+      archFolderPath: getUtilityPlanPdfPickerDefaultDirectory(),
+      pdfPath: nextPath,
+      detectionMode: "manual_override",
+      message: `Manual PDF selected: ${getWindowsPathLeaf(nextPath)}.`,
+    });
     setUtilityPlanStatus("Source PDF updated.");
   } catch (error) {
     reportClientError("Failed to select utility plan PDF", error);
@@ -1492,10 +1843,14 @@ function clearUtilityPlanSourcePdf() {
   );
   utilityPlanState.pdfInfo = null;
   utilityPlanState.activeCalloutId = "";
+  setUtilityPlanArchDiscovery(null);
   clearUtilityPlanPreview();
   renderUtilityPlanEditorUi();
   queueUtilityPlanSave();
   setUtilityPlanStatus("Source PDF cleared.");
+  if (isUtilityPlanEmbeddedInWorkroom()) {
+    void runUtilityPlanArchAutoLocate({ force: false, quiet: true });
+  }
 }
 
 async function browseUtilityPlanExportFolder() {
@@ -1681,9 +2036,29 @@ async function exportUtilityPlanFloors(mode = "current") {
   }
 }
 
+function mountUtilityPlanInWorkroom(hostEl = null) {
+  if (!hostEl) return;
+  setUtilityPlanShellHost("workroom", hostEl);
+  renderUtilityPlanEditorUi();
+}
+
+async function ensureWorkroomSurveyDraftReady({ quiet = true } = {}) {
+  const projectIndex = Number(activeChecklistProject);
+  if (!Number.isInteger(projectIndex) || projectIndex < 0 || !db[projectIndex]) {
+    return null;
+  }
+  if (utilityPlanProjectIndex !== projectIndex || !utilityPlanState.draft) {
+    await setUtilityPlanProject(projectIndex, { quiet });
+  }
+  await runUtilityPlanArchAutoLocate({ force: false, quiet: true });
+  renderUtilityPlanEditorUi();
+  return utilityPlanState.draft;
+}
+
 async function openUtilityPlanEditor(launchContext = null) {
   const dlg = document.getElementById("utilityPlanEditorDlg");
   if (!dlg) return;
+  setUtilityPlanShellHost("dialog");
   renderUtilityPlanProjectOptions(utilityPlanProjectQuery);
   const launchProjectIndex = findUtilityPlanProjectIndexFromLaunchContext(
     launchContext
@@ -1705,6 +2080,7 @@ async function openUtilityPlanEditor(launchContext = null) {
 function closeUtilityPlanEditor() {
   finishUtilityPlanInteraction({ persist: false });
   void saveUtilityPlanDraft({ quiet: true });
+  setUtilityPlanShellHost("dialog");
   const dlg = document.getElementById("utilityPlanEditorDlg");
   if (dlg?.open) dlg.close();
 }
@@ -1739,6 +2115,9 @@ document.getElementById("utilityPlanProjectSelect")?.addEventListener("change", 
 });
 document.getElementById("utilityPlanBrowsePdfBtn")?.addEventListener("click", browseUtilityPlanSourcePdf);
 document.getElementById("utilityPlanClearPdfBtn")?.addEventListener("click", clearUtilityPlanSourcePdf);
+document.getElementById("utilityPlanRefreshDetectionBtn")?.addEventListener("click", () => {
+  void runUtilityPlanArchAutoLocate({ force: true, quiet: false });
+});
 document.getElementById("utilityPlanAddFloorBtn")?.addEventListener("click", () => {
   void addUtilityPlanFloor();
 });

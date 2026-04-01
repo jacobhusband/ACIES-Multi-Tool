@@ -109,6 +109,20 @@ class UtilityPlanEditorBackendTests(unittest.TestCase):
         doc.save(output_path)
         doc.close()
 
+    def _make_arch_pdf(self, output_path, *, include_existing_floor_plan=False):
+        doc = fitz.open()
+        cover = doc.new_page(width=500, height=350)
+        cover.insert_text((70, 70), "Project Cover", fontsize=18)
+        plan = doc.new_page(width=500, height=350)
+        if include_existing_floor_plan:
+            plan.insert_text((70, 70), "Existing Floor Plan", fontsize=22)
+        else:
+            plan.insert_text((70, 70), "Interior Photos", fontsize=22)
+        details = doc.new_page(width=500, height=350)
+        details.insert_text((70, 70), "Project Notes", fontsize=18)
+        doc.save(output_path)
+        doc.close()
+
     def test_save_and_load_survey_report_draft_roundtrip(self):
         with tempfile.TemporaryDirectory(prefix="utility-plan-db-") as temp_dir:
             db_path = str(Path(temp_dir) / "survey_reports.db")
@@ -135,6 +149,31 @@ class UtilityPlanEditorBackendTests(unittest.TestCase):
                         }
                     ],
                 },
+                "photos": {
+                    "items": [
+                        {
+                            "id": "photo_1",
+                            "order": 0,
+                            "filePath": r"C:\Temp\E1.jpg",
+                            "description": "Main switchboard",
+                        }
+                    ]
+                },
+                "findings": {
+                    "sections": {
+                        "power": "Utility transformer feeds the MSB.",
+                        "lighting": "Existing relay panel found near the entry.",
+                    }
+                },
+                "recommendations": {
+                    "items": [
+                        {
+                            "id": "recommendation_1",
+                            "order": 0,
+                            "text": "Verify service capacity before final design.",
+                        }
+                    ]
+                },
             }
 
             with patch.object(main_module, "SURVEY_REPORT_DB_FILE", db_path):
@@ -145,6 +184,15 @@ class UtilityPlanEditorBackendTests(unittest.TestCase):
             self.assertEqual("260243", loaded["projectId"])
             self.assertEqual("Floor 1", loaded["utilityPlan"]["floors"][0]["label"])
             self.assertEqual("MSB", loaded["utilityPlan"]["floors"][0]["callouts"][0]["text"])
+            self.assertEqual("E1", loaded["photos"]["items"][0]["label"])
+            self.assertEqual(
+                "Utility transformer feeds the MSB.",
+                loaded["findings"]["sections"]["power"],
+            )
+            self.assertEqual(
+                "Verify service capacity before final design.",
+                loaded["recommendations"]["items"][0]["text"],
+            )
             self.assertEqual("test", loaded["updatedBy"])
             self.assertGreaterEqual(loaded["version"], 1)
 
@@ -224,6 +272,52 @@ class UtilityPlanEditorBackendTests(unittest.TestCase):
                 pixel = image.getpixel((110, 110))
                 self.assertGreater(pixel[0], 200)
                 self.assertGreater(pixel[1], 180)
+
+    def test_discover_survey_arch_pdf_prefers_existing_floor_plan_match(self):
+        with tempfile.TemporaryDirectory(prefix="utility-plan-discover-") as temp_dir:
+            project_root = Path(temp_dir) / "260429 BofA, 330 S. Santa Fe Ave., Vista, CA"
+            newer_arch = project_root / "Arch" / "2026-03-16 Initial Info"
+            older_arch = project_root / "Arch" / "2025-11-01 Record"
+            newer_arch.mkdir(parents=True)
+            older_arch.mkdir(parents=True)
+            preferred_pdf = newer_arch / "2026.02.24_CA0-138_Vista_TF_MCM_F.pdf"
+            fallback_pdf = older_arch / "Old_Set.pdf"
+            self._make_arch_pdf(preferred_pdf, include_existing_floor_plan=True)
+            self._make_arch_pdf(fallback_pdf, include_existing_floor_plan=False)
+
+            result = self.api.discover_survey_arch_pdf(
+                str(project_root / "Survey" / "2026-03-24 E (JH)" / "report.doc")
+            )
+
+            self.assertEqual("success", result["status"])
+            self.assertEqual(str(project_root), result["projectRootPath"])
+            self.assertEqual(str(project_root / "Arch"), result["archFolderPath"])
+            self.assertEqual(str(preferred_pdf), result["pdfPath"])
+            self.assertEqual(1, result["detectedPageNumber"])
+            self.assertEqual("existing_floor_plan_text", result["detectionMode"])
+
+    def test_select_utility_plan_pdf_uses_default_directory(self):
+        calls = []
+
+        class FakeWindow:
+            def create_file_dialog(self, dialog_type, allow_multiple=False, directory=None, file_types=()):
+                calls.append(
+                    {
+                        "dialog_type": dialog_type,
+                        "allow_multiple": allow_multiple,
+                        "directory": directory,
+                        "file_types": file_types,
+                    }
+                )
+                return [r"C:\Temp\plan.pdf"]
+
+        with tempfile.TemporaryDirectory(prefix="utility-plan-picker-") as temp_dir:
+            with patch.object(main_module.webview, "windows", [FakeWindow()]):
+                result = self.api.select_utility_plan_pdf(temp_dir)
+
+        self.assertEqual("success", result["status"])
+        self.assertEqual(r"C:\Temp\plan.pdf", result["path"])
+        self.assertEqual(temp_dir, calls[0]["directory"])
 
 
 if __name__ == "__main__":

@@ -11,6 +11,10 @@ class ProjectDeliverablePinnedWorkItemsUiTests(unittest.TestCase):
     def test_projects_pinned_work_items_script_wiring_exists(self):
         script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
 
+        self.assertEqual(script.count("function createNotesSection("), 1)
+        self.assertEqual(script.count("function createTasksPreview("), 1)
+        self.assertEqual(script.count("function renderDeliverableCard("), 1)
+
         for expected in (
             "function getPinnedFirstEntries(items = [], normalizeItem = (item) => item) {",
             "function getPinnedDeliverableTaskEntries(deliverable) {",
@@ -22,9 +26,14 @@ class ProjectDeliverablePinnedWorkItemsUiTests(unittest.TestCase):
             "function updateDeliverableWorkItemUi(card, deliverable) {",
             "function createPinnedAttachmentPreviewButton(attachment) {",
             "function createPinnedWorkItemAttachments(previewItem = {}) {",
+            "function createNotesSection(deliverable, card, project = null) {",
+            "function createTasksPreview(deliverable, card, project = null) {",
+            "function renderDeliverableCard(deliverable, isPrimary, project) {",
             'className: "deliverable-pinned-inline-group"',
             'titleUnpinned: "Pin task",',
             'titleUnpinned: "Pin note",',
+            "liveNote.pinned = nextPinned;",
+            "renderNoteList();",
             "pinned: !!task?.pinned,",
             "pinned: !!noteItem?.pinned,",
             "attachments: normalizeAttachments(item.attachments, {",
@@ -34,9 +43,13 @@ class ProjectDeliverablePinnedWorkItemsUiTests(unittest.TestCase):
             'className: "deliverable-pinned-item-attachments"',
             'className: "deliverable-pinned-link"',
             "renderDeliverableStatusBadges(badgesContainer, deliverable);",
+            "const notesSection = createNotesSection(deliverable, card, project);",
         ):
             self.assertIn(expected, script)
 
+        self.assertNotIn("function createNotesSection(deliverable, project) {", script)
+        self.assertNotIn("function createTasksPreview(deliverable, card) {", script)
+        self.assertNotIn("const notesSection = createNotesSection(deliverable, project);", script)
         self.assertNotIn('className: "deliverable-pinned-preview-heading"', script)
         self.assertNotIn('className: "deliverable-pinned-preview"', script)
         self.assertNotIn('className: "deliverable-pinned-item-kind"', script)

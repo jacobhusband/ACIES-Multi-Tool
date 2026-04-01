@@ -238,37 +238,30 @@ const CHECKLIST_ISSUE_STAGE_OPTIONS = [
 ];
 const WORKROOM_PHASE_OPTIONS = [
   {
-    value: "survey_report",
-    label: "Survey Report",
-    eyebrow: "Phase 1 of 5",
-    description:
-      "Start the field package, confirm verification assets, and launch the survey report before broader pre-design setup.",
-  },
-  {
     value: "pre_design",
     label: "Pre-Design",
-    eyebrow: "Phase 2 of 5",
+    eyebrow: "Phase 1 of 4",
     description:
       "Define scope, capture project constraints, and prepare the CAD reference base before design starts.",
   },
   {
     value: "design",
     label: "Design",
-    eyebrow: "Phase 3 of 5",
+    eyebrow: "Phase 2 of 4",
     description:
       "Work through the electrical design checklist, develop the permit set, and manage general notes.",
   },
   {
     value: "preflight",
     label: "Preflight & Issue",
-    eyebrow: "Phase 4 of 5",
+    eyebrow: "Phase 3 of 4",
     description:
       "Run the issue checklist, tighten the drawing set, and prepare publishing actions for release.",
   },
   {
     value: "post_permit",
     label: "Post-Permit",
-    eyebrow: "Phase 5 of 5",
+    eyebrow: "Phase 4 of 4",
     description:
       "Respond to plan check comments, service changes, and bulletin work after the initial permit set.",
   },
@@ -276,71 +269,6 @@ const WORKROOM_PHASE_OPTIONS = [
 const WORKROOM_PHASE_VALUES = new Set(
   WORKROOM_PHASE_OPTIONS.map((phase) => phase.value)
 );
-const WORKROOM_SURVEY_PAGE_OPTIONS = [
-  {
-    value: "utility_plan",
-    label: "Utility Plan",
-    title: "Utility Plan",
-    description:
-      "Use the architectural floor plan as the base, place electrical callouts, and export PNGs for the report.",
-  },
-  {
-    value: "photos",
-    label: "Photos",
-    title: "Photos",
-    description:
-      "Add survey photos in report order, write descriptions, and keep the photo references ready for findings.",
-  },
-  {
-    value: "findings",
-    label: "Findings",
-    title: "Findings",
-    description:
-      "Capture the power, panel, lighting, and data/telephone narrative exactly as it should appear in the report.",
-  },
-  {
-    value: "recommendations",
-    label: "Recommendations",
-    title: "Recommendations",
-    description:
-      "Build the recommendation list in final order so the survey report package is ready to finish.",
-  },
-];
-const WORKROOM_SURVEY_PAGE_VALUES = new Set(
-  WORKROOM_SURVEY_PAGE_OPTIONS.map((page) => page.value)
-);
-const WORKROOM_SURVEY_FINDINGS_FIELDS = [
-  {
-    key: "power",
-    label: "Power",
-    helpText:
-      "Describe the utility transformer, main switchboard, and incoming power path.",
-  },
-  {
-    key: "distribution",
-    label: "Distribution / Metering",
-    helpText:
-      "Capture meter sections, distribution equipment, and breaker breakdowns.",
-  },
-  {
-    key: "panels",
-    label: "Panels",
-    helpText:
-      "Document panel ratings, voltage, feeder source, breaker count, and location.",
-  },
-  {
-    key: "lighting",
-    label: "Lighting",
-    helpText:
-      "Call out lighting controls, emergency lighting, exit signs, and controller equipment.",
-  },
-  {
-    key: "dataTelephone",
-    label: "Data / Telephone",
-    helpText:
-      "Note data backboards, telecom rooms, server racks, and related findings on site.",
-  },
-];
 const WORKROOM_RETURN_TYPE_OPTIONS = [
   { value: "", label: "Select return type..." },
   { value: "plan_check", label: "Plan Check" },
@@ -1587,12 +1515,7 @@ function normalizeChecklistIssueStage(value) {
 
 function normalizeWorkroomPhase(value) {
   const raw = String(value || "").trim().toLowerCase();
-  return WORKROOM_PHASE_VALUES.has(raw) ? raw : "survey_report";
-}
-
-function normalizeWorkroomSurveyPage(value) {
-  const raw = String(value || "").trim().toLowerCase();
-  return WORKROOM_SURVEY_PAGE_VALUES.has(raw) ? raw : "utility_plan";
+  return WORKROOM_PHASE_VALUES.has(raw) ? raw : "pre_design";
 }
 
 function normalizeWorkroomReturnType(value) {
@@ -2643,17 +2566,14 @@ const WORKROOM_CAD_TOOL_IDS = new Set([
 const WORKROOM_TEMPLATE_TOOL_IDS = new Set([
   "toolCreateNarrativeTemplate",
   "toolCreatePlanCheckTemplate",
-  "toolCreateElectricalSurveyTemplate",
 ]);
 const WORKROOM_LAUNCH_CONTEXT_TOOL_IDS = new Set([
   ...WORKROOM_CAD_TOOL_IDS,
   ...WORKROOM_TEMPLATE_TOOL_IDS,
-  "toolUtilityPlanEditor",
   "toolBackupDrawings",
 ]);
 const WORKROOM_HIDDEN_TOOL_IDS = new Set([]);
 const WORKROOM_PHASE_CHECKLIST_MAP = {
-  survey_report: null,
   pre_design: null,
   design: {
     templateKey: CHECKLIST_TEMPLATE_KEYS.ELECTRICAL_GENERAL,
@@ -2670,7 +2590,6 @@ const WORKROOM_PHASE_CHECKLIST_MAP = {
   post_permit: null,
 };
 const WORKROOM_PHASE_TOOL_MAP = {
-  survey_report: ["toolUtilityPlanEditor", "toolCreateElectricalSurveyTemplate"],
   pre_design: ["toolCleanXrefs"],
   design: ["toolLightingSchedule", "toolCircuitBreaker"],
   preflight: ["toolFreezeLayers", "toolPublishDwgs", "toolThawLayers"],
@@ -2687,14 +2606,6 @@ const WFH_SUFFIX = " - WFH";
 const TIMESHEET_SUMMARY_DELIVERABLE_ID = "__summary__";
 const WEEKLY_MEETING_NAME = "workload meeting";
 const WEEKLY_MEETING_DEFAULT_HOURS = 1;
-const UTILITY_PLAN_SCHEMA_VERSION = "1.0.0";
-const UTILITY_PLAN_LABEL_FONT_SIZE = 18;
-const UTILITY_PLAN_LABEL_PADDING_X = 10;
-const UTILITY_PLAN_LABEL_PADDING_Y = 8;
-const UTILITY_PLAN_LINE_HEIGHT = 1.2;
-const UTILITY_PLAN_ZOOM_MIN = 0.35;
-const UTILITY_PLAN_ZOOM_MAX = 4;
-const UTILITY_PLAN_PREVIEW_MAX_SIZE = 1800;
 
 // Cache for loaded descriptions to prevent re-fetching
 const DESCRIPTION_CACHE = {};
@@ -3410,7 +3321,6 @@ function getTemplateKey(template) {
   const sourceName = basename(template?.sourcePath || "").toLowerCase();
   if (sourceName.includes("narrative of changes")) return "narrative";
   if (sourceName.includes("plan check") || sourceName.includes("pcc")) return "planCheck";
-  if (sourceName.includes("electrical survey report")) return "electricalSurvey";
   return null;
 }
 
@@ -3724,7 +3634,6 @@ async function handleRemoveTemplate(templateId, templateName) {
 function getTemplateToolIdForKey(templateKey) {
   if (templateKey === "narrative") return "toolCreateNarrativeTemplate";
   if (templateKey === "planCheck") return "toolCreatePlanCheckTemplate";
-  if (templateKey === "electricalSurvey") return "toolCreateElectricalSurveyTemplate";
   return "";
 }
 
@@ -7893,27 +7802,6 @@ let lightingScheduleSyncStatusMessage = "";
 let lightingScheduleSyncPollTimer = null;
 let lightingScheduleSyncDirty = false;
 let lightingScheduleSyncSaving = false;
-let utilityPlanProjectIndex = null;
-let utilityPlanProjectQuery = "";
-let utilityPlanStatusMessage = "";
-let utilityPlanPreviewRequestId = 0;
-let utilityPlanAutosaveQueued = false;
-let utilityPlanSaving = false;
-let utilityPlanTextMeasureCanvas = null;
-let utilityPlanState = {
-  draft: null,
-  activeFloorId: "",
-  activeCalloutId: "",
-  pdfInfo: null,
-  archDiscovery: null,
-  preview: null,
-  tool: "callout",
-  zoom: 1,
-  panX: 24,
-  panY: 24,
-  hostMode: "dialog",
-  interaction: null,
-};
 let title24ProjectIndex = null;
 let title24ProjectQuery = "";
 let title24ScopeOptionsDataset = null;
@@ -7943,8 +7831,6 @@ const TEMPLATE_KEY_BY_NAME = {
   "narrative of changes": "narrative",
   "plan check comments": "planCheck",
   "plan check response letter": "planCheck",
-  "electrical survey report": "electricalSurvey",
-  "electrical survey report template": "electricalSurvey",
 };
 
 let copyDialogTemplate = null;
@@ -12574,7 +12460,6 @@ function normalizeDeliverable(deliverable = {}) {
       ""
     ),
     workroomPhase: normalizeWorkroomPhase(deliverable.workroomPhase),
-    workroomSurveyPage: normalizeWorkroomSurveyPage(deliverable.workroomSurveyPage),
     workroomReturnType: normalizeWorkroomReturnType(deliverable.workroomReturnType),
     appliedChecklists: Array.isArray(deliverable.appliedChecklists)
       ? deliverable.appliedChecklists
@@ -12615,8 +12500,7 @@ function createDeliverable(seed = {}) {
     status: seed.status || "",
     attachments: seedAttachments,
     workroomCadDiscipline: seed.workroomCadDiscipline || "",
-    workroomPhase: seed.workroomPhase || "survey_report",
-    workroomSurveyPage: seed.workroomSurveyPage || "utility_plan",
+    workroomPhase: seed.workroomPhase || "pre_design",
     workroomReturnType: seed.workroomReturnType || "",
     appliedChecklists: seed.appliedChecklists || [],
     checklistContext: seed.checklistContext || createDefaultChecklistContext(),
@@ -16210,7 +16094,7 @@ function createStatusDropdown(deliverable, project, card) {
   return dropdown;
 }
 
-function createNotesSection(deliverable, project) {
+function createNotesSectionLegacy(deliverable, project) {
   const section = el("div", { className: "deliverable-notes-section" });
 
   // Simple header label (no toggle)
@@ -16244,7 +16128,7 @@ function createNotesSection(deliverable, project) {
   return section;
 }
 
-function createTasksPreview(deliverable, card) {
+function createTasksPreviewLegacy(deliverable, card) {
   const container = el("div", { className: "deliverable-tasks-preview" });
 
   // Initialize tasks array if it doesn't exist
@@ -16423,7 +16307,7 @@ function setDeliverableDetailsCollapsed(card, isCollapsed) {
   card.classList.toggle("details-collapsed", isCollapsed);
 }
 
-function renderDeliverableCard(deliverable, isPrimary, project) {
+function renderDeliverableCardLegacy(deliverable, isPrimary, project) {
   const card = el("div", {
     className: `deliverable-card-new ${isPrimary ? "is-primary" : ""} details-collapsed`
   });
@@ -16441,10 +16325,10 @@ function renderDeliverableCard(deliverable, isPrimary, project) {
   statusSection.append(statusBadges, statusDropdown);
 
   // Tasks preview (2-3 tasks, now clickable)
-  const tasksPreview = createTasksPreview(deliverable, card);
+  const tasksPreview = createTasksPreviewLegacy(deliverable, card);
 
   // Notes section (always visible when expanded, no toggle)
-  const notesSection = createNotesSection(deliverable, project);
+  const notesSection = createNotesSectionLegacy(deliverable, project);
 
   card.append(header, progress, statusSection, tasksPreview, notesSection);
   updateDeliverableTaskStats(card, deliverable);
@@ -24767,12 +24651,6 @@ function initEventListeners() {
     "planCheck",
     "Plan Check Comments"
   );
-  bindTemplateToolButton(
-    "toolCreateElectricalSurveyTemplate",
-    "electricalSurvey",
-    "Electrical Survey Report"
-  );
-
   const backupDrawingsBtn = document.getElementById("toolBackupDrawings");
   if (backupDrawingsBtn) {
     const generalToolsGrid = Array.from(document.querySelectorAll(".tools-section"))

@@ -11,8 +11,14 @@ class ProjectDeliverableTaskPreviewUiTests(unittest.TestCase):
     def test_projects_task_preview_always_renders_full_list(self):
         script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
 
-        self.assertIn("function createTasksPreview(deliverable, card) {", script)
-        self.assertIn("deliverable.tasks.forEach((task, index) => {", script)
+        self.assertIn(
+            "function createTasksPreview(deliverable, card, project = null) {",
+            script,
+        )
+        self.assertIn(
+            "getPinnedDeliverableTaskEntries(deliverable).forEach(({ item: taskObj, index }) => {",
+            script,
+        )
         self.assertIn("renderTaskList();", script)
         self.assertNotIn("const maxVisible = 3;", script)
         self.assertNotIn('className: "deliverable-expand-btn"', script)

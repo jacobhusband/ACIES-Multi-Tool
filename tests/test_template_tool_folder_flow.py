@@ -206,29 +206,29 @@ class TemplateToolFolderFlowTests(unittest.TestCase):
         self.assertEqual([False], fake_word.doc.close_args)
         self.assertTrue(fake_word.quit_called)
 
-    def _make_template_record(self, temp_dir, filename="Electrical Survey Report Template.doc"):
+    def _make_template_record(self, temp_dir, filename="PCC.doc"):
         source_path = Path(temp_dir) / filename
         source_path.write_bytes(b"template-bytes")
         return {
-            "id": "tpl_survey",
-            "name": "Electrical Survey Report",
-            "discipline": "Electrical",
+            "id": "tpl_plan_check",
+            "name": "Plan Check Comments",
+            "discipline": "General",
             "fileType": "doc",
             "sourcePath": str(source_path),
         }
 
-    def test_find_template_by_key_resolves_electrical_survey_alias(self):
+    def test_find_template_by_key_resolves_plan_check_alias(self):
         template_record = {
-            "id": "tpl_survey",
-            "name": "Survey Document",
+            "id": "tpl_plan_check",
+            "name": "Comments Response",
             "fileType": "doc",
-            "sourcePath": r"C:\Templates\Electrical Survey Report Template.doc",
+            "sourcePath": r"C:\Templates\PCC.doc",
         }
 
         with patch.object(self.api, "get_templates", return_value={"templates": [template_record]}):
-            template, key = self.api._find_template_by_key("Electrical Survey Report")
+            template, key = self.api._find_template_by_key("PCC")
 
-        self.assertEqual("electricalSurvey", key)
+        self.assertEqual("planCheck", key)
         self.assertEqual(template_record, template)
 
     def test_find_project_root_by_id_returns_nearest_six_digit_ancestor(self):
@@ -241,7 +241,7 @@ class TemplateToolFolderFlowTests(unittest.TestCase):
 
         self.assertEqual(os.path.normpath(str(root_path)), result)
 
-    def test_copy_template_to_folder_uses_project_prefixed_name_and_opens_root_and_file(self):
+    def test_copy_template_to_folder_opens_project_root_and_file_for_nested_destination(self):
         with tempfile.TemporaryDirectory(prefix="acies-template-copy-") as temp_dir:
             root_path = Path(temp_dir) / "260243 BofA - Eastport Plaza"
             destination_folder = root_path / "Survey" / "2026-03-10 E (JH)"
@@ -266,14 +266,14 @@ class TemplateToolFolderFlowTests(unittest.TestCase):
                 side_effect=lambda target: _capture_open("file", target),
             ):
                 result = self.api.copy_template_to_folder(
-                    "tpl_survey",
+                    "tpl_plan_check",
                     str(destination_folder),
                     None,
                     {"projectName": "BAC Kent, WA"},
-                    {"templateKey": "electricalSurvey", "openOutputs": True},
+                    {"templateKey": "planCheck", "openOutputs": True},
                 )
 
-            expected_filename = "BAC Kent, WA - Electrical Survey Report.doc"
+            expected_filename = "Plan Check Comments.doc"
             expected_path = destination_folder / expected_filename
 
             self.assertEqual("success", result["status"])
@@ -316,17 +316,17 @@ class TemplateToolFolderFlowTests(unittest.TestCase):
                 side_effect=lambda target: _capture_open("file", target),
             ):
                 result = self.api.copy_template_to_folder(
-                    "tpl_survey",
+                    "tpl_plan_check",
                     str(destination_folder),
                     None,
                     {},
-                    {"templateKey": "electricalSurvey", "openOutputs": True},
+                    {"templateKey": "planCheck", "openOutputs": True},
                 )
 
-            expected_path = destination_folder / "Electrical Survey Report.doc"
+            expected_path = destination_folder / "Plan Check Comments.doc"
 
             self.assertEqual("success", result["status"])
-            self.assertEqual("Electrical Survey Report.doc", result["filename"])
+            self.assertEqual("Plan Check Comments.doc", result["filename"])
             self.assertTrue(expected_path.exists())
             self.assertEqual(
                 os.path.normpath(str(destination_folder)),
@@ -345,7 +345,7 @@ class TemplateToolFolderFlowTests(unittest.TestCase):
             destination_folder = Path(temp_dir) / "SurveyOutput"
             destination_folder.mkdir()
             template_record = self._make_template_record(temp_dir)
-            (destination_folder / "Electrical Survey Report.doc").write_bytes(b"existing")
+            (destination_folder / "Plan Check Comments.doc").write_bytes(b"existing")
 
             with patch.object(self.api, "get_templates", return_value={"templates": [template_record]}), patch.object(
                 main_module,
@@ -360,17 +360,17 @@ class TemplateToolFolderFlowTests(unittest.TestCase):
                 return_value={"status": "success"},
             ):
                 result = self.api.copy_template_to_folder(
-                    "tpl_survey",
+                    "tpl_plan_check",
                     str(destination_folder),
                     None,
                     {},
-                    {"templateKey": "electricalSurvey", "openOutputs": True},
+                    {"templateKey": "planCheck", "openOutputs": True},
                 )
 
             self.assertEqual("success", result["status"])
             self.assertRegex(
                 result["filename"],
-                r"^Electrical Survey Report - \d{4}-\d{2}-\d{2} \d{4}( \(\d+\))?\.doc$",
+                r"^Plan Check Comments - \d{4}-\d{2}-\d{2} \d{4}( \(\d+\))?\.doc$",
             )
             self.assertTrue((destination_folder / result["filename"]).exists())
 
@@ -393,11 +393,11 @@ class TemplateToolFolderFlowTests(unittest.TestCase):
                 return_value={"status": "error", "message": "file open failed"},
             ):
                 result = self.api.copy_template_to_folder(
-                    "tpl_survey",
+                    "tpl_plan_check",
                     str(destination_folder),
                     None,
                     {},
-                    {"templateKey": "electricalSurvey", "openOutputs": True},
+                    {"templateKey": "planCheck", "openOutputs": True},
                 )
 
             self.assertEqual("success", result["status"])

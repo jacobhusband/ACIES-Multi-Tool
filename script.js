@@ -124,7 +124,8 @@ let activeChecklistTab = null;
 let checklistDragState = null;
 let checklistRowMenuState = null;
 let checklistHandleMenuSuppressClickUntil = 0;
-let activeWorkroomLeftTab = "tasks";
+let activeWorkroomUtilityTab = "tasks";
+let activeWorkroomPreDesignPage = 0;
 let workroomDisciplineNoticeShown = false;
 let workroomToolStatusState = {
   toolId: "",
@@ -164,12 +165,345 @@ const ACIES_MECHANICAL_CHECKLIST_NAME = "Mechanical - ACIES Checklist";
 const ACIES_ELECTRICAL_CHECKLIST_NAME = "Electrical - ACIES Checklist";
 const ACIES_PLUMBING_CHECKLIST_NAME = "Plumbing - ACIES Checklist";
 const LEGACY_DEFAULT_CHECKLIST_ID = "checklist_default";
+const CHECKLIST_PROFILE_SCHEMA_VERSION = 1;
+const ACIES_ELECTRICAL_SCOPE_PROFILE_KEY = CHECKLIST_TEMPLATE_KEYS.ACIES_ELECTRICAL;
+const ACIES_ELECTRICAL_SCOPE_STATE_OPTIONS = [
+  { value: "ca", label: "California" },
+  { value: "wa", label: "Washington" },
+  { value: "or", label: "Oregon" },
+  { value: "nm", label: "New Mexico" },
+  { value: "other", label: "Other / Multi-state" },
+];
+const ACIES_ELECTRICAL_SCOPE_CITY_AREA_OPTIONS = [
+  { value: "san_francisco", label: "San Francisco" },
+  { value: "san_jose", label: "San Jose" },
+  { value: "santa_clara_county", label: "Santa Clara County" },
+  { value: "milpitas", label: "Milpitas" },
+  { value: "san_mateo", label: "San Mateo" },
+  { value: "petaluma", label: "Petaluma" },
+  { value: "french_valley", label: "French Valley" },
+  { value: "burlingame", label: "Burlingame" },
+  { value: "other", label: "Other / Not listed" },
+];
+const ACIES_ELECTRICAL_SCOPE_UTILITY_REGION_OPTIONS = [
+  { value: "pge", label: "PG&E" },
+  { value: "sce", label: "SCE" },
+  { value: "sdge", label: "SDG&E" },
+  { value: "iid", label: "IID" },
+  { value: "smud", label: "SMUD" },
+  { value: "ladwp", label: "LADWP" },
+  { value: "pse", label: "PSE" },
+  { value: "other", label: "Other / Not listed" },
+];
+const ACIES_ELECTRICAL_SCOPE_PROJECT_DELIVERY_OPTIONS = [
+  { value: "tenant_improvement", label: "Tenant Improvement" },
+  { value: "new_building", label: "New Building" },
+  { value: "shell_core", label: "Shell / Core & Shell" },
+  { value: "addition_remodel", label: "Addition / Remodel" },
+  { value: "service_upgrade", label: "Service Upgrade" },
+  { value: "other", label: "Other" },
+];
+const ACIES_ELECTRICAL_SCOPE_OCCUPANCY_OPTIONS = [
+  { value: "office", label: "Office" },
+  { value: "retail", label: "Retail" },
+  { value: "restaurant", label: "Restaurant / Food Service" },
+  { value: "warehouse", label: "Warehouse / Industrial" },
+  { value: "grocery", label: "Grocery / Market" },
+  { value: "mixed_use", label: "Mixed Use" },
+  { value: "healthcare", label: "Healthcare" },
+  { value: "other", label: "Other" },
+];
+const ACIES_ELECTRICAL_SCOPE_SERVICE_SIZE_OPTIONS = [
+  { value: "lt400", label: "Under 400A" },
+  { value: "400_999", label: "400A - 999A" },
+  { value: "1000_1199", label: "1000A - 1199A" },
+  { value: "1200_2999", label: "1200A - 2999A" },
+  { value: "3000_plus", label: "3000A+" },
+];
+const WORKROOM_VERIFICATION_STATUS_OPTIONS = [
+  { value: "not_started", label: "Not Started" },
+  { value: "in_progress", label: "In Progress" },
+  { value: "complete", label: "Complete" },
+  { value: "not_available", label: "Not Available" },
+];
+const CHECKLIST_BINARY_SCOPE_OPTIONS = [
+  { value: "yes", label: "Yes" },
+  { value: "no", label: "No" },
+];
+const CHECKLIST_ISSUE_STAGE_OPTIONS = [
+  { value: "permit", label: "Permit Set" },
+  { value: "construction", label: "Construction Set" },
+  { value: "revision", label: "Revision / Bulletin" },
+  { value: "submittal", label: "Submittal / Coordination" },
+  { value: "record", label: "Record / As-Built" },
+  { value: "other", label: "Other" },
+];
+const WORKROOM_PHASE_OPTIONS = [
+  {
+    value: "survey_report",
+    label: "Survey Report",
+    eyebrow: "Phase 1 of 5",
+    description:
+      "Start the field package, confirm verification assets, and launch the survey report before broader pre-design setup.",
+  },
+  {
+    value: "pre_design",
+    label: "Pre-Design",
+    eyebrow: "Phase 2 of 5",
+    description:
+      "Define scope, capture project constraints, and prepare the CAD reference base before design starts.",
+  },
+  {
+    value: "design",
+    label: "Design",
+    eyebrow: "Phase 3 of 5",
+    description:
+      "Work through the electrical design checklist, develop the permit set, and manage general notes.",
+  },
+  {
+    value: "preflight",
+    label: "Preflight & Issue",
+    eyebrow: "Phase 4 of 5",
+    description:
+      "Run the issue checklist, tighten the drawing set, and prepare publishing actions for release.",
+  },
+  {
+    value: "post_permit",
+    label: "Post-Permit",
+    eyebrow: "Phase 5 of 5",
+    description:
+      "Respond to plan check comments, service changes, and bulletin work after the initial permit set.",
+  },
+];
+const WORKROOM_PHASE_VALUES = new Set(
+  WORKROOM_PHASE_OPTIONS.map((phase) => phase.value)
+);
+const WORKROOM_RETURN_TYPE_OPTIONS = [
+  { value: "", label: "Select return type..." },
+  { value: "plan_check", label: "Plan Check" },
+  { value: "service_change", label: "Service Change" },
+  { value: "bulletin", label: "Bulletin / Revision" },
+];
+const WORKROOM_RETURN_TYPE_VALUES = new Set(
+  WORKROOM_RETURN_TYPE_OPTIONS.map((option) => option.value).filter(Boolean)
+);
+const ACIES_ELECTRICAL_SCOPE_FIELD_CONFIG = [
+  {
+    key: "state",
+    label: "State",
+    helpText: "Used for state-specific code and energy workflow rows.",
+    options: ACIES_ELECTRICAL_SCOPE_STATE_OPTIONS,
+    section: "scope_jurisdiction",
+  },
+  {
+    key: "cityArea",
+    label: "City / Area",
+    helpText: "Used for city- and area-specific notes inside the ACIES checklist.",
+    options: ACIES_ELECTRICAL_SCOPE_CITY_AREA_OPTIONS,
+    section: "scope_jurisdiction",
+  },
+  {
+    key: "utilityRegion",
+    label: "Utility Region",
+    helpText: "Used for PG&E, SCE, SDG&E, IID, SMUD, LADWP, and PSE-specific checks.",
+    options: ACIES_ELECTRICAL_SCOPE_UTILITY_REGION_OPTIONS,
+    section: "scope_jurisdiction",
+  },
+  {
+    key: "projectDeliveryType",
+    label: "Scope / Work Type",
+    helpText: "Used for tenant improvement, shell, service, and delivery-specific decisions.",
+    options: ACIES_ELECTRICAL_SCOPE_PROJECT_DELIVERY_OPTIONS,
+    section: "scope_jurisdiction",
+  },
+  {
+    key: "occupancyFamily",
+    label: "Building / Occupancy Type",
+    helpText: "Used for office, kitchen, warehouse, retail, and grocery checks.",
+    options: ACIES_ELECTRICAL_SCOPE_OCCUPANCY_OPTIONS,
+    section: "building_profile",
+  },
+  {
+    key: "buildingAreaSqFt",
+    label: "Approx. Area (Sq Ft)",
+    helpText: "Used for early sizing and scope conversations. Stored as a project-wide reference only.",
+    inputType: "number",
+    section: "building_profile",
+    tokenizable: false,
+  },
+  {
+    key: "storyCount",
+    label: "Above Grade Stories",
+    helpText: "Quick building scale reference for early design assumptions.",
+    inputType: "number",
+    section: "building_profile",
+    tokenizable: false,
+  },
+  {
+    key: "serviceSizeBucket",
+    label: "Service Size",
+    helpText: "Used for service-equipment checks that depend on ampacity thresholds.",
+    options: ACIES_ELECTRICAL_SCOPE_SERVICE_SIZE_OPTIONS,
+    section: "building_profile",
+  },
+  {
+    key: "highRise",
+    label: "High Rise Building",
+    helpText: "Used for high-rise-specific notes.",
+    options: CHECKLIST_BINARY_SCOPE_OPTIONS,
+    section: "building_profile",
+  },
+  {
+    key: "hasServiceEquipment",
+    label: "Service Equipment / Switchboard",
+    helpText: "Used for one-line and electrical-room service checks.",
+    options: CHECKLIST_BINARY_SCOPE_OPTIONS,
+    section: "existing_conditions",
+  },
+  {
+    key: "hasTransformer",
+    label: "Transformer",
+    helpText: "Used for transformer section checks.",
+    options: CHECKLIST_BINARY_SCOPE_OPTIONS,
+    section: "existing_conditions",
+  },
+  {
+    key: "hasExteriorSiteWork",
+    label: "Exterior / Site Work",
+    helpText: "Used for site lighting, utility, and pole/site infrastructure checks.",
+    options: CHECKLIST_BINARY_SCOPE_OPTIONS,
+    section: "existing_conditions",
+  },
+  {
+    key: "hasRooftopMechanical",
+    label: "Rooftop Mechanical / Roof Electrical",
+    helpText: "Used for RTU, roof receptacle, and rooftop coordination checks.",
+    options: CHECKLIST_BINARY_SCOPE_OPTIONS,
+    section: "existing_conditions",
+  },
+  {
+    key: "hasMeetingRooms",
+    label: "Meeting / Conference Rooms",
+    helpText: "Used for meeting-room receptacle checks.",
+    options: CHECKLIST_BINARY_SCOPE_OPTIONS,
+    section: "existing_conditions",
+  },
+  {
+    key: "hasCommercialKitchen",
+    label: "Commercial Kitchen / Food Prep",
+    helpText: "Used for commercial kitchen GFCI and shunt-trip coordination checks.",
+    options: CHECKLIST_BINARY_SCOPE_OPTIONS,
+    section: "existing_conditions",
+  },
+  {
+    key: "hasElevator",
+    label: "Elevator",
+    helpText: "Used for elevator-specific checklist sections.",
+    options: CHECKLIST_BINARY_SCOPE_OPTIONS,
+    section: "existing_conditions",
+  },
+  {
+    key: "hasEmergencyPower",
+    label: "Emergency Power / Generator",
+    helpText: "Used for generator and emergency-power checks.",
+    options: CHECKLIST_BINARY_SCOPE_OPTIONS,
+    section: "existing_conditions",
+  },
+  {
+    key: "hasFirePump",
+    label: "Fire Pump",
+    helpText: "Used for fire pump checks.",
+    options: CHECKLIST_BINARY_SCOPE_OPTIONS,
+    section: "existing_conditions",
+  },
+  {
+    key: "hasSolar",
+    label: "Solar / PV",
+    helpText: "Used for solar-ready and PV-related checks.",
+    options: CHECKLIST_BINARY_SCOPE_OPTIONS,
+    section: "existing_conditions",
+  },
+  {
+    key: "hasBatteryOrInverter",
+    label: "Battery / Inverter System",
+    helpText: "Used for inverter and storage-related checks.",
+    options: CHECKLIST_BINARY_SCOPE_OPTIONS,
+    section: "existing_conditions",
+  },
+  {
+    key: "hasEvCharging",
+    label: "EV Charging",
+    helpText: "Used for EV charger and EV infrastructure checks.",
+    options: CHECKLIST_BINARY_SCOPE_OPTIONS,
+    section: "existing_conditions",
+  },
+  {
+    key: "hasWarehouseLoading",
+    label: "Warehouse / Loading Spaces",
+    helpText: "Used for warehouse and loading-space EV provisions.",
+    options: CHECKLIST_BINARY_SCOPE_OPTIONS,
+    section: "existing_conditions",
+  },
+  {
+    key: "surveyStatus",
+    label: "Survey Report",
+    helpText: "Track whether the site survey/report has been completed for this project.",
+    options: WORKROOM_VERIFICATION_STATUS_OPTIONS,
+    section: "field_verification",
+    tokenizable: false,
+  },
+  {
+    key: "sitePhotosStatus",
+    label: "Site Photos",
+    helpText: "Track whether field photos are available for design reference.",
+    options: WORKROOM_VERIFICATION_STATUS_OPTIONS,
+    section: "field_verification",
+    tokenizable: false,
+  },
+  {
+    key: "panelPhotosStatus",
+    label: "Panel Photos",
+    helpText: "Track whether panel and equipment photos have been gathered for design and AI tools.",
+    options: WORKROOM_VERIFICATION_STATUS_OPTIONS,
+    section: "field_verification",
+    tokenizable: false,
+  },
+];
+const ACIES_ELECTRICAL_SCOPE_FIELD_KEYS = ACIES_ELECTRICAL_SCOPE_FIELD_CONFIG.map(
+  (field) => field.key
+);
+const CHECKLIST_ISSUE_STAGE_VALUES = new Set(
+  CHECKLIST_ISSUE_STAGE_OPTIONS.map((option) => option.value)
+);
+const CHECKLIST_SCOPE_ALLOWED_VALUE_LOOKUP = ACIES_ELECTRICAL_SCOPE_FIELD_CONFIG.reduce(
+  (lookup, field) => {
+    if (Array.isArray(field.options) && field.options.length) {
+      lookup[field.key] = new Set((field.options || []).map((option) => option.value));
+    }
+    return lookup;
+  },
+  {
+    issueStage: CHECKLIST_ISSUE_STAGE_VALUES,
+  }
+);
 
 function createChecklistTemplateSubheader(text) {
   return {
     type: CHECKLIST_ROW_TYPES.SUBHEADER,
     text: String(text ?? ""),
   };
+}
+
+function createChecklistTemplateItem(text, applicability = null) {
+  const item = {
+    type: CHECKLIST_ROW_TYPES.ITEM,
+    text: String(text ?? ""),
+  };
+  const normalizedApplicability = normalizeChecklistApplicability(applicability);
+  if (normalizedApplicability) {
+    item.applicability = normalizedApplicability;
+  }
+  return item;
 }
 
 function createChecklistTemplateSection(title, items = []) {
@@ -326,22 +660,77 @@ const ACIES_MECHANICAL_TEMPLATE_ITEMS = [
 
 const ACIES_ELECTRICAL_TEMPLATE_ITEMS = [
   ...createChecklistTemplateSection("Electrical General", [
-    "Latest state code requirement; year.",
+    createChecklistTemplateItem("Latest state code requirement; year.", {
+      any: [
+        "issueStage:permit",
+        "issueStage:construction",
+        "issueStage:revision",
+      ],
+    }),
     "Drawing schedule to match sheet numbers.",
     "Proper scale on drawings.",
     "Coordinate drawings presentation, sheet naming, sheet numbering, and scales with Mechanical & Plumbing for consistency.",
     "Lighting control diagram.",
-    "Lighting control specification.",
+    createChecklistTemplateItem("Lighting control specification.", {
+      any: [
+        "issueStage:permit",
+        "issueStage:construction",
+        "issueStage:revision",
+      ],
+    }),
     "Latest specification or applicable code.",
-    "Non-infringement statement (for high rise building), and energy inspection form (for all projects) for City of San Francisco.",
-    "Scope of work, CA codes list, and city stamp box (CSJ Bulletin #227) 6\" x 6\" cover sheet & 3\" x 3\" each sheet for City of San Jose.",
+    createChecklistTemplateItem(
+      "Non-infringement statement (for high rise building), and energy inspection form (for all projects) for City of San Francisco.",
+      {
+        all: ["cityArea:san_francisco"],
+        any: [
+          "issueStage:permit",
+          "issueStage:construction",
+          "issueStage:revision",
+        ],
+      }
+    ),
+    createChecklistTemplateItem(
+      "Scope of work, CA codes list, and city stamp box (CSJ Bulletin #227) 6\" x 6\" cover sheet & 3\" x 3\" each sheet for City of San Jose.",
+      {
+        all: ["cityArea:san_jose"],
+        any: [
+          "issueStage:permit",
+          "issueStage:construction",
+          "issueStage:revision",
+        ],
+      }
+    ),
     "Receptacle to be 18\" top of box, and switches to be 48\" top of box mounting height.",
-    "Utilize online T-24 forms.",
-    "Utilize online energy forms for WA. https://waenergycodes.com/",
-    "Utilize Comchecks for other states.",
+    createChecklistTemplateItem("Utilize online T-24 forms.", {
+      all: ["state:ca"],
+      any: [
+        "issueStage:permit",
+        "issueStage:construction",
+        "issueStage:revision",
+      ],
+    }),
+    createChecklistTemplateItem("Utilize online energy forms for WA. https://waenergycodes.com/", {
+      all: ["state:wa"],
+      any: [
+        "issueStage:permit",
+        "issueStage:construction",
+        "issueStage:revision",
+      ],
+    }),
+    createChecklistTemplateItem("Utilize Comchecks for other states.", {
+      none: ["state:ca", "state:wa"],
+      any: [
+        "issueStage:permit",
+        "issueStage:construction",
+        "issueStage:revision",
+      ],
+    }),
     "Check adopted energy code for lighting control requirements.",
     "Check municipal code for specific energy code requirements/amendments.",
-    "Check for Reach Code requirements.",
+    createChecklistTemplateItem("Check for Reach Code requirements.", {
+      all: ["state:ca"],
+    }),
   ]),
   ...createChecklistTemplateSection("Electrical Lighting", [
     "Sequence of operation.",
@@ -356,7 +745,9 @@ const ACIES_ELECTRICAL_TEMPLATE_ITEMS = [
     "Location of photocell or photo-sensor.",
     "Lighting under stairway.",
     "Light switch (OS and manual on/off) location.",
-    "Any dimming control requirement for other states.",
+    createChecklistTemplateItem("Any dimming control requirement for other states.", {
+      none: ["state:ca"],
+    }),
     "Lighting above all loading door.",
     "Separate switching for control access area (Pharmacy).",
     "Exterior light specification, UL listed for wet location. BUG rating.",
@@ -364,47 +755,111 @@ const ACIES_ELECTRICAL_TEMPLATE_ITEMS = [
     "New stairway lighting 10fc min not ave., NFPA 101.",
   ]),
   ...createChecklistTemplateSection("HVAC coord", [
-    "Provide motion sensor and light in attic space / near roof ladder opening, CMC 304.3.2.",
+    createChecklistTemplateItem(
+      "Provide motion sensor and light in attic space / near roof ladder opening, CMC 304.3.2.",
+      {
+        all: ["hasRooftopMechanical:yes"],
+      }
+    ),
     "Toilet EF control. Interlock?",
   ]),
   ...createChecklistTemplateSection("T24", [
-    "Dimming control for >=100SF with general lighting 0.5w/sf per T24.",
-    "Demand response design for lighting power 4000W subject to dimming requirements per T24 110.12(c) and controlled receptacles per T24 110.12(e).",
+    createChecklistTemplateItem(
+      "Dimming control for >=100SF with general lighting 0.5w/sf per T24.",
+      {
+        all: ["state:ca"],
+      }
+    ),
+    createChecklistTemplateItem(
+      "Demand response design for lighting power 4000W subject to dimming requirements per T24 110.12(c) and controlled receptacles per T24 110.12(e).",
+      {
+        all: ["state:ca"],
+      }
+    ),
   ]),
   ...createChecklistTemplateSection("Elevator", [
-    "Elevator pit - use 4' / 8' LED. 10fc minimum.",
-    "Elevator lobby (landing) to maintain 10FC per ASME A17.1:2004 2.1110.2.",
+    createChecklistTemplateItem("Elevator pit - use 4' / 8' LED. 10fc minimum.", {
+      all: ["hasElevator:yes"],
+    }),
+    createChecklistTemplateItem(
+      "Elevator lobby (landing) to maintain 10FC per ASME A17.1:2004 2.1110.2.",
+      {
+        all: ["hasElevator:yes"],
+      }
+    ),
   ]),
   ...createChecklistTemplateSection("EM Lighting", [
     "EM lighting (interior & exterior) per CBC 1008.",
     "EM lighting relays, UL924 to bypass lighting controls.",
     "EM light circuiting per 700.12.",
-    "EM lighting - check if high rise building has generator power for emergency light.",
+    createChecklistTemplateItem(
+      "EM lighting - check if high rise building has generator power for emergency light.",
+      {
+        all: ["highRise:yes"],
+      }
+    ),
     "Notes on EM circuit ahead of switches.",
     "Sufficient EM lighting. 1fc ave. and min. at any point of 0.1fc per CBC 1008.3.5.",
     "Exterior EM light above exit doors.",
-    "County of Santa Clara: provide night light for egress lighting in every room under normal conditions.",
+    createChecklistTemplateItem(
+      "County of Santa Clara: provide night light for egress lighting in every room under normal conditions.",
+      {
+        all: ["cityArea:santa_clara_county"],
+      }
+    ),
   ]),
   ...createChecklistTemplateSection("Electrical Site", [
-    "Exterior lighting average 1fc min 0.1fc - at egress path.",
-    "Junction box every 200'.",
+    createChecklistTemplateItem("Exterior lighting average 1fc min 0.1fc - at egress path.", {
+      all: ["hasExteriorSiteWork:yes"],
+    }),
+    createChecklistTemplateItem("Junction box every 200'.", {
+      all: ["hasExteriorSiteWork:yes"],
+    }),
     "Demarcation location and conduits. (2)4\"C.",
-    "PIV location.",
-    "EV charger location - CALGREEN.",
+    createChecklistTemplateItem("PIV location.", {
+      all: ["hasExteriorSiteWork:yes"],
+    }),
+    createChecklistTemplateItem("EV charger location - CALGREEN.", {
+      all: ["state:ca", "hasEvCharging:yes"],
+    }),
     "Signage location. Monument sign? Illuminated address sign.",
-    "Any sump pump at loading dock?",
-    "IID details is different from PG&E & SCE.",
-    "SDG&E: 6' clearance in front of pull section.",
-    "Landscape/irrigation controller.",
-    "Any irrigation pump?",
-    "Any sewer or grinder pump? simplex vs. duplex? EYS fitting?",
-    "Pole height limitation by city.",
-    "Pole light 24' or lower shall have dimming (CA only).",
-    "Any receptacle on light pole.",
+    createChecklistTemplateItem("Any sump pump at loading dock?", {
+      all: ["hasWarehouseLoading:yes"],
+    }),
+    createChecklistTemplateItem("IID details is different from PG&E & SCE.", {
+      all: ["utilityRegion:iid"],
+    }),
+    createChecklistTemplateItem("SDG&E: 6' clearance in front of pull section.", {
+      all: ["utilityRegion:sdge"],
+    }),
+    createChecklistTemplateItem("Landscape/irrigation controller.", {
+      all: ["hasExteriorSiteWork:yes"],
+    }),
+    createChecklistTemplateItem("Any irrigation pump?", {
+      all: ["hasExteriorSiteWork:yes"],
+    }),
+    createChecklistTemplateItem("Any sewer or grinder pump? simplex vs. duplex? EYS fitting?", {
+      all: ["hasExteriorSiteWork:yes"],
+    }),
+    createChecklistTemplateItem("Pole height limitation by city.", {
+      all: ["hasExteriorSiteWork:yes"],
+    }),
+    createChecklistTemplateItem("Pole light 24' or lower shall have dimming (CA only).", {
+      all: ["state:ca", "hasExteriorSiteWork:yes"],
+    }),
+    createChecklistTemplateItem("Any receptacle on light pole.", {
+      all: ["hasExteriorSiteWork:yes"],
+    }),
     "Coordination POC with JT consultant.",
-    "CCT (color correction temperature) limitation by city.",
-    "Full cutoff for all exterior lighting limitations by city.",
-    "Bi-level lighting control.",
+    createChecklistTemplateItem("CCT (color correction temperature) limitation by city.", {
+      all: ["hasExteriorSiteWork:yes"],
+    }),
+    createChecklistTemplateItem("Full cutoff for all exterior lighting limitations by city.", {
+      all: ["hasExteriorSiteWork:yes"],
+    }),
+    createChecklistTemplateItem("Bi-level lighting control.", {
+      all: ["hasExteriorSiteWork:yes"],
+    }),
     "Distance from utility transformer to window, door & swbd.",
     "Coordination POC with JT consultant.",
   ]),
@@ -413,9 +868,18 @@ const ACIES_ELECTRICAL_TEMPLATE_ITEMS = [
   ]),
   ...createChecklistTemplateSection("EL room", [
     "Clearance in front of panels and switchboard.",
-    "2\"C PG&E conduit from switchgear to exterior wall.",
-    "PG&E: 48\" clearance in front of switchboard.",
-    "New Mexico: disconnect means on outside of bldg. shall be within 48\" from service conductors emerge from earth.",
+    createChecklistTemplateItem("2\"C PG&E conduit from switchgear to exterior wall.", {
+      all: ["hasServiceEquipment:yes", "utilityRegion:pge"],
+    }),
+    createChecklistTemplateItem("PG&E: 48\" clearance in front of switchboard.", {
+      all: ["hasServiceEquipment:yes", "utilityRegion:pge"],
+    }),
+    createChecklistTemplateItem(
+      "New Mexico: disconnect means on outside of bldg. shall be within 48\" from service conductors emerge from earth.",
+      {
+        all: ["hasServiceEquipment:yes", "state:nm"],
+      }
+    ),
     "Space for (side or rear) pull section at switchboard.",
     "2 exit doors for equipment 1200A or above and more than 6' wide; door to swing out and with panic hardware for 800A & above.",
     "Provide receptacle within 15' of MSB.",
@@ -423,122 +887,315 @@ const ACIES_ELECTRICAL_TEMPLATE_ITEMS = [
     "No ductwork in EL room.",
     "SPD for residential/emergency, see EATON guidelines.",
     "Fire rating of room? - if emergency non-sprinklered - 2hr.",
-    "Solar and battery storage requirement per T24. Use performance approach to avoid battery storage system.",
+    createChecklistTemplateItem(
+      "Solar and battery storage requirement per T24. Use performance approach to avoid battery storage system.",
+      {
+        all: ["state:ca"],
+      }
+    ),
     "Solar ready - conduits to roof, solar PV space.",
     "FACP?",
     "MPOE - 4' board.",
-    "SCE does not allow fire/security alarm, batteries and irrigation controllers inside meter room.",
-    "SDG&E does not allow telephone, data, communication, fire/security alarm, irrigation control and non-SDG&E related equipment in meter room.",
+    createChecklistTemplateItem(
+      "SCE does not allow fire/security alarm, batteries and irrigation controllers inside meter room.",
+      {
+        all: ["utilityRegion:sce"],
+      }
+    ),
+    createChecklistTemplateItem(
+      "SDG&E does not allow telephone, data, communication, fire/security alarm, irrigation control and non-SDG&E related equipment in meter room.",
+      {
+        all: ["utilityRegion:sdge"],
+      }
+    ),
   ]),
   ...createChecklistTemplateSection("HVAC/Plumbing coord", [
-    "LG is most efficient for RTU/VRF. (Load).",
+    createChecklistTemplateItem("LG is most efficient for RTU/VRF. (Load).", {
+      all: ["hasRooftopMechanical:yes"],
+    }),
     "Any HVAC/plumbing pipe above panels?",
-    "3/4\"C., between FC & CU.",
-    "GFI for RTU: by EC or furnished with RTU.",
-    "Disconnect switch for RTU: by EC or furnished with RTU.",
-    "Coordinate damper(FSD), smoke detector/DD location.",
-    "Shunt-trip breakers for equipment under hood.",
-    "Shunt-trip breakers for Big Ass fan in WH.",
-    "Equipment with >=1/2HP motor, use disconnect switch.",
-    "Motor starter for large EF.",
+    createChecklistTemplateItem("3/4\"C., between FC & CU.", {
+      all: ["hasRooftopMechanical:yes"],
+    }),
+    createChecklistTemplateItem("GFI for RTU: by EC or furnished with RTU.", {
+      all: ["hasRooftopMechanical:yes"],
+    }),
+    createChecklistTemplateItem("Disconnect switch for RTU: by EC or furnished with RTU.", {
+      all: ["hasRooftopMechanical:yes"],
+    }),
+    createChecklistTemplateItem("Coordinate damper(FSD), smoke detector/DD location.", {
+      all: ["hasRooftopMechanical:yes"],
+    }),
+    createChecklistTemplateItem("Shunt-trip breakers for equipment under hood.", {
+      all: ["hasCommercialKitchen:yes"],
+    }),
+    createChecklistTemplateItem("Shunt-trip breakers for Big Ass fan in WH.", {
+      any: ["occupancyFamily:warehouse", "hasWarehouseLoading:yes"],
+    }),
+    createChecklistTemplateItem("Equipment with >=1/2HP motor, use disconnect switch.", {
+      all: ["hasRooftopMechanical:yes"],
+    }),
+    createChecklistTemplateItem("Motor starter for large EF.", {
+      all: ["hasRooftopMechanical:yes"],
+    }),
     "Coordinate EWH voltage and balanced load per phase requirement.",
-    "Interlocking kitchen EF with MAU.",
+    createChecklistTemplateItem("Interlocking kitchen EF with MAU.", {
+      all: ["hasCommercialKitchen:yes"],
+    }),
   ]),
   ...createChecklistTemplateSection("Generator/Inverter", [
-    "Circuiting to genset chargers and jacket water heater.",
-    "EM generator: permanent switching means to connect a temporary source of power for maintenance or repair of the alternate source of power in accordance with 700.3(F).",
+    createChecklistTemplateItem("Circuiting to genset chargers and jacket water heater.", {
+      all: ["hasEmergencyPower:yes"],
+    }),
+    createChecklistTemplateItem(
+      "EM generator: permanent switching means to connect a temporary source of power for maintenance or repair of the alternate source of power in accordance with 700.3(F).",
+      {
+        all: ["hasEmergencyPower:yes"],
+      }
+    ),
   ]),
   ...createChecklistTemplateSection("Fire Pump", [
-    "Must come with jockey pump. All WP inside pump room.",
+    createChecklistTemplateItem("Must come with jockey pump. All WP inside pump room.", {
+      all: ["hasFirePump:yes"],
+    }),
   ]),
   ...createChecklistTemplateSection("General", [
     "Show window receptacles per 210.62.",
     "Signage location vs. architectural layout.",
     "Any structural expansion joint?",
     "Power & Tel conduit stub to ceiling space for multi story bldg.",
-    "Receptacle requirement for meeting rooms (conference rooms) per 210.65.",
+    createChecklistTemplateItem("Receptacle requirement for meeting rooms (conference rooms) per 210.65.", {
+      all: ["hasMeetingRooms:yes"],
+    }),
     "Tamper resistant (406.12), hospital grade?",
     "GFCI protection for receptacles for counter and near water source (6').",
-    "GFCI protection for restaurant kitchens or areas with a sink and permanent provisions for either food preparation or cooking per 210.8(B)(2).",
+    createChecklistTemplateItem(
+      "GFCI protection for restaurant kitchens or areas with a sink and permanent provisions for either food preparation or cooking per 210.8(B)(2).",
+      {
+        all: ["hasCommercialKitchen:yes"],
+      }
+    ),
     "Weatherproof in-use type and weather-resistant devices for exterior receptacles.",
     "GFCI protection for indoor service equipment and indoor equipment requiring dedicated equipment space per 210.8(E)/210.63.",
     "Garage level - provide GFI breakers for heat trace snow melt equipment.",
     "Any isolated ground requirement.",
-    "Offices T24 CA: control receptacles for TI with new electrical service. No control receptacle is required for regular TI.",
+    createChecklistTemplateItem(
+      "Offices T24 CA: control receptacles for TI with new electrical service. No control receptacle is required for regular TI.",
+      {
+        all: ["state:ca", "occupancyFamily:office"],
+      }
+    ),
     "Any area of refuge?",
     "Separate structure (trailer, trash enclosure, pylon sign) with more than 1 branch circuit requires grounding electrodes, NEC 250.32 - should have ground rod + bonding to steel/cold water main.",
     "Avoid 3 hour rated wall, CBC 706.2.",
-    "Shell development: all conduits shall maintain 5' clearance in front of HVAC supply and return openings.",
-    "Medium- and heavy-duty EV charging provision for warehouses, grocery stores and retail stores with planned off-street loading spaces per CGBC 5.106.5.4.",
+    createChecklistTemplateItem(
+      "Shell development: all conduits shall maintain 5' clearance in front of HVAC supply and return openings.",
+      {
+        all: ["projectDeliveryType:shell_core"],
+      }
+    ),
+    createChecklistTemplateItem(
+      "Medium- and heavy-duty EV charging provision for warehouses, grocery stores and retail stores with planned off-street loading spaces per CGBC 5.106.5.4.",
+      {
+        all: ["state:ca", "hasWarehouseLoading:yes"],
+        any: [
+          "occupancyFamily:warehouse",
+          "occupancyFamily:grocery",
+          "occupancyFamily:retail",
+        ],
+      }
+    ),
   ]),
   ...createChecklistTemplateSection("City/Area Specifics", [
-    "Milpitas - receptacle requirement.",
-    "City of San Mateo: justify 1kW solar for residential; 5kW solar for commercial.",
-    "City of Petaluma - mitigation measure - exterior receptacles & 220/1P receptacle at interior loading dock.",
+    createChecklistTemplateItem("Milpitas - receptacle requirement.", {
+      all: ["cityArea:milpitas"],
+    }),
+    createChecklistTemplateItem(
+      "City of San Mateo: justify 1kW solar for residential; 5kW solar for commercial.",
+      {
+        all: ["cityArea:san_mateo"],
+      }
+    ),
+    createChecklistTemplateItem(
+      "City of Petaluma - mitigation measure - exterior receptacles & 220/1P receptacle at interior loading dock.",
+      {
+        all: ["cityArea:petaluma"],
+      }
+    ),
   ]),
   ...createChecklistTemplateSection("Electrical 1-Line Diagram", [
-    "EUSERC needs a switchboard section, no wireway.",
-    "MCB for 6 or more services.",
+    createChecklistTemplateItem("EUSERC needs a switchboard section, no wireway.", {
+      all: ["hasServiceEquipment:yes"],
+    }),
+    createChecklistTemplateItem("MCB for 6 or more services.", {
+      all: ["hasServiceEquipment:yes"],
+    }),
     "Upsize bus for PV - max PV size is 20% over bus size.",
-    "Two to six service disconnects to have separate enclosures or separate vertical section per 230.71(B).",
-    "GFI @ MCB for >=1000A, 480V. (230.95).",
-    ">=1200 breaker: breaker with arc flash reduction maintenance system. (240.87).",
+    createChecklistTemplateItem(
+      "Two to six service disconnects to have separate enclosures or separate vertical section per 230.71(B).",
+      {
+        all: ["hasServiceEquipment:yes"],
+      }
+    ),
+    createChecklistTemplateItem("GFI @ MCB for >=1000A, 480V. (230.95).", {
+      all: ["hasServiceEquipment:yes"],
+      any: [
+        "serviceSizeBucket:1000_1199",
+        "serviceSizeBucket:1200_2999",
+        "serviceSizeBucket:3000_plus",
+      ],
+    }),
+    createChecklistTemplateItem(
+      ">=1200 breaker: breaker with arc flash reduction maintenance system. (240.87).",
+      {
+        all: ["hasServiceEquipment:yes"],
+        any: [
+          "serviceSizeBucket:1200_2999",
+          "serviceSizeBucket:3000_plus",
+        ],
+      }
+    ),
     "CT for meter > 200A service. (full section).",
-    "Side or rear pull section at swbd. Top/bottom conduit opening.",
-    "Any bus duct requirement by utility company.",
-    "3000A - PG&E, bus trench 3000A LADWP.",
-    "LADWP - methane? Check Zimas.",
+    createChecklistTemplateItem("Side or rear pull section at swbd. Top/bottom conduit opening.", {
+      all: ["hasServiceEquipment:yes"],
+    }),
+    createChecklistTemplateItem("Any bus duct requirement by utility company.", {
+      all: ["hasServiceEquipment:yes"],
+    }),
+    createChecklistTemplateItem("3000A - PG&E, bus trench 3000A LADWP.", {
+      all: ["hasServiceEquipment:yes", "serviceSizeBucket:3000_plus"],
+      any: ["utilityRegion:pge", "utilityRegion:ladwp"],
+    }),
+    createChecklistTemplateItem("LADWP - methane? Check Zimas.", {
+      all: ["utilityRegion:ladwp"],
+    }),
     "Disaggregation details.",
     "Voltage drop table.",
-    "AIC rating and series rating. Series rating will require manufacturer catalogue.",
-    "SPD.",
-    "Feeder taps overcurrent protection per 240.21(B) (identify distance).",
+    createChecklistTemplateItem(
+      "AIC rating and series rating. Series rating will require manufacturer catalogue.",
+      {
+        all: ["hasServiceEquipment:yes"],
+      }
+    ),
+    createChecklistTemplateItem("SPD.", {
+      all: ["hasServiceEquipment:yes"],
+    }),
+    createChecklistTemplateItem("Feeder taps overcurrent protection per 240.21(B) (identify distance).", {
+      all: ["hasServiceEquipment:yes"],
+    }),
     "240V delta service needs cable color identification and nameplate. (408.3(F), 110.21(B), 110.15).",
   ]),
   ...createChecklistTemplateSection("Panelboards", [
     "Panel board AIC rating, NEMA rating.",
     "Provide breaker handle-ties as required.",
-    "Provide GFI breaker and lock-on breaker as required. EVCS without disconnect needs 110.25.",
+    createChecklistTemplateItem(
+      "Provide GFI breaker and lock-on breaker as required. EVCS without disconnect needs 110.25.",
+      {
+        all: ["hasEvCharging:yes"],
+      }
+    ),
     "Any isolated ground requirement.",
   ]),
   ...createChecklistTemplateSection("Elevator", [
-    "Shunt trip for elevator connections.",
+    createChecklistTemplateItem("Shunt trip for elevator connections.", {
+      all: ["hasElevator:yes"],
+    }),
   ]),
   ...createChecklistTemplateSection("Grounding", [
     "Must have ground rod. Ground to cold water main/steel.",
     "Check grounding in mixed used bldg., oversize ground wire on 277/480V side.",
   ]),
   ...createChecklistTemplateSection("Transformer", [
-    "Overcurrent protection per 450.3(B) - <1000V, primary only OK. Primary disconnect can be remote with identification 450.14.",
-    "Transformer secondary overcurrent protection req per 240.21(C).",
-    "Feeder taps overcurrent protection per 240.21(B) (identify distance).",
-    "Grounding 250.30, 250.104.",
-    "Fire rating 1hr >112.5kVA if class <150.",
+    createChecklistTemplateItem(
+      "Overcurrent protection per 450.3(B) - <1000V, primary only OK. Primary disconnect can be remote with identification 450.14.",
+      {
+        all: ["hasTransformer:yes"],
+      }
+    ),
+    createChecklistTemplateItem("Transformer secondary overcurrent protection req per 240.21(C).", {
+      all: ["hasTransformer:yes"],
+    }),
+    createChecklistTemplateItem("Feeder taps overcurrent protection per 240.21(B) (identify distance).", {
+      all: ["hasTransformer:yes"],
+    }),
+    createChecklistTemplateItem("Grounding 250.30, 250.104.", {
+      all: ["hasTransformer:yes"],
+    }),
+    createChecklistTemplateItem("Fire rating 1hr >112.5kVA if class <150.", {
+      all: ["hasTransformer:yes"],
+    }),
   ]),
   ...createChecklistTemplateSection("Generator/Battery/Inverter", [
-    "Life safety generator to have portable generator docking station, NEC 700.3(F) - ATS has requirements.",
-    "Identify load type: life safety/legal/optional standby.",
-    "ATS has requirements.",
-    "Inverter sizing - maximum load at 80%. Show kWH.",
-    "SPD.",
-    "Fire code: clearances, fire alarm, 2hr rating. Check CFC 1207.7.",
-    "NFPA 110 for room requirements.",
+    createChecklistTemplateItem(
+      "Life safety generator to have portable generator docking station, NEC 700.3(F) - ATS has requirements.",
+      {
+        any: ["hasEmergencyPower:yes", "hasBatteryOrInverter:yes"],
+      }
+    ),
+    createChecklistTemplateItem("Identify load type: life safety/legal/optional standby.", {
+      any: ["hasEmergencyPower:yes", "hasBatteryOrInverter:yes"],
+    }),
+    createChecklistTemplateItem("ATS has requirements.", {
+      any: ["hasEmergencyPower:yes", "hasBatteryOrInverter:yes"],
+    }),
+    createChecklistTemplateItem("Inverter sizing - maximum load at 80%. Show kWH.", {
+      any: ["hasEmergencyPower:yes", "hasBatteryOrInverter:yes"],
+    }),
+    createChecklistTemplateItem("SPD.", {
+      any: ["hasEmergencyPower:yes", "hasBatteryOrInverter:yes"],
+    }),
+    createChecklistTemplateItem("Fire code: clearances, fire alarm, 2hr rating. Check CFC 1207.7.", {
+      any: ["hasEmergencyPower:yes", "hasBatteryOrInverter:yes"],
+    }),
+    createChecklistTemplateItem("NFPA 110 for room requirements.", {
+      any: ["hasEmergencyPower:yes", "hasBatteryOrInverter:yes"],
+    }),
   ]),
   ...createChecklistTemplateSection("Fire Pump", [
-    "Fire pump - meter - no main per NEC.",
-    "Fire pump - check reliable utility or req. generator.",
-    "Fire pump = life safety; need separation barrier for breaker at generator/can't be combined.",
+    createChecklistTemplateItem("Fire pump - meter - no main per NEC.", {
+      all: ["hasFirePump:yes"],
+    }),
+    createChecklistTemplateItem("Fire pump - check reliable utility or req. generator.", {
+      all: ["hasFirePump:yes"],
+    }),
+    createChecklistTemplateItem(
+      "Fire pump = life safety; need separation barrier for breaker at generator/can't be combined.",
+      {
+        all: ["hasFirePump:yes"],
+      }
+    ),
   ]),
   ...createChecklistTemplateSection("City/Area Specifics", [
-    "Outdoor meters - Sacramento SMUD, OR, WA.",
-    "SMUD - must have MCB, outdoor meters.",
-    "French Valley, CA requires house panel for single tenant pad bldg.",
-    "No shunt trip for elevator connections in Burlingame.",
-    "SFEC requires purple for high leg for 240V delta service. (SFEC 210(A)(3)).",
-    "WA State - outdoor meters.",
-    "WA State - separate meter for HVAC if over 50,000 SQFT.",
-    "WA State - extra clearance for swbd - PSE.",
-    "WA State - shunt trip at disconnect switch located within elevator machine room, load center in elevator machine room for ltg & rec; FC disconnect inside elevator machine room.",
+    createChecklistTemplateItem("Outdoor meters - Sacramento SMUD, OR, WA.", {
+      any: ["utilityRegion:smud", "state:or", "state:wa"],
+    }),
+    createChecklistTemplateItem("SMUD - must have MCB, outdoor meters.", {
+      all: ["utilityRegion:smud"],
+    }),
+    createChecklistTemplateItem("French Valley, CA requires house panel for single tenant pad bldg.", {
+      all: ["cityArea:french_valley"],
+    }),
+    createChecklistTemplateItem("No shunt trip for elevator connections in Burlingame.", {
+      all: ["cityArea:burlingame", "hasElevator:yes"],
+    }),
+    createChecklistTemplateItem("SFEC requires purple for high leg for 240V delta service. (SFEC 210(A)(3)).", {
+      all: ["cityArea:san_francisco"],
+    }),
+    createChecklistTemplateItem("WA State - outdoor meters.", {
+      all: ["state:wa"],
+    }),
+    createChecklistTemplateItem("WA State - separate meter for HVAC if over 50,000 SQFT.", {
+      all: ["state:wa"],
+    }),
+    createChecklistTemplateItem("WA State - extra clearance for swbd - PSE.", {
+      all: ["state:wa", "utilityRegion:pse"],
+    }),
+    createChecklistTemplateItem(
+      "WA State - shunt trip at disconnect switch located within elevator machine room, load center in elevator machine room for ltg & rec; FC disconnect inside elevator machine room.",
+      {
+        all: ["state:wa", "hasElevator:yes"],
+      }
+    ),
   ]),
 ];
 
@@ -719,10 +1376,14 @@ function normalizeChecklistTemplateOverride(rawOverride, templateKey) {
   const items = rawOverride.items.map((item, index) => {
     const normalizedItem = normalizeChecklistItem(item, index);
     changed = changed || normalizedItem.changed;
-    return {
+    const snapshot = {
       text: normalizedItem.item.text,
       type: normalizedItem.item.type,
     };
+    if (normalizedItem.item.applicability) {
+      snapshot.applicability = normalizedItem.item.applicability;
+    }
+    return snapshot;
   });
 
   return {
@@ -773,6 +1434,208 @@ function getChecklistTemplatesForCurrentDisciplines() {
   })
     .map((template) => getChecklistTemplateByKey(template.key))
     .filter(Boolean);
+}
+
+function normalizeChecklistScopeOptionValue(fieldKey, value) {
+  const allowedValues = CHECKLIST_SCOPE_ALLOWED_VALUE_LOOKUP[fieldKey];
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw || !allowedValues || !allowedValues.has(raw)) return "";
+  return raw;
+}
+
+function getChecklistScopeFieldConfig(fieldKey) {
+  return (
+    ACIES_ELECTRICAL_SCOPE_FIELD_CONFIG.find((field) => field.key === fieldKey) || null
+  );
+}
+
+function normalizeChecklistScopeNumberValue(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+  const compact = raw.replace(/,/g, "");
+  if (!/^\d+(\.\d+)?$/.test(compact)) return "";
+  const normalized = compact.replace(/^0+(?=\d)/, "");
+  return normalized || "0";
+}
+
+function normalizeChecklistScopeFieldValue(fieldKey, value) {
+  const field = getChecklistScopeFieldConfig(fieldKey);
+  if (!field) return "";
+  if (field.inputType === "number") {
+    return normalizeChecklistScopeNumberValue(value);
+  }
+  return normalizeChecklistScopeOptionValue(fieldKey, value);
+}
+
+function createEmptyAciesElectricalChecklistAnswers() {
+  return ACIES_ELECTRICAL_SCOPE_FIELD_CONFIG.reduce((answers, field) => {
+    answers[field.key] = "";
+    return answers;
+  }, {});
+}
+
+function normalizeAciesElectricalChecklistAnswers(answers) {
+  const source = answers && typeof answers === "object" && !Array.isArray(answers)
+    ? answers
+    : {};
+  const normalized = createEmptyAciesElectricalChecklistAnswers();
+  ACIES_ELECTRICAL_SCOPE_FIELD_KEYS.forEach((fieldKey) => {
+    normalized[fieldKey] = normalizeChecklistScopeFieldValue(fieldKey, source[fieldKey]);
+  });
+  return normalized;
+}
+
+function createDefaultAciesElectricalChecklistProfile() {
+  return {
+    schemaVersion: CHECKLIST_PROFILE_SCHEMA_VERSION,
+    answers: createEmptyAciesElectricalChecklistAnswers(),
+    updatedAtUtc: "",
+  };
+}
+
+function normalizeAciesElectricalChecklistProfile(profile) {
+  const source = profile && typeof profile === "object" && !Array.isArray(profile)
+    ? profile
+    : {};
+  return {
+    schemaVersion: CHECKLIST_PROFILE_SCHEMA_VERSION,
+    answers: normalizeAciesElectricalChecklistAnswers(source.answers),
+    updatedAtUtc:
+      typeof source.updatedAtUtc === "string" ? source.updatedAtUtc.trim() : "",
+  };
+}
+
+function normalizeProjectChecklistProfiles(profiles) {
+  const source = profiles && typeof profiles === "object" && !Array.isArray(profiles)
+    ? profiles
+    : {};
+  return {
+    ...source,
+    [ACIES_ELECTRICAL_SCOPE_PROFILE_KEY]: normalizeAciesElectricalChecklistProfile(
+      source[ACIES_ELECTRICAL_SCOPE_PROFILE_KEY] || createDefaultAciesElectricalChecklistProfile()
+    ),
+  };
+}
+
+function normalizeChecklistIssueStage(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  return CHECKLIST_ISSUE_STAGE_VALUES.has(raw) ? raw : "";
+}
+
+function normalizeWorkroomPhase(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  return WORKROOM_PHASE_VALUES.has(raw) ? raw : "survey_report";
+}
+
+function normalizeWorkroomReturnType(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  return WORKROOM_RETURN_TYPE_VALUES.has(raw) ? raw : "";
+}
+
+function createDefaultChecklistContext() {
+  return {
+    issueStage: "",
+  };
+}
+
+function normalizeChecklistContext(context) {
+  const source = context && typeof context === "object" && !Array.isArray(context)
+    ? context
+    : {};
+  return {
+    issueStage: normalizeChecklistIssueStage(source.issueStage),
+  };
+}
+
+function normalizeChecklistApplicability(applicability) {
+  if (
+    !applicability ||
+    typeof applicability !== "object" ||
+    Array.isArray(applicability)
+  ) {
+    return null;
+  }
+
+  const normalized = {};
+  ["all", "any", "none"].forEach((key) => {
+    const values = Array.isArray(applicability[key]) ? applicability[key] : [];
+    const deduped = [];
+    const seen = new Set();
+    values.forEach((value) => {
+      const token = String(value || "").trim();
+      if (!token) return;
+      const normalizedToken = token.toLowerCase();
+      if (seen.has(normalizedToken)) return;
+      seen.add(normalizedToken);
+      deduped.push(normalizedToken);
+    });
+    if (deduped.length) {
+      normalized[key] = deduped;
+    }
+  });
+
+  return Object.keys(normalized).length ? normalized : null;
+}
+
+function normalizeChecklistApplicabilityOverrides(rawOverrides) {
+  if (
+    !rawOverrides ||
+    typeof rawOverrides !== "object" ||
+    Array.isArray(rawOverrides)
+  ) {
+    return {};
+  }
+
+  const overrides = {};
+  Object.entries(rawOverrides).forEach(([itemId, value]) => {
+    const normalizedKey = String(itemId || "").trim();
+    const normalizedValue = String(value || "").trim().toLowerCase();
+    if (!normalizedKey) return;
+    if (normalizedValue !== "show" && normalizedValue !== "hide") return;
+    overrides[normalizedKey] = normalizedValue;
+  });
+  return overrides;
+}
+
+function normalizeChecklistInstance(instance = {}) {
+  const source = instance && typeof instance === "object" && !Array.isArray(instance)
+    ? instance
+    : {};
+  const checklistId = String(source.checklistId || "").trim();
+  if (!checklistId) return null;
+
+  const completedItems = [];
+  const seenCompleted = new Set();
+  (Array.isArray(source.completedItems) ? source.completedItems : []).forEach((itemId) => {
+    const normalizedId = String(itemId || "").trim();
+    if (!normalizedId || seenCompleted.has(normalizedId)) return;
+    seenCompleted.add(normalizedId);
+    completedItems.push(normalizedId);
+  });
+
+  const itemNotesSource =
+    source.itemNotes && typeof source.itemNotes === "object" && !Array.isArray(source.itemNotes)
+      ? source.itemNotes
+      : {};
+  const itemNotes = {};
+  Object.entries(itemNotesSource).forEach(([itemId, note]) => {
+    const normalizedId = String(itemId || "").trim();
+    if (!normalizedId) return;
+    itemNotes[normalizedId] = String(note ?? "");
+  });
+
+  return {
+    instanceId:
+      typeof source.instanceId === "string" && source.instanceId.trim()
+        ? source.instanceId.trim()
+        : generateChecklistInstanceId(),
+    checklistId,
+    completedItems,
+    itemNotes,
+    applicabilityOverrides: normalizeChecklistApplicabilityOverrides(
+      source.applicabilityOverrides
+    ),
+  };
 }
 
 function normalizeChecklistRowType(type) {
@@ -933,13 +1796,18 @@ function createChecklistTemplateSnapshot(items = []) {
         : {
             text: item?.text,
             type: item?.type,
+            applicability: item?.applicability,
           },
       order
     );
-    return {
+    const snapshot = {
       text: normalizedItem.item.text,
       type: normalizedItem.item.type,
     };
+    if (normalizedItem.item.applicability) {
+      snapshot.applicability = normalizedItem.item.applicability;
+    }
+    return snapshot;
   });
 }
 
@@ -962,16 +1830,30 @@ function normalizeChecklistItem(item, order) {
   const rawType = typeof item === "string" ? CHECKLIST_ROW_TYPES.ITEM : base.type;
   const type = normalizeChecklistRowType(rawType);
   if (type !== rawType) changed = true;
+  const normalizedApplicability = normalizeChecklistApplicability(base.applicability);
+  if (
+    stableStringify(normalizedApplicability) !==
+    stableStringify(base.applicability ?? null)
+  ) {
+    changed = true;
+  }
   if (base.order !== order) changed = true;
+  const normalizedItem = {
+    ...base,
+    id,
+    text: String(text ?? ""),
+    order,
+    type,
+  };
+  if (normalizedApplicability) {
+    normalizedItem.applicability = normalizedApplicability;
+  } else if (Object.prototype.hasOwnProperty.call(normalizedItem, "applicability")) {
+    delete normalizedItem.applicability;
+    changed = true;
+  }
   return {
     changed,
-    item: {
-      ...base,
-      id,
-      text: String(text ?? ""),
-      order,
-      type,
-    },
+    item: normalizedItem,
   };
 }
 
@@ -1161,6 +2043,299 @@ async function saveChecklists({
 
 function getChecklistById(id) {
   return checklistsDb.checklists.find((c) => c.id === id);
+}
+
+function findChecklistByTemplateKey(templateKey) {
+  const normalizedKey = String(templateKey || "").trim();
+  if (!normalizedKey) return null;
+  return (
+    checklistsDb.checklists.find(
+      (checklist) => String(checklist?.templateKey || "").trim() === normalizedKey
+    ) || null
+  );
+}
+
+function getOrCreateChecklistByTemplateKey(templateKey) {
+  const existing = findChecklistByTemplateKey(templateKey);
+  if (existing) return existing;
+  return createChecklistFromTemplate(templateKey);
+}
+
+function isAciesElectricalChecklist(checklist) {
+  return (
+    String(checklist?.templateKey || "").trim() ===
+    CHECKLIST_TEMPLATE_KEYS.ACIES_ELECTRICAL
+  );
+}
+
+function ensureProjectChecklistProfiles(project) {
+  if (!project) return null;
+  project.checklistProfiles = normalizeProjectChecklistProfiles(project.checklistProfiles);
+  return project.checklistProfiles;
+}
+
+function getProjectAciesElectricalChecklistProfile(project) {
+  const profiles = ensureProjectChecklistProfiles(project);
+  return profiles?.[ACIES_ELECTRICAL_SCOPE_PROFILE_KEY] || null;
+}
+
+function ensureDeliverableChecklistContext(deliverable) {
+  if (!deliverable) return null;
+  deliverable.checklistContext = normalizeChecklistContext(deliverable.checklistContext);
+  return deliverable.checklistContext;
+}
+
+function getAppliedChecklistEntryByTemplateKey(deliverable, templateKey) {
+  if (!deliverable || !Array.isArray(deliverable.appliedChecklists)) return null;
+  for (let instanceIndex = 0; instanceIndex < deliverable.appliedChecklists.length; instanceIndex += 1) {
+    const instance = deliverable.appliedChecklists[instanceIndex];
+    const checklist = getChecklistById(instance?.checklistId);
+    if (!checklist) continue;
+    if (String(checklist.templateKey || "").trim() !== String(templateKey || "").trim()) {
+      continue;
+    }
+    return { instance, checklist, instanceIndex };
+  }
+  return null;
+}
+
+function buildChecklistScopeAnswerState(project, deliverable) {
+  const projectProfile = getProjectAciesElectricalChecklistProfile(project);
+  const answers = normalizeAciesElectricalChecklistAnswers(projectProfile?.answers);
+  return {
+    ...answers,
+    issueStage: normalizeChecklistIssueStage(deliverable?.checklistContext?.issueStage),
+  };
+}
+
+function buildChecklistScopeTokenSet(answerState = {}) {
+  const tokens = new Set();
+  Object.entries(answerState).forEach(([fieldKey, rawValue]) => {
+    const field = getChecklistScopeFieldConfig(fieldKey);
+    if (field && field.tokenizable === false) return;
+    const normalizedValue =
+      fieldKey === "issueStage"
+        ? normalizeChecklistIssueStage(rawValue)
+        : normalizeChecklistScopeOptionValue(fieldKey, rawValue);
+    if (!normalizedValue) return;
+    tokens.add(`${fieldKey}:${normalizedValue}`);
+  });
+  return tokens;
+}
+
+function hasChecklistScopeAnswer(answerState = {}, fieldKey = "") {
+  if (fieldKey === "issueStage") {
+    return Boolean(normalizeChecklistIssueStage(answerState.issueStage));
+  }
+  return Boolean(normalizeChecklistScopeFieldValue(fieldKey, answerState[fieldKey]));
+}
+
+function getChecklistApplicabilityTokenCategory(token) {
+  const normalized = String(token || "").trim().toLowerCase();
+  const separatorIndex = normalized.indexOf(":");
+  return separatorIndex >= 0 ? normalized.slice(0, separatorIndex) : normalized;
+}
+
+function evaluateChecklistApplicabilityClause(mode, tokens, context) {
+  const normalizedTokens = (Array.isArray(tokens) ? tokens : [])
+    .map((token) => String(token || "").trim().toLowerCase())
+    .filter(Boolean);
+  if (!normalizedTokens.length) {
+    return { status: "pass", reason: "" };
+  }
+
+  const answerTokens = context?.answerTokens || new Set();
+  const answerState = context?.answerState || {};
+
+  if (mode === "all") {
+    let unresolved = false;
+    for (const token of normalizedTokens) {
+      if (answerTokens.has(token)) continue;
+      const category = getChecklistApplicabilityTokenCategory(token);
+      if (!hasChecklistScopeAnswer(answerState, category)) {
+        unresolved = true;
+        continue;
+      }
+      return { status: "filtered", reason: "Required scope mismatch." };
+    }
+    return unresolved
+      ? { status: "unresolved", reason: "Needs more scope answers." }
+      : { status: "pass", reason: "" };
+  }
+
+  if (mode === "any") {
+    if (normalizedTokens.some((token) => answerTokens.has(token))) {
+      return { status: "pass", reason: "" };
+    }
+    const unresolved = normalizedTokens.some((token) => {
+      const category = getChecklistApplicabilityTokenCategory(token);
+      return !hasChecklistScopeAnswer(answerState, category);
+    });
+    return unresolved
+      ? { status: "unresolved", reason: "Needs more scope answers." }
+      : { status: "filtered", reason: "Not relevant to the selected scope." };
+  }
+
+  if (mode === "none") {
+    if (normalizedTokens.some((token) => answerTokens.has(token))) {
+      return { status: "filtered", reason: "Excluded by the selected scope." };
+    }
+    const unresolved = normalizedTokens.some((token) => {
+      const category = getChecklistApplicabilityTokenCategory(token);
+      return !hasChecklistScopeAnswer(answerState, category);
+    });
+    return unresolved
+      ? { status: "unresolved", reason: "Needs more scope answers." }
+      : { status: "pass", reason: "" };
+  }
+
+  return { status: "pass", reason: "" };
+}
+
+function evaluateChecklistItemApplicability(item, context, overrides = {}) {
+  if (!item || isChecklistSubheader(item)) {
+    return {
+      visibility: "applicable",
+      manualOverride: "",
+      badge: "",
+      reason: "",
+    };
+  }
+
+  const overrideValue =
+    overrides && typeof overrides === "object"
+      ? normalizeChecklistApplicabilityOverrides(overrides)[item.id]
+      : "";
+  if (overrideValue === "show") {
+    return {
+      visibility: "applicable",
+      manualOverride: "show",
+      badge: "Shown manually",
+      reason: "Shown for this deliverable.",
+    };
+  }
+  if (overrideValue === "hide") {
+    return {
+      visibility: "filtered",
+      manualOverride: "hide",
+      badge: "Hidden manually",
+      reason: "Hidden for this deliverable.",
+    };
+  }
+
+  const applicability = normalizeChecklistApplicability(item.applicability);
+  if (!applicability) {
+    return {
+      visibility: "applicable",
+      manualOverride: "",
+      badge: "",
+      reason: "",
+    };
+  }
+
+  const results = [
+    evaluateChecklistApplicabilityClause("all", applicability.all, context),
+    evaluateChecklistApplicabilityClause("any", applicability.any, context),
+    evaluateChecklistApplicabilityClause("none", applicability.none, context),
+  ];
+  const filteredResult = results.find((result) => result.status === "filtered");
+  if (filteredResult) {
+    return {
+      visibility: "filtered",
+      manualOverride: "",
+      badge: "Filtered",
+      reason: filteredResult.reason,
+    };
+  }
+  const unresolvedResult = results.find((result) => result.status === "unresolved");
+  if (unresolvedResult) {
+    return {
+      visibility: "unresolved",
+      manualOverride: "",
+      badge: "Needs scope",
+      reason: unresolvedResult.reason,
+    };
+  }
+
+  return {
+    visibility: "applicable",
+    manualOverride: "",
+    badge: "",
+    reason: "",
+  };
+}
+
+function buildWorkroomChecklistViewModel(project, deliverable, instance, checklist) {
+  const sections = getChecklistSections(Array.isArray(checklist?.items) ? checklist.items : []);
+  const completedSet = new Set(
+    Array.isArray(instance?.completedItems) ? instance.completedItems : []
+  );
+  const hasFiltering = isAciesElectricalChecklist(checklist);
+  const answerState = hasFiltering
+    ? buildChecklistScopeAnswerState(project, deliverable)
+    : null;
+  const context = hasFiltering
+    ? {
+        answerState,
+        answerTokens: buildChecklistScopeTokenSet(answerState),
+      }
+    : null;
+  const overrides =
+    instance && typeof instance === "object" ? instance.applicabilityOverrides || {} : {};
+
+  const summary = {
+    visibleTotal: 0,
+    visibleCompletedTotal: 0,
+    filteredTotal: 0,
+    unresolvedTotal: 0,
+    applicableTotal: 0,
+  };
+
+  const viewSections = sections.map((section) => {
+    const visibleItems = [];
+    const filteredItems = [];
+    (Array.isArray(section.items) ? section.items : []).forEach((entry) => {
+      const evaluation = hasFiltering
+        ? evaluateChecklistItemApplicability(entry.item, context, overrides)
+        : {
+            visibility: "applicable",
+            manualOverride: "",
+            badge: "",
+            reason: "",
+          };
+      const nextEntry = {
+        ...entry,
+        evaluation,
+        isCompleted: completedSet.has(entry.item.id),
+      };
+      if (evaluation.visibility === "filtered") {
+        filteredItems.push(nextEntry);
+        summary.filteredTotal += 1;
+        return;
+      }
+      visibleItems.push(nextEntry);
+      summary.visibleTotal += 1;
+      if (nextEntry.isCompleted) summary.visibleCompletedTotal += 1;
+      if (evaluation.visibility === "unresolved") {
+        summary.unresolvedTotal += 1;
+      } else {
+        summary.applicableTotal += 1;
+      }
+    });
+
+    return {
+      header: section.header,
+      visibleItems,
+      filteredItems,
+    };
+  });
+
+  return {
+    hasFiltering,
+    context,
+    sections: viewSections,
+    summary,
+  };
 }
 
 function createChecklist(name, options = {}) {
@@ -1360,6 +2535,33 @@ const DISCIPLINE_TO_FUNCTION = {
   Mechanical: "M",
   Plumbing: "P",
 };
+const WORKROOM_PHASES = WORKROOM_PHASE_OPTIONS.reduce((lookup, phase, index) => {
+  lookup[phase.value] = {
+    ...phase,
+    index,
+  };
+  return lookup;
+}, {});
+const WORKROOM_PRE_DESIGN_PAGES = [
+  {
+    key: "scope_jurisdiction",
+    title: "Scope & Jurisdiction",
+    description:
+      "Capture the core project type, jurisdiction, and utility context before design work begins.",
+  },
+  {
+    key: "building_profile",
+    title: "Building Profile",
+    description:
+      "Record the building scale and service characteristics that shape the electrical approach.",
+  },
+  {
+    key: "existing_conditions",
+    title: "Existing Conditions",
+    description:
+      "Identify the major existing systems and scope flags that affect the design checklist.",
+  },
+];
 const WORKROOM_CAD_DISCIPLINES = ["Electrical", "Mechanical", "Plumbing"];
 const WORKROOM_AUTO_SELECT_CAD_TOOL_IDS = new Set([
   "toolPublishDwgs",
@@ -1378,14 +2580,53 @@ const WORKROOM_TEMPLATE_TOOL_IDS = new Set([
 const WORKROOM_LAUNCH_CONTEXT_TOOL_IDS = new Set([
   ...WORKROOM_CAD_TOOL_IDS,
   ...WORKROOM_TEMPLATE_TOOL_IDS,
+  "toolUtilityPlanEditor",
   "toolBackupDrawings",
 ]);
 const WORKROOM_HIDDEN_TOOL_IDS = new Set([]);
+const WORKROOM_PHASE_CHECKLIST_MAP = {
+  survey_report: null,
+  pre_design: null,
+  design: {
+    templateKey: CHECKLIST_TEMPLATE_KEYS.ELECTRICAL_GENERAL,
+    title: "Electrical TI - General Checklist",
+    intro:
+      "Use this checklist to work the project from layout through coordination while work items stay docked to the right.",
+  },
+  preflight: {
+    templateKey: CHECKLIST_TEMPLATE_KEYS.PRE_FLIGHT_ELECTRICAL,
+    title: "Preflight Electrical Checklist",
+    intro:
+      "Run this final issue pass before publishing so the permit set is coordinated, complete, and ready to go out.",
+  },
+  post_permit: null,
+};
+const WORKROOM_PHASE_TOOL_MAP = {
+  survey_report: ["toolUtilityPlanEditor", "toolCreateElectricalSurveyTemplate"],
+  pre_design: ["toolCleanXrefs"],
+  design: ["toolLightingSchedule", "toolCircuitBreaker"],
+  preflight: ["toolFreezeLayers", "toolPublishDwgs", "toolThawLayers"],
+  post_permit: ["toolCreateNarrativeTemplate", "toolCreatePlanCheckTemplate"],
+};
+const WORKROOM_ALWAYS_AVAILABLE_TOOLS = [
+  "toolCopyProjectLocally",
+  "toolBackupDrawings",
+  "toolWireSizer",
+  "toolCircuitBreaker",
+];
 const MAX_HOURS_PER_DAY = 24;
 const WFH_SUFFIX = " - WFH";
 const TIMESHEET_SUMMARY_DELIVERABLE_ID = "__summary__";
 const WEEKLY_MEETING_NAME = "workload meeting";
 const WEEKLY_MEETING_DEFAULT_HOURS = 1;
+const UTILITY_PLAN_SCHEMA_VERSION = "1.0.0";
+const UTILITY_PLAN_LABEL_FONT_SIZE = 18;
+const UTILITY_PLAN_LABEL_PADDING_X = 10;
+const UTILITY_PLAN_LABEL_PADDING_Y = 8;
+const UTILITY_PLAN_LINE_HEIGHT = 1.2;
+const UTILITY_PLAN_ZOOM_MIN = 0.35;
+const UTILITY_PLAN_ZOOM_MAX = 4;
+const UTILITY_PLAN_PREVIEW_MAX_SIZE = 1800;
 
 // Cache for loaded descriptions to prevent re-fetching
 const DESCRIPTION_CACHE = {};
@@ -6228,6 +7469,25 @@ let lightingScheduleSyncStatusMessage = "";
 let lightingScheduleSyncPollTimer = null;
 let lightingScheduleSyncDirty = false;
 let lightingScheduleSyncSaving = false;
+let utilityPlanProjectIndex = null;
+let utilityPlanProjectQuery = "";
+let utilityPlanStatusMessage = "";
+let utilityPlanPreviewRequestId = 0;
+let utilityPlanAutosaveQueued = false;
+let utilityPlanSaving = false;
+let utilityPlanTextMeasureCanvas = null;
+let utilityPlanState = {
+  draft: null,
+  activeFloorId: "",
+  activeCalloutId: "",
+  pdfInfo: null,
+  preview: null,
+  tool: "callout",
+  zoom: 1,
+  panX: 24,
+  panY: 24,
+  interaction: null,
+};
 let title24ProjectIndex = null;
 let title24ProjectQuery = "";
 let title24ScopeOptionsDataset = null;
@@ -9910,6 +11170,9 @@ async function save({
   timestamp = new Date().toISOString(),
   silent = false,
 } = {}) {
+  db.forEach((project) => {
+    getProjectDeliverables(project).forEach(syncDeliverableWorkItemFields);
+  });
   const resolvedTimestamp =
     normalizeIsoTimestamp(timestamp) || new Date().toISOString();
   const comparableChanged =
@@ -10392,12 +11655,150 @@ function normalizeTaskLinks(links) {
 
 function normalizeTask(task) {
   if (typeof task === "string")
-    return { text: task, done: false, links: [] };
+    return { text: task, done: false, pinned: false, links: [] };
   return {
     text: task?.text || "",
     done: !!task?.done,
+    pinned: !!task?.pinned,
     links: normalizeTaskLinks(task?.links),
   };
+}
+
+function normalizeDeliverableNoteItem(noteItem) {
+  if (typeof noteItem === "string") {
+    return { text: noteItem, pinned: false };
+  }
+  return {
+    text: noteItem?.text || "",
+    pinned: !!noteItem?.pinned,
+  };
+}
+
+function normalizeDeliverableNoteItems(noteItems = [], legacyNotes = "") {
+  const normalized = [];
+  const hasExplicitNoteItems = Array.isArray(noteItems);
+  if (hasExplicitNoteItems) {
+    noteItems.forEach((noteItem) => {
+      const normalizedItem = normalizeDeliverableNoteItem(noteItem);
+      if (!String(normalizedItem.text || "").trim()) return;
+      normalized.push(normalizedItem);
+    });
+  }
+
+  if (!hasExplicitNoteItems && String(legacyNotes || "").trim()) {
+    normalized.push({
+      text: String(legacyNotes || ""),
+      pinned: false,
+    });
+  }
+
+  return normalized;
+}
+
+function buildDeliverableNotesText(noteItems = [], fallback = "") {
+  const normalized = Array.isArray(noteItems)
+    ? noteItems
+        .map(normalizeDeliverableNoteItem)
+        .filter((noteItem) => String(noteItem.text || "").trim())
+    : [];
+  if (!normalized.length) return String(fallback || "");
+  return normalized.map((noteItem) => noteItem.text).join("\n");
+}
+
+function syncDeliverableNoteFields(deliverable) {
+  if (!deliverable || typeof deliverable !== "object") return deliverable;
+  deliverable.noteItems = normalizeDeliverableNoteItems(
+    deliverable.noteItems,
+    deliverable.notes
+  );
+  deliverable.notes = buildDeliverableNotesText(
+    deliverable.noteItems,
+    deliverable.notes
+  );
+  return deliverable;
+}
+
+function syncDeliverableWorkItemFields(deliverable) {
+  if (!deliverable || typeof deliverable !== "object") return deliverable;
+  const nextTasks = [];
+  (Array.isArray(deliverable.tasks) ? deliverable.tasks : []).forEach((task) => {
+    const normalizedTask = normalizeTask(task);
+    if (!String(normalizedTask.text || "").trim()) return;
+    if (task && typeof task === "object" && !Array.isArray(task)) {
+      task.text = normalizedTask.text;
+      task.done = normalizedTask.done;
+      task.pinned = normalizedTask.pinned;
+      task.links = normalizedTask.links;
+      nextTasks.push(task);
+      return;
+    }
+    nextTasks.push(normalizedTask);
+  });
+  deliverable.tasks = nextTasks;
+
+  const nextNoteItems = [];
+  (
+    Array.isArray(deliverable.noteItems)
+      ? deliverable.noteItems
+      : normalizeDeliverableNoteItems([], deliverable.notes)
+  ).forEach((noteItem) => {
+    const normalizedNoteItem = normalizeDeliverableNoteItem(noteItem);
+    if (!String(normalizedNoteItem.text || "").trim()) return;
+    if (noteItem && typeof noteItem === "object" && !Array.isArray(noteItem)) {
+      noteItem.text = normalizedNoteItem.text;
+      noteItem.pinned = normalizedNoteItem.pinned;
+      nextNoteItems.push(noteItem);
+      return;
+    }
+    nextNoteItems.push(normalizedNoteItem);
+  });
+  deliverable.noteItems = nextNoteItems;
+  return syncDeliverableNoteFields(deliverable);
+}
+
+function getPinnedFirstEntries(items = [], normalizeItem = (item) => item) {
+  return (Array.isArray(items) ? items : [])
+    .map((item, index) => ({ item: normalizeItem(item), index }))
+    .filter(({ item }) => String(item?.text || "").trim())
+    .sort((left, right) => {
+      if (!!left.item?.pinned === !!right.item?.pinned) {
+        return left.index - right.index;
+      }
+      return left.item?.pinned ? -1 : 1;
+    });
+}
+
+function getPinnedDeliverableTaskEntries(deliverable) {
+  return getPinnedFirstEntries(deliverable?.tasks, normalizeTask);
+}
+
+function getPinnedDeliverableNoteEntries(deliverable) {
+  return getPinnedFirstEntries(
+    deliverable?.noteItems,
+    normalizeDeliverableNoteItem
+  );
+}
+
+function getPinnedDeliverablePreviewItems(deliverable) {
+  return [
+    ...getPinnedDeliverableTaskEntries(deliverable)
+      .filter(({ item }) => item.pinned)
+      .map(({ item, index }) => ({
+        type: "task",
+        text: item.text,
+        done: !!item.done,
+        pinned: true,
+        index,
+      })),
+    ...getPinnedDeliverableNoteEntries(deliverable)
+      .filter(({ item }) => item.pinned)
+      .map(({ item, index }) => ({
+        type: "note",
+        text: item.text,
+        pinned: true,
+        index,
+      })),
+  ];
 }
 
 const NUMBERED_DELIVERABLE_NAME_RULES = [
@@ -10572,7 +11973,11 @@ function normalizeDeliverable(deliverable = {}) {
     id: deliverable.id || createId("dlv"),
     name: String(deliverable.name || "").trim(),
     due: String(deliverable.due || "").trim(),
-    notes: deliverable.notes || "",
+    notes: String(deliverable.notes || ""),
+    noteItems: normalizeDeliverableNoteItems(
+      deliverable.noteItems,
+      deliverable.notes || ""
+    ),
     tasks: Array.isArray(deliverable.tasks)
       ? deliverable.tasks.map(normalizeTask)
       : [],
@@ -10590,9 +11995,20 @@ function normalizeDeliverable(deliverable = {}) {
       deliverable.workroomCadDiscipline,
       ""
     ),
+    workroomPhase: normalizeWorkroomPhase(deliverable.workroomPhase),
+    workroomReturnType: normalizeWorkroomReturnType(deliverable.workroomReturnType),
+    appliedChecklists: Array.isArray(deliverable.appliedChecklists)
+      ? deliverable.appliedChecklists
+          .map((instance) => normalizeChecklistInstance(instance))
+          .filter(Boolean)
+      : [],
+    checklistContext: normalizeChecklistContext(
+      deliverable.checklistContext || createDefaultChecklistContext()
+    ),
   };
   migrateStatusFields(out);
   syncStatusArrays(out);
+  syncDeliverableWorkItemFields(out);
   if (isFinished(out)) {
     out.tasks.forEach((task) => {
       task.done = true;
@@ -10608,6 +12024,7 @@ function createDeliverable(seed = {}) {
     name: seed.name || "",
     due: seed.due || "",
     notes: seed.notes || "",
+    noteItems: seed.noteItems || [],
     tasks: seed.tasks || [],
     statuses: seed.statuses || [],
     statusTags: seed.statusTags || [],
@@ -10616,6 +12033,10 @@ function createDeliverable(seed = {}) {
     emailRef: seedEmailRefs[0] || null,
     links: normalizeDeliverableLinks(seed.links, seed.linkPath || ""),
     workroomCadDiscipline: seed.workroomCadDiscipline || "",
+    workroomPhase: seed.workroomPhase || "survey_report",
+    workroomReturnType: seed.workroomReturnType || "",
+    appliedChecklists: seed.appliedChecklists || [],
+    checklistContext: seed.checklistContext || createDefaultChecklistContext(),
   });
 }
 
@@ -10807,6 +12228,31 @@ function mergeProjects(base, incoming) {
   if (!base.lightingSchedule && incoming.lightingSchedule)
     base.lightingSchedule = incoming.lightingSchedule;
   if (!base.title24 && incoming.title24) base.title24 = incoming.title24;
+  const baseChecklistProfiles = normalizeProjectChecklistProfiles(base.checklistProfiles);
+  const incomingChecklistProfiles = normalizeProjectChecklistProfiles(incoming.checklistProfiles);
+  const baseScopeProfile =
+    baseChecklistProfiles[ACIES_ELECTRICAL_SCOPE_PROFILE_KEY] ||
+    createDefaultAciesElectricalChecklistProfile();
+  const incomingScopeProfile =
+    incomingChecklistProfiles[ACIES_ELECTRICAL_SCOPE_PROFILE_KEY] ||
+    createDefaultAciesElectricalChecklistProfile();
+  const mergedScopeAnswers = createEmptyAciesElectricalChecklistAnswers();
+  ACIES_ELECTRICAL_SCOPE_FIELD_KEYS.forEach((fieldKey) => {
+    mergedScopeAnswers[fieldKey] =
+      baseScopeProfile.answers?.[fieldKey] ||
+      incomingScopeProfile.answers?.[fieldKey] ||
+      "";
+  });
+  base.checklistProfiles = {
+    ...incomingChecklistProfiles,
+    ...baseChecklistProfiles,
+    [ACIES_ELECTRICAL_SCOPE_PROFILE_KEY]: {
+      schemaVersion: CHECKLIST_PROFILE_SCHEMA_VERSION,
+      answers: mergedScopeAnswers,
+      updatedAtUtc:
+        baseScopeProfile.updatedAtUtc || incomingScopeProfile.updatedAtUtc || "",
+    },
+  };
   if (!Array.isArray(base.deliverables)) base.deliverables = [];
   if (Array.isArray(incoming.deliverables))
     base.deliverables.push(...incoming.deliverables);
@@ -10864,6 +12310,9 @@ function normalizeProject(project) {
     deliverables: Array.isArray(project.deliverables)
       ? project.deliverables.map(normalizeDeliverable)
       : [],
+    checklistProfiles: normalizeProjectChecklistProfiles(
+      project.checklistProfiles || { [ACIES_ELECTRICAL_SCOPE_PROFILE_KEY]: project.checklistProfile }
+    ),
     lightingSchedule: normalizeLightingSchedule(
       project.lightingSchedule || createDefaultLightingSchedule()
     ),
@@ -13475,6 +14924,362 @@ function renderDeliverableCard(deliverable, isPrimary, project) {
   return card;
 }
 
+function renderDeliverablePinnedPreview(container, deliverable) {
+  if (!container) return;
+  const previewItems = getPinnedDeliverablePreviewItems(deliverable);
+  container.replaceChildren();
+  container.hidden = previewItems.length === 0;
+  if (!previewItems.length) return;
+
+  container.appendChild(
+    el("div", {
+      className: "deliverable-pinned-preview-heading",
+      textContent: "Pinned",
+    })
+  );
+
+  const list = el("div", { className: "deliverable-pinned-preview-list" });
+  previewItems.forEach((previewItem) => {
+    const row = el("div", {
+      className: `deliverable-pinned-item ${
+        previewItem.type === "task" ? "is-task" : "is-note"
+      } ${previewItem.done ? "done" : ""}`,
+    });
+    row.append(
+      el("span", {
+        className: "deliverable-pinned-item-kind",
+        textContent: previewItem.type === "task" ? "Task" : "Note",
+      }),
+      el("span", {
+        className: "deliverable-pinned-item-text",
+        textContent: previewItem.text || "",
+      })
+    );
+    list.appendChild(row);
+  });
+  container.appendChild(list);
+}
+
+function updateDeliverableWorkItemUi(card, deliverable) {
+  updateDeliverableTaskStats(card, deliverable);
+  renderDeliverablePinnedPreview(
+    card?.querySelector(".deliverable-pinned-preview"),
+    deliverable
+  );
+}
+
+function createNotesSection(deliverable, card) {
+  syncDeliverableNoteFields(deliverable);
+  const section = el("div", { className: "deliverable-notes-section" });
+  const header = el("div", { className: "deliverable-notes-header-simple" });
+  const titleText = el("span", {
+    className: "deliverable-notes-label",
+    textContent: "Notes",
+  });
+  header.appendChild(titleText);
+
+  const list = el("div", { className: "deliverable-notes-list-edit" });
+
+  const renderNoteList = () => {
+    list.innerHTML = "";
+
+    getPinnedDeliverableNoteEntries(deliverable).forEach(({ item: noteItem, index }) => {
+      const row = el("div", { className: "deliverable-note-item" });
+      const icon = el("span", {
+        className: "note-icon",
+        "aria-hidden": "true",
+      });
+      icon.appendChild(createIcon(NOTE_ICON_PATH, 12));
+      const text = el("span", {
+        className: "note-text",
+        textContent: noteItem.text || "Note",
+      });
+      const pinBtn = createWorkItemPinButton({
+        pinned: !!noteItem.pinned,
+        titlePinned: "Unpin note",
+        titleUnpinned: "Pin note",
+        onToggle: async (nextPinned) => {
+          deliverable.noteItems[index].pinned = nextPinned;
+          syncDeliverableNoteFields(deliverable);
+          updateDeliverableWorkItemUi(card, deliverable);
+          renderNoteList();
+          await save();
+        },
+      });
+      const deleteBtn = el("button", {
+        className: "task-delete-btn",
+        type: "button",
+        title: "Remove note",
+        textContent: "×",
+      });
+      const actions = el("div", { className: "work-item-actions" });
+      deleteBtn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        deliverable.noteItems.splice(index, 1);
+        syncDeliverableNoteFields(deliverable);
+        updateDeliverableWorkItemUi(card, deliverable);
+        renderNoteList();
+        await save();
+      });
+      actions.append(pinBtn, deleteBtn);
+      row.append(icon, text, actions);
+      list.appendChild(row);
+    });
+
+    const addNoteRow = el("div", { className: "task-add-row" });
+    const noteBullet = el("span", {
+      className: "note-icon note-add-bullet",
+      "aria-hidden": "true",
+    });
+    noteBullet.appendChild(createIcon(NOTE_ICON_PATH, 12));
+    const noteInput = el("input", {
+      className: "task-add-input note-add-input",
+      type: "text",
+      placeholder: "Add a note...",
+    });
+
+    let isCommittingNote = false;
+    const commitPendingNote = async ({ refocus = false } = {}) => {
+      const noteText = noteInput.value.trim();
+      if (!noteText || isCommittingNote) return false;
+
+      isCommittingNote = true;
+      noteInput.value = "";
+      try {
+        deliverable.noteItems.push({ text: noteText, pinned: false });
+        syncDeliverableNoteFields(deliverable);
+        updateDeliverableWorkItemUi(card, deliverable);
+        await save();
+        renderNoteList();
+
+        if (refocus) {
+          setTimeout(() => {
+            const newNoteInput = list.querySelector(".note-add-input");
+            if (newNoteInput) {
+              newNoteInput.focus();
+              newNoteInput.select();
+            }
+          }, 0);
+        }
+        return true;
+      } finally {
+        isCommittingNote = false;
+      }
+    };
+
+    noteInput.addEventListener("keydown", async (e) => {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      e.stopPropagation();
+      await commitPendingNote({ refocus: true });
+    });
+
+    noteInput.addEventListener("blur", () => {
+      if (!noteInput.value.trim()) return;
+      setTimeout(() => {
+        void commitPendingNote({ refocus: false });
+      }, 0);
+    });
+
+    noteInput.addEventListener("click", (e) => {
+      e.stopPropagation();
+    });
+
+    addNoteRow.append(noteBullet, noteInput);
+    list.appendChild(addNoteRow);
+  };
+
+  renderNoteList();
+  section.append(header, list);
+  return section;
+}
+
+function createTasksPreview(deliverable, card) {
+  syncDeliverableWorkItemFields(deliverable);
+  const container = el("div", { className: "deliverable-tasks-preview" });
+
+  if (!deliverable.tasks) {
+    deliverable.tasks = [];
+  }
+
+  const stats = getTaskCompletionStats(deliverable);
+  const heading = el("div", {
+    className: "deliverable-tasks-preview-heading",
+    textContent:
+      deliverable.tasks.length > 0
+        ? `Tasks (${stats.completed}/${stats.total}):`
+        : "Tasks:",
+  });
+
+  const list = el("div", { className: "deliverable-tasks-preview-list" });
+
+  const updateStatsDisplay = () => {
+    updateDeliverableWorkItemUi(card, deliverable);
+  };
+
+  const renderTaskList = () => {
+    list.innerHTML = "";
+
+    getPinnedDeliverableTaskEntries(deliverable).forEach(({ item: taskObj, index }) => {
+      const item = el("div", {
+        className: `deliverable-task-item ${taskObj.done ? "done" : "undone"}`,
+      });
+      const iconSpan = el("span", {
+        className: "task-icon",
+        textContent: taskObj.done ? "✓" : "○",
+      });
+      const textSpan = el("span", {
+        className: "task-text",
+        textContent: taskObj.text || "Task",
+      });
+      const pinBtn = createWorkItemPinButton({
+        pinned: !!taskObj.pinned,
+        titlePinned: "Unpin task",
+        titleUnpinned: "Pin task",
+        onToggle: async (nextPinned) => {
+          const task = normalizeTask(deliverable.tasks[index]);
+          task.pinned = nextPinned;
+          deliverable.tasks[index] = task;
+          updateStatsDisplay();
+          renderTaskList();
+          await save();
+        },
+      });
+      const deleteBtn = el("button", {
+        className: "task-delete-btn",
+        title: "Remove task",
+        textContent: "×",
+      });
+      const actions = el("div", { className: "work-item-actions" });
+
+      deleteBtn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        deliverable.tasks.splice(index, 1);
+        updateStatsDisplay();
+        renderTaskList();
+        await save();
+      });
+
+      actions.append(pinBtn, deleteBtn);
+      item.append(iconSpan, textSpan, actions);
+
+      item.addEventListener("click", async (e) => {
+        if (e.target.closest(".work-item-actions")) return;
+        e.stopPropagation();
+
+        const task = normalizeTask(deliverable.tasks[index]);
+        task.done = !task.done;
+        deliverable.tasks[index] = task;
+
+        updateStatsDisplay();
+        renderTaskList();
+        await save();
+      });
+
+      list.appendChild(item);
+    });
+
+    const addTaskRow = el("div", { className: "task-add-row" });
+    const bulletSpan = el("span", {
+      className: "task-icon task-add-bullet",
+      textContent: "○",
+    });
+    const taskInput = el("input", {
+      className: "task-add-input",
+      type: "text",
+      placeholder: "Add a task...",
+    });
+
+    let isCommittingTask = false;
+    const commitPendingTask = async ({ refocus = false } = {}) => {
+      const taskText = taskInput.value.trim();
+      if (!taskText || isCommittingTask) return false;
+
+      isCommittingTask = true;
+      taskInput.value = "";
+      try {
+        deliverable.tasks.push({
+          text: taskText,
+          done: false,
+          pinned: false,
+          links: [],
+        });
+
+        updateStatsDisplay();
+        await save();
+        renderTaskList();
+
+        if (refocus) {
+          setTimeout(() => {
+            const newTaskInput = list.querySelector(".task-add-input");
+            if (newTaskInput) {
+              newTaskInput.focus();
+              newTaskInput.select();
+            }
+          }, 0);
+        }
+        return true;
+      } finally {
+        isCommittingTask = false;
+      }
+    };
+
+    taskInput.addEventListener("keydown", async (e) => {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      e.stopPropagation();
+      await commitPendingTask({ refocus: true });
+    });
+
+    taskInput.addEventListener("blur", () => {
+      if (!taskInput.value.trim()) return;
+      setTimeout(() => {
+        void commitPendingTask({ refocus: false });
+      }, 0);
+    });
+
+    taskInput.addEventListener("click", (e) => {
+      e.stopPropagation();
+    });
+
+    addTaskRow.append(bulletSpan, taskInput);
+    list.appendChild(addTaskRow);
+  };
+
+  renderTaskList();
+
+  container.append(heading, list);
+  return container;
+}
+
+function renderDeliverableCard(deliverable, isPrimary, project) {
+  syncDeliverableWorkItemFields(deliverable);
+  const card = el("div", {
+    className: `deliverable-card-new ${isPrimary ? "is-primary" : ""} details-collapsed`,
+  });
+
+  const header = createCardHeader(deliverable, isPrimary, card, project);
+  const pinnedPreview = el("div", {
+    className: "deliverable-pinned-preview",
+    hidden: true,
+  });
+  renderDeliverablePinnedPreview(pinnedPreview, deliverable);
+
+  const progress = createProgressSection(deliverable);
+
+  const statusSection = el("div", { className: "deliverable-status-row" });
+  const statusBadges = createStatusBadges(deliverable);
+  const statusDropdown = createStatusDropdown(deliverable, project, card);
+  statusSection.append(statusBadges, statusDropdown);
+
+  const tasksPreview = createTasksPreview(deliverable, card);
+  const notesSection = createNotesSection(deliverable, card);
+
+  card.append(header, pinnedPreview, progress, statusSection, tasksPreview, notesSection);
+  updateDeliverableWorkItemUi(card, deliverable);
+  return card;
+}
+
 function normalizeProjectMatchValue(value) {
   return String(value || "")
     .toLowerCase()
@@ -14028,14 +15833,14 @@ function buildMatchContextRow(q, project, context) {
       container.appendChild(item);
     }
 
-    if (dCtx.fields.includes("notes") && d.notes) {
+    dCtx.matchingNotes.forEach((noteText) => {
       const item = el("div", { className: "search-context-item" });
       item.append(
-        el("span", { className: "search-context-label", textContent: d.name + " Notes: " }),
-        createContextSnippet(d.notes, q)
+        el("span", { className: "search-context-label", textContent: d.name + " Note: " }),
+        createContextSnippet(noteText, q)
       );
       container.appendChild(item);
-    }
+    });
 
     dCtx.matchingTasks.forEach((taskText) => {
       const item = el("div", { className: "search-context-item" });
@@ -14350,15 +16155,28 @@ function getMatchContext(q, p) {
   if (str(p.notes).includes(q)) { context.projectFields.push("notes"); hasMatch = true; }
 
   getProjectDeliverables(p).forEach((d) => {
-    const dCtx = { deliverable: d, fields: [], matchingTasks: [] };
+    syncDeliverableNoteFields(d);
+    const dCtx = {
+      deliverable: d,
+      fields: [],
+      matchingTasks: [],
+      matchingNotes: [],
+    };
     if (str(d.name).includes(q)) dCtx.fields.push("name");
-    if (str(d.notes).includes(q)) dCtx.fields.push("notes");
     if (str(d.due).includes(q)) dCtx.fields.push("due");
+    (d.noteItems || []).forEach((noteItem) => {
+      if (str(noteItem?.text).includes(q)) dCtx.matchingNotes.push(noteItem.text);
+    });
     (d.tasks || []).forEach((t) => {
       if (str(t.text).includes(q)) dCtx.matchingTasks.push(t.text);
     });
     const hasStatusMatch = (d.statuses || []).some((s) => str(s).includes(q));
-    if (dCtx.fields.length || dCtx.matchingTasks.length || hasStatusMatch) {
+    if (
+      dCtx.fields.length ||
+      dCtx.matchingTasks.length ||
+      dCtx.matchingNotes.length ||
+      hasStatusMatch
+    ) {
       context.deliverables.push(dCtx);
       hasMatch = true;
     }
@@ -14439,6 +16257,7 @@ function onSaveProject() {
   }
 
   flushPendingModalDeliverableTasks();
+  flushPendingModalDeliverableNotes();
   const data = readForm();
   autoSetPrimary(data);
   _aiMatchSnapshot = null;
@@ -14599,7 +16418,6 @@ function addDeliverableCard(deliverable, primaryId, options = {}) {
 
   card.querySelector(".d-name").value = deliverable.name || "";
   card.querySelector(".d-due").value = deliverable.due || "";
-  card.querySelector(".d-notes").value = deliverable.notes || "";
 
   const primaryInput = card.querySelector(".d-primary");
   primaryInput.name = "primaryDeliverable";
@@ -14630,8 +16448,14 @@ function addDeliverableCard(deliverable, primaryId, options = {}) {
   // No secondary action needed on primary change anymore
 
   const taskList = card.querySelector(".deliverable-task-list");
+  const noteList = card.querySelector(".deliverable-note-list");
   card._taskItems = (deliverable.tasks || []).map(normalizeTask);
+  card._noteItems = normalizeDeliverableNoteItems(
+    deliverable.noteItems,
+    deliverable.notes || ""
+  );
   renderModalDeliverableTaskList(card, taskList);
+  renderModalDeliverableNoteList(card, noteList);
   card.querySelector(".btn-remove").onclick = async () => {
     const cardRefs = getDeliverableCardEmailRefs(card);
     await stageModalManagedEmailRefsForRemoval(
@@ -14775,6 +16599,14 @@ function getModalDeliverableTaskItems(card) {
   return card._taskItems;
 }
 
+function getModalDeliverableNoteItems(card) {
+  if (!card) return [];
+  if (!Array.isArray(card._noteItems)) {
+    card._noteItems = [];
+  }
+  return card._noteItems;
+}
+
 function scrollElementIntoNearestModalBody(element) {
   if (!element) return;
   requestAnimationFrame(() => {
@@ -14801,6 +16633,49 @@ function focusModalTaskInput(container) {
   input.focus();
   input.select();
   scrollElementIntoNearestModalBody(input);
+}
+
+function focusModalNoteInput(container) {
+  const input = container?.querySelector(".note-add-input");
+  if (!input) return;
+  input.focus();
+  input.select();
+  scrollElementIntoNearestModalBody(input);
+}
+
+function createWorkItemPinButton({
+  pinned = false,
+  titlePinned = "Unpin item",
+  titleUnpinned = "Pin item",
+  className = "",
+  onToggle = null,
+} = {}) {
+  let currentPinned = !!pinned;
+  const button = el("button", {
+    className: `work-item-pin-btn ${className}`.trim(),
+    type: "button",
+  });
+  button.appendChild(createIcon(PIN_ICON_PATH, 12));
+
+  const syncState = () => {
+    button.classList.toggle("is-pinned", currentPinned);
+    button.title = currentPinned ? titlePinned : titleUnpinned;
+    button.setAttribute(
+      "aria-label",
+      currentPinned ? titlePinned : titleUnpinned
+    );
+    button.setAttribute("aria-pressed", String(currentPinned));
+  };
+
+  button.addEventListener("click", (e) => {
+    e.stopPropagation();
+    currentPinned = !currentPinned;
+    syncState();
+    if (onToggle) onToggle(currentPinned);
+  });
+
+  syncState();
+  return button;
 }
 
 function renderModalDeliverableTaskList(card, container, options = {}) {
@@ -14927,6 +16802,272 @@ function flushPendingModalDeliverableTasks() {
   });
 }
 
+function renderModalDeliverableTaskList(card, container, options = {}) {
+  if (!card || !container) return;
+  const { focusInput = false, ensureInputVisible = false } = options;
+  const taskItems = getModalDeliverableTaskItems(card);
+  container.innerHTML = "";
+
+  getPinnedFirstEntries(taskItems, normalizeTask).forEach(({ item: task, index }) => {
+    const item = el("div", {
+      className: `deliverable-task-item ${task.done ? "done" : "undone"}`,
+    });
+    const iconSpan = el("span", {
+      className: "task-icon",
+      textContent: task.done ? "✓" : "○",
+    });
+    const textSpan = el("span", {
+      className: "task-text",
+      textContent: task.text || "Task",
+    });
+    const pinBtn = createWorkItemPinButton({
+      pinned: !!task.pinned,
+      titlePinned: "Unpin task",
+      titleUnpinned: "Pin task",
+      onToggle: (nextPinned) => {
+        task.pinned = nextPinned;
+        renderModalDeliverableTaskList(card, container);
+      },
+    });
+    const deleteBtn = el("button", {
+      className: "task-delete-btn",
+      type: "button",
+      title: "Remove task",
+      textContent: "×",
+    });
+    const actions = el("div", { className: "work-item-actions" });
+
+    deleteBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      taskItems.splice(index, 1);
+      renderModalDeliverableTaskList(card, container);
+    });
+
+    actions.append(pinBtn, deleteBtn);
+    item.append(iconSpan, textSpan, actions);
+    item.addEventListener("click", (e) => {
+      if (e.target.closest(".work-item-actions")) return;
+      e.stopPropagation();
+      task.done = !task.done;
+      renderModalDeliverableTaskList(card, container);
+    });
+    container.appendChild(item);
+  });
+
+  const addTaskRow = el("div", { className: "task-add-row modal-task-add-row" });
+  const bulletSpan = el("span", {
+    className: "task-icon task-add-bullet",
+    textContent: "○",
+  });
+  const taskInput = el("input", {
+    className: "task-add-input",
+    type: "text",
+    placeholder: "Add a task...",
+  });
+
+  taskInput.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    e.stopPropagation();
+    commitPendingModalDeliverableTask(card, container, {
+      refocus: true,
+      rerender: true,
+      ensureInputVisible: true,
+    });
+  });
+  taskInput.addEventListener("blur", () => {
+    if (!taskInput.value.trim()) return;
+    setTimeout(() => {
+      commitPendingModalDeliverableTask(card, container, {
+        refocus: false,
+        rerender: true,
+        ensureInputVisible: true,
+      });
+    }, 0);
+  });
+  taskInput.addEventListener("click", (e) => {
+    e.stopPropagation();
+  });
+
+  addTaskRow.append(bulletSpan, taskInput);
+  container.appendChild(addTaskRow);
+
+  if (focusInput) {
+    setTimeout(() => {
+      focusModalTaskInput(container);
+    }, 0);
+  } else if (ensureInputVisible) {
+    scrollElementIntoNearestModalBody(taskInput);
+  }
+}
+
+function commitPendingModalDeliverableTask(card, container, options = {}) {
+  const {
+    refocus = false,
+    rerender = true,
+    ensureInputVisible = true,
+  } = options;
+  const taskInput = container?.querySelector(".task-add-input");
+  if (!card || !container || !taskInput) return false;
+
+  const taskText = taskInput.value.trim();
+  if (!taskText) return false;
+
+  taskInput.value = "";
+  const taskItems = getModalDeliverableTaskItems(card);
+  taskItems.push({ text: taskText, done: false, pinned: false, links: [] });
+
+  if (rerender) {
+    renderModalDeliverableTaskList(card, container, {
+      focusInput: refocus,
+      ensureInputVisible,
+    });
+  }
+  return true;
+}
+
+function flushPendingModalDeliverableTasks() {
+  document.querySelectorAll("#deliverableList .deliverable-card").forEach((card) => {
+    const taskList = card.querySelector(".deliverable-task-list");
+    commitPendingModalDeliverableTask(card, taskList, {
+      refocus: false,
+      rerender: false,
+      ensureInputVisible: false,
+    });
+  });
+}
+
+function renderModalDeliverableNoteList(card, container, options = {}) {
+  if (!card || !container) return;
+  const { focusInput = false, ensureInputVisible = false } = options;
+  const noteItems = getModalDeliverableNoteItems(card);
+  container.innerHTML = "";
+
+  getPinnedFirstEntries(noteItems, normalizeDeliverableNoteItem).forEach(
+    ({ item: noteItem, index }) => {
+      const item = el("div", { className: "deliverable-note-item" });
+      const iconSpan = el("span", {
+        className: "note-icon",
+        "aria-hidden": "true",
+      });
+      iconSpan.appendChild(createIcon(NOTE_ICON_PATH, 12));
+      const textSpan = el("span", {
+        className: "note-text",
+        textContent: noteItem.text || "Note",
+      });
+      const pinBtn = createWorkItemPinButton({
+        pinned: !!noteItem.pinned,
+        titlePinned: "Unpin note",
+        titleUnpinned: "Pin note",
+        onToggle: (nextPinned) => {
+          noteItem.pinned = nextPinned;
+          renderModalDeliverableNoteList(card, container);
+        },
+      });
+      const deleteBtn = el("button", {
+        className: "task-delete-btn",
+        type: "button",
+        title: "Remove note",
+        textContent: "×",
+      });
+      const actions = el("div", { className: "work-item-actions" });
+
+      deleteBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        noteItems.splice(index, 1);
+        renderModalDeliverableNoteList(card, container);
+      });
+
+      actions.append(pinBtn, deleteBtn);
+      item.append(iconSpan, textSpan, actions);
+      container.appendChild(item);
+    }
+  );
+
+  const addNoteRow = el("div", { className: "task-add-row modal-task-add-row" });
+  const noteBullet = el("span", {
+    className: "note-icon note-add-bullet",
+    "aria-hidden": "true",
+  });
+  noteBullet.appendChild(createIcon(NOTE_ICON_PATH, 12));
+  const noteInput = el("input", {
+    className: "task-add-input note-add-input",
+    type: "text",
+    placeholder: "Add a note...",
+  });
+
+  noteInput.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    e.stopPropagation();
+    commitPendingModalDeliverableNote(card, container, {
+      refocus: true,
+      rerender: true,
+      ensureInputVisible: true,
+    });
+  });
+  noteInput.addEventListener("blur", () => {
+    if (!noteInput.value.trim()) return;
+    setTimeout(() => {
+      commitPendingModalDeliverableNote(card, container, {
+        refocus: false,
+        rerender: true,
+        ensureInputVisible: true,
+      });
+    }, 0);
+  });
+  noteInput.addEventListener("click", (e) => {
+    e.stopPropagation();
+  });
+
+  addNoteRow.append(noteBullet, noteInput);
+  container.appendChild(addNoteRow);
+
+  if (focusInput) {
+    setTimeout(() => {
+      focusModalNoteInput(container);
+    }, 0);
+  } else if (ensureInputVisible) {
+    scrollElementIntoNearestModalBody(noteInput);
+  }
+}
+
+function commitPendingModalDeliverableNote(card, container, options = {}) {
+  const {
+    refocus = false,
+    rerender = true,
+    ensureInputVisible = true,
+  } = options;
+  const noteInput = container?.querySelector(".note-add-input");
+  if (!card || !container || !noteInput) return false;
+
+  const noteText = noteInput.value.trim();
+  if (!noteText) return false;
+
+  noteInput.value = "";
+  const noteItems = getModalDeliverableNoteItems(card);
+  noteItems.push({ text: noteText, pinned: false });
+
+  if (rerender) {
+    renderModalDeliverableNoteList(card, container, {
+      focusInput: refocus,
+      ensureInputVisible,
+    });
+  }
+  return true;
+}
+
+function flushPendingModalDeliverableNotes() {
+  document.querySelectorAll("#deliverableList .deliverable-card").forEach((card) => {
+    const noteList = card.querySelector(".deliverable-note-list");
+    commitPendingModalDeliverableNote(card, noteList, {
+      refocus: false,
+      rerender: false,
+      ensureInputVisible: false,
+    });
+  });
+}
+
 function readForm() {
   const baseSchedule =
     editIndex >= 0 && db[editIndex] ? db[editIndex].lightingSchedule : null;
@@ -14958,7 +17099,6 @@ function readForm() {
     const deliverableId = card.dataset.deliverableId || createId("dlv");
     const name = card.querySelector(".d-name").value.trim();
     const due = card.querySelector(".d-due").value.trim();
-    const notes = card.querySelector(".d-notes").value;
     const statuses = readStatusPickerFrom(
       card.querySelector(".deliverable-status")
     );
@@ -14973,7 +17113,19 @@ function readForm() {
         return {
           text,
           done: !!normalizedTask.done,
+          pinned: !!normalizedTask.pinned,
           links: normalizedTask.links,
+        };
+      })
+      .filter(Boolean);
+    const noteItems = getModalDeliverableNoteItems(card)
+      .map((noteItem) => {
+        const normalizedNoteItem = normalizeDeliverableNoteItem(noteItem);
+        const text = String(normalizedNoteItem.text || "").trim();
+        if (!text) return null;
+        return {
+          text,
+          pinned: !!normalizedNoteItem.pinned,
         };
       })
       .filter(Boolean);
@@ -14982,7 +17134,7 @@ function readForm() {
       id: deliverableId,
       name,
       due,
-      notes,
+      noteItems,
       tasks,
       statuses,
       emailRefs,
@@ -16232,6 +18384,7 @@ let workroomCadFilesRequestId = 0;
 let workroomCadFilesLoading = false;
 let workroomCadFilesLoadPromise = Promise.resolve();
 let workroomDiscoveredCadFilePaths = [];
+let workroomCadFilesStatusText = "Ready.";
 
 function getActiveWorkroomContext() {
   const project = db[activeChecklistProject];
@@ -16280,6 +18433,10 @@ function setWorkroomCadFilesLoading(isLoading) {
   if (checklistModal?.open) {
     renderWorkroomToolsPanel();
   }
+}
+
+function getWorkroomCadFilesStatusText() {
+  return String(workroomCadFilesStatusText || "").trim() || "Ready.";
 }
 
 async function traceCadAutoSelect(eventName, fields = {}) {
@@ -16456,15 +18613,12 @@ function renderWorkroomProjectHeader() {
 
   const commitRootInput = () => {
     if (!project) return;
-    const changed = setWorkroomRootFolderOverride(project, rootInput.value, {
+    setWorkroomRootFolderOverride(project, rootInput.value, {
       saveNow: true,
     });
     rootInput.value = getWorkroomRootFolderPath(project);
     rootInput.title = rootInput.value;
     syncFolderButtonState();
-    if (changed) {
-      renderWorkroomCadFilesPanel();
-    }
   };
 
   rootInput.oninput = () => {
@@ -16490,16 +18644,13 @@ function renderWorkroomProjectHeader() {
       if (selection?.status !== "success" || !selection.path) {
         return;
       }
-      const changed = setWorkroomRootFolderOverride(project, selection.path, {
-        saveNow: true,
-      });
-      rootInput.value = getWorkroomRootFolderPath(project);
-      rootInput.title = rootInput.value;
-      syncFolderButtonState();
-      if (changed) {
-        renderWorkroomCadFilesPanel();
-      }
-    } catch (e) {
+	      setWorkroomRootFolderOverride(project, selection.path, {
+	        saveNow: true,
+	      });
+	      rootInput.value = getWorkroomRootFolderPath(project);
+	      rootInput.title = rootInput.value;
+	      syncFolderButtonState();
+	    } catch (e) {
       console.warn("Failed to select workroom root folder:", e);
       toast("Couldn't select root project folder.");
     }
@@ -16602,7 +18753,6 @@ function renderWorkroomCadRoutingControl() {
         deliverable.workroomCadDiscipline = discipline;
         save();
         renderWorkroomCadRoutingControl();
-        renderWorkroomCadFilesPanel();
       },
     });
     const label = el("label", {
@@ -16667,9 +18817,10 @@ function buildWorkroomCadLaunchContext() {
 }
 
 function setWorkroomCadFilesStatus(message, { isError = false } = {}) {
+  workroomCadFilesStatusText = String(message || "").trim() || "Ready.";
   const statusEl = document.getElementById("workroomCadFilesStatus");
   if (!statusEl) return;
-  statusEl.textContent = String(message || "").trim() || "Ready.";
+  statusEl.textContent = workroomCadFilesStatusText;
   statusEl.classList.toggle("is-error", !!isError);
 }
 
@@ -16908,7 +19059,8 @@ function openChecklistModal(projectIndex) {
   activeChecklistDeliverable = null;
   checklistModalState.activeInstanceId = null;
   activeChecklistView = null;
-  activeWorkroomLeftTab = "tasks";
+  activeWorkroomUtilityTab = "tasks";
+  activeWorkroomPreDesignPage = 0;
   workroomDisciplineNoticeShown = false;
 
   populateChecklistDeliverableSelect(project);
@@ -16952,52 +19104,248 @@ function populateChecklistDeliverableSelect(project) {
   renderProjectWorkroom();
 }
 
-function normalizeWorkroomLeftTab(tabName) {
+function getWorkroomPhaseMeta(phaseValue) {
+  return WORKROOM_PHASES[normalizeWorkroomPhase(phaseValue)] || WORKROOM_PHASES.survey_report;
+}
+
+function ensureDeliverableWorkroomPhase(deliverable) {
+  if (!deliverable) return "survey_report";
+  const normalized = normalizeWorkroomPhase(deliverable.workroomPhase);
+  if (deliverable.workroomPhase !== normalized) {
+    deliverable.workroomPhase = normalized;
+    debouncedSave();
+  }
+  return normalized;
+}
+
+function updateDeliverableWorkroomPhase(deliverable, value) {
+  if (!deliverable) return false;
+  const normalized = normalizeWorkroomPhase(value);
+  if ((deliverable.workroomPhase || "") === normalized) return false;
+  deliverable.workroomPhase = normalized;
+  return true;
+}
+
+function updateDeliverableWorkroomReturnType(deliverable, value) {
+  if (!deliverable) return false;
+  const normalized = normalizeWorkroomReturnType(value);
+  if ((deliverable.workroomReturnType || "") === normalized) return false;
+  deliverable.workroomReturnType = normalized;
+  return true;
+}
+
+function getActiveWorkroomPhase() {
+  const { deliverable } = getActiveWorkroomContext();
+  return ensureDeliverableWorkroomPhase(deliverable);
+}
+
+function setWorkroomPhase(phaseValue, { saveNow = false } = {}) {
+  const { deliverable } = getActiveWorkroomContext();
+  if (!deliverable) return;
+  const normalized = normalizeWorkroomPhase(phaseValue);
+  if (!updateDeliverableWorkroomPhase(deliverable, normalized)) {
+    renderProjectWorkroom();
+    return;
+  }
+  if (saveNow) {
+    save();
+  } else {
+    debouncedSave();
+  }
+  renderProjectWorkroom();
+}
+
+function stepWorkroomPhase(offset = 1) {
+  const currentMeta = getWorkroomPhaseMeta(getActiveWorkroomPhase());
+  const nextMeta = WORKROOM_PHASE_OPTIONS[currentMeta.index + offset];
+  if (!nextMeta) return;
+  setWorkroomPhase(nextMeta.value);
+}
+
+function ensureWorkroomChecklistTemplateAppliedToDeliverable(templateKey) {
+  const { project, deliverable } = getActiveWorkroomContext();
+  if (!project || !deliverable || !templateKey) return null;
+  const existing = getAppliedChecklistEntryByTemplateKey(deliverable, templateKey);
+  if (existing) return existing;
+  const checklist = getOrCreateChecklistByTemplateKey(templateKey);
+  if (!checklist) return null;
+  if (!Array.isArray(deliverable.appliedChecklists)) {
+    deliverable.appliedChecklists = [];
+  }
+  const instance = normalizeChecklistInstance({
+    instanceId: generateChecklistInstanceId(),
+    checklistId: checklist.id,
+    completedItems: [],
+    itemNotes: {},
+    applicabilityOverrides: {},
+  });
+  if (!instance) return null;
+  deliverable.appliedChecklists.push(instance);
+  save();
+  initChecklistModalTabs(project, activeChecklistDeliverable);
+  return getAppliedChecklistEntryByTemplateKey(deliverable, templateKey);
+}
+
+function getWorkroomPhaseChecklistConfig(phaseValue) {
+  return WORKROOM_PHASE_CHECKLIST_MAP[normalizeWorkroomPhase(phaseValue)] || null;
+}
+
+function getWorkroomPhaseChecklistEntry(phaseValue) {
+  const config = getWorkroomPhaseChecklistConfig(phaseValue);
+  if (!config?.templateKey) return null;
+  const entry = ensureWorkroomChecklistTemplateAppliedToDeliverable(config.templateKey);
+  if (entry?.instance?.instanceId) {
+    checklistModalState.activeInstanceId = entry.instance.instanceId;
+    activeChecklistView = entry.instance.instanceId;
+  }
+  return entry;
+}
+
+function getChecklistScopeAnsweredCount(answerState = {}) {
+  return ACIES_ELECTRICAL_SCOPE_FIELD_KEYS.reduce((count, fieldKey) => {
+    return count + (hasChecklistScopeAnswer(answerState, fieldKey) ? 1 : 0);
+  }, 0);
+}
+
+function updateProjectChecklistScopeAnswer(project, fieldKey, value) {
+  const field = getChecklistScopeFieldConfig(fieldKey);
+  if (!project || !field) return false;
+  const profile = getProjectAciesElectricalChecklistProfile(project);
+  if (!profile) return false;
+  const normalizedValue = normalizeChecklistScopeFieldValue(fieldKey, value);
+  if ((profile.answers?.[fieldKey] || "") === normalizedValue) return false;
+  profile.answers[fieldKey] = normalizedValue;
+  profile.updatedAtUtc = new Date().toISOString();
+  return true;
+}
+
+function updateDeliverableChecklistIssueStage(deliverable, value) {
+  const context = ensureDeliverableChecklistContext(deliverable);
+  if (!context) return false;
+  const normalizedValue = normalizeChecklistIssueStage(value);
+  if ((context.issueStage || "") === normalizedValue) return false;
+  context.issueStage = normalizedValue;
+  return true;
+}
+
+function persistWorkroomScopeChange() {
+  debouncedSave();
+  renderWorkroomPhaseContent();
+}
+
+function ensureAciesElectricalChecklistAppliedToDeliverable() {
+  return ensureWorkroomChecklistTemplateAppliedToDeliverable(
+    CHECKLIST_TEMPLATE_KEYS.ACIES_ELECTRICAL
+  );
+}
+
+function normalizeWorkroomUtilityTab(tabName) {
   const normalized = String(tabName || "").trim().toLowerCase();
-  if (normalized === "tasks" || normalized === "notes" || normalized === "checklist") {
+  if (normalized === "tasks" || normalized === "notes") {
     return normalized;
   }
   return "tasks";
 }
 
-function renderWorkroomLeftTabs() {
-  const tabs = Array.from(document.querySelectorAll("[data-workroom-left-tab]"));
-  const panes = Array.from(document.querySelectorAll("[data-workroom-left-pane]"));
+function getVisibleWorkroomUtilityTabs(phaseValue = getActiveWorkroomPhase()) {
+  return ["tasks", "notes"];
+}
+
+function renderWorkroomUtilityTabs() {
+  const tabs = Array.from(document.querySelectorAll("[data-workroom-utility-tab]"));
+  const panes = Array.from(document.querySelectorAll("[data-workroom-utility-pane]"));
   if (!tabs.length || !panes.length) return;
 
-  activeWorkroomLeftTab = normalizeWorkroomLeftTab(activeWorkroomLeftTab);
+  const visibleTabs = new Set(getVisibleWorkroomUtilityTabs());
+  activeWorkroomUtilityTab = normalizeWorkroomUtilityTab(activeWorkroomUtilityTab);
+  if (!visibleTabs.has(activeWorkroomUtilityTab)) {
+    activeWorkroomUtilityTab = visibleTabs.has("tasks")
+      ? "tasks"
+      : Array.from(visibleTabs)[0] || "tasks";
+  }
 
   tabs.forEach((tabBtn) => {
-    const tabName = normalizeWorkroomLeftTab(tabBtn.dataset.workroomLeftTab);
-    const isActive = tabName === activeWorkroomLeftTab;
+    const tabName = normalizeWorkroomUtilityTab(tabBtn.dataset.workroomUtilityTab);
+    const isVisible = visibleTabs.has(tabName);
+    const isActive = isVisible && tabName === activeWorkroomUtilityTab;
+    tabBtn.hidden = !isVisible;
+    tabBtn.disabled = !isVisible;
     tabBtn.classList.toggle("active", isActive);
     tabBtn.setAttribute("aria-selected", isActive ? "true" : "false");
     tabBtn.setAttribute("tabindex", isActive ? "0" : "-1");
+    tabBtn.setAttribute("aria-hidden", isVisible ? "false" : "true");
     tabBtn.onclick = () => {
-      const nextTab = normalizeWorkroomLeftTab(tabBtn.dataset.workroomLeftTab);
-      if (nextTab === activeWorkroomLeftTab) return;
-      activeWorkroomLeftTab = nextTab;
-      renderWorkroomLeftTabs();
+      const nextTab = normalizeWorkroomUtilityTab(tabBtn.dataset.workroomUtilityTab);
+      if (!visibleTabs.has(nextTab) || nextTab === activeWorkroomUtilityTab) return;
+      activeWorkroomUtilityTab = nextTab;
+      renderWorkroomUtilityTabs();
     };
   });
 
   panes.forEach((pane) => {
-    const paneName = normalizeWorkroomLeftTab(pane.dataset.workroomLeftPane);
-    pane.hidden = paneName !== activeWorkroomLeftTab;
+    const paneName = normalizeWorkroomUtilityTab(pane.dataset.workroomUtilityPane);
+    pane.hidden = !visibleTabs.has(paneName) || paneName !== activeWorkroomUtilityTab;
     pane.setAttribute("aria-hidden", pane.hidden ? "true" : "false");
   });
+}
+
+function renderWorkroomPhaseTabs() {
+  const tabsContainer = document.getElementById("workroomPhaseTabs");
+  const eyebrowEl = document.getElementById("workroomPhaseEyebrow");
+  const titleEl = document.getElementById("workroomPhaseTitle");
+  const descriptionEl = document.getElementById("workroomPhaseDescription");
+  const prevBtn = document.getElementById("workroomPrevPhaseBtn");
+  const nextBtn = document.getElementById("workroomNextPhaseBtn");
+  if (!tabsContainer || !eyebrowEl || !titleEl || !descriptionEl || !prevBtn || !nextBtn) {
+    return;
+  }
+
+  const phaseMeta = getWorkroomPhaseMeta(getActiveWorkroomPhase());
+  tabsContainer.innerHTML = "";
+  WORKROOM_PHASE_OPTIONS.forEach((phase, index) => {
+    const isActive = phase.value === phaseMeta.value;
+    const button = el("button", {
+      type: "button",
+      className: `workroom-phase-tab ${isActive ? "active" : ""}`,
+      "data-phase-index": String(index + 1),
+      "aria-selected": isActive ? "true" : "false",
+      onclick: () => setWorkroomPhase(phase.value),
+    });
+    button.appendChild(
+      el("span", {
+        className: "workroom-phase-tab-index",
+        textContent: String(index + 1),
+      })
+    );
+    button.appendChild(
+      el("span", {
+        className: "workroom-phase-tab-copy",
+        textContent: phase.label,
+      })
+    );
+    tabsContainer.appendChild(button);
+  });
+
+  eyebrowEl.textContent = phaseMeta.eyebrow;
+  titleEl.textContent = phaseMeta.label;
+  descriptionEl.textContent = phaseMeta.description;
+
+  prevBtn.disabled = phaseMeta.index <= 0;
+  nextBtn.disabled = phaseMeta.index >= WORKROOM_PHASE_OPTIONS.length - 1;
+  prevBtn.onclick = () => stepWorkroomPhase(-1);
+  nextBtn.onclick = () => stepWorkroomPhase(1);
 }
 
 function renderProjectWorkroom() {
   renderWorkroomProjectHeader();
   renderWorkroomCadRoutingControl();
-  renderWorkroomLeftTabs();
-  renderWorkroomChecklistPanel();
+  renderWorkroomPhaseTabs();
+  renderWorkroomPhaseContent();
+  renderWorkroomUtilityTabs();
   renderWorkroomTasksPanel();
   renderWorkroomDeliverableNotesPanel();
   renderWorkroomGeneralNotesPanel();
   renderWorkroomToolsPanel();
-  renderWorkroomCadFilesPanel();
 }
 
 function getToolTitle(toolId) {
@@ -17062,9 +19410,15 @@ function getWorkroomVisibleTools() {
         iconMarkup,
         hasGraphicIcon,
         iconTextFallback: iconHost?.textContent?.trim() || "TOOL",
+        sourceCard: card,
         title:
           card.querySelector(".tool-card-header")?.textContent?.trim() ||
           "Unnamed Tool",
+        body:
+          card.querySelector(".tool-card-body")?.textContent?.trim() || "",
+        statusText: card.querySelector(".tool-card-status")?.textContent?.trim() || "",
+        isUnderConstruction:
+          String(card.dataset.underConstruction || "").trim().toLowerCase() === "true",
       };
     })
     .filter(Boolean);
@@ -17087,8 +19441,7 @@ async function triggerWorkroomTool(toolId) {
       toolId,
       cadFilesLoading: workroomCadFilesLoading,
       discoveredCadFileCount: workroomDiscoveredCadFilePaths.length,
-      cadFilesStatus:
-        document.getElementById("workroomCadFilesStatus")?.textContent?.trim() || "",
+      cadFilesStatus: getWorkroomCadFilesStatusText(),
     });
     try {
       await workroomCadFilesLoadPromise;
@@ -17112,77 +19465,819 @@ async function triggerWorkroomTool(toolId) {
     toolId,
     cadFilesLoading: workroomCadFilesLoading,
     discoveredCadFileCount: workroomDiscoveredCadFilePaths.length,
-    cadFilesStatus:
-      document.getElementById("workroomCadFilesStatus")?.textContent?.trim() || "",
+    cadFilesStatus: getWorkroomCadFilesStatusText(),
     launchContext: pendingCadLaunchContext,
   });
   setWorkroomToolStatus({ toolId, message: "Starting...", phase: "running" });
   sourceCard.click();
 }
 
-function renderWorkroomToolsPanel() {
-  const toolsList = document.getElementById("workroomToolsList");
-  if (!toolsList) return;
+function createWorkroomToolItem(tool) {
+  const isCadToolWaitingForLoad =
+    WORKROOM_AUTO_SELECT_CAD_TOOL_IDS.has(tool.id) && workroomCadFilesLoading;
+  const item = el("button", {
+    className: `workroom-tool-item ${isCadToolWaitingForLoad ? "is-loading" : ""}`.trim(),
+    "data-tool-id": tool.id,
+    type: "button",
+    title: tool.title,
+    "aria-label": isCadToolWaitingForLoad
+      ? `Waiting to open ${tool.title}`
+      : `Open ${tool.title}`,
+    disabled: isCadToolWaitingForLoad,
+    onclick: async () => {
+      await triggerWorkroomTool(tool.id);
+    },
+  });
+  const iconEl = el("span", {
+    className: "workroom-tool-icon",
+    "aria-hidden": "true",
+  });
+  if (tool.hasGraphicIcon && tool.iconMarkup) {
+    iconEl.innerHTML = tool.iconMarkup;
+  } else {
+    iconEl.textContent = tool.iconTextFallback;
+  }
+  item.appendChild(iconEl);
 
-  const tools = getWorkroomVisibleTools();
-  toolsList.innerHTML = "";
-
-  if (!tools.length) {
-    toolsList.appendChild(
-      el("div", {
-        className: "workroom-tool-empty",
-        textContent: "No tools available.",
+  const copyWrap = el("div", { className: "workroom-tool-copy" });
+  copyWrap.appendChild(
+    el("span", {
+      className: "workroom-tool-text",
+      textContent: tool.title,
+      title: tool.title,
+    })
+  );
+  if (tool.isUnderConstruction && tool.statusText) {
+    copyWrap.appendChild(
+      el("span", {
+        className: "workroom-tool-meta",
+        textContent: tool.statusText,
       })
     );
-    renderWorkroomToolStatusFooter();
+  }
+  if (isCadToolWaitingForLoad) {
+    copyWrap.appendChild(
+      el("span", {
+        className: "workroom-tool-meta",
+        textContent: "Preparing CAD context...",
+      })
+    );
+  }
+  item.appendChild(copyWrap);
+  return item;
+}
+
+function renderWorkroomToolGroup(container, tools, emptyText) {
+  if (!container) return;
+  container.innerHTML = "";
+  if (!tools.length) {
+    container.appendChild(
+      el("div", {
+        className: "workroom-tool-empty",
+        textContent: emptyText,
+      })
+    );
+    return;
+  }
+  tools.forEach((tool) => {
+    container.appendChild(createWorkroomToolItem(tool));
+  });
+}
+
+function renderWorkroomToolsPanel() {
+  const recommendedList = document.getElementById("workroomRecommendedToolsList");
+  const anytimeList = document.getElementById("workroomAnytimeToolsList");
+  const hintEl = document.getElementById("workroomRecommendedToolsHint");
+  if (!recommendedList || !anytimeList) return;
+
+  const phaseValue = getActiveWorkroomPhase();
+  const phaseMeta = getWorkroomPhaseMeta(phaseValue);
+  const toolsById = new Map(getWorkroomVisibleTools().map((tool) => [tool.id, tool]));
+  const recommendedIds = WORKROOM_PHASE_TOOL_MAP[phaseValue] || [];
+  const anytimeIds = WORKROOM_ALWAYS_AVAILABLE_TOOLS.filter(
+    (toolId) => !recommendedIds.includes(toolId)
+  );
+
+  if (hintEl) {
+    hintEl.textContent = `${phaseMeta.label} tools`;
+  }
+
+  renderWorkroomToolGroup(
+    recommendedList,
+    recommendedIds.map((toolId) => toolsById.get(toolId)).filter(Boolean),
+    "No tools recommended for this phase."
+  );
+  renderWorkroomToolGroup(
+    anytimeList,
+    anytimeIds.map((toolId) => toolsById.get(toolId)).filter(Boolean),
+    "No anytime tools available."
+  );
+  renderWorkroomToolStatusFooter();
+}
+
+function getChecklistOptionLabel(options = [], value = "") {
+  return (
+    (Array.isArray(options) ? options : []).find(
+      (option) => option.value === String(value || "").trim()
+    )?.label || ""
+  );
+}
+
+function createWorkroomSummaryMetric(label, value, accent = false) {
+  return el(
+    "div",
+    {
+      className: `workroom-summary-pill ${accent ? "accent" : ""}`.trim(),
+    },
+    [
+      el("span", {
+        className: "workroom-summary-pill-label",
+        textContent: label,
+      }),
+      el("span", {
+        className: "workroom-summary-pill-value",
+        textContent: String(value || "").trim() || "Unanswered",
+      }),
+    ]
+  );
+}
+
+function renderWorkroomSurveyPhase() {
+  const summaryEl = document.getElementById("workroomSurveySummary");
+  const contentEl = document.getElementById("workroomSurveyContent");
+  const launchBtn = document.getElementById("workroomSurveyLaunchBtn");
+  const templateBtn = document.getElementById("workroomSurveyTemplateBtn");
+  if (!summaryEl || !contentEl || !launchBtn || !templateBtn) return;
+
+  summaryEl.innerHTML = "";
+  contentEl.innerHTML = "";
+
+  const { project, deliverable } = getActiveWorkroomContext();
+  if (!project || !deliverable) {
+    launchBtn.disabled = true;
+    launchBtn.onclick = null;
+    templateBtn.disabled = true;
+    templateBtn.onclick = null;
+    contentEl.innerHTML =
+      "<div class='chk-empty-state'>Select a deliverable to prepare the survey package.</div>";
     return;
   }
 
-  tools.forEach((tool) => {
-    const isCadToolWaitingForLoad =
-      WORKROOM_AUTO_SELECT_CAD_TOOL_IDS.has(tool.id) && workroomCadFilesLoading;
-    const item = el("div", {
-      className: "workroom-tool-item",
-      "data-tool-id": tool.id,
-    });
-    const iconEl = el("span", {
-      className: "workroom-tool-icon",
-      "aria-hidden": "true",
-    });
-    if (tool.hasGraphicIcon && tool.iconMarkup) {
-      iconEl.innerHTML = tool.iconMarkup;
-    } else {
-      iconEl.textContent = tool.iconTextFallback;
-    }
-    item.appendChild(iconEl);
-    item.appendChild(
-      el("span", {
-        className: "workroom-tool-text",
-        textContent: tool.title,
-        title: tool.title,
-      })
-    );
-    item.appendChild(
-      el("button", {
-        className: "btn tiny workroom-tool-run-btn",
-        type: "button",
-        textContent: isCadToolWaitingForLoad ? "Loading..." : "Run",
-        title: isCadToolWaitingForLoad
-          ? "Waiting for CAD files to finish loading"
-          : `Run ${tool.title}`,
-        "aria-label": isCadToolWaitingForLoad
-          ? `Waiting for CAD files to finish loading for ${tool.title}`
-          : `Run ${tool.title}`,
-        disabled: isCadToolWaitingForLoad,
-        onclick: async (e) => {
-          e.stopPropagation();
-          await triggerWorkroomTool(tool.id);
+  const answerState = buildChecklistScopeAnswerState(project, deliverable);
+  const getVerificationLabel = (fieldKey) =>
+    getChecklistOptionLabel(WORKROOM_VERIFICATION_STATUS_OPTIONS, answerState[fieldKey]) ||
+    "Not Started";
+  const verificationFields = ACIES_ELECTRICAL_SCOPE_FIELD_CONFIG.filter(
+    (field) => field.section === "field_verification"
+  );
+
+  launchBtn.disabled = false;
+  launchBtn.onclick = async () => {
+    await triggerWorkroomTool("toolUtilityPlanEditor");
+  };
+  templateBtn.disabled = false;
+  templateBtn.onclick = async () => {
+    await triggerWorkroomTool("toolCreateElectricalSurveyTemplate");
+  };
+
+  summaryEl.appendChild(
+    createWorkroomSummaryMetric("Survey Report", getVerificationLabel("surveyStatus"), true)
+  );
+  summaryEl.appendChild(
+    createWorkroomSummaryMetric("Site Photos", getVerificationLabel("sitePhotosStatus"))
+  );
+  summaryEl.appendChild(
+    createWorkroomSummaryMetric("Panel Photos", getVerificationLabel("panelPhotosStatus"))
+  );
+
+  const intro = el("div", { className: "workroom-phase-intro-card" });
+  intro.appendChild(
+    el("div", {
+      className: "workroom-phase-intro-title",
+      textContent: "Field Package First",
+    })
+  );
+  intro.appendChild(
+    el("div", {
+      className: "workroom-phase-intro-copy",
+      textContent:
+        "Start with the field report package, confirm the reference assets you have collected, and move into Pre-Design once the survey package is ready.",
+    })
+  );
+  contentEl.appendChild(intro);
+
+  const verificationCard = el("div", { className: "workroom-scope-card" });
+  verificationCard.appendChild(
+    el("div", {
+      className: "workroom-scope-card-title",
+      textContent: "Verification Status",
+    })
+  );
+  verificationCard.appendChild(
+    el("div", {
+      className: "workroom-scope-card-copy",
+      textContent:
+        "Track the survey report and photo references needed before the broader project questionnaire and CAD setup work begin.",
+    })
+  );
+  const verificationGrid = el("div", { className: "workroom-scope-grid" });
+  verificationFields.forEach((field) => {
+    verificationGrid.appendChild(
+      createWorkroomScopeInputField({
+        fieldKey: field.key,
+        label: field.label,
+        helpText: field.helpText,
+        value: answerState[field.key],
+        options: field.options,
+        placeholder: "Select status...",
+        onChange: (nextValue) => {
+          if (!updateProjectChecklistScopeAnswer(project, field.key, nextValue)) return;
+          persistWorkroomScopeChange();
         },
       })
     );
-    toolsList.appendChild(item);
   });
-  renderWorkroomToolStatusFooter();
+  verificationCard.appendChild(verificationGrid);
+  contentEl.appendChild(verificationCard);
+
+  const checklistCard = el("div", { className: "workroom-scope-card" });
+  checklistCard.appendChild(
+    el("div", {
+      className: "workroom-scope-card-title",
+      textContent: "Collection Summary",
+    })
+  );
+  checklistCard.appendChild(
+    el("div", {
+      className: "workroom-scope-card-copy",
+      textContent:
+        "Use this as a quick gut-check before continuing into Pre-Design. The survey report action stays available in the right rail as the primary tool for this phase.",
+    })
+  );
+  const checklistList = el("div", { className: "workroom-survey-checklist" });
+  verificationFields.forEach((field) => {
+    const statusValue = String(answerState[field.key] || "").trim();
+    const statusLabel = getVerificationLabel(field.key);
+    const item = el("div", { className: "workroom-survey-checklist-item" });
+    item.appendChild(
+      el("span", {
+        className: `workroom-survey-checklist-dot ${
+          statusValue === "complete"
+            ? "is-complete"
+            : statusValue === "not_available"
+              ? "is-muted"
+              : "is-pending"
+        }`,
+        "aria-hidden": "true",
+      })
+    );
+    const copyWrap = el("div", { className: "workroom-survey-checklist-copy" });
+    copyWrap.appendChild(
+      el("div", {
+        className: "workroom-survey-checklist-title",
+        textContent: field.label,
+      })
+    );
+    copyWrap.appendChild(
+      el("div", {
+        className: "workroom-survey-checklist-help",
+        textContent: field.helpText || "",
+      })
+    );
+    item.appendChild(copyWrap);
+    item.appendChild(
+      el("span", {
+        className: "workroom-survey-checklist-status",
+        textContent: statusLabel,
+      })
+    );
+    checklistList.appendChild(item);
+  });
+  checklistCard.appendChild(checklistList);
+  contentEl.appendChild(checklistCard);
+}
+
+function createWorkroomScopeInputField({
+  fieldKey = "",
+  label = "",
+  helpText = "",
+  value = "",
+  options = [],
+  inputType = "select",
+  placeholder = "",
+  onChange = null,
+  onCommit = null,
+} = {}) {
+  const field = el("label", { className: "workroom-scope-field" });
+  const copy = el("div", { className: "workroom-scope-field-copy" });
+  copy.appendChild(
+    el("span", {
+      className: "workroom-scope-field-label",
+      textContent: label || "Field",
+    })
+  );
+  if (helpText) {
+    copy.appendChild(
+      el("span", {
+        className: "workroom-scope-field-help",
+        textContent: helpText,
+      })
+    );
+  }
+
+  if (inputType === "number") {
+    const input = el("input", {
+      type: "text",
+      inputMode: "decimal",
+      className: "workroom-scope-select workroom-scope-input",
+      value: value || "",
+      placeholder: placeholder || "Enter value...",
+    });
+    input.oninput = () => {
+      input.value = input.value.replace(/[^0-9.,]/g, "");
+    };
+    input.onblur = () => {
+      const normalizedValue = normalizeChecklistScopeNumberValue(input.value);
+      input.value = normalizedValue;
+      if (typeof onCommit === "function") {
+        onCommit(normalizedValue, fieldKey);
+      } else if (typeof onChange === "function") {
+        onChange(normalizedValue, fieldKey);
+      }
+    };
+    field.append(copy, input);
+    return field;
+  }
+
+  const select = el("select", {
+    className: "workroom-scope-select",
+    value: value || "",
+    onchange: (event) => {
+      if (typeof onChange === "function") {
+        onChange(event.target.value, fieldKey);
+      }
+    },
+  });
+  select.appendChild(
+    el("option", {
+      value: "",
+      textContent: placeholder || "Select...",
+    })
+  );
+  (Array.isArray(options) ? options : []).forEach((option) => {
+    select.appendChild(
+      el("option", {
+        value: option.value,
+        textContent: option.label,
+        selected: String(option.value || "") === String(value || ""),
+      })
+    );
+  });
+  field.append(copy, select);
+  return field;
+}
+
+function renderWorkroomScopePanel() {
+  const titleEl = document.getElementById("workroomPreDesignPageTitle");
+  const indicatorEl = document.getElementById("workroomPreDesignPageIndicator");
+  const summaryEl = document.getElementById("workroomPreDesignSummary");
+  const contentEl = document.getElementById("workroomPreDesignContent");
+  const prevBtn = document.getElementById("workroomPreDesignPrevPageBtn");
+  const nextBtn = document.getElementById("workroomPreDesignNextPageBtn");
+  if (!titleEl || !indicatorEl || !summaryEl || !contentEl || !prevBtn || !nextBtn) return;
+
+  contentEl.innerHTML = "";
+  const { project, deliverable } = getActiveWorkroomContext();
+  if (!project || !deliverable) {
+    contentEl.innerHTML =
+      "<div class='chk-empty-state'>Select a deliverable to define the checklist scope.</div>";
+    return;
+  }
+
+  const answerState = buildChecklistScopeAnswerState(project, deliverable);
+  const answeredCount = getChecklistScopeAnsweredCount(answerState);
+  activeWorkroomPreDesignPage = Math.min(
+    Math.max(Number(activeWorkroomPreDesignPage) || 0, 0),
+    WORKROOM_PRE_DESIGN_PAGES.length - 1
+  );
+  const currentPage = WORKROOM_PRE_DESIGN_PAGES[activeWorkroomPreDesignPage];
+  const pageFields = ACIES_ELECTRICAL_SCOPE_FIELD_CONFIG.filter(
+    (field) => field.section === currentPage.key
+  );
+
+  titleEl.textContent = currentPage.title;
+  indicatorEl.textContent = `Page ${activeWorkroomPreDesignPage + 1} of ${WORKROOM_PRE_DESIGN_PAGES.length}`;
+  prevBtn.disabled = activeWorkroomPreDesignPage <= 0;
+  nextBtn.disabled = activeWorkroomPreDesignPage >= WORKROOM_PRE_DESIGN_PAGES.length - 1;
+  prevBtn.onclick = () => {
+    if (activeWorkroomPreDesignPage <= 0) return;
+    activeWorkroomPreDesignPage -= 1;
+    renderWorkroomScopePanel();
+  };
+  nextBtn.onclick = () => {
+    if (activeWorkroomPreDesignPage >= WORKROOM_PRE_DESIGN_PAGES.length - 1) return;
+    activeWorkroomPreDesignPage += 1;
+    renderWorkroomScopePanel();
+  };
+
+  summaryEl.innerHTML = "";
+  summaryEl.appendChild(
+    createWorkroomSummaryMetric(
+      "Answered",
+      `${answeredCount}/${ACIES_ELECTRICAL_SCOPE_FIELD_KEYS.length}`,
+      true
+    )
+  );
+  summaryEl.appendChild(
+    createWorkroomSummaryMetric(
+      "Work Type",
+      getChecklistOptionLabel(
+        ACIES_ELECTRICAL_SCOPE_PROJECT_DELIVERY_OPTIONS,
+        answerState.projectDeliveryType
+      ) || "Not set"
+    )
+  );
+  summaryEl.appendChild(
+    createWorkroomSummaryMetric(
+      "Occupancy",
+      getChecklistOptionLabel(
+        ACIES_ELECTRICAL_SCOPE_OCCUPANCY_OPTIONS,
+        answerState.occupancyFamily
+      ) || "Not set"
+    )
+  );
+
+  const intro = el("div", { className: "workroom-phase-intro-card" });
+  intro.appendChild(
+    el("div", {
+      className: "workroom-phase-intro-title",
+      textContent: currentPage.title,
+    })
+  );
+  intro.appendChild(
+    el("div", {
+      className: "workroom-phase-intro-copy",
+      textContent:
+        `${currentPage.description} These answers are shared across every deliverable on the project.`,
+    })
+  );
+  contentEl.appendChild(intro);
+
+  const questionnaireCard = el("div", { className: "workroom-scope-card" });
+  questionnaireCard.appendChild(
+    el("div", {
+      className: "workroom-scope-card-title",
+      textContent: "Project Questionnaire",
+    })
+  );
+  questionnaireCard.appendChild(
+    el("div", {
+      className: "workroom-scope-card-copy",
+      textContent:
+        "Leave a field blank if you are unsure. The walkthrough saves these answers project-wide for every deliverable.",
+    })
+  );
+  const grid = el("div", { className: "workroom-scope-grid" });
+  pageFields.forEach((field) => {
+    grid.appendChild(
+      createWorkroomScopeInputField({
+        fieldKey: field.key,
+        label: field.label,
+        helpText: field.helpText,
+        value: answerState[field.key],
+        options: field.options,
+        inputType: field.inputType || "select",
+        placeholder: field.inputType === "number" ? "Enter value..." : "Select...",
+        onChange: (nextValue) => {
+          if (!updateProjectChecklistScopeAnswer(project, field.key, nextValue)) return;
+          persistWorkroomScopeChange();
+        },
+        onCommit: (nextValue) => {
+          if (!updateProjectChecklistScopeAnswer(project, field.key, nextValue)) return;
+          persistWorkroomScopeChange();
+        },
+      })
+    );
+  });
+  questionnaireCard.appendChild(grid);
+  contentEl.appendChild(questionnaireCard);
+}
+
+function renderWorkroomChecklistPhase(phaseValue) {
+  const introEl = document.getElementById("workroomChecklistIntro");
+  const summaryEl = document.getElementById("workroomIssueSummary");
+  const tabsEl = document.getElementById("workroomChecklistTabs");
+  const addWrapEl = document
+    .getElementById("workroomChecklistAddSelect")
+    ?.closest(".workroom-checklist-add");
+  if (!introEl || !summaryEl) return;
+
+  const { project, deliverable } = getActiveWorkroomContext();
+  const config = getWorkroomPhaseChecklistConfig(phaseValue);
+  const checklistEntry = getWorkroomPhaseChecklistEntry(phaseValue);
+  introEl.innerHTML = "";
+  summaryEl.innerHTML = "";
+
+  if (!project || !deliverable || !config || !checklistEntry) {
+    introEl.textContent = "Select a deliverable to continue.";
+    const itemsContainer = document.getElementById("workroomChecklistItems");
+    if (itemsContainer) {
+      itemsContainer.innerHTML =
+        "<div class='chk-empty-state'>Select a deliverable to view this phase checklist.</div>";
+    }
+    return;
+  }
+
+  introEl.appendChild(
+    el("div", { className: "workroom-phase-intro-title", textContent: config.title })
+  );
+  introEl.appendChild(
+    el("div", {
+      className: "workroom-phase-intro-copy",
+      textContent: config.intro,
+    })
+  );
+
+  const answerState = buildChecklistScopeAnswerState(project, deliverable);
+  summaryEl.appendChild(
+    createWorkroomSummaryMetric(
+      "Due",
+      deliverable.due ? humanDate(deliverable.due) : "No due date",
+      true
+    )
+  );
+  summaryEl.appendChild(
+    createWorkroomSummaryMetric(
+      "Scope Answers",
+      `${getChecklistScopeAnsweredCount(answerState)}/${ACIES_ELECTRICAL_SCOPE_FIELD_KEYS.length}`
+    )
+  );
+  summaryEl.appendChild(
+    createWorkroomSummaryMetric(
+      "Issue Stage",
+      getChecklistOptionLabel(CHECKLIST_ISSUE_STAGE_OPTIONS, answerState.issueStage) || "Unassigned"
+    )
+  );
+  summaryEl.appendChild(
+    createWorkroomSummaryMetric(
+      "CAD Discipline",
+      ensureWorkroomCadDiscipline(deliverable, getWorkroomAvailableDisciplines())
+    )
+  );
+
+  if (phaseValue === "preflight") {
+    const issueStageCard = el("div", { className: "workroom-phase-summary-card" });
+    issueStageCard.appendChild(
+      createWorkroomScopeInputField({
+        fieldKey: "issueStage",
+        label: "Issue Stage",
+        helpText:
+          "Set the outgoing issue context for this deliverable before running publish actions.",
+        value: answerState.issueStage,
+        options: CHECKLIST_ISSUE_STAGE_OPTIONS,
+        onChange: (nextValue) => {
+          if (!updateDeliverableChecklistIssueStage(deliverable, nextValue)) return;
+          debouncedSave();
+          renderWorkroomChecklistPhase(phaseValue);
+        },
+      })
+    );
+    summaryEl.appendChild(issueStageCard);
+  }
+
+  renderWorkroomChecklistPanel();
+  if (tabsEl) {
+    tabsEl.hidden = checklistModalState.appliedTabs.length <= 1;
+  }
+  if (addWrapEl) {
+    addWrapEl.hidden = true;
+  }
+}
+
+function renderWorkroomPostPermitPhase() {
+  const controlsEl = document.getElementById("workroomPostPermitControls");
+  const narrativeBtn = document.getElementById("workroomNarrativeTemplateBtn");
+  const planCheckBtn = document.getElementById("workroomPlanCheckTemplateBtn");
+  if (!controlsEl || !narrativeBtn || !planCheckBtn) return;
+
+  controlsEl.innerHTML = "";
+  const { deliverable } = getActiveWorkroomContext();
+  if (!deliverable) {
+    controlsEl.innerHTML =
+      "<div class='chk-empty-state'>Select a deliverable to configure the return package.</div>";
+    return;
+  }
+
+  const context = ensureDeliverableChecklistContext(deliverable);
+  controlsEl.appendChild(
+    createWorkroomScopeInputField({
+      fieldKey: "workroomReturnType",
+      label: "Return Type",
+      helpText: "Track whether this follow-up is plan check, service change, or bulletin work.",
+      value: deliverable.workroomReturnType,
+      options: WORKROOM_RETURN_TYPE_OPTIONS.filter((option) => option.value),
+      placeholder: "Select return type...",
+      onChange: (nextValue) => {
+        if (!updateDeliverableWorkroomReturnType(deliverable, nextValue)) return;
+        debouncedSave();
+        renderWorkroomPostPermitPhase();
+      },
+    })
+  );
+  controlsEl.appendChild(
+    createWorkroomScopeInputField({
+      fieldKey: "issueStage",
+      label: "Issue Stage",
+      helpText: "Keep the set context aligned with the outgoing revision package.",
+      value: context.issueStage,
+      options: CHECKLIST_ISSUE_STAGE_OPTIONS,
+      onChange: (nextValue) => {
+        if (!updateDeliverableChecklistIssueStage(deliverable, nextValue)) return;
+        debouncedSave();
+        renderWorkroomPostPermitPhase();
+      },
+    })
+  );
+
+  narrativeBtn.onclick = async () => {
+    await triggerWorkroomTool("toolCreateNarrativeTemplate");
+  };
+  planCheckBtn.onclick = async () => {
+    await triggerWorkroomTool("toolCreatePlanCheckTemplate");
+  };
+}
+
+function renderWorkroomPhaseContent() {
+  const phaseValue = getActiveWorkroomPhase();
+  const surveySection = document.getElementById("workroomSurveySection");
+  const preDesignSection = document.getElementById("workroomPreDesignSection");
+  const checklistSection = document.getElementById("workroomChecklistSection");
+  const postPermitSection = document.getElementById("workroomPostPermitSection");
+  const designNotesSection = document.getElementById("workroomDesignGeneralNotesSection");
+  if (!surveySection || !preDesignSection || !checklistSection || !postPermitSection) return;
+
+  surveySection.hidden = phaseValue !== "survey_report";
+  preDesignSection.hidden = phaseValue !== "pre_design";
+  checklistSection.hidden = !(phaseValue === "design" || phaseValue === "preflight");
+  postPermitSection.hidden = phaseValue !== "post_permit";
+  if (designNotesSection) {
+    designNotesSection.hidden = phaseValue !== "design";
+  }
+  checklistSection.classList.toggle("workroom-phase-section-scrollable", phaseValue === "design");
+
+  if (phaseValue === "survey_report") {
+    renderWorkroomSurveyPhase();
+    return;
+  }
+  if (phaseValue === "pre_design") {
+    renderWorkroomScopePanel();
+    return;
+  }
+  if (phaseValue === "design" || phaseValue === "preflight") {
+    renderWorkroomChecklistPhase(phaseValue);
+    return;
+  }
+  renderWorkroomPostPermitPhase();
+}
+
+function createWorkroomChecklistStatusBadge(evaluation) {
+  if (!evaluation?.badge) return null;
+  const tone =
+    evaluation.manualOverride === "show"
+      ? "is-manual-show"
+      : evaluation.manualOverride === "hide"
+        ? "is-manual-hide"
+        : evaluation.visibility === "unresolved"
+          ? "is-unresolved"
+          : evaluation.visibility === "filtered"
+            ? "is-filtered"
+            : "";
+  return el("span", {
+    className: `workroom-checklist-status-badge ${tone}`.trim(),
+    textContent: evaluation.badge,
+    title: evaluation.reason || evaluation.badge,
+  });
+}
+
+function setChecklistApplicabilityOverride(instanceIndex, itemId, nextValue) {
+  const { deliverable } = getActiveWorkroomContext();
+  const instance = deliverable?.appliedChecklists?.[instanceIndex];
+  if (!instance || !itemId) return;
+
+  if (
+    !instance.applicabilityOverrides ||
+    typeof instance.applicabilityOverrides !== "object" ||
+    Array.isArray(instance.applicabilityOverrides)
+  ) {
+    instance.applicabilityOverrides = {};
+  }
+
+  const normalizedValue =
+    nextValue === "show" || nextValue === "hide" ? nextValue : "";
+  if (normalizedValue) {
+    instance.applicabilityOverrides[itemId] = normalizedValue;
+  } else {
+    delete instance.applicabilityOverrides[itemId];
+  }
+  if (!Object.keys(instance.applicabilityOverrides).length) {
+    instance.applicabilityOverrides = {};
+  }
+
+  save();
+  renderWorkroomChecklistPanel();
+  renderWorkroomPhaseContent();
+}
+
+function createWorkroomChecklistOverrideActions(instanceIndex, itemId, evaluation, checklist) {
+  if (!isAciesElectricalChecklist(checklist) || !itemId) return null;
+
+  let label = "";
+  let nextValue = "";
+  if (evaluation?.manualOverride) {
+    label = "Clear override";
+  } else if (evaluation?.visibility === "filtered") {
+    label = "Show anyway";
+    nextValue = "show";
+  } else {
+    label = "Hide for this deliverable";
+    nextValue = "hide";
+  }
+
+  const actions = el("div", { className: "workroom-checklist-row-actions" });
+  actions.appendChild(
+    el("button", {
+      className: "btn tiny ghost workroom-checklist-override-btn",
+      type: "button",
+      textContent: label,
+      onclick: (event) => {
+        event.stopPropagation();
+        setChecklistApplicabilityOverride(instanceIndex, itemId, nextValue);
+      },
+    })
+  );
+  return actions;
+}
+
+function createWorkroomChecklistRow(entry, checklist, instanceIndex) {
+  const { item, number, isCompleted, evaluation } = entry;
+  const isFiltered = evaluation?.visibility === "filtered";
+  const row = el("div", {
+    className: `checklist-modal-item ${isCompleted ? "checked" : ""} ${
+      isFiltered ? "is-filtered" : ""
+    } ${evaluation?.visibility === "unresolved" ? "is-unresolved" : ""} ${
+      evaluation?.manualOverride === "show" ? "is-manual-show" : ""
+    } ${evaluation?.manualOverride === "hide" ? "is-manual-hide" : ""}`.replace(/\s+/g, " ").trim(),
+    title: evaluation?.reason || "",
+  });
+
+  if (!isFiltered) {
+    row.onclick = () => toggleWorkroomChecklistItem(instanceIndex, checklist.id, item.id);
+  }
+
+  const checkLabel = el("label", { className: "custom-check" });
+  checkLabel.addEventListener("click", (event) => event.stopPropagation());
+  const checkbox = el("input", {
+    type: "checkbox",
+    checked: isCompleted,
+    disabled: isFiltered,
+    onchange: () => toggleWorkroomChecklistItem(instanceIndex, checklist.id, item.id),
+  });
+  const checkmarkSpan = el("span", { className: "checkmark" });
+  checkLabel.append(checkbox, checkmarkSpan);
+
+  const content = el("div", { className: "checklist-modal-item-content" });
+  content.appendChild(
+    el("span", {
+      className: "checklist-modal-item-order",
+      textContent: String(number),
+    })
+  );
+
+  const rowBody = el("div", { className: "workroom-checklist-row-body" });
+  rowBody.appendChild(
+    el("span", {
+      className: "checklist-modal-item-text",
+      textContent: item.text,
+    })
+  );
+
+  const metaRow = el("div", { className: "workroom-checklist-row-meta" });
+  const badge = createWorkroomChecklistStatusBadge(evaluation);
+  if (badge) metaRow.appendChild(badge);
+  const actions = createWorkroomChecklistOverrideActions(
+    instanceIndex,
+    item.id,
+    evaluation,
+    checklist
+  );
+  if (actions) metaRow.appendChild(actions);
+  if (metaRow.childNodes.length) {
+    rowBody.appendChild(metaRow);
+  }
+
+  content.appendChild(rowBody);
+  row.append(checkLabel, content);
+  return row;
 }
 
 function renderWorkroomChecklistPanel() {
@@ -17241,13 +20336,14 @@ function renderWorkroomChecklistTabs() {
   checklistModalState.appliedTabs.forEach((tab, tabIndex) => {
     const checklist = getChecklistById(tab.checklistId);
     const instance = deliverable.appliedChecklists?.[tab.instanceIndex];
-    const completedSet = new Set(
-      Array.isArray(instance?.completedItems) ? instance.completedItems : []
-    );
-    const totalCount = getChecklistCheckableItems(checklist?.items).length;
-    const completedCount = getChecklistCheckableItems(checklist?.items).filter((item) =>
-      completedSet.has(item.id)
-    ).length;
+    const visibilitySummary = buildWorkroomChecklistViewModel(
+      getActiveWorkroomContext().project,
+      deliverable,
+      instance,
+      checklist
+    ).summary;
+    const totalCount = visibilitySummary.visibleTotal;
+    const completedCount = visibilitySummary.visibleCompletedTotal;
     const isActive = tab.instanceId === checklistModalState.activeInstanceId;
 
     const tabBtn = el("button", {
@@ -17322,14 +20418,14 @@ function populateWorkroomChecklistAddSelect() {
 
 function addWorkroomChecklistInstance(checklistId) {
   const { project, deliverable } = getActiveWorkroomContext();
-  if (!project || !deliverable) return;
+  if (!project || !deliverable) return null;
 
   if (!Array.isArray(deliverable.appliedChecklists)) {
     deliverable.appliedChecklists = [];
   }
   if (deliverable.appliedChecklists.some((instance) => instance.checklistId === checklistId)) {
     toast("Checklist already added to this deliverable.");
-    return;
+    return null;
   }
 
   const instance = {
@@ -17337,6 +20433,7 @@ function addWorkroomChecklistInstance(checklistId) {
     checklistId,
     completedItems: [],
     itemNotes: {},
+    applicabilityOverrides: {},
   };
   deliverable.appliedChecklists.push(instance);
   save();
@@ -17345,6 +20442,8 @@ function addWorkroomChecklistInstance(checklistId) {
   checklistModalState.activeInstanceId = instance.instanceId;
   activeChecklistView = instance.instanceId;
   renderWorkroomChecklistPanel();
+  renderWorkroomPhaseContent();
+  return instance;
 }
 
 function removeChecklistInstance(tabIndex) {
@@ -17359,17 +20458,20 @@ function removeChecklistInstance(tabIndex) {
 
   initChecklistModalTabs(project, activeChecklistDeliverable);
   renderWorkroomChecklistPanel();
+  renderWorkroomPhaseContent();
 }
 
 function renderWorkroomChecklistItems(container, instance, checklist, instanceIndex) {
   container.innerHTML = "";
 
-  const completedItems = Array.isArray(instance.completedItems) ? instance.completedItems : [];
-  const completedSet = new Set(completedItems);
-  const checklistItems = Array.isArray(checklist.items) ? checklist.items : [];
-  const checklistSections = getChecklistSections(checklistItems);
-  const checkableItems = getChecklistCheckableItems(checklistItems);
-  const completedCount = checkableItems.filter((item) => completedSet.has(item.id)).length;
+  const { project, deliverable } = getActiveWorkroomContext();
+  const viewModel = buildWorkroomChecklistViewModel(
+    project,
+    deliverable,
+    instance,
+    checklist
+  );
+  const checklistSections = viewModel.sections;
 
   if (!checklistSections.length) {
     container.innerHTML = "<div class='chk-empty-state'>This checklist has no items.</div>";
@@ -17403,46 +20505,34 @@ function renderWorkroomChecklistItems(container, instance, checklist, instanceIn
     }
 
     const body = el("div", { className: "checklist-section-body" });
-    section.items.forEach(({ item, number }) => {
-      const isCompleted = completedSet.has(item.id);
-      const row = el("div", {
-        className: `checklist-modal-item ${isCompleted ? "checked" : ""}`,
-        onclick: () => toggleWorkroomChecklistItem(instanceIndex, checklist.id, item.id),
-      });
-
-      const checkLabel = el("label", { className: "custom-check" });
-      checkLabel.addEventListener("click", (e) => e.stopPropagation());
-      const checkbox = el("input", {
-        type: "checkbox",
-        checked: isCompleted,
-        onchange: () => toggleWorkroomChecklistItem(instanceIndex, checklist.id, item.id),
-      });
-      const checkmarkSpan = el("span", { className: "checkmark" });
-      checkLabel.append(checkbox, checkmarkSpan);
-
-      const content = el("div", { className: "checklist-modal-item-content" });
-      content.appendChild(
-        el("span", {
-          className: "checklist-modal-item-order",
-          textContent: String(number),
-        })
-      );
-      content.appendChild(
-        el("span", {
-          className: "checklist-modal-item-text",
-          textContent: item.text,
-        })
-      );
-
-      row.append(checkLabel, content);
-      body.appendChild(row);
+    section.visibleItems.forEach((entry) => {
+      body.appendChild(createWorkroomChecklistRow(entry, checklist, instanceIndex));
     });
+
+    if (section.filteredItems.length) {
+      const filteredGroup = el("div", { className: "workroom-checklist-filtered-group" });
+      filteredGroup.appendChild(
+        el("div", {
+          className: "workroom-checklist-filtered-title",
+          textContent: `Filtered for this project (${section.filteredItems.length})`,
+        })
+      );
+      const filteredList = el("div", { className: "workroom-checklist-filtered-items" });
+      section.filteredItems.forEach((entry) => {
+        filteredList.appendChild(createWorkroomChecklistRow(entry, checklist, instanceIndex));
+      });
+      filteredGroup.appendChild(filteredList);
+      body.appendChild(filteredGroup);
+    }
 
     sectionEl.appendChild(body);
     container.appendChild(sectionEl);
   });
 
-  setWorkroomChecklistProgress(completedCount, checkableItems.length);
+  setWorkroomChecklistProgress(
+    viewModel.summary.visibleCompletedTotal,
+    viewModel.summary.visibleTotal
+  );
 }
 
 function toggleWorkroomChecklistItem(instanceIndex, checklistId, itemId) {
@@ -17582,33 +20672,238 @@ function setWorkroomTaskProgress(done, total) {
   if (fillEl) fillEl.style.width = total > 0 ? `${(done / total) * 100}%` : "0%";
 }
 
-function renderWorkroomDeliverableNotesPanel() {
-  const notesTextarea = document.getElementById("workroomDeliverableNotesTextarea");
-  if (!notesTextarea) return;
+function renderWorkroomTasksPanel() {
+  const addTaskBtn = document.getElementById("workroomAddTaskBtn");
+  const container = document.getElementById("workroomTasksContainer");
+  if (!addTaskBtn || !container) return;
 
   const { deliverable } = getActiveWorkroomContext();
   if (!deliverable) {
-    notesTextarea.value = "";
-    notesTextarea.disabled = true;
-    notesTextarea.placeholder = "Select a deliverable to view notes.";
-    notesTextarea.oninput = null;
-    notesTextarea.onblur = null;
+    addTaskBtn.disabled = true;
+    addTaskBtn.onclick = null;
+    container.innerHTML =
+      "<div class='chk-empty-state'>Select a deliverable to manage tasks.</div>";
+    setWorkroomTaskProgress(0, 0);
     return;
   }
 
-  notesTextarea.disabled = false;
-  notesTextarea.placeholder = "Add notes for this deliverable...";
-  notesTextarea.value = deliverable.notes || "";
-  notesTextarea.oninput = () => {
-    deliverable.notes = notesTextarea.value;
-    debouncedSave();
-    autoResizeTextarea(notesTextarea);
-  };
-  notesTextarea.onblur = () => {
-    deliverable.notes = notesTextarea.value;
+  syncDeliverableWorkItemFields(deliverable);
+  addTaskBtn.disabled = false;
+  addTaskBtn.onclick = () => {
+    deliverable.tasks.push({
+      text: "New task",
+      done: false,
+      pinned: false,
+      links: [],
+    });
     save();
+    renderWorkroomTasksPanel();
+    setTimeout(() => {
+      const inputs = container.querySelectorAll(".checklist-task-text-input");
+      const last = inputs[inputs.length - 1];
+      if (last) {
+        last.focus();
+        last.select();
+      }
+    }, 20);
   };
-  requestAnimationFrame(() => autoResizeTextarea(notesTextarea));
+
+  if (!Array.isArray(deliverable.tasks) || deliverable.tasks.length === 0) {
+    container.innerHTML = "<div class='chk-empty-state'>No tasks yet.</div>";
+    setWorkroomTaskProgress(0, 0);
+    return;
+  }
+
+  container.innerHTML = "";
+  getPinnedDeliverableTaskEntries(deliverable).forEach(({ item: task, index }) => {
+    deliverable.tasks[index] = normalizeTask(deliverable.tasks[index]);
+    const liveTask = deliverable.tasks[index];
+    const row = el("div", {
+      className: `checklist-task-row ${liveTask.done ? "checklist-task-done" : ""}`,
+    });
+
+    const checkLabel = el("label", { className: "custom-check" });
+    const checkbox = el("input", {
+      type: "checkbox",
+      checked: !!liveTask.done,
+      onchange: () => {
+        liveTask.done = checkbox.checked;
+        save();
+        renderWorkroomTasksPanel();
+      },
+    });
+    checkLabel.append(checkbox, el("span", { className: "checkmark" }));
+
+    const textInput = el("input", {
+      type: "text",
+      className: "checklist-task-text-input",
+      value: liveTask.text || "",
+      placeholder: "Task description...",
+      oninput: (e) => {
+        liveTask.text = e.target.value;
+        debouncedSave();
+      },
+      onkeydown: (e) => {
+        if (e.key === "Enter") {
+          deliverable.tasks.splice(index + 1, 0, {
+            text: "",
+            done: false,
+            pinned: false,
+            links: [],
+          });
+          save();
+          renderWorkroomTasksPanel();
+          setTimeout(() => {
+            const inputs = container.querySelectorAll(".checklist-task-text-input");
+            if (inputs[index + 1]) inputs[index + 1].focus();
+          }, 20);
+        } else if (e.key === "Backspace" && !e.target.value) {
+          deliverable.tasks.splice(index, 1);
+          save();
+          renderWorkroomTasksPanel();
+        }
+      },
+    });
+
+    const pinBtn = createWorkItemPinButton({
+      pinned: !!liveTask.pinned,
+      titlePinned: "Unpin task",
+      titleUnpinned: "Pin task",
+      className: "checklist-work-item-pin",
+      onToggle: (nextPinned) => {
+        liveTask.pinned = nextPinned;
+        save();
+        renderWorkroomTasksPanel();
+      },
+    });
+    const removeBtn = el("button", {
+      className: "checklist-task-remove",
+      type: "button",
+      textContent: "x",
+      onclick: () => {
+        deliverable.tasks.splice(index, 1);
+        save();
+        renderWorkroomTasksPanel();
+      },
+    });
+    const actions = el("div", { className: "checklist-task-actions" });
+    actions.append(pinBtn, removeBtn);
+
+    row.append(checkLabel, textInput, actions);
+    container.appendChild(row);
+  });
+
+  const completed = deliverable.tasks.filter((task) => normalizeTask(task).done).length;
+  setWorkroomTaskProgress(completed, deliverable.tasks.length);
+}
+
+function renderWorkroomDeliverableNotesPanel() {
+  const addNoteBtn = document.getElementById("workroomAddNoteBtn");
+  const container = document.getElementById("workroomNotesContainer");
+  if (!addNoteBtn || !container) return;
+
+  const { deliverable } = getActiveWorkroomContext();
+  if (!deliverable) {
+    addNoteBtn.disabled = true;
+    addNoteBtn.onclick = null;
+    container.innerHTML =
+      "<div class='chk-empty-state'>Select a deliverable to manage notes.</div>";
+    return;
+  }
+
+  syncDeliverableNoteFields(deliverable);
+  addNoteBtn.disabled = false;
+  addNoteBtn.onclick = () => {
+    deliverable.noteItems.push({ text: "New note", pinned: false });
+    syncDeliverableNoteFields(deliverable);
+    save();
+    renderWorkroomDeliverableNotesPanel();
+    setTimeout(() => {
+      const inputs = container.querySelectorAll(".workroom-note-text-input");
+      const last = inputs[inputs.length - 1];
+      if (last) {
+        last.focus();
+        last.select();
+      }
+    }, 20);
+  };
+
+  if (!Array.isArray(deliverable.noteItems) || deliverable.noteItems.length === 0) {
+    container.innerHTML = "<div class='chk-empty-state'>No notes yet.</div>";
+    return;
+  }
+
+  container.innerHTML = "";
+  getPinnedDeliverableNoteEntries(deliverable).forEach(({ item: noteItem, index }) => {
+    deliverable.noteItems[index] = normalizeDeliverableNoteItem(
+      deliverable.noteItems[index]
+    );
+    const liveNote = deliverable.noteItems[index];
+    const row = el("div", { className: "workroom-note-row" });
+    const icon = el("span", {
+      className: "note-icon",
+      "aria-hidden": "true",
+    });
+    icon.appendChild(createIcon(NOTE_ICON_PATH, 12));
+
+    const textInput = el("input", {
+      type: "text",
+      className: "workroom-note-text-input",
+      value: liveNote.text || "",
+      placeholder: "Note text...",
+      oninput: (e) => {
+        liveNote.text = e.target.value;
+        syncDeliverableNoteFields(deliverable);
+        debouncedSave();
+      },
+      onkeydown: (e) => {
+        if (e.key === "Enter") {
+          deliverable.noteItems.splice(index + 1, 0, { text: "", pinned: false });
+          syncDeliverableNoteFields(deliverable);
+          save();
+          renderWorkroomDeliverableNotesPanel();
+          setTimeout(() => {
+            const inputs = container.querySelectorAll(".workroom-note-text-input");
+            if (inputs[index + 1]) inputs[index + 1].focus();
+          }, 20);
+        } else if (e.key === "Backspace" && !e.target.value) {
+          deliverable.noteItems.splice(index, 1);
+          syncDeliverableNoteFields(deliverable);
+          save();
+          renderWorkroomDeliverableNotesPanel();
+        }
+      },
+    });
+
+    const pinBtn = createWorkItemPinButton({
+      pinned: !!liveNote.pinned,
+      titlePinned: "Unpin note",
+      titleUnpinned: "Pin note",
+      className: "checklist-work-item-pin",
+      onToggle: (nextPinned) => {
+        liveNote.pinned = nextPinned;
+        syncDeliverableNoteFields(deliverable);
+        save();
+        renderWorkroomDeliverableNotesPanel();
+      },
+    });
+    const removeBtn = el("button", {
+      className: "checklist-task-remove",
+      type: "button",
+      textContent: "x",
+      onclick: () => {
+        deliverable.noteItems.splice(index, 1);
+        syncDeliverableNoteFields(deliverable);
+        save();
+        renderWorkroomDeliverableNotesPanel();
+      },
+    });
+    const actions = el("div", { className: "checklist-task-actions" });
+    actions.append(pinBtn, removeBtn);
+
+    row.append(icon, textInput, actions);
+    container.appendChild(row);
+  });
 }
 
 function ensureActiveNoteTabSelection() {
@@ -17760,12 +21055,14 @@ document.getElementById("checklistModal")?.addEventListener("close", () => {
   activeChecklistProject = null;
   activeChecklistDeliverable = null;
   activeChecklistView = null;
-  activeWorkroomLeftTab = "tasks";
+  activeWorkroomUtilityTab = "tasks";
+  activeWorkroomPreDesignPage = 0;
   workroomDisciplineNoticeShown = false;
   workroomCadFilesRequestId += 1;
   workroomCadFilesLoadPromise = Promise.resolve();
   setWorkroomCadFilesLoading(false);
   setWorkroomDiscoveredCadFilePaths();
+  setWorkroomCadFilesStatus("Ready.");
   checklistModalState.appliedTabs = [];
   checklistModalState.activeInstanceId = null;
   pendingCadLaunchContext = null;
@@ -17821,11 +21118,15 @@ window.__aciesAutomation = {
   getWorkroomState() {
     const modal = document.getElementById("checklistModal");
     const deliverableSelect = document.getElementById("checklistDeliverableSelect");
-    const cadFilesStatusEl = document.getElementById("workroomCadFilesStatus");
     const project =
       Number.isInteger(activeChecklistProject) && activeChecklistProject >= 0
         ? db[activeChecklistProject] || null
         : null;
+    const deliverable =
+      project && Number.isInteger(activeChecklistDeliverable) && activeChecklistDeliverable >= 0
+        ? getProjectDeliverables(project)[activeChecklistDeliverable] || null
+        : null;
+    const phaseValue = deliverable ? ensureDeliverableWorkroomPhase(deliverable) : "survey_report";
     const openLocalBtn = document.getElementById("workroomOpenLocalProjectBtn");
     const openServerBtn = document.getElementById("workroomOpenServerProjectBtn");
     return {
@@ -17833,9 +21134,22 @@ window.__aciesAutomation = {
       activeProjectIndex: activeChecklistProject,
       activeDeliverableIndex: activeChecklistDeliverable,
       deliverableOptions: deliverableSelect?.options?.length || 0,
+      workroomPhase: phaseValue,
+      workroomReturnType: normalizeWorkroomReturnType(deliverable?.workroomReturnType),
+      activeUtilityTab: normalizeWorkroomUtilityTab(activeWorkroomUtilityTab),
+      visibleUtilityTabs: getVisibleWorkroomUtilityTabs(phaseValue),
+      preDesignPage:
+        phaseValue === "pre_design" ? Number(activeWorkroomPreDesignPage) || 0 : null,
+      phaseTabCount: document.querySelectorAll("#workroomPhaseTabs .workroom-phase-tab").length,
+      recommendedToolCount: document.querySelectorAll(
+        "#workroomRecommendedToolsList .workroom-tool-item"
+      ).length,
+      anytimeToolCount: document.querySelectorAll(
+        "#workroomAnytimeToolsList .workroom-tool-item"
+      ).length,
       cadFilesLoading: workroomCadFilesLoading,
       discoveredCadFileCount: workroomDiscoveredCadFilePaths.length,
-      cadFilesStatus: (cadFilesStatusEl?.textContent || "").trim(),
+      cadFilesStatus: getWorkroomCadFilesStatusText(),
       localProjectPath: normalizeWorkroomFolderPath(project?.localProjectPath || ""),
       serverProjectPath: getWorkroomServerProjectPath(project),
       openLocalProjectButton: {

@@ -656,6 +656,26 @@
                             </div>
                             <div class="tool-card-status"></div>
                         </div>
+                        <div id="toolUtilityPlanEditor" class="tool-card" role="button" tabindex="0">
+                            <div class="tool-card-content">
+                                <div class="tool-icon">
+                                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                        stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <path d="M3 5h18"></path>
+                                        <path d="M3 12h18"></path>
+                                        <path d="M3 19h12"></path>
+                                        <path d="m16 17 2 2 4-4"></path>
+                                        <path d="M8 5v14"></path>
+                                    </svg>
+                                </div>
+                                <div class="tool-card-header">Utility Plan Editor</div>
+                                <div class="tool-card-body">
+                                    Select a source PDF, crop floor plans, place callouts with arrows, and export one
+                                    PNG per floor.
+                                </div>
+                            </div>
+                            <div class="tool-card-status"></div>
+                        </div>
                         <div id="toolCreateElectricalSurveyTemplate" class="tool-card" role="button" tabindex="0">
                             <div class="tool-card-content">
                                 <div class="tool-icon">
@@ -2344,6 +2364,137 @@
         </div>
     </dialog>
 
+    <dialog id="utilityPlanEditorDlg" class="utility-plan-dialog">
+        <div class="utility-plan-shell">
+            <div class="utility-plan-header">
+                <div class="utility-plan-title">
+                    <div class="title">Utility Plan Editor</div>
+                    <p class="tiny muted">Crop floor plans from a PDF, add electrical callouts, and export PNGs.</p>
+                </div>
+                <div class="utility-plan-header-actions">
+                    <div id="utilityPlanStatus" class="utility-plan-status tiny muted">Select a project to begin.</div>
+                    <button class="icon-btn" id="utilityPlanCloseBtn" aria-label="Close Utility Plan Editor"
+                        title="Close">X</button>
+                </div>
+            </div>
+            <div class="utility-plan-body">
+                <aside class="utility-plan-sidebar">
+                    <section class="utility-plan-panel">
+                        <div class="utility-plan-panel-title">Project</div>
+                        <div class="utility-plan-field">
+                            <label class="label" for="utilityPlanProjectSearch">Search Projects</label>
+                            <input id="utilityPlanProjectSearch" type="search"
+                                placeholder="Search by project ID or name" />
+                        </div>
+                        <div class="utility-plan-field">
+                            <label class="label" for="utilityPlanProjectSelect">Project</label>
+                            <select id="utilityPlanProjectSelect"></select>
+                        </div>
+                    </section>
+
+                    <section class="utility-plan-panel">
+                        <div class="utility-plan-panel-title">Source PDF</div>
+                        <div class="utility-plan-file-row">
+                            <input id="utilityPlanSourcePdfPath" type="text" readonly
+                                placeholder="Select architectural PDF..." />
+                            <button class="btn tiny" id="utilityPlanBrowsePdfBtn" type="button">Browse PDF</button>
+                            <button class="btn tiny ghost" id="utilityPlanClearPdfBtn" type="button">Clear</button>
+                        </div>
+                        <div id="utilityPlanPdfMeta" class="tiny muted utility-plan-helper">No PDF selected.</div>
+                    </section>
+
+                    <section class="utility-plan-panel utility-plan-floor-panel">
+                        <div class="utility-plan-panel-header">
+                            <div class="utility-plan-panel-title">Floors</div>
+                            <button class="btn tiny" id="utilityPlanAddFloorBtn" type="button">Add Floor</button>
+                        </div>
+                        <div id="utilityPlanFloorList" class="utility-plan-floor-list"></div>
+                        <div class="utility-plan-floor-actions">
+                            <button class="btn tiny ghost" id="utilityPlanMoveFloorUpBtn" type="button">Move Up</button>
+                            <button class="btn tiny ghost" id="utilityPlanMoveFloorDownBtn"
+                                type="button">Move Down</button>
+                            <button class="btn tiny ghost" id="utilityPlanRemoveFloorBtn"
+                                type="button">Remove</button>
+                        </div>
+                        <div class="utility-plan-field">
+                            <label class="label" for="utilityPlanFloorLabelInput">Floor Label</label>
+                            <input id="utilityPlanFloorLabelInput" type="text" placeholder="e.g. Floor 1" />
+                        </div>
+                        <div class="utility-plan-field">
+                            <label class="label" for="utilityPlanPageSelect">PDF Page</label>
+                            <select id="utilityPlanPageSelect"></select>
+                        </div>
+                    </section>
+
+                    <section class="utility-plan-panel">
+                        <div class="utility-plan-panel-title">Export Folder</div>
+                        <div class="utility-plan-file-row">
+                            <input id="utilityPlanExportFolderPath" type="text" readonly
+                                placeholder="Choose export folder..." />
+                            <button class="btn tiny" id="utilityPlanBrowseExportFolderBtn"
+                                type="button">Browse</button>
+                        </div>
+                        <div class="utility-plan-export-actions">
+                            <button class="btn tiny" id="utilityPlanExportCurrentBtn" type="button">Export Current
+                                Floor</button>
+                            <button class="btn tiny" id="utilityPlanExportAllBtn" type="button">Export All
+                                Floors</button>
+                        </div>
+                    </section>
+
+                    <section class="utility-plan-panel">
+                        <div class="utility-plan-panel-header">
+                            <div class="utility-plan-panel-title">Selected Callout</div>
+                            <div id="utilityPlanCalloutMeta" class="tiny muted">No callout selected.</div>
+                        </div>
+                        <div class="utility-plan-field">
+                            <label class="label" for="utilityPlanCalloutText">Callout Text</label>
+                            <textarea id="utilityPlanCalloutText" rows="3"
+                                placeholder="Enter equipment label..."></textarea>
+                        </div>
+                        <div class="utility-plan-callout-actions">
+                            <button class="btn tiny ghost" id="utilityPlanDuplicateCalloutBtn"
+                                type="button">Duplicate</button>
+                            <button class="btn tiny ghost" id="utilityPlanDeleteCalloutBtn"
+                                type="button">Delete</button>
+                        </div>
+                    </section>
+                </aside>
+
+                <section class="utility-plan-main">
+                    <div class="utility-plan-toolbar">
+                        <div class="utility-plan-toolset">
+                            <button class="btn tiny" id="utilityPlanToolPanBtn" type="button">Pan</button>
+                            <button class="btn tiny" id="utilityPlanToolCropBtn" type="button">Crop</button>
+                            <button class="btn tiny" id="utilityPlanToolCalloutBtn" type="button">Callout</button>
+                        </div>
+                        <div class="utility-plan-toolset">
+                            <button class="btn tiny ghost" id="utilityPlanZoomOutBtn" type="button">-</button>
+                            <button class="btn tiny ghost" id="utilityPlanZoomResetBtn" type="button">Fit</button>
+                            <button class="btn tiny ghost" id="utilityPlanZoomInBtn" type="button">+</button>
+                        </div>
+                    </div>
+                    <div class="utility-plan-editor-shell">
+                        <div id="utilityPlanEmptyState" class="utility-plan-empty">
+                            Select a project and source PDF to start the utility plan.
+                        </div>
+                        <div id="utilityPlanViewport" class="utility-plan-viewport" hidden>
+                            <div id="utilityPlanSurface" class="utility-plan-surface">
+                                <img id="utilityPlanPageImage" alt="Utility plan PDF preview" draggable="false" />
+                                <svg id="utilityPlanOverlay" class="utility-plan-overlay"
+                                    xmlns="http://www.w3.org/2000/svg" aria-label="Utility plan annotations"></svg>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="utilityPlanViewportMeta" class="tiny muted utility-plan-viewport-meta">
+                        Use the mouse wheel to zoom. Drag the crop box, callout labels, and arrow targets directly on
+                        the plan.
+                    </div>
+                </section>
+            </div>
+        </div>
+    </dialog>
+
     <dialog id="title24ComplianceDlg" class="title24-compliance-dialog">
         <div class="title24-compliance-shell">
             <div class="title24-compliance-header">
@@ -2504,87 +2655,143 @@
         </header>
 
         <div class="workroom-body">
-            <div class="workroom-main-grid">
-                <div class="workroom-left-column">
-                    <div class="workroom-left-tabs" role="tablist" aria-label="Deliverable panels">
-                        <button type="button" class="workroom-left-tab active" data-workroom-left-tab="tasks"
-                            role="tab" aria-selected="true" aria-controls="workroomLeftPaneTasks">Tasks</button>
-                        <button type="button" class="workroom-left-tab" data-workroom-left-tab="notes" role="tab"
-                            aria-selected="false" aria-controls="workroomLeftPaneNotes">Notes</button>
-                        <button type="button" class="workroom-left-tab" data-workroom-left-tab="checklist"
-                            role="tab" aria-selected="false" aria-controls="workroomLeftPaneChecklist">Checklist</button>
-                    </div>
+            <div class="workroom-main-column">
+                <section class="workroom-panel workroom-phase-panel">
+                    <div id="workroomPhaseTabs" class="workroom-phase-tabs" role="tablist"
+                        aria-label="Project workroom phases"></div>
 
-                    <section class="workroom-panel workroom-tasks-panel workroom-left-pane"
-                        data-workroom-left-pane="tasks" id="workroomLeftPaneTasks" role="tabpanel">
-                        <div class="workroom-panel-header">
-                            <h3>Deliverable Tasks</h3>
-                            <button class="btn-accent tiny" id="workroomAddTaskBtn">+ Add Task</button>
-                        </div>
-                        <div class="checklist-progress workroom-progress">
-                            <div class="checklist-progress-info">
-                                <span class="checklist-progress-count" id="workroomTaskProgressCount">0/0</span>
-                                <span>completed</span>
+                    <div class="workroom-phase-shell">
+                        <div class="workroom-phase-shell-header">
+                            <div class="workroom-phase-shell-title-wrap">
+                                <div id="workroomPhaseEyebrow" class="workroom-phase-eyebrow">Phase 1 of 5</div>
+                                <div id="workroomPhaseTitle" class="workroom-phase-title">Survey Report</div>
+                                <div id="workroomPhaseDescription" class="workroom-phase-description">
+                                    Start with the field package, track verification assets, and launch the survey report.
+                                </div>
                             </div>
-                            <div class="checklist-progress-bar">
-                                <div class="checklist-progress-fill" id="workroomTaskProgressFill"></div>
+                            <div class="workroom-phase-shell-nav">
+                                <button class="btn tiny ghost" id="workroomPrevPhaseBtn" type="button">Previous</button>
+                                <button class="btn tiny" id="workroomNextPhaseBtn" type="button">Next</button>
                             </div>
                         </div>
-                        <div id="workroomTasksContainer" class="workroom-tasks-container"></div>
-                    </section>
 
-                    <section class="workroom-panel workroom-deliverable-notes-panel workroom-left-pane"
-                        data-workroom-left-pane="notes" id="workroomLeftPaneNotes" role="tabpanel" hidden>
-                        <div class="workroom-panel-header">
-                            <h3>Deliverable Notes</h3>
+                        <div id="workroomSurveySection" class="workroom-phase-section">
+                            <div class="workroom-page-shell workroom-survey-shell">
+                                <div class="workroom-page-shell-header">
+                                    <div class="workroom-page-shell-title-wrap">
+                                        <div class="workroom-page-shell-title">Survey Report</div>
+                                        <div class="tiny muted">Launch the field report and confirm the reference package before pre-design starts.</div>
+                                    </div>
+                                    <div class="workroom-survey-actions">
+                                        <button class="btn workroom-survey-launch-btn" id="workroomSurveyLaunchBtn"
+                                            type="button">Open Utility Plan Editor</button>
+                                        <button class="btn tiny ghost" id="workroomSurveyTemplateBtn"
+                                            type="button">Copy Survey Template</button>
+                                    </div>
+                                </div>
+                                <div id="workroomSurveySummary" class="workroom-phase-summary-strip"></div>
+                                <div id="workroomSurveyContent" class="workroom-page-section"></div>
+                            </div>
                         </div>
-                        <textarea id="workroomDeliverableNotesTextarea" class="workroom-deliverable-notes-textarea"
-                            placeholder="Add notes for this deliverable..."></textarea>
-                    </section>
 
-                    <section class="workroom-panel workroom-checklist-panel workroom-left-pane"
-                        data-workroom-left-pane="checklist" id="workroomLeftPaneChecklist" role="tabpanel" hidden>
-                        <div class="workroom-panel-header">
-                            <h3>Deliverable Checklist</h3>
-                        </div>
-                        <div class="workroom-checklist-controls">
-                            <div id="workroomChecklistTabs" class="workroom-checklist-tabs"></div>
-                            <div class="workroom-checklist-add">
-                                <select id="workroomChecklistAddSelect">
-                                    <option value="">+ Add Checklist...</option>
-                                </select>
+                        <div id="workroomPreDesignSection" class="workroom-phase-section" hidden>
+                            <div class="workroom-page-shell">
+                                <div class="workroom-page-shell-header">
+                                    <div class="workroom-page-shell-title-wrap">
+                                        <div id="workroomPreDesignPageTitle" class="workroom-page-shell-title">
+                                            Scope &amp; Jurisdiction
+                                        </div>
+                                        <div id="workroomPreDesignPageIndicator" class="tiny muted">Page 1 of 3</div>
+                                    </div>
+                                    <div class="workroom-page-shell-nav">
+                                        <button class="btn tiny ghost" id="workroomPreDesignPrevPageBtn"
+                                            type="button">Previous</button>
+                                        <button class="btn tiny" id="workroomPreDesignNextPageBtn"
+                                            type="button">Next</button>
+                                    </div>
+                                </div>
+                                <div id="workroomPreDesignSummary" class="workroom-phase-summary-strip"></div>
+                                <div id="workroomPreDesignContent" class="workroom-page-section"></div>
                             </div>
                         </div>
-                        <div class="checklist-progress workroom-progress">
-                            <div class="checklist-progress-info">
-                                <span class="checklist-progress-count" id="workroomChecklistProgressCount">0/0</span>
-                                <span>completed</span>
-                            </div>
-                            <div class="checklist-progress-bar">
-                                <div class="checklist-progress-fill" id="workroomChecklistProgressFill"></div>
-                            </div>
-                        </div>
-                        <div id="workroomChecklistItems" class="workroom-checklist-items"></div>
-                    </section>
-                </div>
 
-                <section class="workroom-panel workroom-general-notes-panel">
-                    <div class="workroom-panel-header">
-                        <h3>General Notes</h3>
+                        <div id="workroomChecklistSection" class="workroom-phase-section" hidden>
+                            <div id="workroomChecklistIntro" class="workroom-phase-intro-card"></div>
+                            <div id="workroomIssueSummary" class="workroom-phase-summary-grid"></div>
+                            <div class="workroom-checklist-shell">
+                                <div class="workroom-checklist-controls">
+                                    <div id="workroomChecklistTabs" class="workroom-checklist-tabs"></div>
+                                    <div class="workroom-checklist-add">
+                                        <select id="workroomChecklistAddSelect">
+                                            <option value="">+ Add Checklist...</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="checklist-progress workroom-checklist-progress">
+                                    <div class="checklist-progress-info">
+                                        <span class="checklist-progress-count" id="workroomChecklistProgressCount">0/0</span>
+                                        <span>completed</span>
+                                    </div>
+                                    <div class="checklist-progress-bar">
+                                        <div class="checklist-progress-fill" id="workroomChecklistProgressFill"></div>
+                                    </div>
+                                </div>
+                                <div id="workroomChecklistItems" class="workroom-checklist-items"></div>
+                            </div>
+                            <section id="workroomDesignGeneralNotesSection" class="workroom-design-notes-section" hidden>
+                                <div class="workroom-phase-subpanel workroom-general-notes-panel">
+                                    <div class="workroom-panel-header">
+                                        <h3>General Notes</h3>
+                                    </div>
+                                    <div class="workroom-notes-controls">
+                                        <div id="workroomNotesTabs" class="workroom-notes-tabs"></div>
+                                        <button class="icon-btn mini" id="workroomAddNotePageBtn" aria-label="Add notes page"
+                                            title="Add notes page">+</button>
+                                    </div>
+                                    <div class="workroom-notes-search-row">
+                                        <input id="workroomNotesSearchInput" class="workroom-notes-search-input" type="search"
+                                            placeholder="Search general notes..." />
+                                        <button class="btn btn-primary tiny" id="workroomNotesSearchBtn" type="button">Search</button>
+                                    </div>
+                                    <textarea id="workroomGeneralNotesTextarea" class="workroom-general-notes-textarea"
+                                        placeholder="Add notes for the selected notes page..."></textarea>
+                                    <div id="workroomNotesSearchResults" class="workroom-notes-search-results"></div>
+                                </div>
+                            </section>
+                        </div>
+
+                        <div id="workroomPostPermitSection" class="workroom-phase-section" hidden>
+                            <div class="workroom-postpermit-grid">
+                                <div class="workroom-phase-intro-card">
+                                    <div class="workroom-phase-intro-title">Post-Permit Workflow</div>
+                                    <div class="workroom-phase-intro-copy">
+                                        Use this stage when the permit set comes back for plan check, bulletin work, or
+                                        service-related revisions. Keep the response package organized and generate the
+                                        right document templates from one place.
+                                    </div>
+                                </div>
+
+                                <div class="workroom-postpermit-card">
+                                    <div class="workroom-phase-intro-title">Return Work Setup</div>
+                                    <div id="workroomPostPermitControls" class="workroom-postpermit-controls"></div>
+                                </div>
+
+                                <div class="workroom-postpermit-card">
+                                    <div class="workroom-phase-intro-title">Recommended Actions</div>
+                                    <div class="workroom-postpermit-actions">
+                                        <button class="btn tiny" id="workroomNarrativeTemplateBtn"
+                                            type="button">Create Narrative of Changes</button>
+                                        <button class="btn tiny ghost" id="workroomPlanCheckTemplateBtn"
+                                            type="button">Create Plan Check Comments</button>
+                                    </div>
+                                    <div class="workroom-phase-intro-copy">
+                                        Use deliverable tasks and notes below to track reviewer comments, service changes,
+                                        and coordination follow-up while you prepare the response package.
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
-                    <div class="workroom-notes-controls">
-                        <div id="workroomNotesTabs" class="workroom-notes-tabs"></div>
-                        <button class="icon-btn mini" id="workroomAddNotePageBtn" aria-label="Add notes page"
-                            title="Add notes page">+</button>
-                    </div>
-                    <div class="workroom-notes-search-row">
-                        <input id="workroomNotesSearchInput" class="workroom-notes-search-input" type="search"
-                            placeholder="Search general notes..." />
-                        <button class="btn btn-primary tiny" id="workroomNotesSearchBtn" type="button">Search</button>
-                    </div>
-                    <textarea id="workroomGeneralNotesTextarea" class="workroom-general-notes-textarea"
-                        placeholder="Add notes for the selected notes page..."></textarea>
-                    <div id="workroomNotesSearchResults" class="workroom-notes-search-results"></div>
                 </section>
             </div>
 
@@ -2604,17 +2811,66 @@
                             </svg>
                         </button>
                     </div>
-                    <div id="workroomToolsList" class="workroom-tools-list"></div>
+                    <div class="workroom-tool-groups">
+                        <section class="workroom-tool-group">
+                            <div class="workroom-tool-group-header">
+                                <h4>Recommended This Phase</h4>
+                                <div id="workroomRecommendedToolsHint" class="workroom-tool-group-copy">
+                                    Focus tools for the current project stage.
+                                </div>
+                            </div>
+                            <div id="workroomRecommendedToolsList" class="workroom-tools-list"></div>
+                        </section>
+                        <section class="workroom-tool-group">
+                            <div class="workroom-tool-group-header">
+                                <h4>Available Anytime</h4>
+                                <div class="workroom-tool-group-copy">
+                                    Utility tools that stay useful across the full project.
+                                </div>
+                            </div>
+                            <div id="workroomAnytimeToolsList" class="workroom-tools-list"></div>
+                        </section>
+                    </div>
                     <div id="workroomToolStatus" class="workroom-tool-status" aria-live="polite">Ready.</div>
                 </section>
-                <section class="workroom-panel workroom-cad-files-panel">
+
+                <section class="workroom-panel workroom-workitems-panel">
                     <div class="workroom-panel-header">
-                        <h3>CAD Files</h3>
+                        <h3>Work Items</h3>
                     </div>
-                    <div id="workroomCadFilesStatus" class="workroom-cad-files-status" aria-live="polite">
-                        Select a deliverable to load CAD files.
+                    <div class="workroom-utility-tabs workroom-workitems-tabs" role="tablist" aria-label="Workroom work items">
+                        <button type="button" class="workroom-utility-tab active" data-workroom-utility-tab="tasks"
+                            role="tab" aria-selected="true" aria-controls="workroomUtilityPaneTasks">Tasks</button>
+                        <button type="button" class="workroom-utility-tab" data-workroom-utility-tab="notes" role="tab"
+                            aria-selected="false" aria-controls="workroomUtilityPaneNotes">Notes</button>
                     </div>
-                    <div id="workroomCadFilesList" class="workroom-cad-files-list"></div>
+
+                    <section class="workroom-tasks-panel workroom-utility-pane" data-workroom-utility-pane="tasks"
+                        id="workroomUtilityPaneTasks" role="tabpanel">
+                        <div class="workroom-panel-header">
+                            <h3>Deliverable Tasks</h3>
+                            <button class="btn-accent tiny" id="workroomAddTaskBtn">+ Add</button>
+                        </div>
+                        <div class="checklist-progress workroom-progress">
+                            <div class="checklist-progress-info">
+                                <span class="checklist-progress-count" id="workroomTaskProgressCount">0/0</span>
+                                <span>completed</span>
+                            </div>
+                            <div class="checklist-progress-bar">
+                                <div class="checklist-progress-fill" id="workroomTaskProgressFill"></div>
+                            </div>
+                        </div>
+                        <div id="workroomTasksContainer" class="workroom-tasks-container"></div>
+                    </section>
+
+                    <section class="workroom-deliverable-notes-panel workroom-utility-pane"
+                        data-workroom-utility-pane="notes" id="workroomUtilityPaneNotes" role="tabpanel" hidden>
+                        <div class="workroom-panel-header">
+                            <h3>Deliverable Notes</h3>
+                            <button class="btn-accent tiny" id="workroomAddNoteBtn">+ Add</button>
+                        </div>
+                        <div id="workroomNotesContainer" class="workroom-notes-container"></div>
+                    </section>
                 </section>
             </div>
         </div>
@@ -2690,8 +2946,10 @@
             </div>
             <label class="label">Status</label>
             <div class="deliverable-status"></div>
-            <label class="label">Notes</label>
-            <textarea class="d-notes" rows="3" placeholder="Deliverable notes"></textarea>
+            <div class="stack">
+                <div class="title section-header">Notes</div>
+                <div class="deliverable-note-list stack"></div>
+            </div>
             <div class="stack">
                 <div class="title section-header">Tasks</div>
                 <div class="deliverable-task-list stack"></div>
@@ -2708,6 +2966,7 @@
     </template>
     <div id="updateCheckIndicator" class="corner-status" hidden>Checking for updates...</div>
     <script src="script.js"></script>
+    <script src="utility-plan-editor.js"></script>
 </body>
 
 </html>

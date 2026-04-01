@@ -21,11 +21,15 @@ class ProjectModalTaskUiTests(unittest.TestCase):
         self.assertIn("card._taskItems = (deliverable.tasks || []).map(normalizeTask);", script)
         self.assertIn("renderModalDeliverableTaskList(card, taskList);", script)
         self.assertIn("getModalDeliverableTaskItems(card)", script)
-        self.assertIn("taskItems.push({ text: taskText, done: false, links: [] });", script)
+        self.assertIn(
+            "taskItems.push({ text: taskText, done: false, pinned: false, links: [] });",
+            script,
+        )
         self.assertIn('taskInput.addEventListener("blur", () => {', script)
         self.assertIn("setTimeout(() => {", script)
         self.assertIn("focusModalTaskInput(container);", script)
         self.assertIn("links: normalizedTask.links,", script)
+        self.assertIn('titleUnpinned: "Pin task",', script)
 
     def test_modal_task_editor_markup_removes_old_button_and_template(self):
         html = INDEX_HTML_PATH.read_text(encoding="utf-8")

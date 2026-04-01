@@ -16,7 +16,11 @@ class ProjectDeliverableTaskInputUiTests(unittest.TestCase):
         )
         self.assertIn("if (!taskText || isCommittingTask) return false;", script)
         self.assertIn('taskInput.value = "";', script)
-        self.assertIn("deliverable.tasks.push({ text: taskText, done: false });", script)
+        self.assertIn(
+            "deliverable.tasks.push({",
+            script,
+        )
+        self.assertIn("pinned: false,", script)
         self.assertIn("updateStatsDisplay();", script)
         self.assertIn("await save();", script)
         self.assertIn("renderTaskList();", script)

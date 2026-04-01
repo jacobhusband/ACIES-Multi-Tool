@@ -16,6 +16,7 @@ import http.server
 import html
 from pathlib import Path
 from copy import copy, deepcopy
+from contextlib import closing
 from dotenv import load_dotenv
 import datetime
 import threading
@@ -31,6 +32,7 @@ from typing import List
 import importlib
 import uuid
 from urllib.parse import parse_qs, urlencode, urlparse, unquote
+import fitz
 
 # Work around NumPy 2.x removing scalar aliases used by openpyxl.
 _NUMPY_ALIAS_MAP = {
@@ -103,7 +105,7 @@ except AttributeError as _exc:
         raise
 from openpyxl.worksheet.copier import WorksheetCopy
 from pydantic import BaseModel, Field
-from PIL import Image as PILImage, ImageOps, UnidentifiedImageError
+from PIL import Image as PILImage, ImageOps, ImageDraw, ImageFont, UnidentifiedImageError
 
 # Helper functions for date parsing and status management
 STATUS_CANON = ["Waiting", "Working",
@@ -793,6 +795,7 @@ CHECKLISTS_FILE = get_app_data_path("checklists.json")
 SYNC_BACKUPS_DIR = os.path.join(get_app_data_dir(), "sync_backups")
 LIGHTING_SCHEDULE_SYNC_FILE = "T24LightingFixtureSchedule.sync.json"
 LIGHTING_SCHEDULE_DB_FILE = get_app_data_path("lighting_schedules.db")
+SURVEY_REPORT_DB_FILE = get_app_data_path("survey_reports.db")
 SYNC_TRACKED_FILES = {
     "settings": SETTINGS_FILE,
     "tasks": TASKS_FILE,
@@ -825,6 +828,13 @@ LIGHTING_SCHEDULE_DEFAULT_NOTES = "\n".join([
 LIGHTING_PROJECT_SEGMENT_REGEX = re.compile(
     r"^(\d{6})(?!\d)(?:\s*(?:[-_]\s*)?(.*))?$"
 )
+SURVEY_REPORT_SCHEMA_VERSION = "1.0.0"
+UTILITY_PLAN_LABEL_FONT_SIZE = 18
+UTILITY_PLAN_LABEL_PADDING_X = 10
+UTILITY_PLAN_LABEL_PADDING_Y = 8
+UTILITY_PLAN_LINE_SPACING = 1.2
+UTILITY_PLAN_PREVIEW_MAX_DIMENSION = 1800
+UTILITY_PLAN_EXPORT_MAX_DIMENSION = 2200
 
 
 def _normalize_sync_dwg_path(dwg_path):
@@ -1349,6 +1359,551 @@ def _save_lighting_schedule_record(
     )
     record["previousVersion"] = previous_version
     return record
+
+
+def _normalize_survey_report_number(value, fallback=0.0):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return float(fallback)
+    if not math.isfinite(number):
+        return float(fallback)
+    return float(number)
+
+
+def _normalize_utility_plan_rect(raw_rect):
+    raw_rect = raw_rect if isinstance(raw_rect, dict) else {}
+    return {
+        "x": max(0.0, _normalize_survey_report_number(raw_rect.get("x"), 0.0)),
+        "y": max(0.0, _normalize_survey_report_number(raw_rect.get("y"), 0.0)),
+        "width": max(0.0, _normalize_survey_report_number(raw_rect.get("width"), 0.0)),
+        "height": max(0.0, _normalize_survey_report_number(raw_rect.get("height"), 0.0)),
+    }
+
+
+def _normalize_utility_plan_point(raw_point):
+    raw_point = raw_point if isinstance(raw_point, dict) else {}
+    return {
+        "x": max(0.0, _normalize_survey_report_number(raw_point.get("x"), 0.0)),
+        "y": max(0.0, _normalize_survey_report_number(raw_point.get("y"), 0.0)),
+    }
+
+
+def _estimate_utility_plan_text_bounds(text):
+    lines = [line.strip() for line in str(text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")]
+    lines = [line for line in lines if line] or ["Callout"]
+    max_chars = max(len(line) for line in lines)
+    width = max(72.0, float(max_chars * 10 + UTILITY_PLAN_LABEL_PADDING_X * 2))
+    line_height = float(UTILITY_PLAN_LABEL_FONT_SIZE * UTILITY_PLAN_LINE_SPACING)
+    height = max(
+        32.0,
+        float(len(lines) * line_height + UTILITY_PLAN_LABEL_PADDING_Y * 2),
+    )
+    return width, height
+
+
+def _create_default_utility_plan_callout(seed=None):
+    seed = seed if isinstance(seed, dict) else {}
+    text = str(seed.get("text") or "New Callout").strip() or "New Callout"
+    label_rect = _normalize_utility_plan_rect(seed.get("labelRect"))
+    if label_rect["width"] <= 0 or label_rect["height"] <= 0:
+        estimated_width, estimated_height = _estimate_utility_plan_text_bounds(text)
+        label_rect["width"] = estimated_width
+        label_rect["height"] = estimated_height
+    return {
+        "id": str(seed.get("id") or f"callout_{uuid.uuid4().hex[:10]}").strip() or f"callout_{uuid.uuid4().hex[:10]}",
+        "text": text,
+        "labelRect": label_rect,
+        "targetPoint": _normalize_utility_plan_point(seed.get("targetPoint")),
+    }
+
+
+def _create_default_utility_plan_floor(seed=None):
+    seed = seed if isinstance(seed, dict) else {}
+    return {
+        "id": str(seed.get("id") or f"floor_{uuid.uuid4().hex[:10]}").strip() or f"floor_{uuid.uuid4().hex[:10]}",
+        "label": str(seed.get("label") or "Floor 1").strip() or "Floor 1",
+        "order": max(0, int(_normalize_survey_report_number(seed.get("order"), 0))),
+        "pageNumber": max(0, int(_normalize_survey_report_number(seed.get("pageNumber"), 0))),
+        "cropRect": _normalize_utility_plan_rect(seed.get("cropRect")),
+        "callouts": [
+            _create_default_utility_plan_callout(callout)
+            for callout in (seed.get("callouts") or [])
+            if isinstance(callout, dict)
+        ],
+        "exportPath": os.path.normpath(str(seed.get("exportPath") or "").strip())
+        if str(seed.get("exportPath") or "").strip()
+        else "",
+        "lastExportedAtUtc": str(seed.get("lastExportedAtUtc") or "").strip(),
+    }
+
+
+def _create_default_survey_report_draft(project_id=""):
+    return {
+        "schemaVersion": SURVEY_REPORT_SCHEMA_VERSION,
+        "projectId": str(project_id or "").strip(),
+        "utilityPlan": {
+            "sourcePdfPath": "",
+            "exportFolderPath": "",
+            "floors": [_create_default_utility_plan_floor()],
+        },
+        "findings": {},
+        "recommendations": {"items": []},
+        "photos": {"items": []},
+    }
+
+
+def _normalize_survey_report_payload(payload, project_id=""):
+    base = _create_default_survey_report_draft(project_id)
+    if not isinstance(payload, dict):
+        return base
+
+    utility_plan = payload.get("utilityPlan") if isinstance(payload.get("utilityPlan"), dict) else {}
+    floors = [
+        _create_default_utility_plan_floor(floor)
+        for floor in (utility_plan.get("floors") or [])
+        if isinstance(floor, dict)
+    ]
+    if not floors:
+        floors = [_create_default_utility_plan_floor()]
+    floors = sorted(floors, key=lambda floor: (int(floor.get("order", 0)), str(floor.get("label") or "").lower()))
+    for index, floor in enumerate(floors):
+        floor["order"] = index
+
+    source_pdf_path = str(utility_plan.get("sourcePdfPath") or "").strip()
+    export_folder_path = str(utility_plan.get("exportFolderPath") or "").strip()
+
+    base["schemaVersion"] = str(payload.get("schemaVersion") or SURVEY_REPORT_SCHEMA_VERSION).strip() or SURVEY_REPORT_SCHEMA_VERSION
+    base["projectId"] = str(payload.get("projectId") or project_id or "").strip()
+    base["utilityPlan"] = {
+        "sourcePdfPath": os.path.normpath(source_pdf_path) if source_pdf_path else "",
+        "exportFolderPath": os.path.normpath(export_folder_path) if export_folder_path else "",
+        "floors": floors,
+    }
+    return base
+
+
+def _extract_survey_report_project_id_from_path(raw_path):
+    normalized = str(raw_path or "").strip().replace("/", "\\")
+    if not normalized:
+        return ""
+    parts = [part.strip() for part in normalized.split("\\") if part.strip()]
+    for part in reversed(parts):
+        match = LIGHTING_PROJECT_SEGMENT_REGEX.match(part)
+        if match:
+            return str(match.group(1) or "").strip()
+    return ""
+
+
+def _resolve_survey_report_project_id(project_like):
+    if isinstance(project_like, str):
+        value = str(project_like).strip()
+        return value
+    if not isinstance(project_like, dict):
+        return ""
+
+    explicit_id = str(project_like.get("id") or "").strip()
+    if explicit_id:
+        return explicit_id
+
+    for key in ("path", "localProjectPath", "workroomRootPath"):
+        extracted = _extract_survey_report_project_id_from_path(project_like.get(key))
+        if extracted:
+            return extracted
+
+    display_name = str(project_like.get("name") or project_like.get("nick") or "").strip()
+    if display_name:
+        return f"name:{display_name.lower()}"
+    return ""
+
+
+def _open_survey_report_db():
+    conn = sqlite3.connect(SURVEY_REPORT_DB_FILE, timeout=5)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode = WAL;")
+    conn.execute("PRAGMA foreign_keys = ON;")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS survey_report_projects (
+            project_id TEXT PRIMARY KEY,
+            draft_json TEXT NOT NULL,
+            version INTEGER NOT NULL DEFAULT 1,
+            updated_at_utc TEXT NOT NULL,
+            updated_by TEXT NOT NULL DEFAULT 'unknown'
+        );
+        """
+    )
+    return conn
+
+
+def _normalize_survey_report_record(row):
+    if row is None:
+        return None
+
+    try:
+        draft_payload = json.loads(row["draft_json"])
+    except (TypeError, ValueError, KeyError):
+        draft_payload = {}
+
+    normalized = _normalize_survey_report_payload(
+        draft_payload,
+        project_id=str(row["project_id"] or "").strip(),
+    )
+    normalized["projectId"] = str(row["project_id"] or "").strip()
+    normalized["version"] = int(row["version"] or 0)
+    normalized["updatedAtUtc"] = str(row["updated_at_utc"] or "").strip()
+    normalized["updatedBy"] = str(row["updated_by"] or "").strip()
+    return normalized
+
+
+def _get_survey_report_draft(project_id):
+    resolved_id = _resolve_survey_report_project_id(project_id)
+    if not resolved_id:
+        return None
+
+    with closing(_open_survey_report_db()) as conn:
+        row = conn.execute(
+            """
+            SELECT project_id, draft_json, version, updated_at_utc, updated_by
+            FROM survey_report_projects
+            WHERE project_id = ?
+            """,
+            (resolved_id,),
+        ).fetchone()
+    return _normalize_survey_report_record(row)
+
+
+def _save_survey_report_draft(project_id, payload, updated_by="desktop"):
+    resolved_id = _resolve_survey_report_project_id(project_id)
+    if not resolved_id:
+        raise ValueError("Survey report project ID is required.")
+    if not isinstance(payload, dict):
+        raise ValueError("Survey report payload must be a JSON object.")
+
+    normalized_draft = _normalize_survey_report_payload(payload, project_id=resolved_id)
+    draft_json = json.dumps(normalized_draft, ensure_ascii=False, separators=(",", ":"))
+    now_iso = utc_now_iso()
+
+    with closing(_open_survey_report_db()) as conn:
+        existing = conn.execute(
+            """
+            SELECT version
+            FROM survey_report_projects
+            WHERE project_id = ?
+            """,
+            (resolved_id,),
+        ).fetchone()
+        previous_version = int(existing["version"] or 0) if existing else 0
+        next_version = previous_version + 1 if existing else 1
+        conn.execute(
+            """
+            INSERT INTO survey_report_projects (
+                project_id, draft_json, version, updated_at_utc, updated_by
+            )
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(project_id) DO UPDATE SET
+                draft_json = excluded.draft_json,
+                version = excluded.version,
+                updated_at_utc = excluded.updated_at_utc,
+                updated_by = excluded.updated_by
+            """,
+            (
+                resolved_id,
+                draft_json,
+                next_version,
+                    now_iso,
+                    str(updated_by or "desktop").strip() or "desktop",
+            ),
+        )
+        conn.commit()
+
+    record = _get_survey_report_draft(resolved_id)
+    if record is None:
+        raise RuntimeError("Survey report save completed but record could not be reloaded.")
+    record["previousVersion"] = previous_version
+    return record
+
+
+def _normalize_existing_pdf_path(raw_path):
+    path = os.path.normpath(str(raw_path or "").strip().strip('"').strip("'"))
+    if not path:
+        raise ValueError("PDF path is required.")
+    if not os.path.isabs(path):
+        raise ValueError("PDF path must be absolute.")
+    if os.path.splitext(path)[1].lower() != ".pdf":
+        raise ValueError("PDF path must end with .pdf.")
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"PDF file not found: {path}")
+    return path
+
+
+def _get_utility_plan_pdf_info_payload(pdf_path):
+    normalized_path = _normalize_existing_pdf_path(pdf_path)
+    with fitz.open(normalized_path) as doc:
+        pages = []
+        for page_index in range(doc.page_count):
+            rect = doc[page_index].rect
+            pages.append(
+                {
+                    "pageNumber": page_index,
+                    "width": round(float(rect.width), 4),
+                    "height": round(float(rect.height), 4),
+                }
+            )
+    return {
+        "path": normalized_path,
+        "pageCount": len(pages),
+        "pages": pages,
+    }
+
+
+def _render_pdf_page_preview_payload(pdf_path, page_number=0, max_dimension=UTILITY_PLAN_PREVIEW_MAX_DIMENSION):
+    normalized_path = _normalize_existing_pdf_path(pdf_path)
+    with fitz.open(normalized_path) as doc:
+        if doc.page_count <= 0:
+            raise ValueError("PDF does not contain any pages.")
+        page_index = max(0, min(int(_normalize_survey_report_number(page_number, 0)), doc.page_count - 1))
+        page = doc[page_index]
+        rect = page.rect
+        dimension = max(200, int(_normalize_survey_report_number(max_dimension, UTILITY_PLAN_PREVIEW_MAX_DIMENSION)))
+        scale = max(0.25, min(4.0, float(dimension) / max(float(rect.width), float(rect.height), 1.0)))
+        pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
+        encoded = base64.b64encode(pix.tobytes("png")).decode("ascii")
+        return {
+            "path": normalized_path,
+            "pageNumber": page_index,
+            "pageCount": doc.page_count,
+            "pageWidth": round(float(rect.width), 4),
+            "pageHeight": round(float(rect.height), 4),
+            "previewWidth": int(pix.width),
+            "previewHeight": int(pix.height),
+            "dataUrl": f"data:image/png;base64,{encoded}",
+        }
+
+
+def _clamp_utility_plan_rect_to_page(rect, page_width, page_height, default_full_page=False):
+    normalized = _normalize_utility_plan_rect(rect)
+    if default_full_page and (normalized["width"] <= 0 or normalized["height"] <= 0):
+        return {
+            "x": 0.0,
+            "y": 0.0,
+            "width": float(page_width),
+            "height": float(page_height),
+        }
+
+    x = min(max(normalized["x"], 0.0), float(page_width))
+    y = min(max(normalized["y"], 0.0), float(page_height))
+    max_width = max(float(page_width) - x, 0.0)
+    max_height = max(float(page_height) - y, 0.0)
+    width = min(max(normalized["width"], 0.0), max_width)
+    height = min(max(normalized["height"], 0.0), max_height)
+    return {
+        "x": x,
+        "y": y,
+        "width": width,
+        "height": height,
+    }
+
+
+def _clamp_utility_plan_point_to_page(point, page_width, page_height):
+    normalized = _normalize_utility_plan_point(point)
+    return {
+        "x": min(max(normalized["x"], 0.0), float(page_width)),
+        "y": min(max(normalized["y"], 0.0), float(page_height)),
+    }
+
+
+def _load_utility_plan_font(size):
+    font_size = max(12, int(round(size or 12)))
+    candidates = []
+    if sys.platform == "win32":
+        windows_font_dir = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts")
+        candidates.extend(
+            [
+                os.path.join(windows_font_dir, "arial.ttf"),
+                os.path.join(windows_font_dir, "calibri.ttf"),
+                os.path.join(windows_font_dir, "segoeui.ttf"),
+            ]
+        )
+    candidates.extend(["arial.ttf", "DejaVuSans.ttf"])
+
+    for candidate in candidates:
+        try:
+            return ImageFont.truetype(candidate, font_size)
+        except Exception:
+            continue
+    return ImageFont.load_default()
+
+
+def _compute_utility_plan_leader_anchor(rect, target_point):
+    width = max(float(rect.get("width") or 0.0), 0.0)
+    height = max(float(rect.get("height") or 0.0), 0.0)
+    cx = float(rect.get("x") or 0.0) + width / 2.0
+    cy = float(rect.get("y") or 0.0) + height / 2.0
+    dx = float(target_point.get("x") or 0.0) - cx
+    dy = float(target_point.get("y") or 0.0) - cy
+    if abs(dx) < 1e-6 and abs(dy) < 1e-6:
+        return {"x": cx, "y": cy}
+
+    half_width = width / 2.0
+    half_height = height / 2.0
+    scale_x = abs(dx) / half_width if half_width > 0 else float("inf")
+    scale_y = abs(dy) / half_height if half_height > 0 else float("inf")
+    scale = max(scale_x, scale_y, 1e-6)
+    return {
+        "x": cx + dx / scale,
+        "y": cy + dy / scale,
+    }
+
+
+def _sanitize_utility_plan_filename_component(value, fallback):
+    text = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", str(value or "").strip())
+    text = re.sub(r"\s+", " ", text).strip().strip(".")
+    text = text[:120]
+    return text or fallback
+
+
+def _ensure_unique_utility_plan_export_name(base_name, used_names):
+    candidate = f"{base_name}.png"
+    if candidate.lower() not in used_names:
+        used_names.add(candidate.lower())
+        return candidate
+
+    suffix = 2
+    while True:
+        candidate = f"{base_name} ({suffix}).png"
+        if candidate.lower() not in used_names:
+            used_names.add(candidate.lower())
+            return candidate
+        suffix += 1
+
+
+def _draw_utility_plan_callout(draw, crop_rect, scale, callout):
+    label_rect = _normalize_utility_plan_rect(callout.get("labelRect"))
+    target_point = _normalize_utility_plan_point(callout.get("targetPoint"))
+    text = str(callout.get("text") or "Callout").strip() or "Callout"
+
+    font_size = max(12, int(round(UTILITY_PLAN_LABEL_FONT_SIZE * scale)))
+    font = _load_utility_plan_font(font_size)
+    text_bbox = draw.multiline_textbbox(
+        (0, 0),
+        text,
+        font=font,
+        spacing=max(1, int(round(font_size * 0.2))),
+    )
+    rendered_width = max(
+        float(label_rect["width"]),
+        float(text_bbox[2] - text_bbox[0] + (UTILITY_PLAN_LABEL_PADDING_X * 2)),
+    )
+    rendered_height = max(
+        float(label_rect["height"]),
+        float(text_bbox[3] - text_bbox[1] + (UTILITY_PLAN_LABEL_PADDING_Y * 2)),
+    )
+    rendered_rect = {
+        "x": label_rect["x"],
+        "y": label_rect["y"],
+        "width": rendered_width,
+        "height": rendered_height,
+    }
+    anchor = _compute_utility_plan_leader_anchor(rendered_rect, target_point)
+
+    crop_x = float(crop_rect["x"])
+    crop_y = float(crop_rect["y"])
+
+    def _project(point_like):
+        return (
+            float(point_like["x"] - crop_x) * scale,
+            float(point_like["y"] - crop_y) * scale,
+        )
+
+    start_xy = _project(anchor)
+    target_xy = _project(target_point)
+    box_xy = _project(rendered_rect)
+    box_w = rendered_width * scale
+    box_h = rendered_height * scale
+    line_width = max(2, int(round(scale * 2)))
+    arrow_size = max(6.0, float(scale * 7))
+
+    draw.line([start_xy, target_xy], fill=(255, 0, 0), width=line_width)
+    dx = target_xy[0] - start_xy[0]
+    dy = target_xy[1] - start_xy[1]
+    length = math.hypot(dx, dy)
+    if length > 1e-6:
+        ux = dx / length
+        uy = dy / length
+        px = -uy
+        py = ux
+        arrow_base_x = target_xy[0] - ux * arrow_size
+        arrow_base_y = target_xy[1] - uy * arrow_size
+        draw.polygon(
+            [
+                target_xy,
+                (arrow_base_x + px * arrow_size * 0.55, arrow_base_y + py * arrow_size * 0.55),
+                (arrow_base_x - px * arrow_size * 0.55, arrow_base_y - py * arrow_size * 0.55),
+            ],
+            fill=(255, 0, 0),
+        )
+
+    draw.rounded_rectangle(
+        [box_xy[0], box_xy[1], box_xy[0] + box_w, box_xy[1] + box_h],
+        radius=max(4, int(round(scale * 4))),
+        fill=(255, 235, 59),
+        outline=(255, 0, 0),
+        width=max(1, int(round(scale))),
+    )
+    draw.multiline_text(
+        (
+            box_xy[0] + (UTILITY_PLAN_LABEL_PADDING_X * scale),
+            box_xy[1] + (UTILITY_PLAN_LABEL_PADDING_Y * scale),
+        ),
+        text,
+        fill=(191, 24, 0),
+        font=font,
+        spacing=max(1, int(round(font_size * 0.2))),
+    )
+
+
+def _export_utility_plan_floor_png(doc, floor, export_folder_path, used_names):
+    page_number = max(0, min(int(floor.get("pageNumber") or 0), doc.page_count - 1))
+    page = doc[page_number]
+    page_rect = page.rect
+    crop_rect = _clamp_utility_plan_rect_to_page(
+        floor.get("cropRect"),
+        page_rect.width,
+        page_rect.height,
+        default_full_page=True,
+    )
+    if crop_rect["width"] <= 0 or crop_rect["height"] <= 0:
+        raise ValueError(f"Floor '{floor.get('label') or page_number + 1}' does not have a valid crop area.")
+
+    scale = max(
+        1.0,
+        min(
+            4.0,
+            float(UTILITY_PLAN_EXPORT_MAX_DIMENSION) / max(crop_rect["width"], crop_rect["height"], 1.0),
+        ),
+    )
+    clip = fitz.Rect(
+        crop_rect["x"],
+        crop_rect["y"],
+        crop_rect["x"] + crop_rect["width"],
+        crop_rect["y"] + crop_rect["height"],
+    )
+    pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), clip=clip, alpha=False)
+    image = PILImage.open(io.BytesIO(pix.tobytes("png"))).convert("RGB")
+    draw = ImageDraw.Draw(image)
+
+    for callout in floor.get("callouts") or []:
+        _draw_utility_plan_callout(draw, crop_rect, scale, callout)
+
+    label = _sanitize_utility_plan_filename_component(
+        floor.get("label") or f"Floor {page_number + 1}",
+        f"Floor {page_number + 1}",
+    )
+    file_name = _ensure_unique_utility_plan_export_name(f"Utility Plan - {label}", used_names)
+    output_path = os.path.join(export_folder_path, file_name)
+    image.save(output_path, "PNG")
+    return os.path.normpath(output_path)
 
 
 def _migrate_project_lighting_schedules(projects):
@@ -5249,6 +5804,164 @@ Return ONLY the JSON object.
             }
         except Exception as e:
             logging.error(f"Error loading lighting schedule links: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def get_survey_report_draft(self, project_id):
+        """Load the canonical survey report draft from SQLite."""
+        try:
+            record = _get_survey_report_draft(project_id)
+            return {
+                'status': 'success',
+                'exists': bool(record),
+                'projectId': _resolve_survey_report_project_id(project_id),
+                'data': record,
+            }
+        except Exception as e:
+            logging.error(f"Error loading survey report draft: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def save_survey_report_draft(self, project_id, payload):
+        """Persist the survey report draft to SQLite."""
+        try:
+            safe_payload = payload if isinstance(payload, dict) else {}
+            record = _save_survey_report_draft(
+                project_id,
+                safe_payload,
+                updated_by=safe_payload.get('updatedBy', 'desktop'),
+            )
+            return {
+                'status': 'success',
+                'projectId': record['projectId'],
+                'data': record,
+            }
+        except Exception as e:
+            logging.error(f"Error saving survey report draft: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def select_utility_plan_pdf(self):
+        """Shows file dialog for selecting a source PDF."""
+        try:
+            window = webview.windows[0]
+            file_paths = window.create_file_dialog(
+                webview.OPEN_DIALOG,
+                allow_multiple=False,
+                file_types=(
+                    'PDF Files (*.pdf)',
+                    'All Files (*.*)',
+                ),
+            )
+            if not file_paths:
+                return {'status': 'cancelled', 'path': None}
+            if isinstance(file_paths, (list, tuple)):
+                file_paths = file_paths[0] if file_paths else ''
+            return {'status': 'success', 'path': file_paths}
+        except Exception as e:
+            logging.error(f"Error selecting utility plan PDF: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def get_utility_plan_pdf_info(self, pdf_path):
+        """Return page count and page sizes for a utility plan source PDF."""
+        try:
+            return {
+                'status': 'success',
+                'data': _get_utility_plan_pdf_info_payload(pdf_path),
+            }
+        except Exception as e:
+            logging.error(f"Error loading utility plan PDF info: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def get_utility_plan_page_preview(self, pdf_path, page_number=0, max_size=UTILITY_PLAN_PREVIEW_MAX_DIMENSION):
+        """Return a PNG data URL preview for a utility plan PDF page."""
+        try:
+            payload = _render_pdf_page_preview_payload(pdf_path, page_number, max_dimension=max_size)
+            return {'status': 'success', 'data': payload}
+        except Exception as e:
+            logging.error(f"Error rendering utility plan page preview: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def export_utility_plan_pngs(self, project_id, payload=None):
+        """Export one or more utility plan floor crops to PNG."""
+        try:
+            safe_payload = payload if isinstance(payload, dict) else {}
+            resolved_project_id = _resolve_survey_report_project_id(project_id)
+            if not resolved_project_id:
+                raise ValueError("Survey report project ID is required.")
+
+            draft_payload = safe_payload.get('draft')
+            if isinstance(draft_payload, dict):
+                normalized_draft = _normalize_survey_report_payload(
+                    draft_payload,
+                    project_id=resolved_project_id,
+                )
+            else:
+                existing = _get_survey_report_draft(resolved_project_id)
+                normalized_draft = _normalize_survey_report_payload(
+                    existing or {},
+                    project_id=resolved_project_id,
+                )
+
+            utility_plan = normalized_draft.get('utilityPlan') or {}
+            source_pdf_path = _normalize_existing_pdf_path(utility_plan.get('sourcePdfPath'))
+            export_folder_path = str(
+                safe_payload.get('exportFolderPath')
+                or utility_plan.get('exportFolderPath')
+                or ''
+            ).strip()
+            if not export_folder_path:
+                raise ValueError("Choose an export folder before exporting PNGs.")
+            export_folder_path = os.path.normpath(export_folder_path)
+            os.makedirs(export_folder_path, exist_ok=True)
+
+            requested_floor_ids = {
+                str(floor_id).strip()
+                for floor_id in (safe_payload.get('floorIds') or [])
+                if str(floor_id).strip()
+            }
+            floors = [
+                floor for floor in (utility_plan.get('floors') or [])
+                if isinstance(floor, dict)
+                and (not requested_floor_ids or str(floor.get('id') or '').strip() in requested_floor_ids)
+            ]
+            if not floors:
+                raise ValueError("No utility plan floors were selected for export.")
+
+            exported = []
+            used_names = set()
+            with fitz.open(source_pdf_path) as doc:
+                for floor in sorted(
+                    floors,
+                    key=lambda floor: (
+                        int(_normalize_survey_report_number(floor.get('order'), 0)),
+                        str(floor.get('label') or '').lower(),
+                    ),
+                ):
+                    output_path = _export_utility_plan_floor_png(doc, floor, export_folder_path, used_names)
+                    exported_at = utc_now_iso()
+                    floor['exportPath'] = output_path
+                    floor['lastExportedAtUtc'] = exported_at
+                    exported.append(
+                        {
+                            'floorId': str(floor.get('id') or '').strip(),
+                            'label': str(floor.get('label') or '').strip(),
+                            'path': output_path,
+                            'exportedAtUtc': exported_at,
+                        }
+                    )
+
+            normalized_draft['utilityPlan']['exportFolderPath'] = export_folder_path
+            record = _save_survey_report_draft(
+                resolved_project_id,
+                normalized_draft,
+                updated_by=safe_payload.get('updatedBy', 'desktop'),
+            )
+            return {
+                'status': 'success',
+                'projectId': resolved_project_id,
+                'data': record,
+                'exports': exported,
+            }
+        except Exception as e:
+            logging.error(f"Error exporting utility plan PNGs: {e}")
             return {'status': 'error', 'message': str(e)}
 
     def read_t24_output_json(self, json_path):

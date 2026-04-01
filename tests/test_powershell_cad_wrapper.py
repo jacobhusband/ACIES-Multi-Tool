@@ -24,30 +24,16 @@ class PowerShellCadWrapperTests(unittest.TestCase):
         self.assertIn("'script_trace'", text)
         self.assertIn("continue", text)
 
-    def test_workroom_launch_context_uses_cached_cad_file_paths(self):
+    def test_frontend_automation_keeps_cad_trace_helpers_without_workroom_modal(self):
         text = SCRIPT_JS_PATH.read_text(encoding="utf-8")
-        self.assertIn("let workroomCadFilesLoading = false;", text)
-        self.assertIn("let workroomCadFilesLoadPromise = Promise.resolve();", text)
-        self.assertIn("let workroomDiscoveredCadFilePaths = [];", text)
-        self.assertIn("function setWorkroomDiscoveredCadFilePaths(paths = []) {", text)
-        self.assertIn("function setWorkroomCadFilesLoading(isLoading) {", text)
-        self.assertIn("async function traceCadAutoSelect(eventName, fields = {}) {", text)
-        self.assertIn("window.pywebview?.api?.trace_cad_auto_select_event", text)
-        self.assertIn("cadFilePaths: [...workroomDiscoveredCadFilePaths],", text)
-        self.assertIn("setWorkroomDiscoveredCadFilePaths(discoveredPaths);", text)
-        self.assertIn("setWorkroomDiscoveredCadFilePaths();", text)
-        self.assertIn('await traceCadAutoSelect("frontend_cad_files_panel_request", {', text)
-        self.assertIn('await traceCadAutoSelect("frontend_tool_launch", {', text)
-        self.assertIn("async function triggerWorkroomTool(toolId) {", text)
-        self.assertIn('message: "Waiting for CAD files..."', text)
-        self.assertIn("await workroomCadFilesLoadPromise;", text)
-        self.assertIn("disabled: isCadToolWaitingForLoad,", text)
         self.assertIn("async getCadAutoSelectTrace(lineLimit = 200) {", text)
         self.assertIn("async clearCadAutoSelectTrace() {", text)
         self.assertIn("window.pywebview?.api?.get_cad_auto_select_trace", text)
         self.assertIn("window.pywebview?.api?.clear_cad_auto_select_trace", text)
-        self.assertIn("cadFilesLoading: workroomCadFilesLoading,", text)
-        self.assertIn("discoveredCadFileCount: workroomDiscoveredCadFilePaths.length,", text)
+        self.assertNotIn("openWorkroom(projectIndex = 0)", text)
+        self.assertNotIn("async runWorkroomTool(toolId) {", text)
+        self.assertNotIn("getWorkroomState()", text)
+        self.assertNotIn("getToolState(toolId)", text)
 
     def test_cad_scripts_use_raw_values_in_sta_relaunch(self):
         for script_path in CAD_SCRIPT_PATHS:

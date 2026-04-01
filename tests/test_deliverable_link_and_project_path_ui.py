@@ -38,143 +38,60 @@ class DeliverableLinkAndProjectPathUiTests(unittest.TestCase):
             "return findWorkroomProjectRootById(projectPath) || projectPath;", script
         )
 
-    def test_deliverable_links_wiring_exists(self):
+    def test_unified_attachment_wiring_exists(self):
         script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
 
-        self.assertIn("function normalizeDeliverableLinkEntry(entry) {", script)
-        self.assertIn("function hasMeaningfulDeliverableLinkLabel(link) {", script)
-        self.assertIn("function normalizeDeliverableLinks(links, legacyLinkPath = \"\") {", script)
-        self.assertIn("links: normalizeDeliverableLinks(project.links),", script)
-        self.assertIn(
-            'links: normalizeDeliverableLinks(deliverable.links, deliverable.linkPath || ""),',
-            script,
-        )
-        self.assertIn(
-            'links: normalizeDeliverableLinks(seed.links, seed.linkPath || ""),',
-            script,
-        )
-        self.assertIn("base.links = normalizeDeliverableLinks([...(base.links || []), ...(incoming.links || [])]);", script)
-        self.assertIn("links: [],", script)
-        self.assertIn("function getDeliverableCardLinks(card) {", script)
-        self.assertIn("function setDeliverableCardLinks(card, links) {", script)
-        self.assertIn("function getModalProjectDraft() {", script)
-        self.assertIn("function setModalProjectDraft(project) {", script)
-        self.assertIn("function getModalProjectLinks() {", script)
-        self.assertIn("function setModalProjectLinks(links) {", script)
-        self.assertIn("function ensureDeliverableLinksPanel() {", script)
-        self.assertIn("let deliverableLinksPanelClosePending = false;", script)
-        self.assertIn("let deliverableLinksPanelActiveHost = null;", script)
-        self.assertIn("let deliverableLinksPanelDetachOutsideListeners = null;", script)
-        self.assertIn("let deliverableLinksPanelFocusLossFrame = 0;", script)
-        self.assertIn("function getDeliverableLinksPanelOutsideTargets(trigger) {", script)
-        self.assertIn("function isDeliverableLinksInteractionTarget(target) {", script)
-        self.assertIn("function detachDeliverableLinksOutsideListeners() {", script)
-        self.assertIn("function scheduleDeliverableLinksPanelFocusLossCheck() {", script)
-        self.assertIn("function attachDeliverableLinksOutsideListeners(trigger) {", script)
-        self.assertIn("function openDeliverableLinksPanel(context) {", script)
-        self.assertIn("async function closeDeliverableLinksPanel({ focusTrigger = false } = {}) {", script)
-        self.assertIn("async function requestDeliverableLinksPanelClose(options = {}) {", script)
-        self.assertIn("function getOpenDeliverableLinksPanelEntries() {", script)
-        self.assertIn("async function updateOpenDeliverableLinksScopes({", script)
-        self.assertIn("async function moveOpenDeliverableLinkEntryScope(entry, nextScope) {", script)
-        self.assertIn("async function removeOpenDeliverableLinkEntry(entry) {", script)
-        self.assertIn("function createDeliverableLinksControl(deliverable, options = {}) {", script)
-        self.assertIn('textContent: "Links",', script)
-        self.assertIn('placeholder: "Name (optional)",', script)
-        self.assertIn('placeholder: "Paste a file path or URL...",', script)
-        self.assertIn('className: "deliverable-links-add-input deliverable-links-name-input"', script)
-        self.assertIn('className: "deliverable-links-add-input deliverable-links-link-input"', script)
-        self.assertIn('className: "deliverable-links-scope-checkbox"', script)
-        self.assertIn('textContent: "Project-wide"', script)
-        self.assertIn("function getPendingDeliverableLinkEntry() {", script)
-        self.assertIn('const raw = String(elements.linkInput.value || "")', script)
-        self.assertIn('label: String(elements.nameInput.value || "").trim(),', script)
-        self.assertIn("function clearPendingDeliverableLinkEntry() {", script)
-        self.assertIn("elements.nameInput.value = \"\";", script)
-        self.assertIn("elements.linkInput.value = \"\";", script)
-        self.assertIn("function focusDeliverableLinksPrimaryInput({ select = true } = {}) {", script)
-        self.assertIn("elements.nameInput.focus();", script)
-        self.assertIn("const visibleLabel =", script)
-        self.assertIn(
-            'String(entry.label || entry.raw || entry.url || "Link").trim() || "Link";',
-            script,
-        )
-        self.assertIn('"aria-label": `Open ${visibleLabel}`', script)
-        self.assertIn('"aria-label": `Remove ${visibleLabel}`', script)
-        self.assertIn('removeBtn.textContent = "Remove";', script)
-        self.assertIn('className: "deliverable-link-scope-checkbox"', script)
-        self.assertIn('checked: entry.scope === "project"', script)
-        self.assertIn(
-            'projectLinks.push(nextEntry);',
-            script,
-        )
-        self.assertIn(
-            'deliverableLinks.push(nextEntry);',
-            script,
-        )
-        self.assertIn(
-            'const links = getOpenDeliverableLinksPanelEntries();',
-            script,
-        )
-        self.assertNotIn("deliverable-link-checkbox", script)
-        self.assertNotIn("nextLinks[index].done", script)
-        self.assertNotIn("Mark ${visibleLabel} complete", script)
-        self.assertIn("function commitOpenDeliverableLinksInput({ refocus = false } = {}) {", script)
-        self.assertIn("function openDeliverableLinkEntry(linkEntry) {", script)
-        self.assertIn("await window.pywebview.api.reveal_path(localPath);", script)
-        self.assertIn("openExternalUrl(url);", script)
-        self.assertIn('target.addEventListener("pointerdown", handleOutsidePointerLike, true);', script)
-        self.assertIn('target.addEventListener("mousedown", handleOutsidePointerLike, true);', script)
-        self.assertIn('ensureDeliverableLinksPanel().panel.addEventListener("focusout", handleFocusOut);', script)
-        self.assertIn('trigger.addEventListener("focusout", handleFocusOut);', script)
-        self.assertIn('ownerDocument.addEventListener("focusin", handleOutsideFocusIn, true);', script)
-        self.assertIn('ownerDocument.addEventListener("scroll", handleViewportScroll, true);', script)
-        self.assertIn('ownerDocument.defaultView?.addEventListener("resize", handleViewportResize);', script)
-        self.assertIn("const activeElement = ownerDocument?.activeElement || document.activeElement;", script)
-        self.assertIn("deliverableLinksPanelActiveHost instanceof HTMLDialogElement &&", script)
-        self.assertIn("e.target === deliverableLinksPanelActiveHost", script)
-        self.assertIn("if (getPendingDeliverableLinkEntry()) {", script)
-        self.assertIn("await commitOpenDeliverableLinksInput();", script)
-        self.assertIn("attachDeliverableLinksOutsideListeners(context.trigger);", script)
-        self.assertIn("detachDeliverableLinksOutsideListeners();", script)
-        self.assertIn("focusDeliverableLinksPrimaryInput();", script)
-        self.assertIn("openDeliverableLinksContext.addScope = \"deliverable\";", script)
-        self.assertIn("projectDraft: p", script)
-        self.assertIn("projectDraft: getModalProjectDraft()", script)
-        self.assertIn("links: getModalProjectLinks(),", script)
-        self.assertIn("project,", script)
-        self.assertIn("const links = getDeliverableCardLinks(card);", script)
-        self.assertIn("links,", script)
+        for expected in (
+            "function sanitizeAttachmentForCloud(attachment = {}) {",
+            "function mergeCloudAndLocalAttachments(remoteAttachments = [], localAttachments = []) {",
+            "function getDeliverableCardAttachments(card) {",
+            "function setDeliverableCardAttachments(card, attachments) {",
+            "function getModalProjectAttachments() {",
+            "function setModalProjectAttachments(attachments) {",
+            "function syncProjectAttachmentFields(project) {",
+            "function syncDeliverableAttachmentFields(deliverable) {",
+            "function createAttachmentTriggerIcon(size = 15) {",
+            "function createAttachmentControl(descriptor = {}, options = {}) {",
+            'svg.setAttribute("class", "attachment-trigger-icon");',
+            "function openAttachmentPanel(context) {",
+            "async function requestAttachmentPanelClose(options = {}) {",
+            "await addDroppedEmailToAttachmentContext(openAttachmentPanelContext, event);",
+            "attachments: getModalProjectAttachments(),",
+            "const attachments = getDeliverableCardAttachments(card);",
+            "trigger.appendChild(createAttachmentTriggerIcon());",
+            'className: "project-details-header",',
+            'className: "project-details-main",',
+            "projectDetailsHeader.append(projectDetailsMain, projectAttachmentInline);",
+            "nameCell.appendChild(projectDetailsHeader);",
+            'kind: "project",',
+            'kind: "deliverable",',
+        ):
+            self.assertIn(expected, script)
 
-    def test_deliverable_links_markup_and_styles_exist(self):
+        self.assertNotIn("deliverablesCell.appendChild(projectAttachmentInline);", script)
+
+    def test_unified_attachment_markup_and_styles_exist(self):
         html = INDEX_HTML_PATH.read_text(encoding="utf-8")
         css = STYLES_CSS_PATH.read_text(encoding="utf-8")
 
-        self.assertIn('<div class="deliverable-link-control"></div>', html)
-        self.assertIn(".deliverable-link-control {", css)
-        self.assertIn(".deliverable-link-trigger {", css)
-        self.assertIn(".deliverable-links-panel {", css)
-        self.assertIn(".deliverable-links-panel[hidden] {", css)
-        self.assertIn(".deliverable-links-list {", css)
-        self.assertIn(".deliverable-link-item {", css)
-        self.assertIn("grid-template-columns: minmax(0, 1fr) auto;", css)
-        self.assertIn(".deliverable-link-open {", css)
-        self.assertIn("font: inherit;", css)
-        self.assertIn(".deliverable-link-actions {", css)
-        self.assertIn(".deliverable-link-scope-control,", css)
-        self.assertIn(".deliverable-link-scope-checkbox,", css)
-        self.assertIn(".deliverable-link-remove {", css)
-        self.assertIn('text-transform: uppercase;', css)
-        self.assertNotIn(".deliverable-link-item:hover .deliverable-link-remove {", css)
-        self.assertNotIn(".deliverable-link-checkbox {", css)
-        self.assertNotIn(".deliverable-link-item.done .deliverable-link-label,", css)
-        self.assertIn(".deliverable-links-add-bullet {", css)
-        self.assertIn(".deliverable-links-add-fields {", css)
-        self.assertIn(".deliverable-links-scope-control {", css)
-        self.assertIn(".deliverable-links-scope-checkbox {", css)
-        self.assertIn(".deliverable-links-add-input {", css)
-        self.assertIn(".deliverable-links-name-input {", css)
-        self.assertIn(".deliverable-links-link-input {", css)
+        self.assertIn('id="modalProjectAttachmentHost"', html)
+        self.assertIn('<div class="deliverable-attachment-control"></div>', html)
+        self.assertNotIn('<div class="deliverable-link-control"></div>', html)
+        self.assertNotIn('class="deliverable-email-slots"', html)
+
+        for expected in (
+            ".project-details-header {",
+            ".project-details-main {",
+            ".project-title-text {",
+            ".modal-project-attachment-host {",
+            ".project-inline-attachment {",
+            ".attachment-trigger .attachment-trigger-icon {",
+            ".attachment-trigger.has-attachments {",
+            ".attachment-panel {",
+            ".attachment-item {",
+            ".attachment-action-btn {",
+        ):
+            self.assertIn(expected, css)
 
 
 if __name__ == "__main__":

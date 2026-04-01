@@ -1087,6 +1087,10 @@
                     <label class="label">Global Notes</label>
                     <textarea id="f_notes" rows="3" placeholder="Global notes"></textarea>
                 </div>
+                <div class="col-12">
+                    <label class="label">Project Attachments</label>
+                    <div id="modalProjectAttachmentHost" class="modal-project-attachment-host"></div>
+                </div>
             </div>
             <div class="section-divider"></div>
             <div class="stack">
@@ -1474,11 +1478,10 @@
                         scanned for layers.</div>
                 </div>
                 <div class="col-12" style="margin-top: 0.6rem;">
-                    <label class="label">Project Workroom CAD Routing</label>
+                    <label class="label">CAD File Auto-Select Routing</label>
                     <div class="stack" style="gap: 0.35rem;">
                         <label class="radio-label"><input type="checkbox" id="settings_workroomAutoSelectCadFiles">
-                            Auto-select DWGs from project discipline folders when tools are launched in Project
-                            Workroom</label>
+                            Auto-select DWGs from project discipline folders when compatible tools are launched</label>
                     </div>
                     <div class="tiny muted" style="margin-top: 0.35rem;">On: Publish/Freeze/Thaw auto-select base-level
                         DWGs from the active discipline folder. Prepare CAD DWG for Reference always opens the Arch
@@ -2631,289 +2634,6 @@
         </div>
     </dialog>
 
-    <!-- Project Workroom Modal -->
-    <dialog id="checklistModal" class="checklist-modal workroom-modal">
-        <header class="workroom-header">
-            <div class="workroom-header-content">
-                <div class="workroom-title-group">
-                    <div class="workroom-modal-title">
-                        <h2 class="title" id="workroomProjectLabel">Project Workroom</h2>
-                    </div>
-                    <div class="workroom-select-wrapper">
-                        <select id="checklistDeliverableSelect"></select>
-                    </div>
-                </div>
-                <div class="workroom-root-folder-controls">
-                    <input id="workroomRootFolderInput" class="workroom-root-folder-input" type="text"
-                        placeholder="Root project folder path..." aria-label="Root project folder path" />
-                    <button type="button" class="btn tiny" id="workroomSelectRootFolderBtn">Select Root Folder</button>
-                    <button type="button" class="btn tiny ghost" id="workroomOpenLocalProjectBtn">Open Local Project</button>
-                    <button type="button" class="btn tiny ghost" id="workroomOpenServerProjectBtn">Open Server Project</button>
-                </div>
-                <div id="workroomCadRouting" class="workroom-cad-routing" hidden></div>
-            </div>
-            <button class="icon-btn" id="checklistModalCloseBtn" aria-label="Close">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                    stroke-linecap="round" stroke-linejoin="round">
-                    <line x1="18" y1="6" x2="6" y2="18"></line>
-                    <line x1="6" y1="6" x2="18" y2="18"></line>
-                </svg>
-            </button>
-        </header>
-
-        <div class="workroom-body">
-            <div class="workroom-main-column">
-                <section class="workroom-panel workroom-phase-panel">
-                    <div id="workroomPhaseTabs" class="workroom-phase-tabs" role="tablist"
-                        aria-label="Project workroom phases"></div>
-
-                    <div class="workroom-phase-shell">
-                        <div class="workroom-phase-shell-header">
-                            <div class="workroom-phase-shell-title-wrap">
-                                <div id="workroomPhaseEyebrow" class="workroom-phase-eyebrow">Phase 1 of 5</div>
-                                <div id="workroomPhaseTitle" class="workroom-phase-title">Survey Report</div>
-                                <div id="workroomPhaseDescription" class="workroom-phase-description">
-                                    Start with the field package, track verification assets, and launch the survey report.
-                                </div>
-                            </div>
-                            <div class="workroom-phase-shell-nav">
-                                <button class="btn tiny ghost" id="workroomPrevPhaseBtn" type="button">Previous</button>
-                                <button class="btn tiny" id="workroomNextPhaseBtn" type="button">Next</button>
-                            </div>
-                        </div>
-
-                        <div id="workroomSurveySection" class="workroom-phase-section">
-                            <div class="workroom-page-shell workroom-survey-shell">
-                                <div class="workroom-page-shell-header">
-                                    <div class="workroom-page-shell-title-wrap">
-                                        <div class="workroom-page-shell-title">Survey Report Creator</div>
-                                        <div class="tiny muted">Build the survey report one section at a time before moving into pre-design.</div>
-                                    </div>
-                                    <div class="workroom-survey-actions">
-                                        <button class="btn workroom-survey-launch-btn" id="workroomSurveyLaunchBtn"
-                                            type="button">Open Utility Plan Editor</button>
-                                        <button class="btn tiny ghost" id="workroomSurveyTemplateBtn"
-                                            type="button">Copy Survey Template</button>
-                                    </div>
-                                </div>
-                                <div id="workroomSurveySummary" class="workroom-phase-summary-strip"></div>
-                                <div id="workroomSurveyContent" class="workroom-page-section"></div>
-                            </div>
-                        </div>
-
-                        <div id="workroomPreDesignSection" class="workroom-phase-section" hidden>
-                            <div class="workroom-page-shell">
-                                <div class="workroom-page-shell-header">
-                                    <div class="workroom-page-shell-title-wrap">
-                                        <div id="workroomPreDesignPageTitle" class="workroom-page-shell-title">
-                                            Scope &amp; Jurisdiction
-                                        </div>
-                                        <div id="workroomPreDesignPageIndicator" class="tiny muted">Page 1 of 3</div>
-                                    </div>
-                                    <div class="workroom-page-shell-nav">
-                                        <button class="btn tiny ghost" id="workroomPreDesignPrevPageBtn"
-                                            type="button">Previous</button>
-                                        <button class="btn tiny" id="workroomPreDesignNextPageBtn"
-                                            type="button">Next</button>
-                                    </div>
-                                </div>
-                                <div id="workroomPreDesignSummary" class="workroom-phase-summary-strip"></div>
-                                <div id="workroomPreDesignContent" class="workroom-page-section"></div>
-                            </div>
-                        </div>
-
-                        <div id="workroomChecklistSection" class="workroom-phase-section" hidden>
-                            <div id="workroomChecklistIntro" class="workroom-phase-intro-card"></div>
-                            <div id="workroomIssueSummary" class="workroom-phase-summary-grid"></div>
-                            <div class="workroom-checklist-shell">
-                                <div class="workroom-checklist-controls">
-                                    <div id="workroomChecklistTabs" class="workroom-checklist-tabs"></div>
-                                    <div class="workroom-checklist-add">
-                                        <select id="workroomChecklistAddSelect">
-                                            <option value="">+ Add Checklist...</option>
-                                        </select>
-                                    </div>
-                                </div>
-                                <div class="checklist-progress workroom-checklist-progress">
-                                    <div class="checklist-progress-info">
-                                        <span class="checklist-progress-count" id="workroomChecklistProgressCount">0/0</span>
-                                        <span>completed</span>
-                                    </div>
-                                    <div class="checklist-progress-bar">
-                                        <div class="checklist-progress-fill" id="workroomChecklistProgressFill"></div>
-                                    </div>
-                                </div>
-                                <div id="workroomChecklistItems" class="workroom-checklist-items"></div>
-                            </div>
-                            <section id="workroomDesignGeneralNotesSection" class="workroom-design-notes-section" hidden>
-                                <div class="workroom-phase-subpanel workroom-general-notes-panel">
-                                    <div class="workroom-panel-header">
-                                        <h3>General Notes</h3>
-                                    </div>
-                                    <div class="workroom-notes-controls">
-                                        <div id="workroomNotesTabs" class="workroom-notes-tabs"></div>
-                                        <button class="icon-btn mini" id="workroomAddNotePageBtn" aria-label="Add notes page"
-                                            title="Add notes page">+</button>
-                                    </div>
-                                    <div class="workroom-notes-search-row">
-                                        <input id="workroomNotesSearchInput" class="workroom-notes-search-input" type="search"
-                                            placeholder="Search general notes..." />
-                                        <button class="btn btn-primary tiny" id="workroomNotesSearchBtn" type="button">Search</button>
-                                    </div>
-                                    <textarea id="workroomGeneralNotesTextarea" class="workroom-general-notes-textarea"
-                                        placeholder="Add notes for the selected notes page..."></textarea>
-                                    <div id="workroomNotesSearchResults" class="workroom-notes-search-results"></div>
-                                </div>
-                            </section>
-                        </div>
-
-                        <div id="workroomPostPermitSection" class="workroom-phase-section" hidden>
-                            <div class="workroom-postpermit-grid">
-                                <div class="workroom-phase-intro-card">
-                                    <div class="workroom-phase-intro-title">Post-Permit Workflow</div>
-                                    <div class="workroom-phase-intro-copy">
-                                        Use this stage when the permit set comes back for plan check, bulletin work, or
-                                        service-related revisions. Keep the response package organized and generate the
-                                        right document templates from one place.
-                                    </div>
-                                </div>
-
-                                <div class="workroom-postpermit-card">
-                                    <div class="workroom-phase-intro-title">Return Work Setup</div>
-                                    <div id="workroomPostPermitControls" class="workroom-postpermit-controls"></div>
-                                </div>
-
-                                <div class="workroom-postpermit-card">
-                                    <div class="workroom-phase-intro-title">Recommended Actions</div>
-                                    <div class="workroom-postpermit-actions">
-                                        <button class="btn tiny" id="workroomNarrativeTemplateBtn"
-                                            type="button">Create Narrative of Changes</button>
-                                        <button class="btn tiny ghost" id="workroomPlanCheckTemplateBtn"
-                                            type="button">Create Plan Check Comments</button>
-                                    </div>
-                                    <div class="workroom-phase-intro-copy">
-                                        Use deliverable tasks and notes below to track reviewer comments, service changes,
-                                        and coordination follow-up while you prepare the response package.
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </section>
-            </div>
-
-            <div class="workroom-tools-column">
-                <section class="workroom-panel workroom-tools-panel">
-                    <div class="workroom-panel-header">
-                        <h3>Tools</h3>
-                        <button type="button" class="icon-btn mini workroom-tools-settings-btn"
-                            id="workroomToolsSettingsBtn" aria-label="Project Workroom tool settings"
-                            title="Project Workroom tool settings">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <circle cx="12" cy="12" r="3"></circle>
-                                <path
-                                    d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06A2 2 0 1 1 4.38 17l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82L4.21 7.2a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.08a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c0 .66.39 1.26 1 1.51H21a2 2 0 1 1 0 4h-.09c-.66 0-1.26.39-1.51 1z">
-                                </path>
-                            </svg>
-                        </button>
-                    </div>
-                    <div class="workroom-tool-groups">
-                        <section class="workroom-tool-group">
-                            <div class="workroom-tool-group-header">
-                                <h4>Recommended This Phase</h4>
-                                <div id="workroomRecommendedToolsHint" class="workroom-tool-group-copy">
-                                    Focus tools for the current project stage.
-                                </div>
-                            </div>
-                            <div id="workroomRecommendedToolsList" class="workroom-tools-list"></div>
-                        </section>
-                        <section class="workroom-tool-group">
-                            <div class="workroom-tool-group-header">
-                                <h4>Available Anytime</h4>
-                                <div class="workroom-tool-group-copy">
-                                    Utility tools that stay useful across the full project.
-                                </div>
-                            </div>
-                            <div id="workroomAnytimeToolsList" class="workroom-tools-list"></div>
-                        </section>
-                    </div>
-                    <div id="workroomToolStatus" class="workroom-tool-status" aria-live="polite">Ready.</div>
-                </section>
-
-                <section class="workroom-panel workroom-workitems-panel">
-                    <div class="workroom-panel-header">
-                        <h3>Work Items</h3>
-                    </div>
-                    <div class="workroom-utility-tabs workroom-workitems-tabs" role="tablist" aria-label="Workroom work items">
-                        <button type="button" class="workroom-utility-tab active" data-workroom-utility-tab="tasks"
-                            role="tab" aria-selected="true" aria-controls="workroomUtilityPaneTasks">Tasks</button>
-                        <button type="button" class="workroom-utility-tab" data-workroom-utility-tab="notes" role="tab"
-                            aria-selected="false" aria-controls="workroomUtilityPaneNotes">Notes</button>
-                    </div>
-
-                    <section class="workroom-tasks-panel workroom-utility-pane" data-workroom-utility-pane="tasks"
-                        id="workroomUtilityPaneTasks" role="tabpanel">
-                        <div class="workroom-panel-header">
-                            <h3>Deliverable Tasks</h3>
-                            <button class="btn-accent tiny" id="workroomAddTaskBtn">+ Add</button>
-                        </div>
-                        <div class="checklist-progress workroom-progress">
-                            <div class="checklist-progress-info">
-                                <span class="checklist-progress-count" id="workroomTaskProgressCount">0/0</span>
-                                <span>completed</span>
-                            </div>
-                            <div class="checklist-progress-bar">
-                                <div class="checklist-progress-fill" id="workroomTaskProgressFill"></div>
-                            </div>
-                        </div>
-                        <div id="workroomTasksContainer" class="workroom-tasks-container"></div>
-                    </section>
-
-                    <section class="workroom-deliverable-notes-panel workroom-utility-pane"
-                        data-workroom-utility-pane="notes" id="workroomUtilityPaneNotes" role="tabpanel" hidden>
-                        <div class="workroom-panel-header">
-                            <h3>Deliverable Notes</h3>
-                            <button class="btn-accent tiny" id="workroomAddNoteBtn">+ Add</button>
-                        </div>
-                        <div id="workroomNotesContainer" class="workroom-notes-container"></div>
-                    </section>
-                </section>
-            </div>
-        </div>
-    </dialog>
-    <dialog id="workroomToolsSettingsDlg">
-        <div class="modal-header">
-            <div class="title">Project Workroom Tool Settings</div>
-            <button class="btn ghost" onclick="closeDlg('workroomToolsSettingsDlg')">Close</button>
-        </div>
-        <div class="modal-body stack tool-settings-body">
-            <div class="tool-settings-intro">
-                <div class="tool-settings-title">How this toggle works</div>
-                <p class="tiny muted">On means Workroom auto-selects files for Publish/Freeze/Thaw by project path and
-                    discipline. Prepare CAD DWG for Reference always uses manual file selection and opens at the Arch
-                    folder when available.</p>
-            </div>
-            <div class="tool-settings-list">
-                <div class="tool-setting">
-                    <div class="tool-setting-text">
-                        <div class="tool-setting-title">Auto select DWG files</div>
-                        <div class="tool-setting-desc">Applies to Publish/Freeze/Thaw launched from Project Workroom and
-                            reuses the same setting as the main Settings modal.</div>
-                    </div>
-                    <div class="tool-setting-control">
-                        <span class="toggle-label">Off</span>
-                        <label class="switch" aria-label="Auto select DWG files in Project Workroom">
-                            <input type="checkbox" id="workroom_modal_autoSelectCadFiles">
-                            <span class="slider"></span>
-                        </label>
-                        <span class="toggle-label">On</span>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </dialog>
-
     <!-- HTML Templates for JS rendering -->
     <template id="project-row-template">
         <tr class="row">
@@ -2946,8 +2666,7 @@
                 <div class="deliverable-controls">
                     <label class="tiny checkbox-label"><input type="radio" class="d-primary"
                             style="width:auto">Primary</label>
-                    <div class="deliverable-link-control"></div>
-                    <div class="deliverable-email-slots" aria-label="Deliverable email links"></div>
+                    <div class="deliverable-attachment-control"></div>
                     <button type="button" class="btn tiny btn-remove text-danger">Remove</button>
                 </div>
             </div>
@@ -2977,3 +2696,4 @@
 </body>
 
 </html>
+

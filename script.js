@@ -99,15 +99,9 @@ const TRASH_ICON_PATH =
   "M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zm13-15h-3.5l-1-1h-5l-1 1H5v2h14V4z";
 const MAIL_ICON_PATH =
   "M20 4H4c-1.1 0-2 .9-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V6c0-1.1-.9-2-2-2zm-.8 2L12 11.2 4.8 6h14.4zM4 18V7l7.4 5.2a1 1 0 0 0 1.2 0L20 7v11H4z";
-const PAPERCLIP_ICON_PATH =
-  "M16.5 6.5 9 14a3 3 0 1 0 4.24 4.24l8.13-8.13a5 5 0 0 0-7.07-7.07L5.82 11.52a7 7 0 0 0 9.9 9.9l7.07-7.07";
-
 // Checklist Icons
 const CHECKLIST_ICON_PATH =
   "M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM7 10h2v7H7zm4-3h2v10h-2zm4 6h2v4h-2z";
-const WORKROOM_ICON_PATH =
-  "M3 5c0-1.1.9-2 2-2h6v4h2V3h6c1.1 0 2 .9 2 2v4H3V5zm0 6h18v8c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2v-8zm7 2v2h4v-2h-4z";
-
 const CHECK_ICON_PATH =
   "M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z";
 const MAX_DELIVERABLE_EMAIL_REFS = 3;
@@ -3741,15 +3735,59 @@ function clearTemplateToolRunState(toolId) {
   card.classList.remove("running");
   const statusEl = card.querySelector(".tool-card-status");
   if (statusEl) statusEl.textContent = "";
-  const checklistModal = document.getElementById("checklistModal");
-  if (checklistModal?.open) resetWorkroomToolStatus();
+}
+
+function normalizeWorkroomFolderPath(rawPath) {
+  return normalizeWindowsPath(rawPath);
+}
+
+function findWorkroomProjectRootById(projectPath) {
+  return findProjectRootPath(projectPath);
+}
+
+function getWorkroomRootFolderPath(project) {
+  const overridePath = normalizeWorkroomFolderPath(project?.workroomRootPath || "");
+  if (overridePath) return overridePath;
+  const projectPath = normalizeProjectPath(project?.path || "");
+  return findWorkroomProjectRootById(projectPath) || projectPath;
+}
+
+function getWorkroomServerProjectPath(project) {
+  const projectPath = normalizeProjectPath(project?.path || "");
+  if (!projectPath) return "";
+  return findWorkroomProjectRootById(projectPath) || projectPath;
+}
+
+async function setWorkroomLocalProjectPath(project, nextPath, { saveNow = true } = {}) {
+  if (!project) return false;
+  const normalizedNext = normalizeWorkroomFolderPath(nextPath);
+  const normalizedCurrent = normalizeWorkroomFolderPath(project.localProjectPath || "");
+  if (!normalizedNext || normalizedCurrent === normalizedNext) return false;
+  project.localProjectPath = normalizedNext;
+  if (saveNow) await save();
+  else debouncedSave();
+  return true;
+}
+
+function renderWorkroomProjectHeader() {}
+
+function findProjectByNormalizedPath(rawPath) {
+  const normalizedPath = normalizeProjectPath(rawPath);
+  if (!normalizedPath) return null;
+  return (
+    db.find(
+      (project) => normalizeProjectPath(project?.path || "") === normalizedPath
+    ) || null
+  );
 }
 
 function getTemplateToolContext(options = {}) {
   const launchContext = options?.launchContext || null;
   const launchSource = String(launchContext?.source || "").trim().toLowerCase();
   if (launchSource === "workroom") {
-    const { project, deliverable } = getActiveWorkroomContext();
+    const project =
+      findProjectByNormalizedPath(launchContext?.projectPath || "") ||
+      findProjectByNormalizedPath(launchContext?.rootProjectPath || "");
     return {
       projectPath: normalizeWorkroomFolderPath(
         launchContext?.rootProjectPath ||
@@ -3757,9 +3795,13 @@ function getTemplateToolContext(options = {}) {
         getWorkroomRootFolderPath(project)
       ),
       projectName: String(
-        project?.name || project?.nick || project?.id || ""
+        launchContext?.projectName ||
+          project?.name ||
+          project?.nick ||
+          project?.id ||
+          ""
       ).trim(),
-      deliverableName: String(deliverable?.name || "").trim(),
+      deliverableName: String(launchContext?.deliverableName || "").trim(),
       source: "workroom",
     };
   }
@@ -5957,6 +5999,28 @@ function createIcon(path, size = 16) {
   return svg;
 }
 
+function createAttachmentTriggerIcon(size = 15) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("width", String(size));
+  svg.setAttribute("height", String(size));
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "2");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  svg.setAttribute("class", "attachment-trigger-icon");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute(
+    "d",
+    "m18.375 12.739-7.693 7.693a4.5 4.5 0 0 1-6.364-6.364l10.94-10.94a3 3 0 1 1 4.243 4.243l-9.879 9.879a1.5 1.5 0 0 1-2.121-2.121l8.818-8.818"
+  );
+  svg.appendChild(path);
+  return svg;
+}
+
 function createSettingsIcon(size = 14) {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", "0 0 24 24");
@@ -6969,8 +7033,10 @@ function getAttachmentOwnerLabel(descriptor = {}) {
   const deliverable =
     descriptor.deliverable || (kind === "deliverable" ? owner : null);
   const ownerText = String(owner?.text || "").trim();
+  const projectName = String(descriptor.project?.name || owner?.name || "").trim();
   const deliverableName = String(deliverable?.name || "").trim();
-  return ownerText || deliverableName || getAttachmentOwnerKindLabel(kind);
+  if (kind === "project") return projectName || getAttachmentOwnerKindLabel(kind);
+  return ownerText || deliverableName || projectName || getAttachmentOwnerKindLabel(kind);
 }
 
 function getEmailRefLocalPath(emailRef) {
@@ -10348,6 +10414,55 @@ function sanitizeEmailRefForCloud(ref) {
   return normalized;
 }
 
+function sanitizeAttachmentForCloud(attachment = {}) {
+  const normalized = normalizeAttachmentEntry(attachment);
+  if (!normalized) return null;
+  if (normalized.type === "email") {
+    const emailRef = sanitizeEmailRefForCloud(normalized.emailRef);
+    if (!emailRef) return null;
+    return {
+      id: normalized.id,
+      type: "email",
+      description: String(normalized.description || "").trim(),
+      emailRef,
+    };
+  }
+  if (normalized.type !== "url") {
+    return null;
+  }
+  return {
+    id: normalized.id,
+    type: "url",
+    description: String(normalized.description || "").trim(),
+    target: normalized.target,
+  };
+}
+
+function mergeCloudAndLocalAttachments(remoteAttachments = [], localAttachments = []) {
+  const merged = [];
+  const seen = new Map();
+  [
+    ...(Array.isArray(remoteAttachments) ? remoteAttachments : []),
+    ...(Array.isArray(localAttachments) ? localAttachments : []),
+  ]
+    .map((attachment) => normalizeAttachmentEntry(attachment))
+    .filter(Boolean)
+    .forEach((attachment) => {
+      const key = getAttachmentEntryKey(attachment);
+      if (!key) return;
+      if (seen.has(key)) {
+        const existing = seen.get(key);
+        if (!existing.description && attachment.description) {
+          existing.description = attachment.description;
+        }
+        return;
+      }
+      seen.set(key, attachment);
+      merged.push(attachment);
+    });
+  return merged;
+}
+
 function mergeCloudAndLocalEmailRefs(remoteRefs = [], localRefs = []) {
   const merged = [];
   const seen = new Set();
@@ -10376,14 +10491,42 @@ function sanitizeDeliverableForCloud(deliverable = {}) {
       ? deepCloneJson(deliverable, {}) || {}
       : {};
   const normalized = normalizeDeliverable(source);
-  const emailRefs = normalizeEmailRefs(source.emailRefs, source.emailRef)
-    .map((ref) => sanitizeEmailRefForCloud(ref))
+  const attachments = normalizeAttachments(normalized.attachments)
+    .map((attachment) => sanitizeAttachmentForCloud(attachment))
     .filter(Boolean);
+  const emailRefs = buildLegacyEmailRefsFromAttachments(attachments);
   return {
     ...source,
     ...normalized,
+    attachments,
+    links: buildLegacyLinksFromAttachments(attachments),
     emailRefs,
     emailRef: emailRefs[0] || null,
+    tasks: (Array.isArray(normalized.tasks) ? normalized.tasks : []).map((task) => {
+      const taskAttachments = normalizeAttachments(task.attachments)
+        .map((attachment) => sanitizeAttachmentForCloud(attachment))
+        .filter(Boolean);
+      return {
+        ...task,
+        attachments: taskAttachments,
+        links: buildLegacyLinksFromAttachments(taskAttachments),
+        emailRefs: buildLegacyEmailRefsFromAttachments(taskAttachments),
+      };
+    }),
+    noteItems: normalizeDeliverableNoteItems(
+      normalized.noteItems,
+      normalized.notes || ""
+    ).map((noteItem) => {
+      const noteAttachments = normalizeAttachments(noteItem.attachments)
+        .map((attachment) => sanitizeAttachmentForCloud(attachment))
+        .filter(Boolean);
+      return {
+        ...noteItem,
+        attachments: noteAttachments,
+        links: buildLegacyLinksFromAttachments(noteAttachments),
+        emailRefs: buildLegacyEmailRefsFromAttachments(noteAttachments),
+      };
+    }),
   };
 }
 
@@ -10401,6 +10544,18 @@ function mergeLocalDeliverableFields(remoteDeliverable, localDeliverable) {
     ...(deepCloneJson(localDeliverable, {}) || {}),
     ...(deepCloneJson(remoteDeliverable, {}) || {}),
   };
+  merged.attachments = mergeCloudAndLocalAttachments(
+    normalizeAttachments(remoteDeliverable?.attachments, {
+      legacyLinks: remoteDeliverable?.links,
+      legacyEmailRefs: remoteDeliverable?.emailRefs,
+      legacyEmailRef: remoteDeliverable?.emailRef,
+    }),
+    normalizeAttachments(localDeliverable?.attachments, {
+      legacyLinks: localDeliverable?.links,
+      legacyEmailRefs: localDeliverable?.emailRefs,
+      legacyEmailRef: localDeliverable?.emailRef,
+    })
+  );
   const emailRefs = mergeCloudAndLocalEmailRefs(
     remoteDeliverable?.emailRefs,
     localDeliverable?.emailRefs
@@ -10416,15 +10571,20 @@ function sanitizeProjectForCloud(project = {}) {
       ? deepCloneJson(project, {}) || {}
       : {};
   const normalized = normalizeProject(source);
+  const attachments = normalizeAttachments(normalized.attachments)
+    .map((attachment) => sanitizeAttachmentForCloud(attachment))
+    .filter(Boolean);
   return {
     ...source,
     ...normalized,
     path: "",
     localProjectPath: "",
     workroomRootPath: "",
+    attachments,
     refs: (Array.isArray(source.refs) ? source.refs : [])
       .map((ref) => sanitizeLinkForCloud(ref))
       .filter(Boolean),
+    links: buildLegacyLinksFromAttachments(attachments),
     deliverables: getProjectDeliverables(normalized).map((deliverable) =>
       sanitizeDeliverableForCloud(deliverable)
     ),
@@ -10468,6 +10628,14 @@ function mergeLocalProjectFields(remoteProject, localProject) {
     localProject?.workroomRootPath || merged.workroomRootPath || ""
   ).trim();
   merged.refs = mergeCloudAndLocalLinks(remoteProject?.refs, localProject?.refs);
+  merged.attachments = mergeCloudAndLocalAttachments(
+    normalizeAttachments(remoteProject?.attachments, {
+      legacyLinks: remoteProject?.links,
+    }),
+    normalizeAttachments(localProject?.attachments, {
+      legacyLinks: localProject?.links,
+    })
+  );
 
   const localDeliverables = Array.isArray(localProject?.deliverables)
     ? localProject.deliverables
@@ -11531,7 +11699,11 @@ async function save({
   silent = false,
 } = {}) {
   db.forEach((project) => {
-    getProjectDeliverables(project).forEach(syncDeliverableWorkItemFields);
+    syncProjectAttachmentFields(project);
+    getProjectDeliverables(project).forEach((deliverable) => {
+      syncDeliverableAttachmentFields(deliverable);
+      syncDeliverableWorkItemFields(deliverable);
+    });
   });
   const resolvedTimestamp =
     normalizeIsoTimestamp(timestamp) || new Date().toISOString();
@@ -11831,7 +12003,6 @@ function syncWorkroomCadRoutingInputs() {
     "settings_workroomAutoSelectCadFiles",
     enabled
   );
-  setCheckboxValue("workroom_modal_autoSelectCadFiles", enabled);
 }
 
 function areUnderConstructionToolsEnabled() {
@@ -12636,7 +12807,19 @@ function mergeProjects(base, incoming) {
   }
   if (!base.notes && incoming.notes) base.notes = incoming.notes;
   base.refs = mergeRefs(base.refs || [], incoming.refs || []);
-  base.links = normalizeDeliverableLinks([...(base.links || []), ...(incoming.links || [])]);
+  base.attachments = normalizeAttachments(
+    [
+      ...(Array.isArray(base.attachments) ? base.attachments : []),
+      ...(Array.isArray(incoming.attachments) ? incoming.attachments : []),
+    ],
+    {
+      legacyLinks: [
+        ...(Array.isArray(base.links) ? base.links : []),
+        ...(Array.isArray(incoming.links) ? incoming.links : []),
+      ],
+    }
+  );
+  syncProjectAttachmentFields(base);
   if (!base.lightingSchedule && incoming.lightingSchedule)
     base.lightingSchedule = incoming.lightingSchedule;
   if (!base.title24 && incoming.title24) base.title24 = incoming.title24;
@@ -12693,6 +12876,9 @@ function convertLegacyProject(legacy) {
     refs: Array.isArray(legacy?.refs)
       ? legacy.refs.map(normalizeRef).filter(Boolean)
       : [],
+    attachments: normalizeAttachments(legacy?.attachments, {
+      legacyLinks: legacy?.links,
+    }),
     links: [],
     deliverables: [deliverable],
     overviewDeliverableId: deliverable.id,
@@ -12706,6 +12892,9 @@ function normalizeProject(project) {
   if (!Array.isArray(project.deliverables) && isLegacyProject(project)) {
     return normalizeProject(convertLegacyProject(project));
   }
+  const attachments = normalizeAttachments(project.attachments, {
+    legacyLinks: project.links,
+  });
   const out = {
     ...project,
     id: String(project.id || "").trim(),
@@ -12718,7 +12907,8 @@ function normalizeProject(project) {
     refs: Array.isArray(project.refs)
       ? project.refs.map(normalizeRef).filter(Boolean)
       : [],
-    links: normalizeDeliverableLinks(project.links),
+    attachments,
+    links: buildLegacyLinksFromAttachments(attachments),
     deliverables: Array.isArray(project.deliverables)
       ? project.deliverables.map(normalizeDeliverable)
       : [],
@@ -12730,6 +12920,7 @@ function normalizeProject(project) {
     ),
     title24: normalizeTitle24(project.title24 || createDefaultTitle24()),
   };
+  syncProjectAttachmentFields(out);
   if (!out.deliverables.length) out.deliverables = [createDeliverable()];
   if (
     !out.overviewDeliverableId ||
@@ -14858,6 +15049,823 @@ function createDeliverableLinksControl(deliverable, options = {}) {
   );
 }
 
+function sameAttachmentList(a, b) {
+  const left = normalizeAttachments(a);
+  const right = normalizeAttachments(b);
+  if (left.length !== right.length) return false;
+  for (let i = 0; i < left.length; i++) {
+    const leftKey = getAttachmentEntryKey(left[i]);
+    const rightKey = getAttachmentEntryKey(right[i]);
+    if (leftKey !== rightKey) return false;
+    if (String(left[i].description || "").trim() !== String(right[i].description || "").trim()) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function getAttachmentOwnerSessionToken(descriptor = {}) {
+  if (descriptor.modalCard) return descriptor.modalCard;
+  if (descriptor.scope === "edit-modal") return { modalSession: true };
+  return null;
+}
+
+function getAttachmentOwnerAttachments(descriptor = {}) {
+  const {
+    kind = "deliverable",
+    owner = null,
+    modalCard = null,
+    scope = "projects-tab",
+  } = descriptor;
+  if (kind === "deliverable" && modalCard) {
+    return getDeliverableCardAttachments(modalCard);
+  }
+  if (kind === "project" && scope === "edit-modal") {
+    return getModalProjectAttachments();
+  }
+  if (!owner || typeof owner !== "object") return [];
+  if (kind === "project") {
+    syncProjectAttachmentFields(owner);
+    return normalizeAttachments(owner.attachments);
+  }
+  syncAttachmentOwnerCompatFields(owner, {
+    includeEmailRefs: true,
+    legacyLinks:
+      kind === "deliverable"
+        ? normalizeDeliverableLinks(owner.links, owner.linkPath || "")
+        : owner.links || [],
+    legacyEmailRefs: owner.emailRefs,
+    legacyEmailRef: owner.emailRef,
+  });
+  return normalizeAttachments(owner.attachments);
+}
+
+async function setAttachmentOwnerAttachments(
+  descriptor = {},
+  nextAttachments,
+  options = {}
+) {
+  const {
+    persistNow = false,
+    onChange = null,
+  } = options;
+  const normalized = normalizeAttachments(nextAttachments);
+  const current = getAttachmentOwnerAttachments(descriptor);
+  if (sameAttachmentList(current, normalized)) {
+    return current;
+  }
+
+  const sessionToken = getAttachmentOwnerSessionToken(descriptor);
+  await reconcileManagedEmailRefTransitions(
+    buildLegacyEmailRefsFromAttachments(current),
+    buildLegacyEmailRefsFromAttachments(normalized),
+    { modalCard: sessionToken }
+  );
+
+  const { kind = "deliverable", owner = null, modalCard = null, scope = "projects-tab" } =
+    descriptor;
+  if (kind === "deliverable" && modalCard) {
+    setDeliverableCardAttachments(modalCard, normalized);
+  }
+  if (kind === "project" && scope === "edit-modal") {
+    setModalProjectAttachments(normalized);
+  }
+  if (owner && typeof owner === "object") {
+    owner.attachments = normalizeAttachments(normalized);
+    if (kind === "project") {
+      syncProjectAttachmentFields(owner);
+    } else if (kind === "deliverable") {
+      syncDeliverableAttachmentFields(owner);
+    } else {
+      syncAttachmentOwnerCompatFields(owner, {
+        includeEmailRefs: true,
+        legacyLinks:
+          kind === "deliverable"
+            ? normalizeDeliverableLinks(owner.links, owner.linkPath || "")
+            : owner.links || [],
+        legacyEmailRefs: owner.emailRefs,
+        legacyEmailRef: owner.emailRef,
+      });
+    }
+  }
+
+  if (persistNow) {
+    await save();
+  }
+  if (typeof onChange === "function") onChange(normalized);
+  return normalized;
+}
+
+function createAttachmentTypeBadge(type = "path") {
+  return el("span", {
+    className: `attachment-type-badge is-${type}`,
+    textContent: getAttachmentTypeLabel(type),
+  });
+}
+
+async function openAttachmentEntry(attachment) {
+  const normalized = normalizeAttachmentEntry(attachment);
+  if (!normalized) {
+    toast("No attachment is set.");
+    return false;
+  }
+
+  if (normalized.type === "email") {
+    return openDeliverableEmailRef(normalized.emailRef);
+  }
+  if (normalized.type === "url") {
+    openExternalUrl(normalized.target);
+    return true;
+  }
+  if (!window.pywebview?.api?.open_path) {
+    toast("Open path is unavailable.");
+    return false;
+  }
+  try {
+    const result = await window.pywebview.api.open_path(normalized.target);
+    if (result?.status && result.status !== "success") {
+      throw new Error(result.message || "Unable to open attachment.");
+    }
+    return true;
+  } catch (error) {
+    toast(error?.message || "Unable to open attachment.");
+    return false;
+  }
+}
+
+let openAttachmentPanelContext = null;
+let attachmentPanelElements = null;
+let attachmentPanelPositionRaf = 0;
+let attachmentPanelClosePending = false;
+let attachmentPanelDetachOutsideListeners = null;
+let attachmentPanelFocusLossFrame = 0;
+let attachmentPanelActiveHost = null;
+let attachmentPanelActiveOwnerDocument = null;
+
+function updateAttachmentTriggerState(trigger, attachments) {
+  if (!trigger) return;
+  const normalized = normalizeAttachments(attachments);
+  const count = normalized.length;
+  const preview = normalized
+    .slice(0, 3)
+    .map(
+      (attachment) =>
+        String(
+          attachment.description ||
+            getAttachmentDescriptionFallback(attachment) ||
+            "Attachment"
+        ).trim() || "Attachment"
+    )
+    .join(", ");
+  trigger.classList.toggle("has-attachments", count > 0);
+  trigger.classList.toggle("open", openAttachmentPanelContext?.trigger === trigger);
+  trigger.setAttribute("aria-expanded", String(openAttachmentPanelContext?.trigger === trigger));
+  trigger.setAttribute(
+    "aria-label",
+    count > 0
+      ? `Manage ${count} attachment${count === 1 ? "" : "s"}`
+      : "Manage attachments"
+  );
+  trigger.title = count > 0 ? preview || "Manage attachments" : "Manage attachments";
+}
+
+function ensureAttachmentPanel() {
+  if (attachmentPanelElements) return attachmentPanelElements;
+
+  const panel = el("div", {
+    className: "attachment-panel",
+    hidden: true,
+  });
+  const list = el("div", { className: "attachment-list" });
+  const composer = el("div", { className: "attachment-composer" });
+  const descriptionInput = el("input", {
+    className: "attachment-description-input",
+    type: "text",
+    placeholder: "Description (optional)",
+    "aria-label": "Attachment description",
+  });
+  const pathInput = el("input", {
+    className: "attachment-path-input",
+    type: "text",
+    placeholder: "Enter a path or URL",
+    "aria-label": "Attachment path or URL",
+  });
+  const actionRow = el("div", { className: "attachment-action-row" });
+  const chooseFileBtn = el("button", {
+    className: "attachment-action-btn",
+    type: "button",
+    textContent: "Choose File",
+  });
+  const chooseFolderBtn = el("button", {
+    className: "attachment-action-btn",
+    type: "button",
+    textContent: "Choose Folder",
+  });
+  const savePathBtn = el("button", {
+    className: "attachment-action-btn",
+    type: "button",
+    textContent: "Save Path/URL",
+  });
+  const chooseEmailBtn = el("button", {
+    className: "attachment-action-btn",
+    type: "button",
+    textContent: "Choose Email File",
+  });
+
+  actionRow.append(chooseFileBtn, chooseFolderBtn, savePathBtn, chooseEmailBtn);
+  composer.append(descriptionInput, pathInput, actionRow);
+  panel.append(list, composer);
+  document.body.appendChild(panel);
+
+  attachmentPanelElements = {
+    panel,
+    list,
+    descriptionInput,
+    pathInput,
+    chooseFileBtn,
+    chooseFolderBtn,
+    savePathBtn,
+    chooseEmailBtn,
+  };
+
+  const stopPropagation = (event) => {
+    event.stopPropagation();
+  };
+  [descriptionInput, pathInput].forEach((input) => {
+    input.addEventListener("click", stopPropagation);
+  });
+
+  return attachmentPanelElements;
+}
+
+function clearPendingAttachmentComposer() {
+  const elements = ensureAttachmentPanel();
+  elements.descriptionInput.value = "";
+  elements.pathInput.value = "";
+}
+
+function focusAttachmentComposer() {
+  const elements = ensureAttachmentPanel();
+  elements.descriptionInput.focus();
+  elements.descriptionInput.select();
+}
+
+async function addAttachmentToOpenPanel(entry) {
+  if (!openAttachmentPanelContext) return false;
+  const normalizedEntry = normalizeAttachmentEntry(entry);
+  if (!normalizedEntry) return false;
+  const nextAttachments = [
+    ...openAttachmentPanelContext.getAttachments(),
+    normalizedEntry,
+  ];
+  await openAttachmentPanelContext.setAttachments(nextAttachments);
+  renderOpenAttachmentPanel();
+  updateAttachmentTriggerState(
+    openAttachmentPanelContext.trigger,
+    openAttachmentPanelContext.getAttachments()
+  );
+  return true;
+}
+
+async function addDroppedEmailToAttachmentContext(context, event) {
+  if (!context) return false;
+  const resolved = await resolveEmailRefFromDrop(
+    event,
+    buildAttachmentOwnerEmailContext(context, context.scope || "projects-tab")
+  );
+  if (!resolved.emailRef) {
+    showEmailLinkFallbackGuidance();
+    return false;
+  }
+  const elements = ensureAttachmentPanel();
+  const description =
+    openAttachmentPanelContext?.trigger === context.trigger
+      ? String(elements.descriptionInput.value || "").trim()
+      : "";
+  if (openAttachmentPanelContext?.trigger === context.trigger) {
+    clearPendingAttachmentComposer();
+  }
+  await context.setAttachments([
+    ...context.getAttachments(),
+    {
+      type: "email",
+      description,
+      emailRef: resolved.emailRef,
+    },
+  ]);
+  if (openAttachmentPanelContext?.trigger === context.trigger) {
+    renderOpenAttachmentPanel();
+  }
+  return true;
+}
+
+function buildPendingManualAttachment() {
+  const elements = ensureAttachmentPanel();
+  const target = String(elements.pathInput.value || "").trim();
+  if (!target) return null;
+  return normalizeAttachmentEntry({
+    type: isWebAttachmentTarget(target) ? "url" : "path",
+    target,
+    description: String(elements.descriptionInput.value || "").trim(),
+  });
+}
+
+async function chooseAttachmentFileFromPicker() {
+  if (!window.pywebview?.api?.select_files) {
+    toast("File picker is unavailable.");
+    return null;
+  }
+  try {
+    const result = await window.pywebview.api.select_files({
+      allow_multiple: false,
+    });
+    if (result?.status !== "success" || !Array.isArray(result.paths) || !result.paths[0]) {
+      return null;
+    }
+    const elements = ensureAttachmentPanel();
+    return normalizeAttachmentEntry({
+      type: "file",
+      target: result.paths[0],
+      description: String(elements.descriptionInput.value || "").trim(),
+    });
+  } catch {
+    toast("Unable to open file picker.");
+    return null;
+  }
+}
+
+async function chooseAttachmentFolderFromPicker() {
+  if (!window.pywebview?.api?.select_folder) {
+    toast("Folder picker is unavailable.");
+    return null;
+  }
+  try {
+    const result = await window.pywebview.api.select_folder();
+    if (result?.status !== "success" || !result.path) return null;
+    const elements = ensureAttachmentPanel();
+    return normalizeAttachmentEntry({
+      type: "folder",
+      target: result.path,
+      description: String(elements.descriptionInput.value || "").trim(),
+    });
+  } catch {
+    toast("Unable to open folder picker.");
+    return null;
+  }
+}
+
+async function addPendingAttachmentFromPathInput() {
+  const attachment = buildPendingManualAttachment();
+  if (!attachment) return false;
+  clearPendingAttachmentComposer();
+  return addAttachmentToOpenPanel(attachment);
+}
+
+function getAttachmentPanelHost(trigger) {
+  return trigger?.closest("dialog[open]") || document.body;
+}
+
+function getAttachmentPanelOutsideTargets(trigger) {
+  const ownerDocument = trigger?.ownerDocument || document;
+  const host = getAttachmentPanelHost(trigger);
+  return [...new Set([host, ownerDocument].filter(Boolean))];
+}
+
+function isAttachmentPanelInteractionTarget(target) {
+  if (!(target instanceof Node)) return false;
+  const elements = attachmentPanelElements;
+  if (elements?.panel?.contains(target)) return true;
+  return !!openAttachmentPanelContext?.trigger?.contains(target);
+}
+
+function detachAttachmentPanelOutsideListeners() {
+  if (typeof attachmentPanelDetachOutsideListeners === "function") {
+    attachmentPanelDetachOutsideListeners();
+  }
+  if (attachmentPanelFocusLossFrame) {
+    cancelAnimationFrame(attachmentPanelFocusLossFrame);
+    attachmentPanelFocusLossFrame = 0;
+  }
+  attachmentPanelDetachOutsideListeners = null;
+  attachmentPanelActiveHost = null;
+  attachmentPanelActiveOwnerDocument = null;
+}
+
+function scheduleAttachmentPanelFocusLossCheck() {
+  if (attachmentPanelFocusLossFrame) {
+    cancelAnimationFrame(attachmentPanelFocusLossFrame);
+  }
+  const triggerSnapshot = openAttachmentPanelContext?.trigger || null;
+  const ownerDocument =
+    attachmentPanelActiveOwnerDocument || triggerSnapshot?.ownerDocument || document;
+  attachmentPanelFocusLossFrame = requestAnimationFrame(() => {
+    attachmentPanelFocusLossFrame = 0;
+    if (!openAttachmentPanelContext || openAttachmentPanelContext.trigger !== triggerSnapshot) {
+      return;
+    }
+    const activeElement = ownerDocument?.activeElement || document.activeElement;
+    if (isAttachmentPanelInteractionTarget(activeElement)) return;
+    void requestAttachmentPanelClose();
+  });
+}
+
+function attachAttachmentPanelOutsideListeners(trigger) {
+  detachAttachmentPanelOutsideListeners();
+  const ownerDocument = trigger?.ownerDocument || document;
+  const host = getAttachmentPanelHost(trigger);
+  const outsideTargets = getAttachmentPanelOutsideTargets(trigger);
+  attachmentPanelActiveHost = host;
+  attachmentPanelActiveOwnerDocument = ownerDocument;
+
+  const handleOutsidePointerLike = (event) => {
+    if (!openAttachmentPanelContext) return;
+    if (
+      attachmentPanelActiveHost instanceof HTMLDialogElement &&
+      event.target === attachmentPanelActiveHost
+    ) {
+      void requestAttachmentPanelClose();
+      return;
+    }
+    if (isAttachmentPanelInteractionTarget(event.target)) return;
+    void requestAttachmentPanelClose();
+  };
+  const handleOutsideFocusIn = (event) => {
+    if (!openAttachmentPanelContext) return;
+    if (isAttachmentPanelInteractionTarget(event.target)) return;
+    void requestAttachmentPanelClose();
+  };
+  const handleEscapeKey = (event) => {
+    if (event.key !== "Escape" || !openAttachmentPanelContext) return;
+    event.preventDefault();
+    void requestAttachmentPanelClose({ focusTrigger: true });
+  };
+  const handleFocusOut = () => {
+    if (!openAttachmentPanelContext) return;
+    scheduleAttachmentPanelFocusLossCheck();
+  };
+  const handleViewportScroll = (event) => {
+    if (!openAttachmentPanelContext) return;
+    if (isAttachmentPanelInteractionTarget(event.target)) return;
+    void requestAttachmentPanelClose();
+  };
+  const handleViewportResize = () => {
+    if (!openAttachmentPanelContext) return;
+    scheduleAttachmentPanelPosition();
+  };
+
+  outsideTargets.forEach((target) => {
+    target.addEventListener("pointerdown", handleOutsidePointerLike, true);
+    target.addEventListener("mousedown", handleOutsidePointerLike, true);
+  });
+  ensureAttachmentPanel().panel.addEventListener("focusout", handleFocusOut);
+  trigger.addEventListener("focusout", handleFocusOut);
+  ownerDocument.addEventListener("focusin", handleOutsideFocusIn, true);
+  ownerDocument.addEventListener("scroll", handleViewportScroll, true);
+  ownerDocument.addEventListener("keydown", handleEscapeKey);
+  ownerDocument.defaultView?.addEventListener("resize", handleViewportResize);
+
+  attachmentPanelDetachOutsideListeners = () => {
+    outsideTargets.forEach((target) => {
+      target.removeEventListener("pointerdown", handleOutsidePointerLike, true);
+      target.removeEventListener("mousedown", handleOutsidePointerLike, true);
+    });
+    ensureAttachmentPanel().panel.removeEventListener("focusout", handleFocusOut);
+    trigger.removeEventListener("focusout", handleFocusOut);
+    ownerDocument.removeEventListener("focusin", handleOutsideFocusIn, true);
+    ownerDocument.removeEventListener("scroll", handleViewportScroll, true);
+    ownerDocument.removeEventListener("keydown", handleEscapeKey);
+    ownerDocument.defaultView?.removeEventListener("resize", handleViewportResize);
+  };
+}
+
+function scheduleAttachmentPanelPosition() {
+  if (!openAttachmentPanelContext || attachmentPanelPositionRaf) return;
+  attachmentPanelPositionRaf = requestAnimationFrame(() => {
+    attachmentPanelPositionRaf = 0;
+    positionOpenAttachmentPanel();
+  });
+}
+
+function positionOpenAttachmentPanel() {
+  const elements = ensureAttachmentPanel();
+  if (!openAttachmentPanelContext) {
+    elements.panel.hidden = true;
+    return;
+  }
+  const trigger = openAttachmentPanelContext.trigger;
+  if (!trigger?.isConnected) {
+    void requestAttachmentPanelClose();
+    return;
+  }
+  const gap = 8;
+  const rect = trigger.getBoundingClientRect();
+  const panel = elements.panel;
+  panel.hidden = false;
+  panel.style.top = "0px";
+  panel.style.left = "0px";
+  panel.style.visibility = "hidden";
+
+  const panelRect = panel.getBoundingClientRect();
+  let top = rect.bottom + gap;
+  if (top + panelRect.height > window.innerHeight - gap) {
+    top = Math.max(gap, rect.top - panelRect.height - gap);
+  }
+  let left = rect.right - panelRect.width;
+  left = Math.max(gap, Math.min(left, window.innerWidth - panelRect.width - gap));
+  if (top + panelRect.height > window.innerHeight - gap) {
+    top = Math.max(gap, window.innerHeight - panelRect.height - gap);
+  }
+  panel.style.top = `${Math.round(top)}px`;
+  panel.style.left = `${Math.round(left)}px`;
+  panel.style.visibility = "";
+}
+
+async function closeAttachmentPanel({ focusTrigger = false } = {}) {
+  if (attachmentPanelClosePending) return false;
+  const elements = ensureAttachmentPanel();
+  const trigger = openAttachmentPanelContext?.trigger || null;
+  if (!trigger && !openAttachmentPanelContext) {
+    detachAttachmentPanelOutsideListeners();
+    elements.panel.hidden = true;
+    elements.panel.style.visibility = "";
+    return false;
+  }
+  attachmentPanelClosePending = true;
+  try {
+    clearPendingAttachmentComposer();
+    if (trigger) {
+      trigger.classList.remove("open");
+      trigger.setAttribute("aria-expanded", "false");
+    }
+    openAttachmentPanelContext = null;
+    detachAttachmentPanelOutsideListeners();
+    elements.panel.hidden = true;
+    elements.panel.style.visibility = "";
+    if (focusTrigger) trigger?.focus();
+    return true;
+  } finally {
+    attachmentPanelClosePending = false;
+  }
+}
+
+async function requestAttachmentPanelClose(options = {}) {
+  return closeAttachmentPanel(options);
+}
+
+function renderOpenAttachmentPanel() {
+  const elements = ensureAttachmentPanel();
+  if (!openAttachmentPanelContext) {
+    elements.list.replaceChildren();
+    elements.panel.hidden = true;
+    return;
+  }
+
+  const attachments = openAttachmentPanelContext.getAttachments();
+  elements.list.replaceChildren();
+  if (!attachments.length) {
+    elements.list.appendChild(
+      el("div", {
+        className: "attachment-empty",
+        textContent: "No attachments yet. Add a file, folder, path, URL, or email below.",
+      })
+    );
+  }
+
+  attachments.forEach((attachment, index) => {
+    const normalized = normalizeAttachmentEntry(attachment);
+    if (!normalized) return;
+    const row = el("div", { className: "attachment-item" });
+    const openBtn = el("button", {
+      className: "attachment-open",
+      type: "button",
+      title:
+        normalized.type === "email"
+          ? String(normalized.emailRef?.label || "Open email")
+          : normalized.target || normalized.description || "Open attachment",
+    });
+    openBtn.append(
+      createAttachmentTypeBadge(normalized.type),
+      el("span", {
+        className: "attachment-item-label",
+        textContent:
+          String(
+            normalized.description ||
+              getAttachmentDescriptionFallback(normalized) ||
+              "Attachment"
+          ).trim() || "Attachment",
+      })
+    );
+
+    const removeBtn = el("button", {
+      className: "attachment-remove",
+      type: "button",
+      textContent: "Remove",
+      "aria-label": `Remove attachment ${index + 1}`,
+    });
+
+    openBtn.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      await openAttachmentEntry(normalized);
+    });
+    removeBtn.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      const nextAttachments = attachments.filter((_, entryIndex) => entryIndex !== index);
+      await openAttachmentPanelContext.setAttachments(nextAttachments);
+      renderOpenAttachmentPanel();
+      updateAttachmentTriggerState(
+        openAttachmentPanelContext.trigger,
+        openAttachmentPanelContext.getAttachments()
+      );
+    });
+
+    row.append(openBtn, removeBtn);
+    elements.list.appendChild(row);
+  });
+
+  scheduleAttachmentPanelPosition();
+}
+
+function openAttachmentPanel(context) {
+  const elements = ensureAttachmentPanel();
+  if (openAttachmentPanelContext?.trigger === context.trigger) {
+    void requestAttachmentPanelClose();
+    return;
+  }
+
+  if (openAttachmentPanelContext?.trigger) {
+    updateAttachmentTriggerState(
+      openAttachmentPanelContext.trigger,
+      openAttachmentPanelContext.getAttachments()
+    );
+  }
+
+  openAttachmentPanelContext = context;
+  const host = getAttachmentPanelHost(context.trigger);
+  if (elements.panel.parentElement !== host) {
+    host.appendChild(elements.panel);
+  }
+  attachAttachmentPanelOutsideListeners(context.trigger);
+  clearPendingAttachmentComposer();
+  renderOpenAttachmentPanel();
+  positionOpenAttachmentPanel();
+  updateAttachmentTriggerState(context.trigger, context.getAttachments());
+
+  setTimeout(() => {
+    if (openAttachmentPanelContext?.trigger !== context.trigger) return;
+    focusAttachmentComposer();
+  }, 0);
+}
+
+function createAttachmentControl(descriptor = {}, options = {}) {
+  const {
+    persistNow = false,
+    onChange = null,
+    className = "",
+  } = options;
+  const control = el("div", {
+    className: `attachment-control ${className}`.trim(),
+  });
+  const trigger = el("button", {
+    className: "attachment-trigger",
+    type: "button",
+    "aria-haspopup": "dialog",
+    "aria-expanded": "false",
+  });
+  trigger.appendChild(createAttachmentTriggerIcon());
+
+  const getAttachments = () => getAttachmentOwnerAttachments(descriptor);
+  const setAttachments = async (nextAttachments) => {
+    const normalized = await setAttachmentOwnerAttachments(descriptor, nextAttachments, {
+      persistNow,
+      onChange,
+    });
+    updateAttachmentTriggerState(trigger, normalized);
+    return normalized;
+  };
+  const attachmentContext = {
+    ...descriptor,
+    trigger,
+    getAttachments,
+    setAttachments,
+  };
+
+  trigger.addEventListener("click", (event) => {
+    event.stopPropagation();
+    document
+      .querySelectorAll(".deliverable-status-dropdown.open")
+      .forEach((dropdown) => setDeliverableStatusDropdownState(dropdown, false));
+    openAttachmentPanel(attachmentContext);
+  });
+
+  trigger.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    trigger.classList.add("is-dragover");
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+  });
+  trigger.addEventListener("dragleave", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    trigger.classList.remove("is-dragover");
+  });
+  trigger.addEventListener("drop", async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    trigger.classList.remove("is-dragover");
+    try {
+      await addDroppedEmailToAttachmentContext(attachmentContext, event);
+    } catch (error) {
+      console.warn("Failed to process dropped email:", error);
+      toast(error?.message || "Unable to process dropped email.");
+    }
+  });
+
+  control.appendChild(trigger);
+  updateAttachmentTriggerState(trigger, getAttachments());
+
+  const elements = ensureAttachmentPanel();
+  if (elements.chooseFileBtn.dataset.attachmentBound !== "true") {
+    elements.chooseFileBtn.dataset.attachmentBound = "true";
+    elements.chooseFileBtn.addEventListener("click", async (event) => {
+      if (!openAttachmentPanelContext) return;
+      event.stopPropagation();
+      const entry = await chooseAttachmentFileFromPicker();
+      if (!entry) return;
+      clearPendingAttachmentComposer();
+      await addAttachmentToOpenPanel(entry);
+    });
+  }
+  if (elements.chooseFolderBtn.dataset.attachmentBound !== "true") {
+    elements.chooseFolderBtn.dataset.attachmentBound = "true";
+    elements.chooseFolderBtn.addEventListener("click", async (event) => {
+      if (!openAttachmentPanelContext) return;
+      event.stopPropagation();
+      const entry = await chooseAttachmentFolderFromPicker();
+      if (!entry) return;
+      clearPendingAttachmentComposer();
+      await addAttachmentToOpenPanel(entry);
+    });
+  }
+  if (elements.chooseEmailBtn.dataset.attachmentBound !== "true") {
+    elements.chooseEmailBtn.dataset.attachmentBound = "true";
+    elements.chooseEmailBtn.addEventListener("click", async (event) => {
+      if (!openAttachmentPanelContext) return;
+      event.stopPropagation();
+      const emailRef = await chooseEmailFileRefFromPicker();
+      if (!emailRef) return;
+      const description = String(ensureAttachmentPanel().descriptionInput.value || "").trim();
+      clearPendingAttachmentComposer();
+      await addAttachmentToOpenPanel({
+        type: "email",
+        description,
+        emailRef,
+      });
+    });
+  }
+  if (elements.savePathBtn.dataset.attachmentBound !== "true") {
+    elements.savePathBtn.dataset.attachmentBound = "true";
+    elements.savePathBtn.addEventListener("click", async (event) => {
+      if (!openAttachmentPanelContext) return;
+      event.stopPropagation();
+      await addPendingAttachmentFromPathInput();
+    });
+  }
+  if (elements.pathInput.dataset.attachmentBound !== "true") {
+    elements.pathInput.dataset.attachmentBound = "true";
+    elements.pathInput.addEventListener("keydown", async (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      event.stopPropagation();
+      await addPendingAttachmentFromPathInput();
+    });
+  }
+  if (elements.panel.dataset.attachmentDropBound !== "true") {
+    elements.panel.dataset.attachmentDropBound = "true";
+    elements.panel.addEventListener("dragover", (event) => {
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+      elements.panel.classList.add("is-dragover");
+    });
+    elements.panel.addEventListener("dragleave", (event) => {
+      event.preventDefault();
+      elements.panel.classList.remove("is-dragover");
+    });
+    elements.panel.addEventListener("drop", async (event) => {
+      event.preventDefault();
+      elements.panel.classList.remove("is-dragover");
+      try {
+        await addDroppedEmailToAttachmentContext(openAttachmentPanelContext, event);
+        renderOpenAttachmentPanel();
+      } catch (error) {
+        console.warn("Failed to process dropped email:", error);
+        toast(error?.message || "Unable to process dropped email.");
+      }
+    });
+  }
+
+  return control;
+}
+
 function createCardHeader(deliverable, isPrimary, card, project) {
   const header = el("div", { className: "deliverable-card-header-new" });
 
@@ -14966,25 +15974,23 @@ function createCardHeader(deliverable, isPrimary, card, project) {
 
   header.appendChild(leftSection);
 
-  // Right section: email + expand/contract controls
+  // Right section: attachments + expand/contract controls
   const actions = el("div", { className: "deliverable-header-actions" });
-  const emailSlots = el("div", {
-    className: "deliverable-email-slots",
-    "aria-label": "Deliverable email links",
-  });
-  renderDeliverableEmailSlots(emailSlots, deliverable, {
-    project,
-    persistNow: true,
-    modalCard: null,
-    scope: "projects-tab",
-  });
-
   const expandToggle = createExpandToggle(card);
-  const linkControl = createDeliverableLinksControl(deliverable, {
-    project,
-    persistNow: true,
-  });
-  actions.append(linkControl, emailSlots, expandToggle);
+  const attachmentControl = createAttachmentControl(
+    {
+      kind: "deliverable",
+      owner: deliverable,
+      deliverable,
+      project,
+      scope: "projects-tab",
+    },
+    {
+      persistNow: true,
+      onChange: () => updateDeliverableWorkItemUi(card, deliverable),
+    }
+  );
+  actions.append(attachmentControl, expandToggle);
   header.appendChild(actions);
 
   return header;
@@ -15062,7 +16068,13 @@ function createProgressSection(deliverable) {
 
 function createStatusBadges(deliverable) {
   const container = el("div", { className: "deliverable-status-badges" });
+  renderDeliverableStatusBadges(container, deliverable);
+  return container;
+}
 
+function renderDeliverableStatusBadges(container, deliverable) {
+  if (!container) return;
+  container.replaceChildren();
   if (deliverable.statuses && deliverable.statuses.length) {
     deliverable.statuses.forEach(status => {
       const statusClass = status.toLowerCase().replace(/\s+/g, "");
@@ -15073,8 +16085,14 @@ function createStatusBadges(deliverable) {
       container.appendChild(badge);
     });
   }
-
-  return container;
+  const pinnedHost = el("div", {
+    className: "deliverable-pinned-inline-group",
+    hidden: true,
+  });
+  renderDeliverablePinnedPreview(pinnedHost, deliverable);
+  if (!pinnedHost.hidden) {
+    container.appendChild(pinnedHost);
+  }
 }
 
 function setDeliverableStatusDropdownState(dropdown, isOpen) {
@@ -15154,17 +16172,7 @@ function createStatusDropdown(deliverable, project, card) {
       const card = dropdown.closest(".deliverable-card-new");
       const badgesContainer = card.querySelector(".deliverable-status-badges");
       if (badgesContainer) {
-        badgesContainer.innerHTML = "";
-        if (deliverable.statuses.length) {
-          deliverable.statuses.forEach(s => {
-            const statusClass = s.toLowerCase().replace(/\s+/g, "");
-            const badge = el("div", {
-              className: `deliverable-status-badge ${statusClass}`,
-              textContent: s
-            });
-            badgesContainer.appendChild(badge);
-          });
-        }
+        renderDeliverableStatusBadges(badgesContainer, deliverable);
       }
     });
 
@@ -15184,8 +16192,8 @@ function createStatusDropdown(deliverable, project, card) {
         setDeliverableStatusDropdownState(openDropdown, false);
       }
     });
-    if (openDeliverableLinksContext) {
-      void requestDeliverableLinksPanelClose();
+    if (openAttachmentPanelContext) {
+      void requestAttachmentPanelClose();
     }
 
     setDeliverableStatusDropdownState(dropdown, isOpen);
@@ -15450,45 +16458,34 @@ function renderDeliverablePinnedPreview(container, deliverable) {
   container.hidden = previewItems.length === 0;
   if (!previewItems.length) return;
 
-  container.appendChild(
-    el("div", {
-      className: "deliverable-pinned-preview-heading",
-      textContent: "Pinned",
-    })
-  );
-
-  const list = el("div", { className: "deliverable-pinned-preview-list" });
   previewItems.forEach((previewItem) => {
-    const row = el("div", {
-      className: `deliverable-pinned-item ${
+    const pillIcon = createIcon(
+      previewItem.type === "task" ? CHECK_ICON_PATH : NOTE_ICON_PATH,
+      10
+    );
+    pillIcon.classList.add("deliverable-pinned-inline-pill-icon");
+    pillIcon.setAttribute("aria-hidden", "true");
+    const contentPill = el("span", {
+      className: `deliverable-pinned-inline-pill ${
         previewItem.type === "task" ? "is-task" : "is-note"
       } ${previewItem.done ? "done" : ""}`,
+      title: previewItem.text || "",
     });
-    const body = el("div", { className: "deliverable-pinned-item-body" });
-    body.appendChild(
+    contentPill.append(
+      pillIcon,
       el("span", {
-        className: "deliverable-pinned-item-text",
+        className: "deliverable-pinned-inline-pill-text",
         textContent: previewItem.text || "",
       })
     );
-    const attachments = createPinnedWorkItemAttachments(previewItem);
-    if (attachments) body.appendChild(attachments);
-    row.append(
-      el("span", {
-        className: "deliverable-pinned-item-kind",
-        textContent: previewItem.type === "task" ? "Task" : "Note",
-      }),
-      body
-    );
-    list.appendChild(row);
+    container.appendChild(contentPill);
   });
-  container.appendChild(list);
 }
 
 function updateDeliverableWorkItemUi(card, deliverable) {
   updateDeliverableTaskStats(card, deliverable);
-  renderDeliverablePinnedPreview(
-    card?.querySelector(".deliverable-pinned-preview"),
+  renderDeliverableStatusBadges(
+    card?.querySelector(".deliverable-status-badges"),
     deliverable
   );
 }
@@ -15563,8 +16560,8 @@ function createNotesSection(deliverable, card, project = null) {
         renderNoteList();
         await save();
       });
-      actions.append(pinBtn, deleteBtn);
-      content.append(text, attachments);
+      actions.append(attachments, pinBtn, deleteBtn);
+      content.append(text);
       row.append(icon, content, actions);
       list.appendChild(row);
     });
@@ -15592,8 +16589,7 @@ function createNotesSection(deliverable, card, project = null) {
         deliverable.noteItems.push({
           text: noteText,
           pinned: false,
-          links: [],
-          emailRefs: [],
+          attachments: [],
         });
         syncDeliverableNoteFields(deliverable);
         updateDeliverableWorkItemUi(card, deliverable);
@@ -15721,12 +16717,12 @@ function createTasksPreview(deliverable, card, project = null) {
         await save();
       });
 
-      actions.append(pinBtn, deleteBtn);
-      content.append(textSpan, attachments);
+      actions.append(attachments, pinBtn, deleteBtn);
+      content.append(textSpan);
       item.append(iconSpan, content, actions);
 
       item.addEventListener("click", async (e) => {
-        if (e.target.closest(".work-item-actions, .work-item-attachments")) return;
+        if (e.target.closest(".work-item-actions, .attachment-control")) return;
         e.stopPropagation();
 
         liveTask.done = !liveTask.done;
@@ -15762,8 +16758,7 @@ function createTasksPreview(deliverable, card, project = null) {
           text: taskText,
           done: false,
           pinned: false,
-          links: [],
-          emailRefs: [],
+          attachments: [],
         });
 
         updateStatsDisplay();
@@ -15820,12 +16815,6 @@ function renderDeliverableCard(deliverable, isPrimary, project) {
   });
 
   const header = createCardHeader(deliverable, isPrimary, card, project);
-  const pinnedPreview = el("div", {
-    className: "deliverable-pinned-preview",
-    hidden: true,
-  });
-  renderDeliverablePinnedPreview(pinnedPreview, deliverable);
-
   const progress = createProgressSection(deliverable);
 
   const statusSection = el("div", { className: "deliverable-status-row" });
@@ -15836,7 +16825,7 @@ function renderDeliverableCard(deliverable, isPrimary, project) {
   const tasksPreview = createTasksPreview(deliverable, card, project);
   const notesSection = createNotesSection(deliverable, card, project);
 
-  card.append(header, pinnedPreview, progress, statusSection, tasksPreview, notesSection);
+  card.append(header, progress, statusSection, tasksPreview, notesSection);
   updateDeliverableWorkItemUi(card, deliverable);
   return card;
 }
@@ -16570,6 +17559,12 @@ function render() {
     idBadge.textContent = p.id || "--";
 
     const nameCell = tr.querySelector(".cell-name");
+    const projectDetailsHeader = el("div", {
+      className: "project-details-header",
+    });
+    const projectDetailsMain = el("div", {
+      className: "project-details-main",
+    });
     if (p.path) {
       const link = el("button", {
         className: "path-link",
@@ -16584,25 +17579,49 @@ function render() {
           toast("Failed to open path.");
         }
       };
-      nameCell.appendChild(link);
+      projectDetailsMain.appendChild(link);
     } else {
-      nameCell.textContent = p.name || "--";
+      projectDetailsMain.appendChild(
+        el("span", {
+          className: "project-title-text",
+          textContent: p.name || "--",
+        })
+      );
     }
 
     // Add account if available (from P:\ or M:\ drive path)
     const account = extractAccountFromPath(p.path);
     if (account) {
-      nameCell.append(
+      projectDetailsMain.append(
         el("small", { className: "muted", textContent: ` (${account})` })
       );
     }
 
     // Add nickname if available
     if (p.nick) {
-      nameCell.append(
+      projectDetailsMain.append(
         el("small", { className: "muted", textContent: ` (${p.nick})` })
       );
     }
+    const projectAttachmentInline = el("div", {
+      className: "project-inline-attachment",
+    });
+    projectAttachmentInline.appendChild(
+      createAttachmentControl(
+        {
+          kind: "project",
+          owner: p,
+          project: p,
+          scope: "projects-tab",
+        },
+        {
+          persistNow: true,
+        }
+      )
+    );
+    projectDetailsHeader.append(projectDetailsMain, projectAttachmentInline);
+    nameCell.appendChild(projectDetailsHeader);
+
     const projectNotes = (p.notes || "").trim();
     if (projectNotes) {
       nameCell.append(
@@ -16638,7 +17657,12 @@ function render() {
 
       deliverablesCell.appendChild(cardsContainer);
     } else {
-      deliverablesCell.textContent = "--";
+      deliverablesCell.appendChild(
+        el("div", {
+          className: "deliverable-empty",
+          textContent: "--",
+        })
+      );
     }
 
     const actionsCell = tr.querySelector(".cell-actions");
@@ -16650,13 +17674,6 @@ function render() {
         ariaLabel: "Edit project",
         path: PENCIL_ICON_PATH,
         onClick: () => openEdit(idx),
-      }),
-      createIconButton({
-        className: "btn icon-only",
-        title: "Project Workroom",
-        ariaLabel: "Open project workroom",
-        path: WORKROOM_ICON_PATH,
-        onClick: () => openChecklistModal(idx),
       }),
       createIconButton({
         className: "btn btn-danger icon-only",
@@ -16771,6 +17788,7 @@ function createBlankProject() {
     workroomRootPath: "",
     notes: "",
     refs: [],
+    attachments: [],
     links: [],
     deliverables: [deliverable],
     overviewDeliverableId: deliverable.id,
@@ -16848,6 +17866,22 @@ function fillForm(project) {
   const deliverableList = document.getElementById("deliverableList");
   deliverableList.innerHTML = "";
   setModalProjectDraft(p);
+  const projectAttachmentHost = document.getElementById("modalProjectAttachmentHost");
+  if (projectAttachmentHost) {
+    projectAttachmentHost.replaceChildren(
+      createAttachmentControl(
+        {
+          kind: "project",
+          owner: getModalProjectDraft(),
+          project: getModalProjectDraft(),
+          scope: "edit-modal",
+        },
+        {
+          persistNow: false,
+        }
+      )
+    );
+  }
   const sortedDeliverables = p.deliverables.slice();
   sortDeliverablesByPrimaryThenDueDesc(
     sortedDeliverables,
@@ -16871,94 +17905,170 @@ function fillForm(project) {
 }
 
 function getDeliverableCardEmailRefs(card) {
-  if (!card) return [];
-  const raw = card.dataset.emailRefs || "";
-  if (raw) {
-    try {
-      return normalizeEmailRefs(JSON.parse(raw));
-    } catch {
-      /* fall through to legacy field */
-    }
-  }
-  const legacyRaw = card.dataset.emailRef || "";
-  if (!legacyRaw) return [];
-  try {
-    return normalizeEmailRefs(null, JSON.parse(legacyRaw));
-  } catch {
-    return normalizeEmailRefs(null, legacyRaw);
-  }
+  return buildLegacyEmailRefsFromAttachments(getDeliverableCardAttachments(card));
 }
 
 function setDeliverableCardEmailRefs(card, emailRefs) {
   if (!card) return;
-  const normalized = normalizeEmailRefs(emailRefs);
-  if (!normalized.length) {
-    delete card.dataset.emailRefs;
-    delete card.dataset.emailRef;
-    return;
-  }
-  card.dataset.emailRefs = JSON.stringify(normalized);
-  card.dataset.emailRef = JSON.stringify(normalized[0]);
+  const attachments = normalizeAttachments(getDeliverableCardAttachments(card), {
+    legacyEmailRefs: emailRefs,
+  }).filter((attachment) => attachment.type !== "email");
+  normalizeEmailRefs(emailRefs).forEach((emailRef) => {
+    attachments.push(
+      normalizeAttachmentEntry({
+        type: "email",
+        emailRef,
+      })
+    );
+  });
+  setDeliverableCardAttachments(card, attachments);
 }
 
 function getDeliverableCardLinks(card) {
-  if (!card) return [];
-  if (!Array.isArray(card._linkItems)) {
-    let parsed = [];
-    try {
-      parsed = JSON.parse(card.dataset.links || "[]");
-    } catch {
-      parsed = [];
-    }
-    card._linkItems = normalizeDeliverableLinks(parsed);
-  }
-  return normalizeDeliverableLinks(card._linkItems);
+  return buildLegacyLinksFromAttachments(getDeliverableCardAttachments(card));
 }
 
 function setDeliverableCardLinks(card, links) {
   if (!card) return;
-  const normalized = normalizeDeliverableLinks(links);
-  card._linkItems = normalized;
-  if (!normalized.length) {
-    delete card.dataset.links;
-    return;
+  const attachments = normalizeAttachments(getDeliverableCardAttachments(card), {
+    legacyLinks: links,
+  }).filter((attachment) => attachment.type === "email");
+  normalizeDeliverableLinks(links).forEach((link) => {
+    attachments.push(
+      normalizeAttachmentEntry({
+        type: isWebAttachmentTarget(link.raw || link.url || "") ? "url" : "path",
+        description: link.label || "",
+        target: link.raw || link.url || "",
+      })
+    );
+  });
+  setDeliverableCardAttachments(card, attachments);
+}
+
+function getDeliverableCardAttachments(card) {
+  if (!card) return [];
+  if (!Array.isArray(card._attachmentItems)) {
+    let parsed = null;
+    try {
+      parsed = JSON.parse(card.dataset.attachments || "null");
+    } catch {
+      parsed = null;
+    }
+    card._attachmentItems = normalizeAttachments(parsed, {
+      legacyLinks: (() => {
+        try {
+          return JSON.parse(card.dataset.links || "[]");
+        } catch {
+          return [];
+        }
+      })(),
+      legacyEmailRefs: (() => {
+        try {
+          return JSON.parse(card.dataset.emailRefs || "[]");
+        } catch {
+          return [];
+        }
+      })(),
+      legacyEmailRef: (() => {
+        const raw = card.dataset.emailRef || "";
+        if (!raw) return null;
+        try {
+          return JSON.parse(raw);
+        } catch {
+          return raw;
+        }
+      })(),
+    });
   }
-  card.dataset.links = JSON.stringify(normalized);
+  return normalizeAttachments(card._attachmentItems);
+}
+
+function setDeliverableCardAttachments(card, attachments) {
+  if (!card) return [];
+  const normalized = normalizeAttachments(attachments);
+  card._attachmentItems = normalized;
+  const compatOwner = { attachments: normalized };
+  syncAttachmentOwnerCompatFields(compatOwner, {
+    includeEmailRefs: true,
+  });
+  if (normalized.length) {
+    card.dataset.attachments = JSON.stringify(normalized);
+  } else {
+    delete card.dataset.attachments;
+  }
+  if (compatOwner.links.length) {
+    card.dataset.links = JSON.stringify(compatOwner.links);
+  } else {
+    delete card.dataset.links;
+  }
+  if (compatOwner.emailRefs.length) {
+    card.dataset.emailRefs = JSON.stringify(compatOwner.emailRefs);
+    card.dataset.emailRef = JSON.stringify(compatOwner.emailRefs[0]);
+  } else {
+    delete card.dataset.emailRefs;
+    delete card.dataset.emailRef;
+  }
+  return normalized;
 }
 
 function getModalProjectDraft() {
   const list = document.getElementById("deliverableList");
   if (!list) return null;
   if (!list._projectDraft || typeof list._projectDraft !== "object") {
-    list._projectDraft = { links: [] };
+    list._projectDraft = { attachments: [], links: [] };
   }
-  if (!Array.isArray(list._projectDraft.links)) {
-    list._projectDraft.links = [];
-  }
-  list._projectDraft.links = normalizeDeliverableLinks(list._projectDraft.links);
+  syncProjectAttachmentFields(list._projectDraft);
   return list._projectDraft;
 }
 
 function setModalProjectDraft(project) {
   const list = document.getElementById("deliverableList");
   if (!list) return null;
-  list._projectDraft = project && typeof project === "object" ? project : { links: [] };
-  if (!Array.isArray(list._projectDraft.links)) {
-    list._projectDraft.links = [];
-  }
-  list._projectDraft.links = normalizeDeliverableLinks(list._projectDraft.links);
+  list._projectDraft =
+    project && typeof project === "object"
+      ? project
+      : { attachments: [], links: [] };
+  syncProjectAttachmentFields(list._projectDraft);
   return list._projectDraft;
 }
 
 function getModalProjectLinks() {
-  return normalizeDeliverableLinks(getModalProjectDraft()?.links);
+  return buildLegacyLinksFromAttachments(getModalProjectAttachments());
 }
 
 function setModalProjectLinks(links) {
   const draft = getModalProjectDraft();
   if (!draft) return [];
-  draft.links = normalizeDeliverableLinks(links);
+  const attachments = normalizeAttachments(draft.attachments, {
+    legacyLinks: links,
+  }).filter((attachment) => attachment.type === "email");
+  normalizeDeliverableLinks(links).forEach((link) => {
+    attachments.push(
+      normalizeAttachmentEntry({
+        type: isWebAttachmentTarget(link.raw || link.url || "") ? "url" : "path",
+        description: link.label || "",
+        target: link.raw || link.url || "",
+      })
+    );
+  });
+  draft.attachments = normalizeAttachments(attachments);
+  syncProjectAttachmentFields(draft);
   return draft.links;
+}
+
+function getModalProjectAttachments() {
+  const draft = getModalProjectDraft();
+  if (!draft) return [];
+  syncProjectAttachmentFields(draft);
+  return normalizeAttachments(draft.attachments);
+}
+
+function setModalProjectAttachments(attachments) {
+  const draft = getModalProjectDraft();
+  if (!draft) return [];
+  draft.attachments = normalizeAttachments(attachments);
+  syncProjectAttachmentFields(draft);
+  return draft.attachments;
 }
 
 function addDeliverableCard(deliverable, primaryId, options = {}) {
@@ -16972,10 +18082,8 @@ function addDeliverableCard(deliverable, primaryId, options = {}) {
     .querySelector(".deliverable-card");
   const deliverableId = deliverable.id || createId("dlv");
   card.dataset.deliverableId = deliverableId;
-  syncDeliverableEmailRefs(deliverable);
-  setDeliverableCardEmailRefs(card, deliverable.emailRefs);
-  deliverable.links = normalizeDeliverableLinks(deliverable.links, deliverable.linkPath || "");
-  setDeliverableCardLinks(card, deliverable.links);
+  syncDeliverableAttachmentFields(deliverable);
+  setDeliverableCardAttachments(card, deliverable.attachments);
 
   card.querySelector(".d-name").value = deliverable.name || "";
   card.querySelector(".d-due").value = deliverable.due || "";
@@ -16986,23 +18094,22 @@ function addDeliverableCard(deliverable, primaryId, options = {}) {
     primaryInput.checked = true;
   }
 
-  const emailSlots = card.querySelector(".deliverable-email-slots");
-  if (emailSlots) {
-    renderDeliverableEmailSlots(emailSlots, deliverable, {
-      project: null,
-      persistNow: false,
-      modalCard: card,
-      scope: "edit-modal",
-    });
-  }
-  const linkControlHost = card.querySelector(".deliverable-link-control");
-  if (linkControlHost) {
-    linkControlHost.replaceChildren(
-      createDeliverableLinksControl(deliverable, {
-        persistNow: false,
-        modalCard: card,
-        project: projectDraft,
-      })
+  const attachmentControlHost = card.querySelector(".deliverable-attachment-control");
+  if (attachmentControlHost) {
+    attachmentControlHost.replaceChildren(
+      createAttachmentControl(
+        {
+          kind: "deliverable",
+          owner: deliverable,
+          deliverable,
+          project: projectDraft,
+          modalCard: card,
+          scope: "edit-modal",
+        },
+        {
+          persistNow: false,
+        }
+      )
     );
   }
 
@@ -17018,14 +18125,14 @@ function addDeliverableCard(deliverable, primaryId, options = {}) {
   renderModalDeliverableTaskList(card, taskList);
   renderModalDeliverableNoteList(card, noteList);
   card.querySelector(".btn-remove").onclick = async () => {
-    const cardRefs = getDeliverableCardEmailRefs(card);
+    const cardRefs = buildLegacyEmailRefsFromAttachments(getDeliverableCardAttachments(card));
     const workItemRefs = getModalDeliverableWorkItemEmailRefs(card);
     await stageModalManagedEmailRefsForRemoval(
       cardRefs.length ? cardRefs : deliverable.emailRefs
     );
     await stageModalManagedEmailRefsForRemoval(workItemRefs);
-    if (openDeliverableLinksContext?.modalCard === card) {
-      void requestDeliverableLinksPanelClose();
+    if (openAttachmentPanelContext?.modalCard === card) {
+      void requestAttachmentPanelClose();
     }
     card.remove();
   };
@@ -17280,108 +18387,68 @@ function createWorkItemAttachmentControls({
   scope = "projects-tab",
   onChange = null,
 } = {}) {
-  const attachments = el("div", { className: "work-item-attachments" });
-  if (!owner) return attachments;
-
-  const linkControl = createAttachmentLinksControl(
-    {
-      kind,
-      owner,
-      deliverable,
-      project,
-    },
-    {
-      persistNow,
-      modalCard,
-      allowProjectScope: false,
-      onChange,
-    }
+  const container = el("div", { className: "work-item-attachment-control" });
+  if (!owner) return container;
+  container.appendChild(
+    createAttachmentControl(
+      {
+        kind,
+        owner,
+        deliverable,
+        project,
+        modalCard,
+        scope,
+      },
+      {
+        persistNow,
+        onChange,
+        className: "is-work-item",
+      }
+    )
   );
-  linkControl.classList.add("work-item-link-control");
-
-  const emailSlots = el("div", {
-    className: "deliverable-email-slots work-item-email-slots",
-    "aria-label": `${getAttachmentOwnerKindLabel(kind)} email links`,
-  });
-  renderAttachmentOwnerEmailSlots(
-    emailSlots,
-    {
-      kind,
-      owner,
-      deliverable,
-      project,
-    },
-    {
-      persistNow,
-      modalCard,
-      scope,
-      onChange,
-    }
-  );
-
-  attachments.append(linkControl, emailSlots);
-  return attachments;
+  return container;
 }
 
-function createPinnedLinkPreviewButton(linkEntry) {
-  const normalized = normalizeDeliverableLinkEntry(linkEntry);
+function createPinnedAttachmentPreviewButton(attachment) {
+  const normalized = normalizeAttachmentEntry(attachment);
   if (!normalized) return null;
   const label =
-    String(normalized.label || normalized.raw || normalized.url || "Link").trim() ||
-    "Link";
+    String(
+      normalized.description ||
+        getAttachmentDescriptionFallback(normalized) ||
+        "Attachment"
+    ).trim() || "Attachment";
   const button = el("button", {
     className: "deliverable-pinned-link",
     type: "button",
     textContent: label,
-    title: normalized.raw || normalized.url || label,
+    title:
+      normalized.type === "email"
+        ? label
+        : normalized.target || label,
   });
   button.addEventListener("click", async (e) => {
     e.stopPropagation();
-    await openDeliverableLinkEntry(normalized);
-  });
-  return button;
-}
-
-function createPinnedEmailPreviewButton(emailRef, index = 0) {
-  const normalized = normalizeEmailRef(emailRef);
-  if (!normalized) return null;
-  const button = el("button", {
-    className: "deliverable-pinned-email-btn",
-    type: "button",
-    title: `Open linked email ${index + 1}`,
-    "aria-label": `Open linked email ${index + 1}`,
-  });
-  button.append(
-    createIcon(MAIL_ICON_PATH, 12),
-    el("span", {
-      className: "deliverable-pinned-email-label",
-      textContent: `Email ${index + 1}`,
-    })
-  );
-  button.addEventListener("click", async (e) => {
-    e.stopPropagation();
-    await openDeliverableEmailRef(normalized);
+    await openAttachmentEntry(normalized);
   });
   return button;
 }
 
 function createPinnedWorkItemAttachments(previewItem = {}) {
-  const links = normalizeDeliverableLinks(previewItem.links);
-  const emailRefs = normalizeEmailRefs(previewItem.emailRefs);
-  if (!links.length && !emailRefs.length) return null;
+  const attachments = normalizeAttachments(previewItem.attachments, {
+    legacyLinks: previewItem.links,
+    legacyEmailRefs: previewItem.emailRefs,
+  });
+  if (!attachments.length) return null;
 
-  const attachments = el("div", {
+  const container = el("div", {
     className: "deliverable-pinned-item-attachments",
   });
-  links.forEach((linkEntry) => {
-    const linkButton = createPinnedLinkPreviewButton(linkEntry);
-    if (linkButton) attachments.appendChild(linkButton);
+  attachments.forEach((attachment) => {
+    const button = createPinnedAttachmentPreviewButton(attachment);
+    if (button) container.appendChild(button);
   });
-  emailRefs.forEach((emailRef, index) => {
-    const emailButton = createPinnedEmailPreviewButton(emailRef, index);
-    if (emailButton) attachments.appendChild(emailButton);
-  });
-  return attachments.childElementCount ? attachments : null;
+  return container.childElementCount ? container : null;
 }
 
 function renderModalDeliverableTaskList(card, container, options = {}) {
@@ -17565,11 +18632,11 @@ function renderModalDeliverableTaskList(card, container, options = {}) {
       })();
     });
 
-    actions.append(pinBtn, deleteBtn);
-    content.append(textSpan, attachments);
+    actions.append(attachments, pinBtn, deleteBtn);
+    content.append(textSpan);
     item.append(iconSpan, content, actions);
     item.addEventListener("click", (e) => {
-      if (e.target.closest(".work-item-actions, .work-item-attachments")) return;
+      if (e.target.closest(".work-item-actions, .attachment-control")) return;
       e.stopPropagation();
       liveTask.done = !liveTask.done;
       renderModalDeliverableTaskList(card, container);
@@ -17642,8 +18709,7 @@ function commitPendingModalDeliverableTask(card, container, options = {}) {
     text: taskText,
     done: false,
     pinned: false,
-    links: [],
-    emailRefs: [],
+    attachments: [],
   });
 
   if (rerender) {
@@ -17723,8 +18789,8 @@ function renderModalDeliverableNoteList(card, container, options = {}) {
         })();
       });
 
-      actions.append(pinBtn, deleteBtn);
-      content.append(textSpan, attachments);
+      actions.append(attachments, pinBtn, deleteBtn);
+      content.append(textSpan);
       item.append(iconSpan, content, actions);
       container.appendChild(item);
     }
@@ -17795,8 +18861,7 @@ function commitPendingModalDeliverableNote(card, container, options = {}) {
   noteItems.push({
     text: noteText,
     pinned: false,
-    links: [],
-    emailRefs: [],
+    attachments: [],
   });
 
   if (rerender) {
@@ -17838,6 +18903,7 @@ function readForm() {
     localProjectPath: normalizeWindowsPath(existingProject?.localProjectPath || ""),
     workroomRootPath: normalizeWindowsPath(existingProject?.workroomRootPath || ""),
     refs: [],
+    attachments: getModalProjectAttachments(),
     links: getModalProjectLinks(),
     deliverables: [],
     overviewDeliverableId: "",
@@ -17853,8 +18919,7 @@ function readForm() {
     const statuses = readStatusPickerFrom(
       card.querySelector(".deliverable-status")
     );
-    const emailRefs = getDeliverableCardEmailRefs(card);
-    const links = getDeliverableCardLinks(card);
+    const attachments = getDeliverableCardAttachments(card);
 
     const tasks = getModalDeliverableTaskItems(card)
       .map((task) => {
@@ -17865,6 +18930,7 @@ function readForm() {
           text,
           done: !!normalizedTask.done,
           pinned: !!normalizedTask.pinned,
+          attachments: normalizedTask.attachments,
           links: normalizedTask.links,
           emailRefs: normalizedTask.emailRefs,
         };
@@ -17878,6 +18944,7 @@ function readForm() {
         return {
           text,
           pinned: !!normalizedNoteItem.pinned,
+          attachments: normalizedNoteItem.attachments,
           links: normalizedNoteItem.links,
           emailRefs: normalizedNoteItem.emailRefs,
         };
@@ -17891,9 +18958,7 @@ function readForm() {
       noteItems,
       tasks,
       statuses,
-      emailRefs,
-      emailRef: emailRefs[0] || null,
-      links,
+      attachments,
     });
 
     out.deliverables.push(deliverable);
@@ -17918,7 +18983,7 @@ function readForm() {
     if (label) link.label = label;
     out.refs.push(link);
   });
-  return out;
+  return normalizeProject(out);
 }
 
 function addRefRowFrom(L = {}) {
@@ -18466,41 +19531,6 @@ function renderChecklistSearchResults() {
   });
 }
 
-function renderWorkroomNoteSearchResults() {
-  const searchInput = document.getElementById("workroomNotesSearchInput");
-  const resultsContainer = document.getElementById("workroomNotesSearchResults");
-  const workroomTextarea = document.getElementById("workroomGeneralNotesTextarea");
-  if (!searchInput || !resultsContainer || !workroomTextarea) return;
-
-  const query = (searchInput.value || "").trim().toLowerCase();
-  resultsContainer.innerHTML = "";
-  if (!query || !activeNoteTab) return;
-
-  const queryWords = query.split(" ").filter(Boolean);
-  if (!queryWords.length) return;
-
-  const content = notesDb[activeNoteTab];
-  if (!content) return;
-
-  const notes = content.split(/\n\s*\n/).filter((note) => note.trim() !== "");
-  let matchCount = 0;
-  notes.forEach((noteText) => {
-    const lowerNoteText = noteText.toLowerCase();
-    if (!queryWords.every((word) => lowerNoteText.includes(word))) return;
-    matchCount += 1;
-
-    resultsContainer.append(
-      createNoteSearchResultItem(noteText, () => {
-        focusAndSelectNoteSnippet(workroomTextarea, noteText);
-      })
-    );
-  });
-
-  if (matchCount === 0) {
-    resultsContainer.innerHTML =
-      "<p class='muted tiny' style='text-align:center;padding:0.75rem'>No results found.</p>";
-  }
-}
 // ===================== CHECKLISTS RENDERING =====================
 
 let activeChecklistTabId = null;
@@ -19125,3366 +20155,7 @@ document.addEventListener("keydown", (e) => {
   syncChecklistMenuUi();
 });
 
-// ===================== CHECKLIST MODAL FUNCTIONS =====================
-
-let activeChecklistView = null;
-
-// Checklist modal state
-let checklistModalState = {
-  appliedTabs: [], // { instanceId, checklistId, instanceIndex }
-  activeInstanceId: null,
-};
-let workroomCadFilesRequestId = 0;
-let workroomCadFilesLoading = false;
-let workroomCadFilesLoadPromise = Promise.resolve();
-let workroomDiscoveredCadFilePaths = [];
-let workroomCadFilesStatusText = "Ready.";
-
-function getActiveWorkroomContext() {
-  const project = db[activeChecklistProject];
-  if (!project) return { project: null, deliverables: [], deliverable: null };
-  const deliverables = getProjectDeliverables(project);
-  const deliverableIndex = Number(activeChecklistDeliverable);
-  const deliverable =
-    Number.isInteger(deliverableIndex) && deliverableIndex >= 0
-      ? deliverables[deliverableIndex] || null
-      : null;
-  return { project, deliverables, deliverable };
-}
-
-function getWorkroomProjectHeaderText(project) {
-  const projectId = String(project?.id || "").trim();
-  const projectName = String(project?.name || "").trim();
-  if (projectId && projectName) return `${projectId} - ${projectName}`;
-  if (projectId) return projectId;
-  if (projectName) return projectName;
-  return "Unnamed Project";
-}
-
-function normalizeWorkroomFolderPath(rawPath) {
-  return normalizeWindowsPath(rawPath);
-}
-
-function setWorkroomDiscoveredCadFilePaths(paths = []) {
-  const nextPaths = [];
-  const seen = new Set();
-  (Array.isArray(paths) ? paths : []).forEach((pathValue) => {
-    const normalized = normalizeWorkroomFolderPath(pathValue);
-    if (!normalized) return;
-    const key = normalized.toLowerCase();
-    if (seen.has(key)) return;
-    seen.add(key);
-    nextPaths.push(normalized);
-  });
-  workroomDiscoveredCadFilePaths = nextPaths;
-}
-
-function setWorkroomCadFilesLoading(isLoading) {
-  const nextValue = !!isLoading;
-  if (workroomCadFilesLoading === nextValue) return;
-  workroomCadFilesLoading = nextValue;
-  const checklistModal = document.getElementById("checklistModal");
-  if (checklistModal?.open) {
-    renderWorkroomToolsPanel();
-  }
-}
-
-function getWorkroomCadFilesStatusText() {
-  return String(workroomCadFilesStatusText || "").trim() || "Ready.";
-}
-
-async function traceCadAutoSelect(eventName, fields = {}) {
-  if (!window.pywebview?.api?.trace_cad_auto_select_event) return;
-  try {
-    await window.pywebview.api.trace_cad_auto_select_event(eventName, fields);
-  } catch (e) {
-    console.debug("CAD auto-select trace failed:", e);
-  }
-}
-
-function getWorkroomPathFolderName(rawPath) {
-  return getWindowsPathLeaf(rawPath);
-}
-
-function getWorkroomPathParent(rawPath) {
-  return getWindowsPathParent(rawPath);
-}
-
-function findWorkroomProjectRootById(projectPath) {
-  return findProjectRootPath(projectPath);
-}
-
-function getDefaultWorkroomRootFolderPath(project) {
-  const projectPath = normalizeProjectPath(project?.path || "");
-  if (!projectPath) return "";
-  const rootFromId = findWorkroomProjectRootById(projectPath);
-  return rootFromId || projectPath;
-}
-
-function getWorkroomRootFolderPath(project) {
-  const overridePath = normalizeWorkroomFolderPath(project?.workroomRootPath || "");
-  if (overridePath) return overridePath;
-  return getDefaultWorkroomRootFolderPath(project);
-}
-
-function getWorkroomServerProjectPath(project) {
-  const projectPath = normalizeProjectPath(project?.path || "");
-  if (!projectPath) return "";
-  return findWorkroomProjectRootById(projectPath) || projectPath;
-}
-
-function setWorkroomRootFolderOverride(project, nextPath, { saveNow = true } = {}) {
-  if (!project) return false;
-  const normalizedNext = normalizeWorkroomFolderPath(nextPath);
-  const normalizedCurrent = normalizeWorkroomFolderPath(project.workroomRootPath || "");
-  if (normalizedCurrent === normalizedNext) return false;
-  project.workroomRootPath = normalizedNext;
-  if (saveNow) save();
-  else debouncedSave();
-  return true;
-}
-
-async function setWorkroomLocalProjectPath(project, nextPath, { saveNow = true } = {}) {
-  if (!project) return false;
-  const normalizedNext = normalizeWorkroomFolderPath(nextPath);
-  const normalizedCurrent = normalizeWorkroomFolderPath(project.localProjectPath || "");
-  if (!normalizedNext || normalizedCurrent === normalizedNext) return false;
-  project.localProjectPath = normalizedNext;
-  if (saveNow) await save();
-  else debouncedSave();
-  return true;
-}
-
-async function maybeLinkExistingLocalProject(project) {
-  if (!project || !window.pywebview?.api?.get_local_project_copy_info) return "";
-  const serverPath = getWorkroomServerProjectPath(project);
-  if (!serverPath) return "";
-  try {
-    const response = await window.pywebview.api.get_local_project_copy_info(
-      convertPath(serverPath)
-    );
-    if (response?.status !== "success" || !response.exists || !response.path) {
-      return "";
-    }
-    const changed = await setWorkroomLocalProjectPath(project, response.path, {
-      saveNow: true,
-    });
-    if (changed) {
-      renderWorkroomProjectHeader();
-    }
-    return normalizeWorkroomFolderPath(response.path);
-  } catch (e) {
-    console.warn("Failed to link existing local project copy:", e);
-    return "";
-  }
-}
-
-async function openWorkroomDirectory(
-  path,
-  {
-    missingMessage = "Folder path is not set.",
-    failureMessage = "Couldn't open folder.",
-  } = {}
-) {
-  const normalizedPath = normalizeWorkroomFolderPath(path);
-  if (!normalizedPath) {
-    toast(missingMessage);
-    return false;
-  }
-  if (!window.pywebview?.api?.open_directory_strict) {
-    toast("Folder opening is unavailable.");
-    return false;
-  }
-  try {
-    const res = await window.pywebview.api.open_directory_strict(
-      convertPath(normalizedPath)
-    );
-    if (res?.status !== "success") {
-      throw new Error(res?.message || failureMessage);
-    }
-    toast("Opening folder...");
-    return true;
-  } catch (e) {
-    console.warn("Failed to open Workroom directory:", e);
-    toast(e?.message || failureMessage);
-    return false;
-  }
-}
-
-function renderWorkroomProjectHeader() {
-  const projectLabel = document.getElementById("workroomProjectLabel");
-  const rootInput = document.getElementById("workroomRootFolderInput");
-  const selectBtn = document.getElementById("workroomSelectRootFolderBtn");
-  const openLocalBtn = document.getElementById("workroomOpenLocalProjectBtn");
-  const openServerBtn = document.getElementById("workroomOpenServerProjectBtn");
-  if (!projectLabel || !rootInput || !selectBtn || !openLocalBtn || !openServerBtn) {
-    return;
-  }
-
-  const { project } = getActiveWorkroomContext();
-  const syncFolderButtonState = () => {
-    const serverPath = getWorkroomServerProjectPath(project);
-    const localPath = normalizeWorkroomFolderPath(project?.localProjectPath || "");
-    openLocalBtn.disabled = false;
-    openLocalBtn.title = localPath
-      ? `Open: ${localPath}`
-      : "No local project folder saved yet. Existing expected local copies will be linked automatically.";
-    openServerBtn.disabled = !serverPath;
-    openServerBtn.title = serverPath
-      ? `Open: ${serverPath}`
-      : "No server project folder could be resolved from the saved project path.";
-  };
-
-  if (!project) {
-    projectLabel.textContent = "Project Workroom";
-    projectLabel.title = "Project Workroom";
-    rootInput.value = "";
-    rootInput.placeholder = "Select a project to set root folder...";
-    rootInput.disabled = true;
-    rootInput.oninput = null;
-    rootInput.onblur = null;
-    rootInput.onkeydown = null;
-    selectBtn.disabled = true;
-    selectBtn.onclick = null;
-    openLocalBtn.disabled = true;
-    openLocalBtn.title = "Select a project to open its local folder.";
-    openLocalBtn.onclick = null;
-    openServerBtn.disabled = true;
-    openServerBtn.title = "Select a project to open its server folder.";
-    openServerBtn.onclick = null;
-    return;
-  }
-
-  const projectHeaderText = getWorkroomProjectHeaderText(project);
-  projectLabel.textContent = "Project Workroom";
-  projectLabel.title = projectHeaderText;
-
-  const activeRootPath = getWorkroomRootFolderPath(project);
-  rootInput.disabled = false;
-  rootInput.placeholder = "Root project folder path...";
-  rootInput.value = activeRootPath;
-  rootInput.title = activeRootPath;
-
-  const commitRootInput = () => {
-    if (!project) return;
-    setWorkroomRootFolderOverride(project, rootInput.value, {
-      saveNow: true,
-    });
-    rootInput.value = getWorkroomRootFolderPath(project);
-    rootInput.title = rootInput.value;
-    syncFolderButtonState();
-  };
-
-  rootInput.oninput = () => {
-    rootInput.title = rootInput.value;
-  };
-  rootInput.onblur = () => {
-    commitRootInput();
-  };
-  rootInput.onkeydown = (e) => {
-    if (e.key !== "Enter") return;
-    e.preventDefault();
-    commitRootInput();
-  };
-
-  selectBtn.disabled = !window.pywebview?.api?.select_folder;
-  selectBtn.onclick = async () => {
-    if (!window.pywebview?.api?.select_folder) {
-      toast("Folder picker is unavailable.");
-      return;
-    }
-    try {
-      const selection = await window.pywebview.api.select_folder();
-      if (selection?.status !== "success" || !selection.path) {
-        return;
-      }
-	      setWorkroomRootFolderOverride(project, selection.path, {
-	        saveNow: true,
-	      });
-	      rootInput.value = getWorkroomRootFolderPath(project);
-	      rootInput.title = rootInput.value;
-	      syncFolderButtonState();
-	    } catch (e) {
-      console.warn("Failed to select workroom root folder:", e);
-      toast("Couldn't select root project folder.");
-    }
-  };
-
-  syncFolderButtonState();
-  openLocalBtn.onclick = async () => {
-    let localPath = normalizeWorkroomFolderPath(project.localProjectPath || "");
-    if (!localPath) {
-      localPath = await maybeLinkExistingLocalProject(project);
-    }
-    await openWorkroomDirectory(localPath, {
-      missingMessage:
-        "No local project folder exists yet. Use Copy Project Locally first.",
-      failureMessage: "Couldn't open local project folder.",
-    });
-  };
-  openServerBtn.onclick = async () => {
-    await openWorkroomDirectory(getWorkroomServerProjectPath(project), {
-      missingMessage:
-        "No server project folder could be resolved from the saved project path.",
-      failureMessage: "Couldn't open server project folder.",
-    });
-  };
-}
-
-function maybeShowWorkroomDisciplineNotice(configuredDisciplines = []) {
-  if (configuredDisciplines.length <= 1 || workroomDisciplineNoticeShown) return;
-  workroomDisciplineNoticeShown = true;
-  toast(
-    "Multiple disciplines detected. Select the correct discipline for this deliverable before running CAD tools.",
-    7000
-  );
-}
-
-function ensureWorkroomCadDiscipline(deliverable, disciplines = []) {
-  const options = disciplines.length ? disciplines : getWorkroomAvailableDisciplines();
-  if (!options.length) return "Electrical";
-  if (!deliverable) return options[0];
-
-  const existing = normalizeWorkroomCadDiscipline(deliverable.workroomCadDiscipline, "");
-  if (existing && options.includes(existing)) return existing;
-
-  const fallbackDiscipline = options[0];
-  if (deliverable.workroomCadDiscipline !== fallbackDiscipline) {
-    deliverable.workroomCadDiscipline = fallbackDiscipline;
-    debouncedSave();
-  }
-  return fallbackDiscipline;
-}
-
-function renderWorkroomCadRoutingControl() {
-  const container = document.getElementById("workroomCadRouting");
-  if (!container) return;
-
-  const { project, deliverable } = getActiveWorkroomContext();
-  const configuredDisciplines = getWorkroomConfiguredDisciplines();
-  const disciplines = getWorkroomAvailableDisciplines();
-  if (!deliverable || !disciplines.length) {
-    container.hidden = true;
-    container.innerHTML = "";
-    return;
-  }
-
-  maybeShowWorkroomDisciplineNotice(configuredDisciplines);
-  const activeDiscipline = ensureWorkroomCadDiscipline(deliverable, disciplines);
-  container.hidden = false;
-  container.innerHTML = "";
-
-  const routingRow = el("div", { className: "workroom-cad-routing-row" });
-
-  const disciplineSection = el("div", {
-    className: "workroom-cad-routing-section workroom-cad-routing-main",
-  });
-  disciplineSection.appendChild(
-    el("p", {
-      className: "workroom-cad-routing-label",
-      textContent: "Deliverable Discipline",
-    })
-  );
-
-  const group = el("div", {
-    className: "workroom-cad-routing-group",
-    role: "group",
-    "aria-label": "Deliverable discipline",
-  });
-
-  disciplines.forEach((discipline, index) => {
-    const inputId = `workroomCadDiscipline_${index}`;
-    const wrapper = el("div", { className: "workroom-cad-routing-option" });
-    const input = el("input", {
-      type: "radio",
-      id: inputId,
-      name: "workroomCadDiscipline",
-      className: "workroom-cad-routing-radio",
-      value: discipline,
-      checked: discipline === activeDiscipline,
-      onchange: () => {
-        if (!input.checked || deliverable.workroomCadDiscipline === discipline) return;
-        deliverable.workroomCadDiscipline = discipline;
-        save();
-        renderWorkroomCadRoutingControl();
-      },
-    });
-    const label = el("label", {
-      htmlFor: inputId,
-      className: "workroom-cad-routing-radio-label",
-      textContent: discipline,
-      title: `Route Workroom CAD tools to ${discipline} folder`,
-    });
-    wrapper.append(input, label);
-    group.appendChild(wrapper);
-  });
-
-  disciplineSection.appendChild(group);
-  routingRow.appendChild(disciplineSection);
-
-  const emailSection = el("div", {
-    className: "workroom-cad-routing-section workroom-cad-routing-email",
-  });
-  emailSection.appendChild(
-    el("p", {
-      className: "workroom-cad-routing-label",
-      textContent: "Attached Emails",
-    })
-  );
-  const emailSlots = el("div", {
-    className: "workroom-deliverable-email-slots",
-    "aria-label": "Deliverable email links",
-  });
-  renderDeliverableEmailSlots(emailSlots, deliverable, {
-    project,
-    persistNow: true,
-    scope: "workroom",
-  });
-  emailSection.appendChild(emailSlots);
-  routingRow.appendChild(emailSection);
-
-  container.appendChild(routingRow);
-  if (configuredDisciplines.length > 1) {
-    container.appendChild(
-      el("p", {
-        className: "workroom-cad-routing-help tiny muted",
-        textContent:
-          "Select the correct discipline for the current deliverable so CAD tools scan the right folder.",
-      })
-    );
-  }
-}
-
-function buildWorkroomCadLaunchContext() {
-  const { project, deliverable } = getActiveWorkroomContext();
-  const disciplines = getWorkroomAvailableDisciplines();
-  const activeDiscipline = ensureWorkroomCadDiscipline(deliverable, disciplines);
-  const projectPath = normalizeWorkroomFolderPath(project?.path || "");
-  const rootProjectPath = getWorkroomRootFolderPath(project);
-  return {
-    source: "workroom",
-    projectPath,
-    rootProjectPath,
-    discipline: activeDiscipline || disciplines[0] || "Electrical",
-    cadFilePaths: [...workroomDiscoveredCadFilePaths],
-  };
-}
-
-function setWorkroomCadFilesStatus(message, { isError = false } = {}) {
-  workroomCadFilesStatusText = String(message || "").trim() || "Ready.";
-  const statusEl = document.getElementById("workroomCadFilesStatus");
-  if (!statusEl) return;
-  statusEl.textContent = workroomCadFilesStatusText;
-  statusEl.classList.toggle("is-error", !!isError);
-}
-
-async function renderWorkroomCadFilesPanel() {
-  const requestId = ++workroomCadFilesRequestId;
-  setWorkroomCadFilesLoading(true);
-  const loadPromise = (async () => {
-    const listEl = document.getElementById("workroomCadFilesList");
-    if (!listEl) return;
-
-    listEl.innerHTML = "";
-    setWorkroomDiscoveredCadFilePaths();
-    const { project } = getActiveWorkroomContext();
-    if (!project) {
-      setWorkroomCadFilesStatus("Select a project to view CAD files.");
-      await traceCadAutoSelect("frontend_cad_files_panel_skipped", {
-        requestId,
-        reason: "no_project",
-      });
-      return;
-    }
-
-    const rootProjectPath = getWorkroomRootFolderPath(project);
-    if (!rootProjectPath) {
-      setWorkroomCadFilesStatus("Root project folder path is not set.", {
-        isError: true,
-      });
-      await traceCadAutoSelect("frontend_cad_files_panel_skipped", {
-        requestId,
-        reason: "missing_root_project_path",
-      });
-      return;
-    }
-
-    const launchContext = buildWorkroomCadLaunchContext();
-    const selectedDiscipline = String(launchContext?.discipline || "").trim() || "Electrical";
-    setWorkroomCadFilesStatus(`Loading ${selectedDiscipline} CAD files...`);
-    await traceCadAutoSelect("frontend_cad_files_panel_request", {
-      requestId,
-      selectedDiscipline,
-      launchContext,
-    });
-
-    try {
-      if (!window.pywebview?.api?.get_workroom_cad_files) {
-        throw new Error("CAD files API is unavailable.");
-      }
-      const response = await window.pywebview.api.get_workroom_cad_files(launchContext);
-      if (requestId !== workroomCadFilesRequestId) return;
-
-      if (response?.status !== "success") {
-        throw new Error(response?.message || "Unable to load CAD files.");
-      }
-
-      const folderPath = String(response.folderPath || "").trim();
-      const discipline = String(response.discipline || selectedDiscipline).trim() || selectedDiscipline;
-      const files = Array.isArray(response.files) ? response.files : [];
-
-      if (!folderPath) {
-        const missingMessage = String(response.message || "").trim();
-        await traceCadAutoSelect("frontend_cad_files_panel_result", {
-          requestId,
-          status: "missing_folder",
-          discipline,
-          folderPath,
-          count: 0,
-          filePaths: [],
-          message: missingMessage,
-        });
-        setWorkroomCadFilesStatus(
-          missingMessage || `${discipline} folder was not found for this project.`,
-          { isError: true }
-        );
-        return;
-      }
-
-      if (!files.length) {
-        await traceCadAutoSelect("frontend_cad_files_panel_result", {
-          requestId,
-          status: "empty",
-          discipline,
-          folderPath,
-          count: 0,
-          filePaths: [],
-          message: String(response.message || "").trim(),
-        });
-        setWorkroomCadFilesStatus(`No DWG files found in ${discipline}.`);
-        return;
-      }
-
-      const discoveredPaths = [];
-      files.forEach((file) => {
-        const filePath = normalizeWorkroomFolderPath(file?.path || "");
-        if (!filePath) return;
-        discoveredPaths.push(filePath);
-        const fileName = String(file?.name || "").trim() || getFileNameFromPath(filePath);
-        listEl.appendChild(
-          el("button", {
-            type: "button",
-            className: "workroom-cad-file-link",
-            textContent: fileName || "DWG file",
-            title: filePath,
-            onclick: async () => {
-              try {
-                const res = await window.pywebview.api.open_path(filePath);
-                if (res?.status !== "success") {
-                  throw new Error(res?.message || "Failed to open CAD file.");
-                }
-                toast("Opening file...");
-              } catch (e) {
-                console.warn(`Failed to open CAD file (${filePath}):`, e);
-                toast("Couldn't open CAD file.");
-              }
-            },
-          })
-        );
-      });
-
-      setWorkroomDiscoveredCadFilePaths(discoveredPaths);
-      if (!workroomDiscoveredCadFilePaths.length) {
-        await traceCadAutoSelect("frontend_cad_files_panel_result", {
-          requestId,
-          status: "normalized_empty",
-          discipline,
-          folderPath,
-          count: 0,
-          filePaths: [],
-        });
-        setWorkroomCadFilesStatus(`No DWG files found in ${discipline}.`);
-        return;
-      }
-
-      await traceCadAutoSelect("frontend_cad_files_panel_result", {
-        requestId,
-        status: "success",
-        discipline,
-        folderPath,
-        count: workroomDiscoveredCadFilePaths.length,
-        filePaths: [...workroomDiscoveredCadFilePaths],
-      });
-      setWorkroomCadFilesStatus(
-        `${workroomDiscoveredCadFilePaths.length} DWG file${
-          workroomDiscoveredCadFilePaths.length === 1 ? "" : "s"
-        } in ${discipline}.`
-      );
-    } catch (e) {
-      if (requestId !== workroomCadFilesRequestId) return;
-      console.warn("Failed to render Workroom CAD files panel:", e);
-      setWorkroomDiscoveredCadFilePaths();
-      await traceCadAutoSelect("frontend_cad_files_panel_error", {
-        requestId,
-        message: e?.message || "Unable to load CAD files.",
-      });
-      setWorkroomCadFilesStatus(e?.message || "Unable to load CAD files.", {
-        isError: true,
-      });
-    }
-  })();
-  workroomCadFilesLoadPromise = loadPromise;
-  try {
-    return await loadPromise;
-  } finally {
-    if (requestId === workroomCadFilesRequestId) {
-      setWorkroomCadFilesLoading(false);
-    }
-  }
-}
-
-function consumePendingCadLaunchContext() {
-  const context = pendingCadLaunchContext;
-  pendingCadLaunchContext = null;
-  return context;
-}
-
-function resolveCadLaunchContextForTool() {
-  const pendingContext = consumePendingCadLaunchContext();
-  if (pendingContext) return pendingContext;
-
-  const checklistModal = document.getElementById("checklistModal");
-  if (!checklistModal?.open) return null;
-
-  const { project, deliverable } = getActiveWorkroomContext();
-  if (!project || !deliverable) return null;
-
-  return buildWorkroomCadLaunchContext();
-}
-
-function initChecklistModalTabs(project, deliverableIndex) {
-  const deliverables = getProjectDeliverables(project);
-  const resolvedIndex = Number(deliverableIndex);
-  const deliverable =
-    Number.isInteger(resolvedIndex) && resolvedIndex >= 0
-      ? deliverables[resolvedIndex] || null
-      : null;
-
-  checklistModalState.appliedTabs = [];
-  if (!deliverable) {
-    checklistModalState.activeInstanceId = null;
-    return;
-  }
-
-  if (!Array.isArray(deliverable.appliedChecklists)) {
-    deliverable.appliedChecklists = [];
-  }
-
-  const originalInstanceCount = deliverable.appliedChecklists.length;
-  deliverable.appliedChecklists = deliverable.appliedChecklists.filter(
-    (instance) => !!getChecklistById(instance?.checklistId)
-  );
-  if (deliverable.appliedChecklists.length !== originalInstanceCount) {
-    save();
-  }
-
-  checklistModalState.appliedTabs = deliverable.appliedChecklists.map(
-    (instance, instanceIndex) => ({
-      instanceId: instance.instanceId,
-      checklistId: instance.checklistId,
-      instanceIndex,
-    })
-  );
-
-  const hasActive = checklistModalState.appliedTabs.some(
-    (tab) => tab.instanceId === checklistModalState.activeInstanceId
-  );
-  if (!hasActive) {
-    checklistModalState.activeInstanceId = checklistModalState.appliedTabs[0]?.instanceId || null;
-  }
-  activeChecklistView = checklistModalState.activeInstanceId;
-}
-
-function openChecklistModal(projectIndex) {
-  const project = db[projectIndex];
-  if (!project) return;
-
-  activeChecklistProject = projectIndex;
-  activeChecklistDeliverable = null;
-  checklistModalState.activeInstanceId = null;
-  activeChecklistView = null;
-  activeWorkroomUtilityTab = "tasks";
-  activeWorkroomPreDesignPage = 0;
-  workroomDisciplineNoticeShown = false;
-
-  populateChecklistDeliverableSelect(project);
-  document.getElementById("checklistModal").showModal();
-  renderWorkroomToolStatusFooter();
-}
-
-function populateChecklistDeliverableSelect(project) {
-  const select = document.getElementById("checklistDeliverableSelect");
-  if (!select) return;
-
-  select.innerHTML = "";
-  const deliverables = getProjectDeliverables(project);
-
-  if (deliverables.length === 0) {
-    select.innerHTML = '<option value="">No deliverables found</option>';
-    select.disabled = true;
-    activeChecklistDeliverable = -1;
-    checklistModalState.appliedTabs = [];
-    checklistModalState.activeInstanceId = null;
-    renderProjectWorkroom();
-    return;
-  }
-
-  select.disabled = false;
-  deliverables.forEach((deliverable, index) => {
-    select.appendChild(
-      el("option", {
-        value: String(index),
-        textContent: `${deliverable.name || "Untitled"}${deliverable.due ? " (Due: " + humanDate(deliverable.due) + ")" : ""
-          }`,
-      })
-    );
-  });
-
-  const primaryIndex = deliverables.findIndex((d) => d.id === project.overviewDeliverableId);
-  activeChecklistDeliverable = primaryIndex >= 0 ? primaryIndex : 0;
-  select.value = String(activeChecklistDeliverable);
-
-  initChecklistModalTabs(project, activeChecklistDeliverable);
-  renderProjectWorkroom();
-}
-
-function getWorkroomPhaseMeta(phaseValue) {
-  return WORKROOM_PHASES[normalizeWorkroomPhase(phaseValue)] || WORKROOM_PHASES.survey_report;
-}
-
-function ensureDeliverableWorkroomPhase(deliverable) {
-  if (!deliverable) return "survey_report";
-  const normalized = normalizeWorkroomPhase(deliverable.workroomPhase);
-  if (deliverable.workroomPhase !== normalized) {
-    deliverable.workroomPhase = normalized;
-    debouncedSave();
-  }
-  return normalized;
-}
-
-function getWorkroomSurveyPageMeta(pageValue) {
-  return (
-    WORKROOM_SURVEY_PAGE_OPTIONS.find(
-      (page) => page.value === normalizeWorkroomSurveyPage(pageValue)
-    ) || WORKROOM_SURVEY_PAGE_OPTIONS[0]
-  );
-}
-
-function ensureDeliverableWorkroomSurveyPage(deliverable) {
-  if (!deliverable) return "utility_plan";
-  const normalized = normalizeWorkroomSurveyPage(deliverable.workroomSurveyPage);
-  if (deliverable.workroomSurveyPage !== normalized) {
-    deliverable.workroomSurveyPage = normalized;
-    debouncedSave();
-  }
-  return normalized;
-}
-
-function updateDeliverableWorkroomPhase(deliverable, value) {
-  if (!deliverable) return false;
-  const normalized = normalizeWorkroomPhase(value);
-  if ((deliverable.workroomPhase || "") === normalized) return false;
-  deliverable.workroomPhase = normalized;
-  return true;
-}
-
-function updateDeliverableWorkroomSurveyPage(deliverable, value) {
-  if (!deliverable) return false;
-  const normalized = normalizeWorkroomSurveyPage(value);
-  if ((deliverable.workroomSurveyPage || "") === normalized) return false;
-  deliverable.workroomSurveyPage = normalized;
-  return true;
-}
-
-function updateDeliverableWorkroomReturnType(deliverable, value) {
-  if (!deliverable) return false;
-  const normalized = normalizeWorkroomReturnType(value);
-  if ((deliverable.workroomReturnType || "") === normalized) return false;
-  deliverable.workroomReturnType = normalized;
-  return true;
-}
-
-function getActiveWorkroomPhase() {
-  const { deliverable } = getActiveWorkroomContext();
-  return ensureDeliverableWorkroomPhase(deliverable);
-}
-
-function getActiveWorkroomSurveyPage() {
-  const { deliverable } = getActiveWorkroomContext();
-  return ensureDeliverableWorkroomSurveyPage(deliverable);
-}
-
-function setWorkroomPhase(phaseValue, { saveNow = false } = {}) {
-  const { deliverable } = getActiveWorkroomContext();
-  if (!deliverable) return;
-  const normalized = normalizeWorkroomPhase(phaseValue);
-  if (!updateDeliverableWorkroomPhase(deliverable, normalized)) {
-    renderProjectWorkroom();
-    return;
-  }
-  if (saveNow) {
-    save();
-  } else {
-    debouncedSave();
-  }
-  renderProjectWorkroom();
-}
-
-function setWorkroomSurveyPage(pageValue, { saveNow = false } = {}) {
-  const { deliverable } = getActiveWorkroomContext();
-  if (!deliverable) return;
-  const normalized = normalizeWorkroomSurveyPage(pageValue);
-  if (!updateDeliverableWorkroomSurveyPage(deliverable, normalized)) {
-    renderWorkroomSurveyPhase();
-    return;
-  }
-  if (saveNow) {
-    save();
-  } else {
-    debouncedSave();
-  }
-  renderWorkroomSurveyPhase();
-}
-
-function stepWorkroomPhase(offset = 1) {
-  const currentMeta = getWorkroomPhaseMeta(getActiveWorkroomPhase());
-  const nextMeta = WORKROOM_PHASE_OPTIONS[currentMeta.index + offset];
-  if (!nextMeta) return;
-  setWorkroomPhase(nextMeta.value);
-}
-
-function stepWorkroomSurveyPage(offset = 1) {
-  const currentPage = getWorkroomSurveyPageMeta(getActiveWorkroomSurveyPage());
-  const currentIndex = WORKROOM_SURVEY_PAGE_OPTIONS.findIndex(
-    (page) => page.value === currentPage.value
-  );
-  const nextMeta = WORKROOM_SURVEY_PAGE_OPTIONS[currentIndex + offset];
-  if (!nextMeta) return;
-  setWorkroomSurveyPage(nextMeta.value);
-}
-
-function ensureWorkroomChecklistTemplateAppliedToDeliverable(templateKey) {
-  const { project, deliverable } = getActiveWorkroomContext();
-  if (!project || !deliverable || !templateKey) return null;
-  const existing = getAppliedChecklistEntryByTemplateKey(deliverable, templateKey);
-  if (existing) return existing;
-  const checklist = getOrCreateChecklistByTemplateKey(templateKey);
-  if (!checklist) return null;
-  if (!Array.isArray(deliverable.appliedChecklists)) {
-    deliverable.appliedChecklists = [];
-  }
-  const instance = normalizeChecklistInstance({
-    instanceId: generateChecklistInstanceId(),
-    checklistId: checklist.id,
-    completedItems: [],
-    itemNotes: {},
-    applicabilityOverrides: {},
-  });
-  if (!instance) return null;
-  deliverable.appliedChecklists.push(instance);
-  save();
-  initChecklistModalTabs(project, activeChecklistDeliverable);
-  return getAppliedChecklistEntryByTemplateKey(deliverable, templateKey);
-}
-
-function getWorkroomPhaseChecklistConfig(phaseValue) {
-  return WORKROOM_PHASE_CHECKLIST_MAP[normalizeWorkroomPhase(phaseValue)] || null;
-}
-
-function getWorkroomPhaseChecklistEntry(phaseValue) {
-  const config = getWorkroomPhaseChecklistConfig(phaseValue);
-  if (!config?.templateKey) return null;
-  const entry = ensureWorkroomChecklistTemplateAppliedToDeliverable(config.templateKey);
-  if (entry?.instance?.instanceId) {
-    checklistModalState.activeInstanceId = entry.instance.instanceId;
-    activeChecklistView = entry.instance.instanceId;
-  }
-  return entry;
-}
-
-function getChecklistScopeAnsweredCount(answerState = {}) {
-  return ACIES_ELECTRICAL_SCOPE_FIELD_KEYS.reduce((count, fieldKey) => {
-    return count + (hasChecklistScopeAnswer(answerState, fieldKey) ? 1 : 0);
-  }, 0);
-}
-
-function updateProjectChecklistScopeAnswer(project, fieldKey, value) {
-  const field = getChecklistScopeFieldConfig(fieldKey);
-  if (!project || !field) return false;
-  const profile = getProjectAciesElectricalChecklistProfile(project);
-  if (!profile) return false;
-  const normalizedValue = normalizeChecklistScopeFieldValue(fieldKey, value);
-  if ((profile.answers?.[fieldKey] || "") === normalizedValue) return false;
-  profile.answers[fieldKey] = normalizedValue;
-  profile.updatedAtUtc = new Date().toISOString();
-  return true;
-}
-
-function updateDeliverableChecklistIssueStage(deliverable, value) {
-  const context = ensureDeliverableChecklistContext(deliverable);
-  if (!context) return false;
-  const normalizedValue = normalizeChecklistIssueStage(value);
-  if ((context.issueStage || "") === normalizedValue) return false;
-  context.issueStage = normalizedValue;
-  return true;
-}
-
-function persistWorkroomScopeChange() {
-  debouncedSave();
-  renderWorkroomPhaseContent();
-}
-
-function ensureAciesElectricalChecklistAppliedToDeliverable() {
-  return ensureWorkroomChecklistTemplateAppliedToDeliverable(
-    CHECKLIST_TEMPLATE_KEYS.ACIES_ELECTRICAL
-  );
-}
-
-function normalizeWorkroomUtilityTab(tabName) {
-  const normalized = String(tabName || "").trim().toLowerCase();
-  if (normalized === "tasks" || normalized === "notes") {
-    return normalized;
-  }
-  return "tasks";
-}
-
-function getVisibleWorkroomUtilityTabs(phaseValue = getActiveWorkroomPhase()) {
-  return ["tasks", "notes"];
-}
-
-function renderWorkroomUtilityTabs() {
-  const tabs = Array.from(document.querySelectorAll("[data-workroom-utility-tab]"));
-  const panes = Array.from(document.querySelectorAll("[data-workroom-utility-pane]"));
-  if (!tabs.length || !panes.length) return;
-
-  const visibleTabs = new Set(getVisibleWorkroomUtilityTabs());
-  activeWorkroomUtilityTab = normalizeWorkroomUtilityTab(activeWorkroomUtilityTab);
-  if (!visibleTabs.has(activeWorkroomUtilityTab)) {
-    activeWorkroomUtilityTab = visibleTabs.has("tasks")
-      ? "tasks"
-      : Array.from(visibleTabs)[0] || "tasks";
-  }
-
-  tabs.forEach((tabBtn) => {
-    const tabName = normalizeWorkroomUtilityTab(tabBtn.dataset.workroomUtilityTab);
-    const isVisible = visibleTabs.has(tabName);
-    const isActive = isVisible && tabName === activeWorkroomUtilityTab;
-    tabBtn.hidden = !isVisible;
-    tabBtn.disabled = !isVisible;
-    tabBtn.classList.toggle("active", isActive);
-    tabBtn.setAttribute("aria-selected", isActive ? "true" : "false");
-    tabBtn.setAttribute("tabindex", isActive ? "0" : "-1");
-    tabBtn.setAttribute("aria-hidden", isVisible ? "false" : "true");
-    tabBtn.onclick = () => {
-      const nextTab = normalizeWorkroomUtilityTab(tabBtn.dataset.workroomUtilityTab);
-      if (!visibleTabs.has(nextTab) || nextTab === activeWorkroomUtilityTab) return;
-      activeWorkroomUtilityTab = nextTab;
-      renderWorkroomUtilityTabs();
-    };
-  });
-
-  panes.forEach((pane) => {
-    const paneName = normalizeWorkroomUtilityTab(pane.dataset.workroomUtilityPane);
-    pane.hidden = !visibleTabs.has(paneName) || paneName !== activeWorkroomUtilityTab;
-    pane.setAttribute("aria-hidden", pane.hidden ? "true" : "false");
-  });
-}
-
-function renderWorkroomPhaseTabs() {
-  const tabsContainer = document.getElementById("workroomPhaseTabs");
-  const eyebrowEl = document.getElementById("workroomPhaseEyebrow");
-  const titleEl = document.getElementById("workroomPhaseTitle");
-  const descriptionEl = document.getElementById("workroomPhaseDescription");
-  const prevBtn = document.getElementById("workroomPrevPhaseBtn");
-  const nextBtn = document.getElementById("workroomNextPhaseBtn");
-  if (!tabsContainer || !eyebrowEl || !titleEl || !descriptionEl || !prevBtn || !nextBtn) {
-    return;
-  }
-
-  const phaseMeta = getWorkroomPhaseMeta(getActiveWorkroomPhase());
-  tabsContainer.innerHTML = "";
-  WORKROOM_PHASE_OPTIONS.forEach((phase, index) => {
-    const isActive = phase.value === phaseMeta.value;
-    const button = el("button", {
-      type: "button",
-      className: `workroom-phase-tab ${isActive ? "active" : ""}`,
-      "data-phase-index": String(index + 1),
-      "aria-selected": isActive ? "true" : "false",
-      onclick: () => setWorkroomPhase(phase.value),
-    });
-    button.appendChild(
-      el("span", {
-        className: "workroom-phase-tab-index",
-        textContent: String(index + 1),
-      })
-    );
-    button.appendChild(
-      el("span", {
-        className: "workroom-phase-tab-copy",
-        textContent: phase.label,
-      })
-    );
-    tabsContainer.appendChild(button);
-  });
-
-  eyebrowEl.textContent = phaseMeta.eyebrow;
-  titleEl.textContent = phaseMeta.label;
-  descriptionEl.textContent = phaseMeta.description;
-
-  prevBtn.disabled = phaseMeta.index <= 0;
-  nextBtn.disabled = phaseMeta.index >= WORKROOM_PHASE_OPTIONS.length - 1;
-  prevBtn.onclick = () => stepWorkroomPhase(-1);
-  nextBtn.onclick = () => stepWorkroomPhase(1);
-}
-
-function syncWorkroomPhaseLayout(phaseValue = getActiveWorkroomPhase()) {
-  const modal = document.getElementById("checklistModal");
-  if (!modal) return;
-  modal.classList.toggle("is-survey-phase", phaseValue === "survey_report");
-}
-
-function renderProjectWorkroom() {
-  syncWorkroomPhaseLayout();
-  renderWorkroomProjectHeader();
-  renderWorkroomCadRoutingControl();
-  renderWorkroomPhaseTabs();
-  renderWorkroomPhaseContent();
-  renderWorkroomUtilityTabs();
-  renderWorkroomTasksPanel();
-  renderWorkroomDeliverableNotesPanel();
-  renderWorkroomGeneralNotesPanel();
-  renderWorkroomToolsPanel();
-}
-
-function getToolTitle(toolId) {
-  const card = document.getElementById(toolId);
-  if (!card) return "Tool";
-  return card.querySelector(".tool-card-header")?.textContent?.trim() || "Tool";
-}
-
-function renderWorkroomToolStatusFooter() {
-  const statusEl = document.getElementById("workroomToolStatus");
-  if (!statusEl) return;
-  statusEl.classList.remove("is-running", "is-done", "is-error");
-  const phase = workroomToolStatusState?.phase || "idle";
-  if (phase === "running") statusEl.classList.add("is-running");
-  if (phase === "done") statusEl.classList.add("is-done");
-  if (phase === "error") statusEl.classList.add("is-error");
-  statusEl.textContent = workroomToolStatusState?.message || "Ready.";
-}
-
-function setWorkroomToolStatus({ toolId = "", message = "", phase = "idle" } = {}) {
-  const normalizedPhase =
-    phase === "running" || phase === "done" || phase === "error"
-      ? phase
-      : "idle";
-  const toolLabel = toolId ? getToolTitle(toolId) : "";
-  let nextMessage = String(message || "").trim();
-  if (!nextMessage) nextMessage = normalizedPhase === "done" ? "Done." : "Ready.";
-  if (toolLabel && normalizedPhase !== "idle") {
-    nextMessage = `${toolLabel}: ${nextMessage}`;
-  }
-  workroomToolStatusState = {
-    toolId,
-    label: toolLabel,
-    message: nextMessage,
-    phase: normalizedPhase,
-  };
-  renderWorkroomToolStatusFooter();
-}
-
-function resetWorkroomToolStatus() {
-  workroomToolStatusState = {
-    toolId: "",
-    label: "",
-    message: "Ready.",
-    phase: "idle",
-  };
-  renderWorkroomToolStatusFooter();
-}
-
-function getWorkroomVisibleTools() {
-  return Array.from(
-    document.querySelectorAll("#tools-panel .tool-card:not([hidden])")
-  )
-    .map((card) => {
-      const id = card.id;
-      if (!id || WORKROOM_HIDDEN_TOOL_IDS.has(id)) return null;
-      const iconHost = card.querySelector(".tool-icon");
-      const iconMarkup = iconHost?.innerHTML?.trim() || "";
-      const hasGraphicIcon = !!iconHost?.querySelector("svg, img");
-      return {
-        id,
-        iconMarkup,
-        hasGraphicIcon,
-        iconTextFallback: iconHost?.textContent?.trim() || "TOOL",
-        sourceCard: card,
-        title:
-          card.querySelector(".tool-card-header")?.textContent?.trim() ||
-          "Unnamed Tool",
-        body:
-          card.querySelector(".tool-card-body")?.textContent?.trim() || "",
-        statusText: card.querySelector(".tool-card-status")?.textContent?.trim() || "",
-        isUnderConstruction:
-          String(card.dataset.underConstruction || "").trim().toLowerCase() === "true",
-      };
-    })
-    .filter(Boolean);
-}
-
-async function triggerWorkroomTool(toolId) {
-  if (!toolId) return;
-  const sourceCard = document.getElementById(toolId);
-  if (!sourceCard || sourceCard.hidden) {
-    toast("Selected tool is unavailable.");
-    return;
-  }
-  if (WORKROOM_AUTO_SELECT_CAD_TOOL_IDS.has(toolId) && workroomCadFilesLoading) {
-    setWorkroomToolStatus({
-      toolId,
-      message: "Waiting for CAD files...",
-      phase: "running",
-    });
-    await traceCadAutoSelect("frontend_tool_waiting_for_cad_files", {
-      toolId,
-      cadFilesLoading: workroomCadFilesLoading,
-      discoveredCadFileCount: workroomDiscoveredCadFilePaths.length,
-      cadFilesStatus: getWorkroomCadFilesStatusText(),
-    });
-    try {
-      await workroomCadFilesLoadPromise;
-    } catch (e) {
-      console.warn("Failed while waiting for Workroom CAD files:", e);
-    }
-    const checklistModal = document.getElementById("checklistModal");
-    if (!checklistModal?.open) {
-      await traceCadAutoSelect("frontend_tool_launch_cancelled", {
-        toolId,
-        reason: "workroom_closed_while_waiting",
-      });
-      return;
-    }
-  }
-  pendingCadLaunchContext = null;
-  if (WORKROOM_LAUNCH_CONTEXT_TOOL_IDS.has(toolId)) {
-    pendingCadLaunchContext = buildWorkroomCadLaunchContext();
-  }
-  await traceCadAutoSelect("frontend_tool_launch", {
-    toolId,
-    cadFilesLoading: workroomCadFilesLoading,
-    discoveredCadFileCount: workroomDiscoveredCadFilePaths.length,
-    cadFilesStatus: getWorkroomCadFilesStatusText(),
-    launchContext: pendingCadLaunchContext,
-  });
-  setWorkroomToolStatus({ toolId, message: "Starting...", phase: "running" });
-  sourceCard.click();
-}
-
-function createWorkroomToolItem(tool) {
-  const isCadToolWaitingForLoad =
-    WORKROOM_AUTO_SELECT_CAD_TOOL_IDS.has(tool.id) && workroomCadFilesLoading;
-  const item = el("button", {
-    className: `workroom-tool-item ${isCadToolWaitingForLoad ? "is-loading" : ""}`.trim(),
-    "data-tool-id": tool.id,
-    type: "button",
-    title: tool.title,
-    "aria-label": isCadToolWaitingForLoad
-      ? `Waiting to open ${tool.title}`
-      : `Open ${tool.title}`,
-    disabled: isCadToolWaitingForLoad,
-    onclick: async () => {
-      await triggerWorkroomTool(tool.id);
-    },
-  });
-  const iconEl = el("span", {
-    className: "workroom-tool-icon",
-    "aria-hidden": "true",
-  });
-  if (tool.hasGraphicIcon && tool.iconMarkup) {
-    iconEl.innerHTML = tool.iconMarkup;
-  } else {
-    iconEl.textContent = tool.iconTextFallback;
-  }
-  item.appendChild(iconEl);
-
-  const copyWrap = el("div", { className: "workroom-tool-copy" });
-  copyWrap.appendChild(
-    el("span", {
-      className: "workroom-tool-text",
-      textContent: tool.title,
-      title: tool.title,
-    })
-  );
-  if (tool.isUnderConstruction && tool.statusText) {
-    copyWrap.appendChild(
-      el("span", {
-        className: "workroom-tool-meta",
-        textContent: tool.statusText,
-      })
-    );
-  }
-  if (isCadToolWaitingForLoad) {
-    copyWrap.appendChild(
-      el("span", {
-        className: "workroom-tool-meta",
-        textContent: "Preparing CAD context...",
-      })
-    );
-  }
-  item.appendChild(copyWrap);
-  return item;
-}
-
-function renderWorkroomToolGroup(container, tools, emptyText) {
-  if (!container) return;
-  container.innerHTML = "";
-  if (!tools.length) {
-    container.appendChild(
-      el("div", {
-        className: "workroom-tool-empty",
-        textContent: emptyText,
-      })
-    );
-    return;
-  }
-  tools.forEach((tool) => {
-    container.appendChild(createWorkroomToolItem(tool));
-  });
-}
-
-function renderWorkroomToolsPanel() {
-  const recommendedList = document.getElementById("workroomRecommendedToolsList");
-  const anytimeList = document.getElementById("workroomAnytimeToolsList");
-  const hintEl = document.getElementById("workroomRecommendedToolsHint");
-  if (!recommendedList || !anytimeList) return;
-
-  const phaseValue = getActiveWorkroomPhase();
-  const phaseMeta = getWorkroomPhaseMeta(phaseValue);
-  const toolsById = new Map(getWorkroomVisibleTools().map((tool) => [tool.id, tool]));
-  const recommendedIds = WORKROOM_PHASE_TOOL_MAP[phaseValue] || [];
-  const anytimeIds = WORKROOM_ALWAYS_AVAILABLE_TOOLS.filter(
-    (toolId) => !recommendedIds.includes(toolId)
-  );
-
-  if (hintEl) {
-    hintEl.textContent = `${phaseMeta.label} tools`;
-  }
-
-  renderWorkroomToolGroup(
-    recommendedList,
-    recommendedIds.map((toolId) => toolsById.get(toolId)).filter(Boolean),
-    "No tools recommended for this phase."
-  );
-  renderWorkroomToolGroup(
-    anytimeList,
-    anytimeIds.map((toolId) => toolsById.get(toolId)).filter(Boolean),
-    "No anytime tools available."
-  );
-  renderWorkroomToolStatusFooter();
-}
-
-function getChecklistOptionLabel(options = [], value = "") {
-  return (
-    (Array.isArray(options) ? options : []).find(
-      (option) => option.value === String(value || "").trim()
-    )?.label || ""
-  );
-}
-
-function createWorkroomSummaryMetric(label, value, accent = false) {
-  return el(
-    "div",
-    {
-      className: `workroom-summary-pill ${accent ? "accent" : ""}`.trim(),
-    },
-    [
-      el("span", {
-        className: "workroom-summary-pill-label",
-        textContent: label,
-      }),
-      el("span", {
-        className: "workroom-summary-pill-value",
-        textContent: String(value || "").trim() || "Unanswered",
-      }),
-    ]
-  );
-}
-
-function getWorkroomSurveyDraft() {
-  return utilityPlanState?.draft || null;
-}
-
-function queueWorkroomSurveyDraftSave() {
-  if (typeof queueUtilityPlanSave === "function") {
-    queueUtilityPlanSave();
-  }
-}
-
-function getWorkroomSurveyPhotoItems() {
-  const draft = getWorkroomSurveyDraft();
-  if (!draft) return [];
-  if (!draft.photos || typeof draft.photos !== "object") {
-    draft.photos = { items: [] };
-  }
-  draft.photos.items =
-    typeof normalizeSurveyPhotoItems === "function"
-      ? normalizeSurveyPhotoItems(draft.photos.items)
-      : [];
-  return draft.photos.items;
-}
-
-function getWorkroomSurveyFindingsSections() {
-  const draft = getWorkroomSurveyDraft();
-  if (!draft) return null;
-  if (!draft.findings || typeof draft.findings !== "object") {
-    draft.findings = { sections: {} };
-  }
-  const sourceSections =
-    draft.findings.sections && typeof draft.findings.sections === "object"
-      ? draft.findings.sections
-      : {};
-  const normalized = {};
-  WORKROOM_SURVEY_FINDINGS_FIELDS.forEach((field) => {
-    normalized[field.key] = String(sourceSections[field.key] || "").trim();
-  });
-  draft.findings.sections = normalized;
-  return draft.findings.sections;
-}
-
-function getWorkroomSurveyRecommendationItems() {
-  const draft = getWorkroomSurveyDraft();
-  if (!draft) return [];
-  if (!draft.recommendations || typeof draft.recommendations !== "object") {
-    draft.recommendations = { items: [] };
-  }
-  draft.recommendations.items =
-    typeof normalizeSurveyRecommendationItems === "function"
-      ? normalizeSurveyRecommendationItems(draft.recommendations.items)
-      : [];
-  return draft.recommendations.items;
-}
-
-async function ensureWorkroomSurveyDraftLoaded() {
-  const projectIndex = Number(activeChecklistProject);
-  if (
-    !Number.isInteger(projectIndex) ||
-    projectIndex < 0 ||
-    !db[projectIndex] ||
-    typeof ensureWorkroomSurveyDraftReady !== "function"
-  ) {
-    return null;
-  }
-
-  const draft = getWorkroomSurveyDraft();
-  const hasSourcePdf = !!draft?.utilityPlan?.sourcePdfPath;
-  const needsLoad =
-    utilityPlanProjectIndex !== projectIndex ||
-    !draft ||
-    (!hasSourcePdf && !utilityPlanState?.archDiscovery) ||
-    (!utilityPlanState?.pdfInfo && hasSourcePdf && !utilityPlanState?.archDiscovery);
-  if (!needsLoad) return draft;
-
-  if (
-    workroomSurveyDraftLoadPromise &&
-    workroomSurveyDraftProjectIndex === projectIndex
-  ) {
-    return workroomSurveyDraftLoadPromise;
-  }
-
-  workroomSurveyDraftProjectIndex = projectIndex;
-  workroomSurveyDraftLoadPromise = Promise.resolve()
-    .then(() => ensureWorkroomSurveyDraftReady({ quiet: true }))
-    .catch((error) => {
-      console.warn("Failed to load workroom survey draft:", error);
-      if (typeof setUtilityPlanStatus === "function") {
-        setUtilityPlanStatus(
-          error?.message || "Unable to load the survey report draft."
-        );
-      }
-      return null;
-    })
-    .finally(() => {
-      workroomSurveyDraftLoadPromise = null;
-      if (
-        getActiveWorkroomPhase() === "survey_report" &&
-        Number(activeChecklistProject) === projectIndex
-      ) {
-        renderWorkroomSurveyPhase();
-      }
-    });
-  return workroomSurveyDraftLoadPromise;
-}
-
-function addWorkroomSurveyPhotoItem() {
-  const draft = getWorkroomSurveyDraft();
-  if (!draft) return;
-  const items = getWorkroomSurveyPhotoItems();
-  items.push(
-    typeof createDefaultSurveyPhotoItem === "function"
-      ? createDefaultSurveyPhotoItem({}, items.length)
-      : {
-          id: `survey_photo_${Math.random().toString(36).slice(2, 11)}`,
-          order: items.length,
-          label: `E${items.length + 1}`,
-          filePath: "",
-          description: "",
-        }
-  );
-  draft.photos.items =
-    typeof normalizeSurveyPhotoItems === "function"
-      ? normalizeSurveyPhotoItems(items)
-      : items;
-  queueWorkroomSurveyDraftSave();
-  renderWorkroomSurveyPhase();
-}
-
-function removeWorkroomSurveyPhotoItem(itemId) {
-  const draft = getWorkroomSurveyDraft();
-  if (!draft) return;
-  draft.photos.items = getWorkroomSurveyPhotoItems().filter(
-    (item) => item.id !== itemId
-  );
-  draft.photos.items =
-    typeof normalizeSurveyPhotoItems === "function"
-      ? normalizeSurveyPhotoItems(draft.photos.items)
-      : draft.photos.items;
-  queueWorkroomSurveyDraftSave();
-  renderWorkroomSurveyPhase();
-}
-
-function moveWorkroomSurveyPhotoItem(itemId, offset) {
-  const draft = getWorkroomSurveyDraft();
-  if (!draft) return;
-  const items = [...getWorkroomSurveyPhotoItems()];
-  const index = items.findIndex((item) => item.id === itemId);
-  const nextIndex = index + offset;
-  if (index < 0 || nextIndex < 0 || nextIndex >= items.length) return;
-  const [moved] = items.splice(index, 1);
-  items.splice(nextIndex, 0, moved);
-  draft.photos.items =
-    typeof normalizeSurveyPhotoItems === "function"
-      ? normalizeSurveyPhotoItems(items)
-      : items;
-  queueWorkroomSurveyDraftSave();
-  renderWorkroomSurveyPhase();
-}
-
-async function browseWorkroomSurveyPhotoFile(itemId) {
-  const draft = getWorkroomSurveyDraft();
-  if (!draft || !window.pywebview?.api?.select_files) {
-    toast("Photo picker is unavailable.");
-    return;
-  }
-  try {
-    const response = await window.pywebview.api.select_files({
-      allow_multiple: false,
-      file_types: [
-        "Image Files (*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.tif;*.tiff)",
-        "All Files (*.*)",
-      ],
-    });
-    if (response?.status !== "success" || !response.paths?.length) return;
-    const item = getWorkroomSurveyPhotoItems().find((entry) => entry.id === itemId);
-    if (!item) return;
-    item.filePath = normalizeWindowsPath(response.paths[0]);
-    queueWorkroomSurveyDraftSave();
-    renderWorkroomSurveyPhase();
-  } catch (error) {
-    console.warn("Failed to choose survey photo:", error);
-    toast("Unable to select a photo.");
-  }
-}
-
-function addWorkroomSurveyRecommendationItem() {
-  const draft = getWorkroomSurveyDraft();
-  if (!draft) return;
-  const items = getWorkroomSurveyRecommendationItems();
-  items.push(
-    typeof createDefaultSurveyRecommendationItem === "function"
-      ? createDefaultSurveyRecommendationItem({}, items.length)
-      : {
-          id: `survey_recommendation_${Math.random().toString(36).slice(2, 11)}`,
-          order: items.length,
-          text: "",
-        }
-  );
-  draft.recommendations.items =
-    typeof normalizeSurveyRecommendationItems === "function"
-      ? normalizeSurveyRecommendationItems(items)
-      : items;
-  queueWorkroomSurveyDraftSave();
-  renderWorkroomSurveyPhase();
-}
-
-function removeWorkroomSurveyRecommendationItem(itemId) {
-  const draft = getWorkroomSurveyDraft();
-  if (!draft) return;
-  draft.recommendations.items = getWorkroomSurveyRecommendationItems().filter(
-    (item) => item.id !== itemId
-  );
-  draft.recommendations.items =
-    typeof normalizeSurveyRecommendationItems === "function"
-      ? normalizeSurveyRecommendationItems(draft.recommendations.items)
-      : draft.recommendations.items;
-  queueWorkroomSurveyDraftSave();
-  renderWorkroomSurveyPhase();
-}
-
-function moveWorkroomSurveyRecommendationItem(itemId, offset) {
-  const draft = getWorkroomSurveyDraft();
-  if (!draft) return;
-  const items = [...getWorkroomSurveyRecommendationItems()];
-  const index = items.findIndex((item) => item.id === itemId);
-  const nextIndex = index + offset;
-  if (index < 0 || nextIndex < 0 || nextIndex >= items.length) return;
-  const [moved] = items.splice(index, 1);
-  items.splice(nextIndex, 0, moved);
-  draft.recommendations.items =
-    typeof normalizeSurveyRecommendationItems === "function"
-      ? normalizeSurveyRecommendationItems(items)
-      : items;
-  queueWorkroomSurveyDraftSave();
-  renderWorkroomSurveyPhase();
-}
-
-function renderWorkroomSurveyUtilityPlanPage(container, draftReady) {
-  const host = el("div", {
-    id: "workroomSurveyUtilityPlanHost",
-    className: "workroom-survey-utility-host",
-  });
-  container.appendChild(host);
-  if (!draftReady) {
-    host.appendChild(
-      el("div", {
-        className: "chk-empty-state workroom-survey-loading",
-        textContent: "Loading the survey creator and checking the architectural PDF...",
-      })
-    );
-    return;
-  }
-  if (typeof mountUtilityPlanInWorkroom === "function") {
-    mountUtilityPlanInWorkroom(host);
-    return;
-  }
-  host.appendChild(
-    el("div", {
-      className: "chk-empty-state",
-      textContent: "Utility plan editor is unavailable.",
-    })
-  );
-}
-
-function renderWorkroomSurveyPhotosPage(container, draftReady) {
-  const actions = el("div", { className: "workroom-survey-inline-actions" });
-  actions.appendChild(
-    el("button", {
-      className: "btn",
-      type: "button",
-      textContent: "Add Photo",
-      disabled: !draftReady,
-      onclick: addWorkroomSurveyPhotoItem,
-    })
-  );
-  container.appendChild(actions);
-
-  if (!draftReady) {
-    container.appendChild(
-      el("div", {
-        className: "chk-empty-state workroom-survey-loading",
-        textContent: "Loading survey photos...",
-      })
-    );
-    return;
-  }
-
-  const items = getWorkroomSurveyPhotoItems();
-  if (!items.length) {
-    container.appendChild(
-      el("div", {
-        className: "chk-empty-state",
-        textContent: "No survey photos have been added yet.",
-      })
-    );
-    return;
-  }
-
-  const list = el("div", { className: "workroom-survey-photo-list" });
-  items.forEach((item, index) => {
-    const card = el("div", { className: "workroom-survey-photo-card" });
-    const top = el("div", { className: "workroom-survey-card-header" });
-    const title = el("div", { className: "workroom-survey-card-title-wrap" });
-    title.appendChild(
-      el("div", {
-        className: "workroom-survey-card-eyebrow",
-        textContent: `Photo ${index + 1}`,
-      })
-    );
-    title.appendChild(
-      el("div", {
-        className: "workroom-survey-card-title",
-        textContent: item.label || `E${index + 1}`,
-      })
-    );
-    top.appendChild(title);
-    const controls = el("div", { className: "workroom-survey-inline-actions" });
-    controls.appendChild(
-      el("button", {
-        className: "btn tiny ghost",
-        type: "button",
-        textContent: "Up",
-        disabled: index <= 0,
-        onclick: () => moveWorkroomSurveyPhotoItem(item.id, -1),
-      })
-    );
-    controls.appendChild(
-      el("button", {
-        className: "btn tiny ghost",
-        type: "button",
-        textContent: "Down",
-        disabled: index >= items.length - 1,
-        onclick: () => moveWorkroomSurveyPhotoItem(item.id, 1),
-      })
-    );
-    controls.appendChild(
-      el("button", {
-        className: "btn tiny ghost",
-        type: "button",
-        textContent: "Remove",
-        onclick: () => removeWorkroomSurveyPhotoItem(item.id),
-      })
-    );
-    top.appendChild(controls);
-    card.appendChild(top);
-
-    const fileRow = el("div", { className: "workroom-survey-file-row" });
-    fileRow.appendChild(
-      el("input", {
-        type: "text",
-        className: "workroom-survey-path-input",
-        value: item.filePath || "",
-        readOnly: true,
-        placeholder: "Select a survey photo...",
-        title: item.filePath || "",
-      })
-    );
-    fileRow.appendChild(
-      el("button", {
-        className: "btn tiny",
-        type: "button",
-        textContent: item.filePath ? "Change Photo" : "Choose Photo",
-        onclick: () => {
-          void browseWorkroomSurveyPhotoFile(item.id);
-        },
-      })
-    );
-    card.appendChild(fileRow);
-
-    const field = el("label", { className: "workroom-survey-field" });
-    field.appendChild(
-      el("span", {
-        className: "workroom-survey-field-label",
-        textContent: "Description",
-      })
-    );
-    const textarea = el("textarea", {
-      className: "workroom-survey-textarea",
-      rows: 3,
-      placeholder: "Describe what this photo shows...",
-      value: item.description || "",
-      oninput: (event) => {
-        item.description = event.target.value;
-        queueWorkroomSurveyDraftSave();
-        if (typeof autoResizeTextarea === "function") {
-          autoResizeTextarea(event.target);
-        }
-      },
-    });
-    if (typeof autoResizeTextarea === "function") {
-      setTimeout(() => autoResizeTextarea(textarea), 0);
-    }
-    field.appendChild(textarea);
-    card.appendChild(field);
-    list.appendChild(card);
-  });
-  container.appendChild(list);
-}
-
-function renderWorkroomSurveyFindingsPage(container, draftReady) {
-  if (!draftReady) {
-    container.appendChild(
-      el("div", {
-        className: "chk-empty-state workroom-survey-loading",
-        textContent: "Loading findings sections...",
-      })
-    );
-    return;
-  }
-
-  const sections = getWorkroomSurveyFindingsSections();
-  const grid = el("div", { className: "workroom-survey-findings-grid" });
-  WORKROOM_SURVEY_FINDINGS_FIELDS.forEach((fieldConfig) => {
-    const panel = el("label", { className: "workroom-survey-section-card" });
-    panel.appendChild(
-      el("span", {
-        className: "workroom-survey-field-label",
-        textContent: fieldConfig.label,
-      })
-    );
-    panel.appendChild(
-      el("span", {
-        className: "workroom-survey-field-help",
-        textContent: fieldConfig.helpText,
-      })
-    );
-    const textarea = el("textarea", {
-      className: "workroom-survey-textarea workroom-survey-textarea-lg",
-      rows: 8,
-      placeholder: `Write the ${fieldConfig.label.toLowerCase()} findings...`,
-      value: sections?.[fieldConfig.key] || "",
-      oninput: (event) => {
-        sections[fieldConfig.key] = event.target.value;
-        queueWorkroomSurveyDraftSave();
-        if (typeof autoResizeTextarea === "function") {
-          autoResizeTextarea(event.target);
-        }
-      },
-    });
-    panel.appendChild(textarea);
-    grid.appendChild(panel);
-  });
-  container.appendChild(grid);
-}
-
-function renderWorkroomSurveyRecommendationsPage(container, draftReady) {
-  const actions = el("div", { className: "workroom-survey-inline-actions" });
-  actions.appendChild(
-    el("button", {
-      className: "btn",
-      type: "button",
-      textContent: "Add Recommendation",
-      disabled: !draftReady,
-      onclick: addWorkroomSurveyRecommendationItem,
-    })
-  );
-  container.appendChild(actions);
-
-  if (!draftReady) {
-    container.appendChild(
-      el("div", {
-        className: "chk-empty-state workroom-survey-loading",
-        textContent: "Loading recommendations...",
-      })
-    );
-    return;
-  }
-
-  const items = getWorkroomSurveyRecommendationItems();
-  if (!items.length) {
-    container.appendChild(
-      el("div", {
-        className: "chk-empty-state",
-        textContent: "No recommendations have been added yet.",
-      })
-    );
-    return;
-  }
-
-  const list = el("div", { className: "workroom-survey-recommendations-list" });
-  items.forEach((item, index) => {
-    const row = el("div", { className: "workroom-survey-recommendation-row" });
-    row.appendChild(
-      el("div", {
-        className: "workroom-survey-recommendation-index",
-        textContent: String(index + 1),
-      })
-    );
-    const input = el("textarea", {
-      className: "workroom-survey-textarea",
-      rows: 2,
-      placeholder: "Enter a recommendation bullet...",
-      value: item.text || "",
-      oninput: (event) => {
-        item.text = event.target.value;
-        queueWorkroomSurveyDraftSave();
-        if (typeof autoResizeTextarea === "function") {
-          autoResizeTextarea(event.target);
-        }
-      },
-    });
-    row.appendChild(input);
-    const controls = el("div", { className: "workroom-survey-inline-actions" });
-    controls.appendChild(
-      el("button", {
-        className: "btn tiny ghost",
-        type: "button",
-        textContent: "Up",
-        disabled: index <= 0,
-        onclick: () => moveWorkroomSurveyRecommendationItem(item.id, -1),
-      })
-    );
-    controls.appendChild(
-      el("button", {
-        className: "btn tiny ghost",
-        type: "button",
-        textContent: "Down",
-        disabled: index >= items.length - 1,
-        onclick: () => moveWorkroomSurveyRecommendationItem(item.id, 1),
-      })
-    );
-    controls.appendChild(
-      el("button", {
-        className: "btn tiny ghost",
-        type: "button",
-        textContent: "Remove",
-        onclick: () => removeWorkroomSurveyRecommendationItem(item.id),
-      })
-    );
-    row.appendChild(controls);
-    list.appendChild(row);
-  });
-  container.appendChild(list);
-}
-
-function renderWorkroomSurveyPhase() {
-  const summaryEl = document.getElementById("workroomSurveySummary");
-  const contentEl = document.getElementById("workroomSurveyContent");
-  const launchBtn = document.getElementById("workroomSurveyLaunchBtn");
-  const templateBtn = document.getElementById("workroomSurveyTemplateBtn");
-  if (!summaryEl || !contentEl || !launchBtn || !templateBtn) return;
-
-  if (typeof setUtilityPlanShellHost === "function") {
-    setUtilityPlanShellHost("dialog");
-  }
-  summaryEl.innerHTML = "";
-  contentEl.innerHTML = "";
-
-  const { project, deliverable } = getActiveWorkroomContext();
-  launchBtn.hidden = true;
-  launchBtn.disabled = true;
-  launchBtn.onclick = null;
-
-  if (!project || !deliverable) {
-    templateBtn.disabled = true;
-    templateBtn.onclick = null;
-    contentEl.innerHTML =
-      "<div class='chk-empty-state'>Select a deliverable to build the survey report.</div>";
-    if (typeof setUtilityPlanShellHost === "function") {
-      setUtilityPlanShellHost("dialog");
-    }
-    return;
-  }
-
-  templateBtn.hidden = false;
-  templateBtn.disabled = false;
-  templateBtn.onclick = async () => {
-    await triggerWorkroomTool("toolCreateElectricalSurveyTemplate");
-  };
-
-  const surveyPage = getWorkroomSurveyPageMeta(getActiveWorkroomSurveyPage());
-  const surveyPageIndex = WORKROOM_SURVEY_PAGE_OPTIONS.findIndex(
-    (page) => page.value === surveyPage.value
-  );
-  const draftReady =
-    utilityPlanProjectIndex === Number(activeChecklistProject) &&
-    !!getWorkroomSurveyDraft();
-  void ensureWorkroomSurveyDraftLoaded();
-
-  const stepRow = el("div", { className: "workroom-survey-step-row" });
-  WORKROOM_SURVEY_PAGE_OPTIONS.forEach((page, index) => {
-    const isActive = page.value === surveyPage.value;
-    const button = el(
-      "button",
-      {
-        type: "button",
-        className: `workroom-survey-step ${isActive ? "is-active" : ""}`.trim(),
-        onclick: () => setWorkroomSurveyPage(page.value),
-      },
-      []
-    );
-    button.appendChild(
-      el("span", {
-        className: "workroom-survey-step-index",
-        textContent: String(index + 1),
-      })
-    );
-    button.appendChild(
-      el("span", {
-        className: "workroom-survey-step-label",
-        textContent: page.label,
-      })
-    );
-    stepRow.appendChild(button);
-  });
-  summaryEl.appendChild(stepRow);
-
-  const pageShell = el("section", { className: "workroom-survey-page-shell" });
-  const header = el("div", { className: "workroom-survey-page-header" });
-  const titleWrap = el("div", { className: "workroom-survey-page-title-wrap" });
-  titleWrap.appendChild(
-    el("div", {
-      className: "workroom-survey-page-eyebrow",
-      textContent: `Step ${surveyPageIndex + 1} of ${WORKROOM_SURVEY_PAGE_OPTIONS.length}`,
-    })
-  );
-  titleWrap.appendChild(
-    el("div", {
-      className: "workroom-survey-page-title",
-      textContent: surveyPage.title,
-    })
-  );
-  titleWrap.appendChild(
-    el("div", {
-      className: "workroom-survey-page-description",
-      textContent: surveyPage.description,
-    })
-  );
-  header.appendChild(titleWrap);
-  const nav = el("div", { className: "workroom-page-shell-nav" });
-  nav.appendChild(
-    el("button", {
-      className: "btn tiny ghost",
-      type: "button",
-      textContent: "Previous",
-      disabled: surveyPageIndex <= 0,
-      onclick: () => stepWorkroomSurveyPage(-1),
-    })
-  );
-  nav.appendChild(
-    el("button", {
-      className: "btn tiny",
-      type: "button",
-      textContent: "Next",
-      disabled: surveyPageIndex >= WORKROOM_SURVEY_PAGE_OPTIONS.length - 1,
-      onclick: () => stepWorkroomSurveyPage(1),
-    })
-  );
-  header.appendChild(nav);
-  pageShell.appendChild(header);
-
-  const body = el("div", { className: "workroom-survey-page-body" });
-  pageShell.appendChild(body);
-
-  if (surveyPage.value !== "utility_plan" && typeof setUtilityPlanShellHost === "function") {
-    setUtilityPlanShellHost("dialog");
-  }
-
-  if (surveyPage.value === "utility_plan") {
-    renderWorkroomSurveyUtilityPlanPage(body, draftReady);
-  } else if (surveyPage.value === "photos") {
-    renderWorkroomSurveyPhotosPage(body, draftReady);
-  } else if (surveyPage.value === "findings") {
-    renderWorkroomSurveyFindingsPage(body, draftReady);
-  } else {
-    renderWorkroomSurveyRecommendationsPage(body, draftReady);
-  }
-
-  contentEl.appendChild(pageShell);
-}
-
-function createWorkroomScopeInputField({
-  fieldKey = "",
-  label = "",
-  helpText = "",
-  value = "",
-  options = [],
-  inputType = "select",
-  placeholder = "",
-  onChange = null,
-  onCommit = null,
-} = {}) {
-  const field = el("label", { className: "workroom-scope-field" });
-  const copy = el("div", { className: "workroom-scope-field-copy" });
-  copy.appendChild(
-    el("span", {
-      className: "workroom-scope-field-label",
-      textContent: label || "Field",
-    })
-  );
-  if (helpText) {
-    copy.appendChild(
-      el("span", {
-        className: "workroom-scope-field-help",
-        textContent: helpText,
-      })
-    );
-  }
-
-  if (inputType === "number") {
-    const input = el("input", {
-      type: "text",
-      inputMode: "decimal",
-      className: "workroom-scope-select workroom-scope-input",
-      value: value || "",
-      placeholder: placeholder || "Enter value...",
-    });
-    input.oninput = () => {
-      input.value = input.value.replace(/[^0-9.,]/g, "");
-    };
-    input.onblur = () => {
-      const normalizedValue = normalizeChecklistScopeNumberValue(input.value);
-      input.value = normalizedValue;
-      if (typeof onCommit === "function") {
-        onCommit(normalizedValue, fieldKey);
-      } else if (typeof onChange === "function") {
-        onChange(normalizedValue, fieldKey);
-      }
-    };
-    field.append(copy, input);
-    return field;
-  }
-
-  const select = el("select", {
-    className: "workroom-scope-select",
-    value: value || "",
-    onchange: (event) => {
-      if (typeof onChange === "function") {
-        onChange(event.target.value, fieldKey);
-      }
-    },
-  });
-  select.appendChild(
-    el("option", {
-      value: "",
-      textContent: placeholder || "Select...",
-    })
-  );
-  (Array.isArray(options) ? options : []).forEach((option) => {
-    select.appendChild(
-      el("option", {
-        value: option.value,
-        textContent: option.label,
-        selected: String(option.value || "") === String(value || ""),
-      })
-    );
-  });
-  field.append(copy, select);
-  return field;
-}
-
-function renderWorkroomScopePanel() {
-  const titleEl = document.getElementById("workroomPreDesignPageTitle");
-  const indicatorEl = document.getElementById("workroomPreDesignPageIndicator");
-  const summaryEl = document.getElementById("workroomPreDesignSummary");
-  const contentEl = document.getElementById("workroomPreDesignContent");
-  const prevBtn = document.getElementById("workroomPreDesignPrevPageBtn");
-  const nextBtn = document.getElementById("workroomPreDesignNextPageBtn");
-  if (!titleEl || !indicatorEl || !summaryEl || !contentEl || !prevBtn || !nextBtn) return;
-
-  contentEl.innerHTML = "";
-  const { project, deliverable } = getActiveWorkroomContext();
-  if (!project || !deliverable) {
-    contentEl.innerHTML =
-      "<div class='chk-empty-state'>Select a deliverable to define the checklist scope.</div>";
-    return;
-  }
-
-  const answerState = buildChecklistScopeAnswerState(project, deliverable);
-  const answeredCount = getChecklistScopeAnsweredCount(answerState);
-  activeWorkroomPreDesignPage = Math.min(
-    Math.max(Number(activeWorkroomPreDesignPage) || 0, 0),
-    WORKROOM_PRE_DESIGN_PAGES.length - 1
-  );
-  const currentPage = WORKROOM_PRE_DESIGN_PAGES[activeWorkroomPreDesignPage];
-  const pageFields = ACIES_ELECTRICAL_SCOPE_FIELD_CONFIG.filter(
-    (field) => field.section === currentPage.key
-  );
-
-  titleEl.textContent = currentPage.title;
-  indicatorEl.textContent = `Page ${activeWorkroomPreDesignPage + 1} of ${WORKROOM_PRE_DESIGN_PAGES.length}`;
-  prevBtn.disabled = activeWorkroomPreDesignPage <= 0;
-  nextBtn.disabled = activeWorkroomPreDesignPage >= WORKROOM_PRE_DESIGN_PAGES.length - 1;
-  prevBtn.onclick = () => {
-    if (activeWorkroomPreDesignPage <= 0) return;
-    activeWorkroomPreDesignPage -= 1;
-    renderWorkroomScopePanel();
-  };
-  nextBtn.onclick = () => {
-    if (activeWorkroomPreDesignPage >= WORKROOM_PRE_DESIGN_PAGES.length - 1) return;
-    activeWorkroomPreDesignPage += 1;
-    renderWorkroomScopePanel();
-  };
-
-  summaryEl.innerHTML = "";
-  summaryEl.appendChild(
-    createWorkroomSummaryMetric(
-      "Answered",
-      `${answeredCount}/${ACIES_ELECTRICAL_SCOPE_FIELD_KEYS.length}`,
-      true
-    )
-  );
-  summaryEl.appendChild(
-    createWorkroomSummaryMetric(
-      "Work Type",
-      getChecklistOptionLabel(
-        ACIES_ELECTRICAL_SCOPE_PROJECT_DELIVERY_OPTIONS,
-        answerState.projectDeliveryType
-      ) || "Not set"
-    )
-  );
-  summaryEl.appendChild(
-    createWorkroomSummaryMetric(
-      "Occupancy",
-      getChecklistOptionLabel(
-        ACIES_ELECTRICAL_SCOPE_OCCUPANCY_OPTIONS,
-        answerState.occupancyFamily
-      ) || "Not set"
-    )
-  );
-
-  const intro = el("div", { className: "workroom-phase-intro-card" });
-  intro.appendChild(
-    el("div", {
-      className: "workroom-phase-intro-title",
-      textContent: currentPage.title,
-    })
-  );
-  intro.appendChild(
-    el("div", {
-      className: "workroom-phase-intro-copy",
-      textContent:
-        `${currentPage.description} These answers are shared across every deliverable on the project.`,
-    })
-  );
-  contentEl.appendChild(intro);
-
-  const questionnaireCard = el("div", { className: "workroom-scope-card" });
-  questionnaireCard.appendChild(
-    el("div", {
-      className: "workroom-scope-card-title",
-      textContent: "Project Questionnaire",
-    })
-  );
-  questionnaireCard.appendChild(
-    el("div", {
-      className: "workroom-scope-card-copy",
-      textContent:
-        "Leave a field blank if you are unsure. The walkthrough saves these answers project-wide for every deliverable.",
-    })
-  );
-  const grid = el("div", { className: "workroom-scope-grid" });
-  pageFields.forEach((field) => {
-    grid.appendChild(
-      createWorkroomScopeInputField({
-        fieldKey: field.key,
-        label: field.label,
-        helpText: field.helpText,
-        value: answerState[field.key],
-        options: field.options,
-        inputType: field.inputType || "select",
-        placeholder: field.inputType === "number" ? "Enter value..." : "Select...",
-        onChange: (nextValue) => {
-          if (!updateProjectChecklistScopeAnswer(project, field.key, nextValue)) return;
-          persistWorkroomScopeChange();
-        },
-        onCommit: (nextValue) => {
-          if (!updateProjectChecklistScopeAnswer(project, field.key, nextValue)) return;
-          persistWorkroomScopeChange();
-        },
-      })
-    );
-  });
-  questionnaireCard.appendChild(grid);
-  contentEl.appendChild(questionnaireCard);
-}
-
-function renderWorkroomChecklistPhase(phaseValue) {
-  const introEl = document.getElementById("workroomChecklistIntro");
-  const summaryEl = document.getElementById("workroomIssueSummary");
-  const tabsEl = document.getElementById("workroomChecklistTabs");
-  const addWrapEl = document
-    .getElementById("workroomChecklistAddSelect")
-    ?.closest(".workroom-checklist-add");
-  if (!introEl || !summaryEl) return;
-
-  const { project, deliverable } = getActiveWorkroomContext();
-  const config = getWorkroomPhaseChecklistConfig(phaseValue);
-  const checklistEntry = getWorkroomPhaseChecklistEntry(phaseValue);
-  introEl.innerHTML = "";
-  summaryEl.innerHTML = "";
-
-  if (!project || !deliverable || !config || !checklistEntry) {
-    introEl.textContent = "Select a deliverable to continue.";
-    const itemsContainer = document.getElementById("workroomChecklistItems");
-    if (itemsContainer) {
-      itemsContainer.innerHTML =
-        "<div class='chk-empty-state'>Select a deliverable to view this phase checklist.</div>";
-    }
-    return;
-  }
-
-  introEl.appendChild(
-    el("div", { className: "workroom-phase-intro-title", textContent: config.title })
-  );
-  introEl.appendChild(
-    el("div", {
-      className: "workroom-phase-intro-copy",
-      textContent: config.intro,
-    })
-  );
-
-  const answerState = buildChecklistScopeAnswerState(project, deliverable);
-  summaryEl.appendChild(
-    createWorkroomSummaryMetric(
-      "Due",
-      deliverable.due ? humanDate(deliverable.due) : "No due date",
-      true
-    )
-  );
-  summaryEl.appendChild(
-    createWorkroomSummaryMetric(
-      "Scope Answers",
-      `${getChecklistScopeAnsweredCount(answerState)}/${ACIES_ELECTRICAL_SCOPE_FIELD_KEYS.length}`
-    )
-  );
-  summaryEl.appendChild(
-    createWorkroomSummaryMetric(
-      "Issue Stage",
-      getChecklistOptionLabel(CHECKLIST_ISSUE_STAGE_OPTIONS, answerState.issueStage) || "Unassigned"
-    )
-  );
-  summaryEl.appendChild(
-    createWorkroomSummaryMetric(
-      "CAD Discipline",
-      ensureWorkroomCadDiscipline(deliverable, getWorkroomAvailableDisciplines())
-    )
-  );
-
-  if (phaseValue === "preflight") {
-    const issueStageCard = el("div", { className: "workroom-phase-summary-card" });
-    issueStageCard.appendChild(
-      createWorkroomScopeInputField({
-        fieldKey: "issueStage",
-        label: "Issue Stage",
-        helpText:
-          "Set the outgoing issue context for this deliverable before running publish actions.",
-        value: answerState.issueStage,
-        options: CHECKLIST_ISSUE_STAGE_OPTIONS,
-        onChange: (nextValue) => {
-          if (!updateDeliverableChecklistIssueStage(deliverable, nextValue)) return;
-          debouncedSave();
-          renderWorkroomChecklistPhase(phaseValue);
-        },
-      })
-    );
-    summaryEl.appendChild(issueStageCard);
-  }
-
-  renderWorkroomChecklistPanel();
-  if (tabsEl) {
-    tabsEl.hidden = checklistModalState.appliedTabs.length <= 1;
-  }
-  if (addWrapEl) {
-    addWrapEl.hidden = true;
-  }
-}
-
-function renderWorkroomPostPermitPhase() {
-  const controlsEl = document.getElementById("workroomPostPermitControls");
-  const narrativeBtn = document.getElementById("workroomNarrativeTemplateBtn");
-  const planCheckBtn = document.getElementById("workroomPlanCheckTemplateBtn");
-  if (!controlsEl || !narrativeBtn || !planCheckBtn) return;
-
-  controlsEl.innerHTML = "";
-  const { deliverable } = getActiveWorkroomContext();
-  if (!deliverable) {
-    controlsEl.innerHTML =
-      "<div class='chk-empty-state'>Select a deliverable to configure the return package.</div>";
-    return;
-  }
-
-  const context = ensureDeliverableChecklistContext(deliverable);
-  controlsEl.appendChild(
-    createWorkroomScopeInputField({
-      fieldKey: "workroomReturnType",
-      label: "Return Type",
-      helpText: "Track whether this follow-up is plan check, service change, or bulletin work.",
-      value: deliverable.workroomReturnType,
-      options: WORKROOM_RETURN_TYPE_OPTIONS.filter((option) => option.value),
-      placeholder: "Select return type...",
-      onChange: (nextValue) => {
-        if (!updateDeliverableWorkroomReturnType(deliverable, nextValue)) return;
-        debouncedSave();
-        renderWorkroomPostPermitPhase();
-      },
-    })
-  );
-  controlsEl.appendChild(
-    createWorkroomScopeInputField({
-      fieldKey: "issueStage",
-      label: "Issue Stage",
-      helpText: "Keep the set context aligned with the outgoing revision package.",
-      value: context.issueStage,
-      options: CHECKLIST_ISSUE_STAGE_OPTIONS,
-      onChange: (nextValue) => {
-        if (!updateDeliverableChecklistIssueStage(deliverable, nextValue)) return;
-        debouncedSave();
-        renderWorkroomPostPermitPhase();
-      },
-    })
-  );
-
-  narrativeBtn.onclick = async () => {
-    await triggerWorkroomTool("toolCreateNarrativeTemplate");
-  };
-  planCheckBtn.onclick = async () => {
-    await triggerWorkroomTool("toolCreatePlanCheckTemplate");
-  };
-}
-
-function renderWorkroomPhaseContent() {
-  const phaseValue = getActiveWorkroomPhase();
-  const surveySection = document.getElementById("workroomSurveySection");
-  const preDesignSection = document.getElementById("workroomPreDesignSection");
-  const checklistSection = document.getElementById("workroomChecklistSection");
-  const postPermitSection = document.getElementById("workroomPostPermitSection");
-  const designNotesSection = document.getElementById("workroomDesignGeneralNotesSection");
-  if (!surveySection || !preDesignSection || !checklistSection || !postPermitSection) return;
-  syncWorkroomPhaseLayout(phaseValue);
-
-  surveySection.hidden = phaseValue !== "survey_report";
-  preDesignSection.hidden = phaseValue !== "pre_design";
-  checklistSection.hidden = !(phaseValue === "design" || phaseValue === "preflight");
-  postPermitSection.hidden = phaseValue !== "post_permit";
-  if (designNotesSection) {
-    designNotesSection.hidden = phaseValue !== "design";
-  }
-  checklistSection.classList.toggle("workroom-phase-section-scrollable", phaseValue === "design");
-
-  if (phaseValue === "survey_report") {
-    renderWorkroomSurveyPhase();
-    return;
-  }
-  if (typeof setUtilityPlanShellHost === "function") {
-    setUtilityPlanShellHost("dialog");
-  }
-  if (phaseValue === "pre_design") {
-    renderWorkroomScopePanel();
-    return;
-  }
-  if (phaseValue === "design" || phaseValue === "preflight") {
-    renderWorkroomChecklistPhase(phaseValue);
-    return;
-  }
-  renderWorkroomPostPermitPhase();
-}
-
-function createWorkroomChecklistStatusBadge(evaluation) {
-  if (!evaluation?.badge) return null;
-  const tone =
-    evaluation.manualOverride === "show"
-      ? "is-manual-show"
-      : evaluation.manualOverride === "hide"
-        ? "is-manual-hide"
-        : evaluation.visibility === "unresolved"
-          ? "is-unresolved"
-          : evaluation.visibility === "filtered"
-            ? "is-filtered"
-            : "";
-  return el("span", {
-    className: `workroom-checklist-status-badge ${tone}`.trim(),
-    textContent: evaluation.badge,
-    title: evaluation.reason || evaluation.badge,
-  });
-}
-
-function setChecklistApplicabilityOverride(instanceIndex, itemId, nextValue) {
-  const { deliverable } = getActiveWorkroomContext();
-  const instance = deliverable?.appliedChecklists?.[instanceIndex];
-  if (!instance || !itemId) return;
-
-  if (
-    !instance.applicabilityOverrides ||
-    typeof instance.applicabilityOverrides !== "object" ||
-    Array.isArray(instance.applicabilityOverrides)
-  ) {
-    instance.applicabilityOverrides = {};
-  }
-
-  const normalizedValue =
-    nextValue === "show" || nextValue === "hide" ? nextValue : "";
-  if (normalizedValue) {
-    instance.applicabilityOverrides[itemId] = normalizedValue;
-  } else {
-    delete instance.applicabilityOverrides[itemId];
-  }
-  if (!Object.keys(instance.applicabilityOverrides).length) {
-    instance.applicabilityOverrides = {};
-  }
-
-  save();
-  renderWorkroomChecklistPanel();
-  renderWorkroomPhaseContent();
-}
-
-function createWorkroomChecklistOverrideActions(instanceIndex, itemId, evaluation, checklist) {
-  if (!isAciesElectricalChecklist(checklist) || !itemId) return null;
-
-  let label = "";
-  let nextValue = "";
-  if (evaluation?.manualOverride) {
-    label = "Clear override";
-  } else if (evaluation?.visibility === "filtered") {
-    label = "Show anyway";
-    nextValue = "show";
-  } else {
-    label = "Hide for this deliverable";
-    nextValue = "hide";
-  }
-
-  const actions = el("div", { className: "workroom-checklist-row-actions" });
-  actions.appendChild(
-    el("button", {
-      className: "btn tiny ghost workroom-checklist-override-btn",
-      type: "button",
-      textContent: label,
-      onclick: (event) => {
-        event.stopPropagation();
-        setChecklistApplicabilityOverride(instanceIndex, itemId, nextValue);
-      },
-    })
-  );
-  return actions;
-}
-
-function createWorkroomChecklistRow(entry, checklist, instanceIndex) {
-  const { item, number, isCompleted, evaluation } = entry;
-  const isFiltered = evaluation?.visibility === "filtered";
-  const row = el("div", {
-    className: `checklist-modal-item ${isCompleted ? "checked" : ""} ${
-      isFiltered ? "is-filtered" : ""
-    } ${evaluation?.visibility === "unresolved" ? "is-unresolved" : ""} ${
-      evaluation?.manualOverride === "show" ? "is-manual-show" : ""
-    } ${evaluation?.manualOverride === "hide" ? "is-manual-hide" : ""}`.replace(/\s+/g, " ").trim(),
-    title: evaluation?.reason || "",
-  });
-
-  if (!isFiltered) {
-    row.onclick = () => toggleWorkroomChecklistItem(instanceIndex, checklist.id, item.id);
-  }
-
-  const checkLabel = el("label", { className: "custom-check" });
-  checkLabel.addEventListener("click", (event) => event.stopPropagation());
-  const checkbox = el("input", {
-    type: "checkbox",
-    checked: isCompleted,
-    disabled: isFiltered,
-    onchange: () => toggleWorkroomChecklistItem(instanceIndex, checklist.id, item.id),
-  });
-  const checkmarkSpan = el("span", { className: "checkmark" });
-  checkLabel.append(checkbox, checkmarkSpan);
-
-  const content = el("div", { className: "checklist-modal-item-content" });
-  content.appendChild(
-    el("span", {
-      className: "checklist-modal-item-order",
-      textContent: String(number),
-    })
-  );
-
-  const rowBody = el("div", { className: "workroom-checklist-row-body" });
-  rowBody.appendChild(
-    el("span", {
-      className: "checklist-modal-item-text",
-      textContent: item.text,
-    })
-  );
-
-  const metaRow = el("div", { className: "workroom-checklist-row-meta" });
-  const badge = createWorkroomChecklistStatusBadge(evaluation);
-  if (badge) metaRow.appendChild(badge);
-  const actions = createWorkroomChecklistOverrideActions(
-    instanceIndex,
-    item.id,
-    evaluation,
-    checklist
-  );
-  if (actions) metaRow.appendChild(actions);
-  if (metaRow.childNodes.length) {
-    rowBody.appendChild(metaRow);
-  }
-
-  content.appendChild(rowBody);
-  row.append(checkLabel, content);
-  return row;
-}
-
-function renderWorkroomChecklistPanel() {
-  const itemsContainer = document.getElementById("workroomChecklistItems");
-  if (!itemsContainer) return;
-
-  renderWorkroomChecklistTabs();
-
-  const { deliverable } = getActiveWorkroomContext();
-  if (!deliverable) {
-    itemsContainer.innerHTML = "<div class='chk-empty-state'>Select a deliverable to view checklists.</div>";
-    setWorkroomChecklistProgress(0, 0);
-    return;
-  }
-
-  if (!checklistModalState.appliedTabs.length) {
-    itemsContainer.innerHTML =
-      "<div class='chk-empty-state'>No checklists applied. Use the add checklist dropdown.</div>";
-    setWorkroomChecklistProgress(0, 0);
-    return;
-  }
-
-  const activeTab =
-    checklistModalState.appliedTabs.find(
-      (tab) => tab.instanceId === checklistModalState.activeInstanceId
-    ) || checklistModalState.appliedTabs[0];
-
-  checklistModalState.activeInstanceId = activeTab.instanceId;
-  activeChecklistView = activeTab.instanceId;
-
-  const instance = deliverable.appliedChecklists?.[activeTab.instanceIndex];
-  const checklist = getChecklistById(activeTab.checklistId);
-  if (!instance || !checklist) {
-    itemsContainer.innerHTML = "<div class='chk-empty-state'>Checklist instance not found.</div>";
-    setWorkroomChecklistProgress(0, 0);
-    return;
-  }
-
-  renderWorkroomChecklistItems(itemsContainer, instance, checklist, activeTab.instanceIndex);
-}
-
-function renderWorkroomChecklistTabs() {
-  const tabsContainer = document.getElementById("workroomChecklistTabs");
-  const addSelect = document.getElementById("workroomChecklistAddSelect");
-  if (!tabsContainer || !addSelect) return;
-
-  tabsContainer.innerHTML = "";
-
-  const { deliverable } = getActiveWorkroomContext();
-  if (!deliverable) {
-    addSelect.disabled = true;
-    addSelect.innerHTML = '<option value="">+ Add Checklist...</option>';
-    return;
-  }
-
-  checklistModalState.appliedTabs.forEach((tab, tabIndex) => {
-    const checklist = getChecklistById(tab.checklistId);
-    const instance = deliverable.appliedChecklists?.[tab.instanceIndex];
-    const visibilitySummary = buildWorkroomChecklistViewModel(
-      getActiveWorkroomContext().project,
-      deliverable,
-      instance,
-      checklist
-    ).summary;
-    const totalCount = visibilitySummary.visibleTotal;
-    const completedCount = visibilitySummary.visibleCompletedTotal;
-    const isActive = tab.instanceId === checklistModalState.activeInstanceId;
-
-    const tabBtn = el("button", {
-      className: `workroom-checklist-tab ${isActive ? "active" : ""}`,
-      type: "button",
-      onclick: () => {
-        checklistModalState.activeInstanceId = tab.instanceId;
-        activeChecklistView = tab.instanceId;
-        renderWorkroomChecklistPanel();
-      },
-    });
-    tabBtn.appendChild(
-      el("span", {
-        className: "workroom-checklist-tab-label",
-        textContent: checklist?.name || "Checklist",
-      })
-    );
-    tabBtn.appendChild(
-      el("span", {
-        className: "workroom-checklist-tab-badge",
-        textContent: `${completedCount}/${totalCount}`,
-      })
-    );
-
-    const removeBtn = el("button", {
-      className: "workroom-checklist-remove icon-btn mini",
-      type: "button",
-      title: "Remove checklist",
-      "aria-label": "Remove checklist",
-      onclick: (e) => {
-        e.stopPropagation();
-        if (confirm(`Remove "${checklist?.name || "checklist"}" from this deliverable?`)) {
-          removeChecklistInstance(tabIndex);
-        }
-      },
-    });
-    removeBtn.textContent = "x";
-    tabBtn.appendChild(removeBtn);
-    tabsContainer.appendChild(tabBtn);
-  });
-
-  const availableCount = populateWorkroomChecklistAddSelect();
-  addSelect.disabled = availableCount === 0;
-  addSelect.onchange = (e) => {
-    const checklistId = e.target.value;
-    if (!checklistId) return;
-    addWorkroomChecklistInstance(checklistId);
-    e.target.value = "";
-  };
-}
-
-function populateWorkroomChecklistAddSelect() {
-  const select = document.getElementById("workroomChecklistAddSelect");
-  if (!select) return 0;
-
-  const currentIds = checklistModalState.appliedTabs.map((tab) => tab.checklistId);
-  select.innerHTML = '<option value="">+ Add Checklist...</option>';
-  let availableCount = 0;
-
-  checklistsDb.checklists.forEach((checklist) => {
-    if (currentIds.includes(checklist.id)) return;
-    availableCount += 1;
-    select.appendChild(
-      el("option", {
-        value: checklist.id,
-        textContent: checklist.name,
-      })
-    );
-  });
-  return availableCount;
-}
-
-function addWorkroomChecklistInstance(checklistId) {
-  const { project, deliverable } = getActiveWorkroomContext();
-  if (!project || !deliverable) return null;
-
-  if (!Array.isArray(deliverable.appliedChecklists)) {
-    deliverable.appliedChecklists = [];
-  }
-  if (deliverable.appliedChecklists.some((instance) => instance.checklistId === checklistId)) {
-    toast("Checklist already added to this deliverable.");
-    return null;
-  }
-
-  const instance = {
-    instanceId: generateChecklistInstanceId(),
-    checklistId,
-    completedItems: [],
-    itemNotes: {},
-    applicabilityOverrides: {},
-  };
-  deliverable.appliedChecklists.push(instance);
-  save();
-
-  initChecklistModalTabs(project, activeChecklistDeliverable);
-  checklistModalState.activeInstanceId = instance.instanceId;
-  activeChecklistView = instance.instanceId;
-  renderWorkroomChecklistPanel();
-  renderWorkroomPhaseContent();
-  return instance;
-}
-
-function removeChecklistInstance(tabIndex) {
-  const tab = checklistModalState.appliedTabs[tabIndex];
-  if (!tab) return;
-
-  const { project, deliverable } = getActiveWorkroomContext();
-  if (!project || !deliverable || !Array.isArray(deliverable.appliedChecklists)) return;
-
-  deliverable.appliedChecklists.splice(tab.instanceIndex, 1);
-  save();
-
-  initChecklistModalTabs(project, activeChecklistDeliverable);
-  renderWorkroomChecklistPanel();
-  renderWorkroomPhaseContent();
-}
-
-function renderWorkroomChecklistItems(container, instance, checklist, instanceIndex) {
-  container.innerHTML = "";
-
-  const { project, deliverable } = getActiveWorkroomContext();
-  const viewModel = buildWorkroomChecklistViewModel(
-    project,
-    deliverable,
-    instance,
-    checklist
-  );
-  const checklistSections = viewModel.sections;
-
-  if (!checklistSections.length) {
-    container.innerHTML = "<div class='chk-empty-state'>This checklist has no items.</div>";
-    setWorkroomChecklistProgress(0, 0);
-    return;
-  }
-
-  checklistSections.forEach((section) => {
-    const sectionEl = el("div", {
-      className: `workroom-checklist-section ${
-        section.header ? "" : "workroom-checklist-section-untitled"
-      }`,
-    });
-
-    if (section.header) {
-      const header = el("div", { className: "checklist-section-header" });
-      const title = el("div", { className: "checklist-section-title" });
-      title.appendChild(
-        el("span", {
-          className: "checklist-section-marker",
-          "aria-hidden": "true",
-        })
-      );
-      title.appendChild(
-        el("span", {
-          textContent: section.header.text || "Section",
-        })
-      );
-      header.appendChild(title);
-      sectionEl.appendChild(header);
-    }
-
-    const body = el("div", { className: "checklist-section-body" });
-    section.visibleItems.forEach((entry) => {
-      body.appendChild(createWorkroomChecklistRow(entry, checklist, instanceIndex));
-    });
-
-    if (section.filteredItems.length) {
-      const filteredGroup = el("div", { className: "workroom-checklist-filtered-group" });
-      filteredGroup.appendChild(
-        el("div", {
-          className: "workroom-checklist-filtered-title",
-          textContent: `Filtered for this project (${section.filteredItems.length})`,
-        })
-      );
-      const filteredList = el("div", { className: "workroom-checklist-filtered-items" });
-      section.filteredItems.forEach((entry) => {
-        filteredList.appendChild(createWorkroomChecklistRow(entry, checklist, instanceIndex));
-      });
-      filteredGroup.appendChild(filteredList);
-      body.appendChild(filteredGroup);
-    }
-
-    sectionEl.appendChild(body);
-    container.appendChild(sectionEl);
-  });
-
-  setWorkroomChecklistProgress(
-    viewModel.summary.visibleCompletedTotal,
-    viewModel.summary.visibleTotal
-  );
-}
-
-function toggleWorkroomChecklistItem(instanceIndex, checklistId, itemId) {
-  const { deliverable } = getActiveWorkroomContext();
-  const instance = deliverable?.appliedChecklists?.[instanceIndex];
-  const checklist = getChecklistById(checklistId);
-  const item = checklist?.items?.find((entry) => entry.id === itemId);
-  if (!instance || !item || isChecklistSubheader(item)) return;
-
-  if (!Array.isArray(instance.completedItems)) {
-    instance.completedItems = [];
-  }
-
-  const idx = instance.completedItems.indexOf(itemId);
-  if (idx >= 0) {
-    instance.completedItems.splice(idx, 1);
-  } else {
-    instance.completedItems.push(itemId);
-  }
-
-  save();
-  renderWorkroomChecklistPanel();
-}
-
-function setWorkroomChecklistProgress(done, total) {
-  const countEl = document.getElementById("workroomChecklistProgressCount");
-  const fillEl = document.getElementById("workroomChecklistProgressFill");
-  if (countEl) countEl.textContent = `${done}/${total}`;
-  if (fillEl) fillEl.style.width = total > 0 ? `${(done / total) * 100}%` : "0%";
-}
-
-function renderWorkroomTasksPanel() {
-  const addTaskBtn = document.getElementById("workroomAddTaskBtn");
-  const container = document.getElementById("workroomTasksContainer");
-  if (!addTaskBtn || !container) return;
-
-  const { deliverable } = getActiveWorkroomContext();
-  if (!deliverable) {
-    addTaskBtn.disabled = true;
-    addTaskBtn.onclick = null;
-    container.innerHTML = "<div class='chk-empty-state'>Select a deliverable to manage tasks.</div>";
-    setWorkroomTaskProgress(0, 0);
-    return;
-  }
-
-  addTaskBtn.disabled = false;
-  addTaskBtn.onclick = () => {
-    if (!Array.isArray(deliverable.tasks)) {
-      deliverable.tasks = [];
-    }
-    deliverable.tasks.push({ text: "New task", done: false, link: "", link2: "" });
-    save();
-    renderWorkroomTasksPanel();
-    setTimeout(() => {
-      const inputs = container.querySelectorAll(".checklist-task-text-input");
-      const last = inputs[inputs.length - 1];
-      if (last) {
-        last.focus();
-        last.select();
-      }
-    }, 20);
-  };
-
-  if (!Array.isArray(deliverable.tasks) || deliverable.tasks.length === 0) {
-    container.innerHTML = "<div class='chk-empty-state'>No tasks yet.</div>";
-    setWorkroomTaskProgress(0, 0);
-    return;
-  }
-
-  container.innerHTML = "";
-  deliverable.tasks.forEach((task, taskIndex) => {
-    const row = el("div", {
-      className: `checklist-task-row ${task.done ? "checklist-task-done" : ""}`,
-    });
-
-    const checkLabel = el("label", { className: "custom-check" });
-    const checkbox = el("input", {
-      type: "checkbox",
-      checked: !!task.done,
-      onchange: () => {
-        task.done = checkbox.checked;
-        save();
-        renderWorkroomTasksPanel();
-      },
-    });
-    checkLabel.append(checkbox, el("span", { className: "checkmark" }));
-
-    const textInput = el("input", {
-      type: "text",
-      className: "checklist-task-text-input",
-      value: task.text || "",
-      placeholder: "Task description...",
-      oninput: (e) => {
-        task.text = e.target.value;
-        debouncedSave();
-      },
-      onkeydown: (e) => {
-        if (e.key === "Enter") {
-          deliverable.tasks.splice(taskIndex + 1, 0, { text: "", done: false, link: "", link2: "" });
-          save();
-          renderWorkroomTasksPanel();
-          setTimeout(() => {
-            const inputs = container.querySelectorAll(".checklist-task-text-input");
-            if (inputs[taskIndex + 1]) inputs[taskIndex + 1].focus();
-          }, 20);
-        } else if (e.key === "Backspace" && !e.target.value) {
-          deliverable.tasks.splice(taskIndex, 1);
-          save();
-          renderWorkroomTasksPanel();
-        }
-      },
-    });
-
-    const removeBtn = el("button", {
-      className: "checklist-task-remove",
-      type: "button",
-      textContent: "x",
-      onclick: () => {
-        deliverable.tasks.splice(taskIndex, 1);
-        save();
-        renderWorkroomTasksPanel();
-      },
-    });
-
-    row.append(checkLabel, textInput, removeBtn);
-    container.appendChild(row);
-  });
-
-  const completed = deliverable.tasks.filter((task) => task.done).length;
-  setWorkroomTaskProgress(completed, deliverable.tasks.length);
-}
-
-function setWorkroomTaskProgress(done, total) {
-  const countEl = document.getElementById("workroomTaskProgressCount");
-  const fillEl = document.getElementById("workroomTaskProgressFill");
-  if (countEl) countEl.textContent = `${done}/${total}`;
-  if (fillEl) fillEl.style.width = total > 0 ? `${(done / total) * 100}%` : "0%";
-}
-
-function renderWorkroomTasksPanel() {
-  const addTaskBtn = document.getElementById("workroomAddTaskBtn");
-  const container = document.getElementById("workroomTasksContainer");
-  if (!addTaskBtn || !container) return;
-
-  const { project, deliverable } = getActiveWorkroomContext();
-  if (!deliverable) {
-    addTaskBtn.disabled = true;
-    addTaskBtn.onclick = null;
-    container.innerHTML =
-      "<div class='chk-empty-state'>Select a deliverable to manage tasks.</div>";
-    setWorkroomTaskProgress(0, 0);
-    return;
-  }
-
-  syncDeliverableWorkItemFields(deliverable);
-  addTaskBtn.disabled = false;
-  addTaskBtn.onclick = () => {
-    deliverable.tasks.push({
-      text: "New task",
-      done: false,
-      pinned: false,
-      links: [],
-      emailRefs: [],
-    });
-    save();
-    renderWorkroomTasksPanel();
-    setTimeout(() => {
-      const inputs = container.querySelectorAll(".checklist-task-text-input");
-      const last = inputs[inputs.length - 1];
-      if (last) {
-        last.focus();
-        last.select();
-      }
-    }, 20);
-  };
-
-  if (!Array.isArray(deliverable.tasks) || deliverable.tasks.length === 0) {
-    container.innerHTML = "<div class='chk-empty-state'>No tasks yet.</div>";
-    setWorkroomTaskProgress(0, 0);
-    return;
-  }
-
-  container.innerHTML = "";
-  getPinnedDeliverableTaskEntries(deliverable).forEach(({ item: task, index }) => {
-    deliverable.tasks[index] = normalizeTask(deliverable.tasks[index]);
-    const liveTask = deliverable.tasks[index];
-    const row = el("div", {
-      className: `checklist-task-row ${liveTask.done ? "checklist-task-done" : ""}`,
-    });
-
-    const checkLabel = el("label", { className: "custom-check" });
-    const checkbox = el("input", {
-      type: "checkbox",
-      checked: !!liveTask.done,
-      onchange: () => {
-        liveTask.done = checkbox.checked;
-        save();
-        renderWorkroomTasksPanel();
-      },
-    });
-    checkLabel.append(checkbox, el("span", { className: "checkmark" }));
-
-    const content = el("div", { className: "checklist-task-content" });
-    const textInput = el("input", {
-      type: "text",
-      className: "checklist-task-text-input",
-      value: liveTask.text || "",
-      placeholder: "Task description...",
-      oninput: (e) => {
-        liveTask.text = e.target.value;
-        debouncedSave();
-      },
-      onkeydown: (e) => {
-        if (e.key === "Enter") {
-          deliverable.tasks.splice(index + 1, 0, {
-            text: "",
-            done: false,
-            pinned: false,
-            links: [],
-            emailRefs: [],
-          });
-          save();
-          renderWorkroomTasksPanel();
-          setTimeout(() => {
-            const inputs = container.querySelectorAll(".checklist-task-text-input");
-            if (inputs[index + 1]) inputs[index + 1].focus();
-          }, 20);
-        } else if (e.key === "Backspace" && !e.target.value) {
-          void (async () => {
-            await clearAttachmentOwnerEmailRefs(liveTask);
-            deliverable.tasks.splice(index, 1);
-            save();
-            renderWorkroomTasksPanel();
-          })();
-        }
-      },
-    });
-    const attachments = createWorkItemAttachmentControls({
-      kind: "task",
-      owner: liveTask,
-      deliverable,
-      project,
-      persistNow: true,
-      scope: "workroom",
-    });
-
-    const pinBtn = createWorkItemPinButton({
-      pinned: !!liveTask.pinned,
-      titlePinned: "Unpin task",
-      titleUnpinned: "Pin task",
-      className: "checklist-work-item-pin",
-      onToggle: (nextPinned) => {
-        liveTask.pinned = nextPinned;
-        save();
-        renderWorkroomTasksPanel();
-      },
-    });
-    const removeBtn = el("button", {
-      className: "checklist-task-remove",
-      type: "button",
-      textContent: "x",
-      onclick: () => {
-        void (async () => {
-          await clearAttachmentOwnerEmailRefs(liveTask);
-          deliverable.tasks.splice(index, 1);
-          save();
-          renderWorkroomTasksPanel();
-        })();
-      },
-    });
-    const actions = el("div", { className: "checklist-task-actions" });
-    actions.append(pinBtn, removeBtn);
-
-    content.append(textInput, attachments);
-    row.append(checkLabel, content, actions);
-    container.appendChild(row);
-  });
-
-  const completed = deliverable.tasks.filter((task) => normalizeTask(task).done).length;
-  setWorkroomTaskProgress(completed, deliverable.tasks.length);
-}
-
-function renderWorkroomDeliverableNotesPanel() {
-  const addNoteBtn = document.getElementById("workroomAddNoteBtn");
-  const container = document.getElementById("workroomNotesContainer");
-  if (!addNoteBtn || !container) return;
-
-  const { project, deliverable } = getActiveWorkroomContext();
-  if (!deliverable) {
-    addNoteBtn.disabled = true;
-    addNoteBtn.onclick = null;
-    container.innerHTML =
-      "<div class='chk-empty-state'>Select a deliverable to manage notes.</div>";
-    return;
-  }
-
-  syncDeliverableNoteFields(deliverable);
-  addNoteBtn.disabled = false;
-  addNoteBtn.onclick = () => {
-    deliverable.noteItems.push({
-      text: "New note",
-      pinned: false,
-      links: [],
-      emailRefs: [],
-    });
-    syncDeliverableNoteFields(deliverable);
-    save();
-    renderWorkroomDeliverableNotesPanel();
-    setTimeout(() => {
-      const inputs = container.querySelectorAll(".workroom-note-text-input");
-      const last = inputs[inputs.length - 1];
-      if (last) {
-        last.focus();
-        last.select();
-      }
-    }, 20);
-  };
-
-  if (!Array.isArray(deliverable.noteItems) || deliverable.noteItems.length === 0) {
-    container.innerHTML = "<div class='chk-empty-state'>No notes yet.</div>";
-    return;
-  }
-
-  container.innerHTML = "";
-  getPinnedDeliverableNoteEntries(deliverable).forEach(({ item: noteItem, index }) => {
-    deliverable.noteItems[index] = normalizeDeliverableNoteItem(
-      deliverable.noteItems[index]
-    );
-    const liveNote = deliverable.noteItems[index];
-    const row = el("div", { className: "workroom-note-row" });
-    const icon = el("span", {
-      className: "note-icon",
-      "aria-hidden": "true",
-    });
-    icon.appendChild(createIcon(NOTE_ICON_PATH, 12));
-
-    const content = el("div", { className: "checklist-task-content" });
-    const textInput = el("input", {
-      type: "text",
-      className: "workroom-note-text-input",
-      value: liveNote.text || "",
-      placeholder: "Note text...",
-      oninput: (e) => {
-        liveNote.text = e.target.value;
-        syncDeliverableNoteFields(deliverable);
-        debouncedSave();
-      },
-      onkeydown: (e) => {
-        if (e.key === "Enter") {
-          deliverable.noteItems.splice(index + 1, 0, {
-            text: "",
-            pinned: false,
-            links: [],
-            emailRefs: [],
-          });
-          syncDeliverableNoteFields(deliverable);
-          save();
-          renderWorkroomDeliverableNotesPanel();
-          setTimeout(() => {
-            const inputs = container.querySelectorAll(".workroom-note-text-input");
-            if (inputs[index + 1]) inputs[index + 1].focus();
-          }, 20);
-        } else if (e.key === "Backspace" && !e.target.value) {
-          void (async () => {
-            await clearAttachmentOwnerEmailRefs(liveNote);
-            deliverable.noteItems.splice(index, 1);
-            syncDeliverableNoteFields(deliverable);
-            save();
-            renderWorkroomDeliverableNotesPanel();
-          })();
-        }
-      },
-    });
-    const attachments = createWorkItemAttachmentControls({
-      kind: "note",
-      owner: liveNote,
-      deliverable,
-      project,
-      persistNow: true,
-      scope: "workroom",
-    });
-
-    const pinBtn = createWorkItemPinButton({
-      pinned: !!liveNote.pinned,
-      titlePinned: "Unpin note",
-      titleUnpinned: "Pin note",
-      className: "checklist-work-item-pin",
-      onToggle: (nextPinned) => {
-        liveNote.pinned = nextPinned;
-        syncDeliverableNoteFields(deliverable);
-        save();
-        renderWorkroomDeliverableNotesPanel();
-      },
-    });
-    const removeBtn = el("button", {
-      className: "checklist-task-remove",
-      type: "button",
-      textContent: "x",
-      onclick: () => {
-        void (async () => {
-          await clearAttachmentOwnerEmailRefs(liveNote);
-          deliverable.noteItems.splice(index, 1);
-          syncDeliverableNoteFields(deliverable);
-          save();
-          renderWorkroomDeliverableNotesPanel();
-        })();
-      },
-    });
-    const actions = el("div", { className: "checklist-task-actions" });
-    actions.append(pinBtn, removeBtn);
-
-    content.append(textInput, attachments);
-    row.append(icon, content, actions);
-    container.appendChild(row);
-  });
-}
-
-function ensureActiveNoteTabSelection() {
-  if (!Array.isArray(noteTabs) || noteTabs.length === 0) {
-    noteTabs = ["General"];
-  }
-  if (!activeNoteTab || !noteTabs.includes(activeNoteTab)) {
-    activeNoteTab = noteTabs[0];
-  }
-  if (!notesDb || typeof notesDb !== "object") {
-    notesDb = {};
-  }
-  noteTabs.forEach((tab) => {
-    if (typeof notesDb[tab] !== "string") {
-      notesDb[tab] = notesDb[tab] || "";
-    }
-  });
-}
-
-function syncMainNotesFromWorkroom() {
-  updateActiveNoteTextarea();
-  const mainNotesTextarea = document.getElementById("notesTextarea");
-  if (mainNotesTextarea && activeNoteTab) {
-    mainNotesTextarea.value = notesDb[activeNoteTab] || "";
-  }
-}
-
-function renderWorkroomGeneralNotesPanel() {
-  const tabsContainer = document.getElementById("workroomNotesTabs");
-  const addBtn = document.getElementById("workroomAddNotePageBtn");
-  const notesTextarea = document.getElementById("workroomGeneralNotesTextarea");
-  const searchInput = document.getElementById("workroomNotesSearchInput");
-  const searchBtn = document.getElementById("workroomNotesSearchBtn");
-  const resultsContainer = document.getElementById("workroomNotesSearchResults");
-  if (!tabsContainer || !addBtn || !notesTextarea || !searchInput || !searchBtn || !resultsContainer)
-    return;
-
-  ensureActiveNoteTabSelection();
-  tabsContainer.innerHTML = "";
-
-  noteTabs.forEach((tabName) => {
-    const tabBtn = el("button", {
-      className: `workroom-note-tab ${tabName === activeNoteTab ? "active" : ""}`,
-      type: "button",
-      onclick: () => {
-        activeNoteTab = tabName;
-        renderWorkroomGeneralNotesPanel();
-        renderNoteTabs();
-        renderNoteSearchResults();
-      },
-    });
-    tabBtn.appendChild(
-      el("span", {
-        className: "workroom-note-tab-label",
-        textContent: tabName,
-      })
-    );
-
-    const removeBtn = el("button", {
-      className: "workroom-note-tab-remove icon-btn mini",
-      type: "button",
-      title: "Delete page",
-      "aria-label": "Delete page",
-      onclick: (e) => {
-        e.stopPropagation();
-        if (confirm(`Permanently delete page "${tabName}"?`)) {
-          const idx = noteTabs.indexOf(tabName);
-          if (idx > -1) {
-            noteTabs.splice(idx, 1);
-            delete notesDb[tabName];
-            activeNoteTab = noteTabs[Math.max(0, idx - 1)] || null;
-            ensureActiveNoteTabSelection();
-            saveNotes();
-            renderWorkroomGeneralNotesPanel();
-            renderNoteTabs();
-            renderNoteSearchResults();
-          }
-        }
-      },
-    });
-    removeBtn.textContent = "x";
-    tabBtn.appendChild(removeBtn);
-    tabsContainer.appendChild(tabBtn);
-  });
-
-  addBtn.onclick = () => {
-    const name = prompt("Enter name for new page:");
-    if (!name || !name.trim()) return;
-    const trimmed = name.trim();
-    if (noteTabs.includes(trimmed)) {
-      toast("Page name already exists.");
-      return;
-    }
-    noteTabs.push(trimmed);
-    notesDb[trimmed] = "";
-    activeNoteTab = trimmed;
-    saveNotes();
-    renderWorkroomGeneralNotesPanel();
-    renderNoteTabs();
-    renderNoteSearchResults();
-  };
-
-  searchBtn.onclick = () => {
-    renderWorkroomNoteSearchResults();
-  };
-  searchInput.onkeydown = (e) => {
-    if (e.key !== "Enter") return;
-    e.preventDefault();
-    renderWorkroomNoteSearchResults();
-  };
-
-  notesTextarea.disabled = !activeNoteTab;
-  notesTextarea.placeholder = activeNoteTab
-    ? `Enter notes for ${activeNoteTab}...`
-    : "Create a page to begin.";
-  notesTextarea.value = activeNoteTab ? notesDb[activeNoteTab] || "" : "";
-
-  notesTextarea.oninput = () => {
-    if (!activeNoteTab) return;
-    notesDb[activeNoteTab] = notesTextarea.value;
-    debouncedSaveNotes();
-    syncMainNotesFromWorkroom();
-  };
-  notesTextarea.onblur = () => {
-    if (!activeNoteTab) return;
-    notesDb[activeNoteTab] = notesTextarea.value;
-    saveNotes();
-    syncMainNotesFromWorkroom();
-  };
-
-  if ((searchInput.value || "").trim()) {
-    renderWorkroomNoteSearchResults();
-  } else {
-    resultsContainer.innerHTML = "";
-  }
-}
-
-document.getElementById("checklistDeliverableSelect")?.addEventListener("change", (e) => {
-  const project = db[activeChecklistProject];
-  if (!project) return;
-
-  activeChecklistDeliverable = Number(e.target.value);
-  initChecklistModalTabs(project, activeChecklistDeliverable);
-  renderProjectWorkroom();
-});
-
-// Close modal handler
-document.getElementById("checklistModal")?.addEventListener("close", () => {
-  activeChecklistProject = null;
-  activeChecklistDeliverable = null;
-  activeChecklistView = null;
-  activeWorkroomUtilityTab = "tasks";
-  activeWorkroomPreDesignPage = 0;
-  workroomDisciplineNoticeShown = false;
-  workroomCadFilesRequestId += 1;
-  workroomCadFilesLoadPromise = Promise.resolve();
-  setWorkroomCadFilesLoading(false);
-  setWorkroomDiscoveredCadFilePaths();
-  setWorkroomCadFilesStatus("Ready.");
-  checklistModalState.appliedTabs = [];
-  checklistModalState.activeInstanceId = null;
-  pendingCadLaunchContext = null;
-  const workroomToolsSettingsDlg = document.getElementById(
-    "workroomToolsSettingsDlg"
-  );
-  if (workroomToolsSettingsDlg?.open) {
-    workroomToolsSettingsDlg.close();
-  }
-  resetWorkroomToolStatus();
-  const workroomSearchInput = document.getElementById("workroomNotesSearchInput");
-  const workroomResults = document.getElementById("workroomNotesSearchResults");
-  if (workroomSearchInput) workroomSearchInput.value = "";
-  if (workroomResults) workroomResults.innerHTML = "";
-});
-
-// Close button handler
-document.getElementById("checklistModalCloseBtn")?.addEventListener("click", (e) => {
-  e.stopPropagation();
-  document.getElementById("checklistModal").close();
-});
-
-// Make functions globally available
-window.openChecklistModal = openChecklistModal;
-window.switchChecklistView = () => { };
 window.__aciesAutomation = {
-  openWorkroom(projectIndex = 0) {
-    const idx = Number.isInteger(Number(projectIndex)) ? Number(projectIndex) : 0;
-    openChecklistModal(idx);
-    return this.getWorkroomState();
-  },
-  closeWorkroom() {
-    const modal = document.getElementById("checklistModal");
-    if (modal?.open) modal.close();
-    return this.getWorkroomState();
-  },
-  async runWorkroomTool(toolId) {
-    await triggerWorkroomTool(toolId);
-    return this.getToolState(toolId);
-  },
   async getCadAutoSelectTrace(lineLimit = 200) {
     if (!window.pywebview?.api?.get_cad_auto_select_trace) {
       return { status: "error", message: "CAD auto-select trace API is unavailable." };
@@ -22496,77 +20167,6 @@ window.__aciesAutomation = {
       return { status: "error", message: "CAD auto-select trace API is unavailable." };
     }
     return window.pywebview.api.clear_cad_auto_select_trace();
-  },
-  getWorkroomState() {
-    const modal = document.getElementById("checklistModal");
-    const deliverableSelect = document.getElementById("checklistDeliverableSelect");
-    const project =
-      Number.isInteger(activeChecklistProject) && activeChecklistProject >= 0
-        ? db[activeChecklistProject] || null
-        : null;
-    const deliverable =
-      project && Number.isInteger(activeChecklistDeliverable) && activeChecklistDeliverable >= 0
-        ? getProjectDeliverables(project)[activeChecklistDeliverable] || null
-        : null;
-    const phaseValue = deliverable ? ensureDeliverableWorkroomPhase(deliverable) : "survey_report";
-    const openLocalBtn = document.getElementById("workroomOpenLocalProjectBtn");
-    const openServerBtn = document.getElementById("workroomOpenServerProjectBtn");
-    return {
-      modalOpen: !!modal?.open,
-      activeProjectIndex: activeChecklistProject,
-      activeDeliverableIndex: activeChecklistDeliverable,
-      deliverableOptions: deliverableSelect?.options?.length || 0,
-      workroomPhase: phaseValue,
-      workroomReturnType: normalizeWorkroomReturnType(deliverable?.workroomReturnType),
-      activeUtilityTab: normalizeWorkroomUtilityTab(activeWorkroomUtilityTab),
-      visibleUtilityTabs: getVisibleWorkroomUtilityTabs(phaseValue),
-      preDesignPage:
-        phaseValue === "pre_design" ? Number(activeWorkroomPreDesignPage) || 0 : null,
-      phaseTabCount: document.querySelectorAll("#workroomPhaseTabs .workroom-phase-tab").length,
-      recommendedToolCount: document.querySelectorAll(
-        "#workroomRecommendedToolsList .workroom-tool-item"
-      ).length,
-      anytimeToolCount: document.querySelectorAll(
-        "#workroomAnytimeToolsList .workroom-tool-item"
-      ).length,
-      cadFilesLoading: workroomCadFilesLoading,
-      discoveredCadFileCount: workroomDiscoveredCadFilePaths.length,
-      cadFilesStatus: getWorkroomCadFilesStatusText(),
-      localProjectPath: normalizeWorkroomFolderPath(project?.localProjectPath || ""),
-      serverProjectPath: getWorkroomServerProjectPath(project),
-      openLocalProjectButton: {
-        exists: !!openLocalBtn,
-        disabled: !!openLocalBtn?.disabled,
-        title: openLocalBtn?.title || "",
-      },
-      openServerProjectButton: {
-        exists: !!openServerBtn,
-        disabled: !!openServerBtn?.disabled,
-        title: openServerBtn?.title || "",
-      },
-    };
-  },
-  getToolState(toolId) {
-    const card = document.getElementById(toolId);
-    const statusEl = card?.querySelector(".tool-card-status");
-    const statusText = (statusEl?.textContent || "").trim();
-    const running = !!card?.classList.contains("running");
-    let phase = "idle";
-    if (statusText.toLowerCase().startsWith("error")) {
-      phase = "error";
-    } else if (statusText.toLowerCase().includes("done")) {
-      phase = "done";
-    } else if (running) {
-      phase = "running";
-    }
-    return {
-      toolId,
-      exists: !!card,
-      running,
-      phase,
-      statusText,
-      workroom: this.getWorkroomState(),
-    };
   },
   simulateAiResult(aiData = {}) {
     return handleAiProjectResult(aiData || {});
@@ -23271,15 +20871,6 @@ window.updateToolStatus = function (toolId, message) {
   } else if (nextMessage === "DONE") {
     footerPhase = "done";
     footerMessage = "Done.";
-  }
-
-  const checklistModal = document.getElementById("checklistModal");
-  if (checklistModal?.open) {
-    setWorkroomToolStatus({
-      toolId,
-      message: footerMessage,
-      phase: footerPhase,
-    });
   }
 
   if (!statusEl) return;
@@ -25322,20 +22913,6 @@ function removeLightingScheduleRow(rowIndex) {
   debouncedSaveLightingSchedule();
 }
 
-function openLightingScheduleFromWorkroom() {
-  const checklistModal = document.getElementById("checklistModal");
-  const projectIndex = Number(activeChecklistProject);
-  if (
-    checklistModal?.open &&
-    Number.isInteger(projectIndex) &&
-    projectIndex >= 0 &&
-    !!db[projectIndex]
-  ) {
-    setLightingScheduleProject(projectIndex);
-  }
-  openLightingSchedule();
-}
-
 async function openLightingSchedule() {
   const dlg = document.getElementById("lightingScheduleDlg");
   if (!dlg) return;
@@ -25363,20 +22940,6 @@ function closeLightingSchedule() {
   stopLightingScheduleSyncWatcher();
   if (dlg?.open) dlg.close();
   save();
-}
-
-async function openTitle24ComplianceFromWorkroom() {
-  const checklistModal = document.getElementById("checklistModal");
-  const projectIndex = Number(activeChecklistProject);
-  if (
-    checklistModal?.open &&
-    Number.isInteger(projectIndex) &&
-    projectIndex >= 0 &&
-    !!db[projectIndex]
-  ) {
-    setTitle24Project(projectIndex);
-  }
-  await openTitle24Compliance();
 }
 
 function getActiveTitle24Project() {
@@ -26738,18 +24301,6 @@ function initEventListeners() {
 
   initToolCardDetailsToggles();
 
-  const workroomToolsSettingsBtn = document.getElementById(
-    "workroomToolsSettingsBtn"
-  );
-  if (workroomToolsSettingsBtn) {
-    workroomToolsSettingsBtn.onclick = (e) => {
-      e.stopPropagation();
-      syncWorkroomCadRoutingInputs();
-      const dlg = document.getElementById("workroomToolsSettingsDlg");
-      if (dlg && !dlg.open) dlg.showModal();
-    };
-  }
-
   const handleAppFocus = async () => {
     if (!googleAuthBusy) {
       await loadGoogleAuthState({ silent: true });
@@ -26992,8 +24543,8 @@ function initEventListeners() {
   const editDlg = document.getElementById("editDlg");
   if (editDlg) {
     editDlg.addEventListener("close", () => {
-      if (openDeliverableLinksContext?.trigger?.closest("#editDlg")) {
-        void requestDeliverableLinksPanelClose();
+      if (openAttachmentPanelContext?.trigger?.closest("#editDlg")) {
+        void requestAttachmentPanelClose();
       }
       if (modalEmailSession.active) flushModalEmailSession(false);
     });
@@ -27713,12 +25264,7 @@ function initEventListeners() {
       ) {
         return;
       }
-      const checklistModal = document.getElementById("checklistModal");
-      if (checklistModal?.open) {
-        openLightingScheduleFromWorkroom();
-      } else {
-        openLightingSchedule();
-      }
+      openLightingSchedule();
     };
     lightingScheduleBtn.addEventListener("click", openLightingScheduleHandler);
     lightingScheduleBtn.addEventListener("keydown", (e) => {
@@ -27861,12 +25407,7 @@ function initEventListeners() {
       ) {
         return;
       }
-      const checklistModal = document.getElementById("checklistModal");
-      if (checklistModal?.open) {
-        await openTitle24ComplianceFromWorkroom();
-      } else {
-        await openTitle24Compliance();
-      }
+      await openTitle24Compliance();
     };
     title24ComplianceBtn.addEventListener("click", (e) => {
       openTitle24ComplianceHandler(e);
@@ -28201,7 +25742,7 @@ function initEventListeners() {
       };
     });
 
-  ["settings_workroomAutoSelectCadFiles", "workroom_modal_autoSelectCadFiles"]
+  ["settings_workroomAutoSelectCadFiles"]
     .map((id) => document.getElementById(id))
     .filter(Boolean)
     .forEach((checkbox) => {
@@ -28478,3 +26019,4 @@ async function init() {
 }
 
 init();
+

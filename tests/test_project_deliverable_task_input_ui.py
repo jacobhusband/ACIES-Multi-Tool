@@ -21,7 +21,7 @@ class ProjectDeliverableTaskInputUiTests(unittest.TestCase):
             script,
         )
         self.assertIn("pinned: false,", script)
-        self.assertIn("emailRefs: [],", script)
+        self.assertIn("attachments: [],", script)
         self.assertIn("updateStatsDisplay();", script)
         self.assertIn("await save();", script)
         self.assertIn("renderTaskList();", script)
@@ -31,6 +31,7 @@ class ProjectDeliverableTaskInputUiTests(unittest.TestCase):
         self.assertIn("setTimeout(() => {", script)
         self.assertIn("void commitPendingTask({ refocus: false });", script)
         self.assertIn("createWorkItemAttachmentControls({", script)
+        self.assertIn("actions.append(attachments, pinBtn, deleteBtn);", script)
 
 
 if __name__ == "__main__":

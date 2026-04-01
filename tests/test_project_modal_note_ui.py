@@ -27,13 +27,14 @@ class ProjectModalNoteUiTests(unittest.TestCase):
         self.assertIn("card._noteItems = normalizeDeliverableNoteItems(", script)
         self.assertIn("renderModalDeliverableNoteList(card, noteList);", script)
         self.assertIn("noteItems.push({", script)
-        self.assertIn("links: [],", script)
-        self.assertIn("emailRefs: [],", script)
+        self.assertIn("attachments: [],", script)
         self.assertIn("const noteItems = getModalDeliverableNoteItems(card)", script)
         self.assertIn('if (!hasExplicitNoteItems && String(legacyNotes || "").trim()) {', script)
         self.assertIn("createWorkItemAttachmentControls({", script)
         self.assertIn('kind: "note",', script)
+        self.assertIn("attachments: normalizedNoteItem.attachments,", script)
         self.assertIn("emailRefs: normalizedNoteItem.emailRefs,", script)
+        self.assertIn("actions.append(attachments, pinBtn, deleteBtn);", script)
 
     def test_modal_note_editor_markup_replaces_textarea(self):
         html = INDEX_HTML_PATH.read_text(encoding="utf-8")

@@ -376,41 +376,30 @@ function getUtilityPlanShell() {
   return document.getElementById("utilityPlanShell");
 }
 
-function isUtilityPlanEmbeddedInWorkroom() {
-  return utilityPlanState.hostMode === "workroom";
-}
-
 function setUtilityPlanShellHost(mode = "dialog", hostEl = null) {
   const shell = getUtilityPlanShell();
   const dialog = document.getElementById("utilityPlanEditorDlg");
-  const nextMode = mode === "workroom" ? "workroom" : "dialog";
   if (!shell || !dialog) return;
 
-  if (nextMode === "workroom" && hostEl) {
-    if (shell.parentElement !== hostEl) {
-      hostEl.appendChild(shell);
-    }
-  } else if (shell.parentElement !== dialog) {
+  if (shell.parentElement !== dialog) {
     dialog.appendChild(shell);
   }
 
-  utilityPlanState.hostMode = nextMode;
-  shell.classList.toggle("is-embedded", nextMode === "workroom");
+  utilityPlanState.hostMode = "dialog";
+  shell.classList.remove("is-embedded");
 
   const titleEl = document.getElementById("utilityPlanHeaderTitle");
   const subtitleEl = document.getElementById("utilityPlanHeaderSubtitle");
   const browseBtn = document.getElementById("utilityPlanBrowsePdfBtn");
   if (titleEl) {
-    titleEl.textContent = nextMode === "workroom" ? "Utility Plan" : "Utility Plan Editor";
+    titleEl.textContent = "Utility Plan Editor";
   }
   if (subtitleEl) {
     subtitleEl.textContent =
-      nextMode === "workroom"
-        ? "Use the architectural floor plan as the base, add electrical callouts, and export PNGs."
-        : "Crop floor plans from a PDF, add electrical callouts, and export PNGs.";
+      "Crop floor plans from a PDF, add electrical callouts, and export PNGs.";
   }
   if (browseBtn) {
-    browseBtn.textContent = nextMode === "workroom" ? "Change PDF" : "Browse PDF";
+    browseBtn.textContent = "Browse PDF";
   }
 }
 
@@ -1848,9 +1837,6 @@ function clearUtilityPlanSourcePdf() {
   renderUtilityPlanEditorUi();
   queueUtilityPlanSave();
   setUtilityPlanStatus("Source PDF cleared.");
-  if (isUtilityPlanEmbeddedInWorkroom()) {
-    void runUtilityPlanArchAutoLocate({ force: false, quiet: true });
-  }
 }
 
 async function browseUtilityPlanExportFolder() {
@@ -2034,25 +2020,6 @@ async function exportUtilityPlanFloors(mode = "current") {
     setUtilityPlanStatus(error?.message || "Unable to export utility plan PNGs.");
     toast("Utility plan export failed.");
   }
-}
-
-function mountUtilityPlanInWorkroom(hostEl = null) {
-  if (!hostEl) return;
-  setUtilityPlanShellHost("workroom", hostEl);
-  renderUtilityPlanEditorUi();
-}
-
-async function ensureWorkroomSurveyDraftReady({ quiet = true } = {}) {
-  const projectIndex = Number(activeChecklistProject);
-  if (!Number.isInteger(projectIndex) || projectIndex < 0 || !db[projectIndex]) {
-    return null;
-  }
-  if (utilityPlanProjectIndex !== projectIndex || !utilityPlanState.draft) {
-    await setUtilityPlanProject(projectIndex, { quiet });
-  }
-  await runUtilityPlanArchAutoLocate({ force: false, quiet: true });
-  renderUtilityPlanEditorUi();
-  return utilityPlanState.draft;
 }
 
 async function openUtilityPlanEditor(launchContext = null) {

@@ -17,21 +17,31 @@ class ProjectDeliverablePinnedWorkItemsUiTests(unittest.TestCase):
             "function getPinnedDeliverableNoteEntries(deliverable) {",
             "function getPinnedDeliverablePreviewItems(deliverable) {",
             "function createWorkItemPinButton({",
+            "function renderDeliverableStatusBadges(container, deliverable) {",
             "function renderDeliverablePinnedPreview(container, deliverable) {",
             "function updateDeliverableWorkItemUi(card, deliverable) {",
+            "function createPinnedAttachmentPreviewButton(attachment) {",
             "function createPinnedWorkItemAttachments(previewItem = {}) {",
-            'className: "deliverable-pinned-preview"',
+            'className: "deliverable-pinned-inline-group"',
             'titleUnpinned: "Pin task",',
             'titleUnpinned: "Pin note",',
             "pinned: !!task?.pinned,",
             "pinned: !!noteItem?.pinned,",
-            "links: normalizeTaskLinks(item.links),",
-            "emailRefs: normalizeEmailRefs(item.emailRefs),",
+            "attachments: normalizeAttachments(item.attachments, {",
+            'pillIcon.classList.add("deliverable-pinned-inline-pill-icon");',
+            'className: `deliverable-pinned-inline-pill ${',
+            'className: "deliverable-pinned-inline-pill-text"',
             'className: "deliverable-pinned-item-attachments"',
             'className: "deliverable-pinned-link"',
-            'className: "deliverable-pinned-email-btn"',
+            "renderDeliverableStatusBadges(badgesContainer, deliverable);",
         ):
             self.assertIn(expected, script)
+
+        self.assertNotIn('className: "deliverable-pinned-preview-heading"', script)
+        self.assertNotIn('className: "deliverable-pinned-preview"', script)
+        self.assertNotIn('className: "deliverable-pinned-item-kind"', script)
+        self.assertNotIn('className: "deliverable-pinned-item-kind-label"', script)
+        self.assertNotIn("createPinnedWorkItemAttachments(previewItem);", script)
 
     def test_projects_pinned_work_items_styles_exist(self):
         css = STYLES_CSS_PATH.read_text(encoding="utf-8")
@@ -40,18 +50,20 @@ class ProjectDeliverablePinnedWorkItemsUiTests(unittest.TestCase):
             ".work-item-actions {",
             ".work-item-pin-btn {",
             ".work-item-pin-btn.is-pinned {",
-            ".deliverable-pinned-preview {",
-            ".deliverable-pinned-preview-heading {",
-            ".deliverable-pinned-preview-list {",
-            ".deliverable-pinned-item {",
-            ".deliverable-pinned-item-body {",
-            ".deliverable-pinned-item-kind {",
-            ".deliverable-pinned-item-text {",
+            ".deliverable-pinned-inline-group {",
+            ".deliverable-pinned-inline-pill {",
+            ".deliverable-pinned-inline-pill-icon {",
+            ".deliverable-pinned-inline-pill-text {",
+            ".deliverable-pinned-inline-pill.is-task {",
+            ".deliverable-pinned-inline-pill.is-note {",
             ".deliverable-pinned-item-attachments {",
             ".deliverable-pinned-link,",
-            ".deliverable-pinned-email-btn {",
         ):
             self.assertIn(expected, css)
+
+        self.assertNotIn(".deliverable-pinned-preview-heading {", css)
+        self.assertNotIn(".deliverable-pinned-preview {", css)
+        self.assertNotIn(".deliverable-pinned-item-kind {", css)
 
 
 if __name__ == "__main__":

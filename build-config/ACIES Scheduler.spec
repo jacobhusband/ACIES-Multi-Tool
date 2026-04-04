@@ -1,29 +1,33 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-# This spec file should be run from the project root directory, not from build-config/
+import os
+
+
+spec_dir = globals().get('SPECPATH')
+project_root = os.path.abspath(os.path.join(spec_dir, os.pardir)) if spec_dir else os.path.abspath(os.getcwd())
 
 a = Analysis(
-    ['main.py'],
-    pathex=[],
+    [os.path.join(project_root, 'main.py')],
+    pathex=[project_root],
     binaries=[],
     datas=[
-        ('VERSION', '.'),
-        ('index.html', '.'),
-        ('styles.css', '.'),
-        ('script.js', '.'),
-        ('.env', '.'),
-        ('assets\\acies.png', '.'),
-        ('scripts\\merge_pdfs.py', 'scripts'),
-        ('scripts\\detect_pdf_size.py', 'scripts'),
-        ('scripts\\PlotDWGs.ps1', 'scripts'),
-        ('scripts\\FreezeLayersDWGs.ps1', 'scripts'),
-        ('scripts\\ThawLayersDWGs.ps1', 'scripts'),
-        ('scripts\\removeXREFPaths.ps1', 'scripts'),
-        ('scripts\\StripRefPaths.dll', 'scripts'),
-        ('templates', 'templates'),
-        ('WireSizerApplication\\dist', 'WireSizerApplication\\dist')
+        (os.path.join(project_root, 'VERSION'), '.'),
+        (os.path.join(project_root, 'index.html'), '.'),
+        (os.path.join(project_root, 'styles.css'), '.'),
+        (os.path.join(project_root, 'script.js'), '.'),
+        (os.path.join(project_root, '.env'), '.'),
+        (os.path.join(project_root, 'assets', 'acies.png'), '.'),
+        (os.path.join(project_root, 'scripts', 'merge_pdfs.py'), 'scripts'),
+        (os.path.join(project_root, 'scripts', 'detect_pdf_size.py'), 'scripts'),
+        (os.path.join(project_root, 'scripts', 'PlotDWGs.ps1'), 'scripts'),
+        (os.path.join(project_root, 'scripts', 'FreezeLayersDWGs.ps1'), 'scripts'),
+        (os.path.join(project_root, 'scripts', 'ThawLayersDWGs.ps1'), 'scripts'),
+        (os.path.join(project_root, 'scripts', 'removeXREFPaths.ps1'), 'scripts'),
+        (os.path.join(project_root, 'scripts', 'StripRefPaths.dll'), 'scripts'),
+        (os.path.join(project_root, 'templates'), 'templates'),
+        (os.path.join(project_root, 'WireSizerApplication', 'dist'), 'WireSizerApplication\\dist')
     ],
-    hiddenimports=[],
+    hiddenimports=['pillow_heif', '_pillow_heif'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -49,7 +53,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['assets\\acies.ico'],
+    icon=[os.path.join(project_root, 'assets', 'acies.ico')],
 )
 coll = COLLECT(
     exe,

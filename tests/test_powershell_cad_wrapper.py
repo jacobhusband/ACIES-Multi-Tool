@@ -35,6 +35,25 @@ class PowerShellCadWrapperTests(unittest.TestCase):
         self.assertNotIn("getWorkroomState()", text)
         self.assertNotIn("getToolState(toolId)", text)
 
+    def test_frontend_restores_workroom_launch_context_helpers_for_shared_tools(self):
+        text = SCRIPT_JS_PATH.read_text(encoding="utf-8")
+
+        for expected in (
+            "function getActiveWorkroomContext() {",
+            "function consumePendingCadLaunchContext() {",
+            "function buildWorkroomCadLaunchContext() {",
+            "function resolveCadLaunchContextForTool() {",
+            'source: "workroom",',
+            "rootProjectPath,",
+            "cadFilePaths: [],",
+            "projectName:",
+            "deliverableName:",
+            "const pendingContext = consumePendingCadLaunchContext();",
+            'const checklistModal = document.getElementById("checklistModal");',
+            "if (!checklistModal?.open) return null;",
+        ):
+            self.assertIn(expected, text)
+
     def test_cad_scripts_use_raw_values_in_sta_relaunch(self):
         for script_path in CAD_SCRIPT_PATHS:
             with self.subTest(script=script_path.name):

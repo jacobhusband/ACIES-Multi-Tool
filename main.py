@@ -107,6 +107,49 @@ from openpyxl.worksheet.copier import WorksheetCopy
 from pydantic import BaseModel, Field
 from PIL import Image as PILImage, ImageOps, ImageDraw, ImageFont, UnidentifiedImageError
 
+HEIF_IMAGE_EXTENSIONS = {".heic", ".heics", ".heif", ".heifs", ".hif"}
+HEIF_SUPPORT_ENABLED = False
+HEIF_SUPPORT_ERROR = ""
+
+
+def _register_heif_support():
+    global HEIF_SUPPORT_ENABLED, HEIF_SUPPORT_ERROR
+    try:
+        pillow_heif = importlib.import_module("pillow_heif")
+        register_heif_opener = getattr(pillow_heif, "register_heif_opener", None)
+        if not callable(register_heif_opener):
+            raise AttributeError("pillow_heif.register_heif_opener is unavailable.")
+        register_heif_opener()
+        HEIF_SUPPORT_ENABLED = True
+        HEIF_SUPPORT_ERROR = ""
+        return True
+    except Exception as exc:
+        HEIF_SUPPORT_ENABLED = False
+        HEIF_SUPPORT_ERROR = str(exc)
+        return False
+
+
+def _is_heif_image_path(path):
+    return os.path.splitext(str(path or "").strip())[1].lower() in HEIF_IMAGE_EXTENSIONS
+
+
+def _open_local_pil_image(path):
+    try:
+        return PILImage.open(path)
+    except UnidentifiedImageError as exc:
+        if not _is_heif_image_path(path):
+            raise
+        if not HEIF_SUPPORT_ENABLED:
+            raise ValueError(
+                "HEIC/HEIF images are not supported in this build. Install pillow-heif and rebuild the app."
+            ) from exc
+        raise ValueError(
+            "Could not read HEIC/HEIF image data. Re-save the image as JPG or PNG and try again."
+        ) from exc
+
+
+_register_heif_support()
+
 # Helper functions for date parsing and status management
 STATUS_CANON = ["Waiting", "Working",
                 "Pending Review", "Complete", "Delivered"]
@@ -1789,6 +1832,10 @@ class Api:
         self.test_mode = test_mode_raw in ('1', 'true', 'yes', 'on')
         self._test_mode_records = []
         self._workroom_cad_file_cache = {}
+        self._panel_schedule_running = False
+        self._panel_schedule_thread = None
+        self._panel_schedule_job_record = None
+        self._panel_schedule_job_lock = threading.Lock()
         if self.test_mode:
             logging.info(
                 "Api initialized in ACIES_TEST_MODE. CAD tools run in deterministic validation mode.")
@@ -6334,7 +6381,7 @@ Return ONLY the JSON object.
                 if ext == '.pdf':
                     continue
 
-                with PILImage.open(image_path) as source_img:
+                with _open_local_pil_image(image_path) as source_img:
                     if hasattr(source_img, 'n_frames') and source_img.n_frames > 1:
                         source_img.seek(0)
                     pil_img = ImageOps.exif_transpose(source_img).copy()
@@ -6615,7 +6662,7 @@ Return ONLY the JSON object.
         try:
             window = webview.windows[0]
             file_types = (
-                'Image Files (*.jpg;*.jpeg;*.png;*.gif;*.bmp)',
+                'Image Files (*.jpg;*.jpeg;*.png;*.gif;*.bmp;*.heic;*.heif)',
                 'PDF Files (*.pdf)',
                 'All Files (*.*)'
             )
@@ -6658,7 +6705,7 @@ Return ONLY the JSON object.
             except Exception:
                 preview_max_size = 1600
 
-            with PILImage.open(resolved_path) as source_img:
+            with _open_local_pil_image(resolved_path) as source_img:
                 if hasattr(source_img, 'n_frames') and source_img.n_frames > 1:
                     source_img.seek(0)
                 preview = ImageOps.exif_transpose(source_img).copy()
@@ -6691,6 +6738,14 @@ Return ONLY the JSON object.
             return {
                 'status': 'unsupported',
                 'message': 'Preview not available for this file type.',
+                'path': resolved_path or '',
+                'filename': os.path.basename(resolved_path) if resolved_path else '',
+            }
+        except ValueError as e:
+            resolved_path = self._resolve_expense_image_path(path)
+            return {
+                'status': 'unsupported',
+                'message': str(e),
                 'path': resolved_path or '',
                 'filename': os.path.basename(resolved_path) if resolved_path else '',
             }
@@ -7921,23 +7976,161 @@ Return ONLY the JSON object.
             logging.error(f"Error saving CircuitBreakerAI schedule: {e}")
             return {'status': 'error', 'message': str(e)}
 
+    def _ensure_panel_schedule_job_state(self):
+        if not hasattr(self, "_panel_schedule_job_lock") or self._panel_schedule_job_lock is None:
+            self._panel_schedule_job_lock = threading.Lock()
+        if not hasattr(self, "_panel_schedule_job_record"):
+            self._panel_schedule_job_record = None
+
+    def _normalize_panel_schedule_payload(self, payload):
+        data = payload or {}
+        if isinstance(data, str):
+            try:
+                data = json.loads(data)
+            except Exception:
+                data = {}
+        return data if isinstance(data, dict) else {}
+
+    def _count_panel_schedule_payload_panels(self, payload):
+        data = self._normalize_panel_schedule_payload(payload)
+        panels_payload = data.get('panels')
+        if isinstance(panels_payload, list):
+            count = sum(1 for item in panels_payload if isinstance(item, dict))
+            if count > 0:
+                return count
+        return 1
+
+    def _extract_panel_schedule_output_path(self, payload):
+        data = self._normalize_panel_schedule_payload(payload)
+        output_mode = str(
+            data.get('outputMode') or data.get('output_mode') or 'new'
+        ).strip().lower()
+        if output_mode not in ("new", "existing"):
+            output_mode = "new"
+        output_path = (
+            data.get('outputPath')
+            or data.get('output_path')
+            or (data.get('newOutputPath') if output_mode == "new" else data.get('existingOutputPath'))
+            or (data.get('new_output_path') if output_mode == "new" else data.get('existing_output_path'))
+        )
+        output_path = str(output_path or '').strip()
+        return os.path.normpath(output_path) if output_path else ""
+
+    def _build_panel_schedule_job_record(self, job_id, payload, panel_count):
+        output_path = self._extract_panel_schedule_output_path(payload)
+        return {
+            'jobId': str(job_id or '').strip(),
+            'status': 'running',
+            'message': f"Running {panel_count} panel{'s' if panel_count != 1 else ''} in background...",
+            'panelCount': max(int(panel_count or 0), 1),
+            'outputPath': output_path,
+            'outputFolder': os.path.dirname(output_path) if output_path else '',
+            'successCount': 0,
+            'failureCount': 0,
+            'results': [],
+            'startedAt': utc_now_iso(),
+            'finishedAt': '',
+        }
+
+    def _store_panel_schedule_job_record(self, record):
+        self._ensure_panel_schedule_job_state()
+        with self._panel_schedule_job_lock:
+            self._panel_schedule_job_record = deepcopy(record) if isinstance(record, dict) else None
+
+    def _get_panel_schedule_job_record(self, job_id=None):
+        self._ensure_panel_schedule_job_state()
+        with self._panel_schedule_job_lock:
+            record = deepcopy(self._panel_schedule_job_record)
+        if not isinstance(record, dict):
+            return None
+        if job_id is not None and str(record.get('jobId') or '') != str(job_id or '').strip():
+            return None
+        return record
+
+    def _build_panel_schedule_terminal_record(self, job_id, result):
+        existing = self._get_panel_schedule_job_record(job_id) or {}
+        payload = result if isinstance(result, dict) else {}
+        status = str(payload.get('status') or 'error').strip().lower()
+        if status not in ('success', 'error'):
+            status = 'error'
+
+        def _coerce_non_negative_int(value, default=0):
+            try:
+                return max(int(value), 0)
+            except Exception:
+                return default
+
+        output_path = str(
+            payload.get('outputPath') or existing.get('outputPath') or ''
+        ).strip()
+        output_path = os.path.normpath(output_path) if output_path else ''
+        panel_count = _coerce_non_negative_int(
+            payload.get('panelCount'),
+            _coerce_non_negative_int(existing.get('panelCount'), 1),
+        ) or 1
+        return {
+            'jobId': str(job_id or '').strip(),
+            'status': status,
+            'message': str(payload.get('message') or '').strip(),
+            'panelCount': panel_count,
+            'outputPath': output_path,
+            'outputFolder': str(
+                payload.get('outputFolder') or existing.get('outputFolder') or (
+                    os.path.dirname(output_path) if output_path else ''
+                )
+            ).strip(),
+            'successCount': _coerce_non_negative_int(payload.get('successCount')),
+            'failureCount': _coerce_non_negative_int(payload.get('failureCount')),
+            'results': deepcopy(payload.get('results') or []) if isinstance(payload.get('results'), list) else [],
+            'startedAt': str(existing.get('startedAt') or utc_now_iso()).strip(),
+            'finishedAt': utc_now_iso(),
+        }
+
+    def get_panel_schedule_background_status(self, job_id):
+        normalized_job_id = str(job_id or '').strip()
+        if not normalized_job_id:
+            return {'status': 'not_found', 'jobId': ''}
+        record = self._get_panel_schedule_job_record(normalized_job_id)
+        if not record:
+            return {'status': 'not_found', 'jobId': normalized_job_id}
+        return record
+
     def run_panel_schedule_background(self, payload):
         """Runs Panel Schedule AI in a background thread and notifies the UI."""
         if getattr(self, "_panel_schedule_running", False):
             return {'status': 'error', 'message': 'Panel Schedule AI is already running.'}
 
-        self._panel_schedule_running = True
-        thread = threading.Thread(
-            target=self._panel_schedule_worker,
-            args=(payload,),
-            daemon=True
+        panel_count = self._count_panel_schedule_payload_panels(payload)
+        job_id = uuid.uuid4().hex
+        self._store_panel_schedule_job_record(
+            self._build_panel_schedule_job_record(job_id, payload, panel_count)
         )
-        self._panel_schedule_thread = thread
-        thread.start()
-        return {'status': 'started'}
+        self._panel_schedule_running = True
+        try:
+            thread = threading.Thread(
+                target=self._panel_schedule_worker,
+                args=(job_id, payload),
+                daemon=True
+            )
+            self._panel_schedule_thread = thread
+            thread.start()
+        except Exception as e:
+            self._panel_schedule_running = False
+            self._store_panel_schedule_job_record(
+                self._build_panel_schedule_terminal_record(
+                    job_id,
+                    {
+                        'status': 'error',
+                        'message': str(e),
+                        'panelCount': panel_count,
+                    },
+                )
+            )
+            return {'status': 'error', 'message': str(e)}
+        return {'status': 'started', 'jobId': job_id, 'panelCount': panel_count}
 
-    def _panel_schedule_worker(self, payload):
-        window = webview.windows[0]
+    def _panel_schedule_worker(self, job_id, payload):
+        window = webview.windows[0] if webview.windows else None
         result = {'status': 'error', 'message': 'Panel Schedule AI failed.'}
         try:
             result = self._process_panel_schedule_payload(payload)
@@ -7947,8 +8140,14 @@ Return ONLY the JSON object.
         finally:
             self._panel_schedule_running = False
 
+        terminal_record = self._build_panel_schedule_terminal_record(job_id, result)
+        self._store_panel_schedule_job_record(terminal_record)
+
+        if not window:
+            return
+
         try:
-            js_payload = json.dumps(result)
+            js_payload = json.dumps(terminal_record)
             window.evaluate_js(
                 f"window.handlePanelScheduleResult({js_payload})"
             )
@@ -8212,7 +8411,7 @@ TASK 3: LOAD TYPES
             for path in breaker_paths + directory_paths:
                 if not os.path.exists(path):
                     raise ValueError(f"Image not found: {path}")
-                gemini_images.append(PILImage.open(path))
+                gemini_images.append(_open_local_pil_image(path))
 
             cb_enforce_rate_limit()
 
@@ -8246,12 +8445,7 @@ TASK 3: LOAD TYPES
         return panel_data
 
     def _process_panel_schedule_payload(self, payload):
-        data = payload or {}
-        if isinstance(data, str):
-            try:
-                data = json.loads(data)
-            except Exception:
-                data = {}
+        data = self._normalize_panel_schedule_payload(payload)
 
         output_mode = str(
             data.get('outputMode') or data.get('output_mode') or 'new'

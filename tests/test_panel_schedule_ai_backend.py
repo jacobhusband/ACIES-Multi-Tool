@@ -126,6 +126,7 @@ _ensure_pil_stub()
 _ensure_openpyxl_stub()
 
 from main import Api
+import main
 
 
 class PanelScheduleAiBackendTests(unittest.TestCase):
@@ -223,6 +224,245 @@ class PanelScheduleAiBackendTests(unittest.TestCase):
         self.assertIn(
             "Use visible breaker positions and circuit numbering to merge split sections",
             prompt,
+        )
+
+    def test_register_heif_support_calls_register_opener_when_available(self):
+        calls = []
+        fake_module = types.SimpleNamespace(
+            register_heif_opener=lambda: calls.append("registered")
+        )
+
+        with patch.object(main, "HEIF_SUPPORT_ENABLED", False), patch.object(
+            main,
+            "HEIF_SUPPORT_ERROR",
+            "",
+        ), patch("main.importlib.import_module", return_value=fake_module) as import_mock:
+            result = main._register_heif_support()
+            self.assertTrue(main.HEIF_SUPPORT_ENABLED)
+            self.assertEqual("", main.HEIF_SUPPORT_ERROR)
+
+        self.assertTrue(result)
+        self.assertEqual(["registered"], calls)
+        import_mock.assert_called_once_with("pillow_heif")
+
+    def test_register_heif_support_degrades_cleanly_when_import_fails(self):
+        with patch.object(main, "HEIF_SUPPORT_ENABLED", True), patch.object(
+            main,
+            "HEIF_SUPPORT_ERROR",
+            "",
+        ), patch(
+            "main.importlib.import_module",
+            side_effect=ModuleNotFoundError("No module named 'pillow_heif'"),
+        ):
+            result = main._register_heif_support()
+            self.assertFalse(main.HEIF_SUPPORT_ENABLED)
+            self.assertIn("pillow_heif", main.HEIF_SUPPORT_ERROR)
+
+        self.assertFalse(result)
+
+    def test_open_local_pil_image_maps_unreadable_heic_to_clear_value_error(self):
+        with patch.object(main, "HEIF_SUPPORT_ENABLED", True), patch(
+            "main.PILImage.open",
+            side_effect=main.UnidentifiedImageError("cannot identify image file"),
+        ):
+            with self.assertRaises(ValueError) as ctx:
+                main._open_local_pil_image("panel_photo.HEIC")
+
+        self.assertIn("HEIC/HEIF", str(ctx.exception))
+        self.assertNotIn("cannot identify image file", str(ctx.exception))
+
+    def test_analyze_panel_schedule_images_uses_shared_heic_image_opener(self):
+        opened_paths = []
+        fake_images = []
+
+        class FakeImage:
+            def __init__(self, path):
+                self.path = path
+                self.closed = False
+
+            def close(self):
+                self.closed = True
+
+        def fake_open(path):
+            opened_paths.append(path)
+            image = FakeImage(path)
+            fake_images.append(image)
+            return image
+
+        class FakeModels:
+            def generate_content(self, **kwargs):
+                return types.SimpleNamespace(parsed=types.SimpleNamespace(panel_name=""), text="")
+
+        fake_client = types.SimpleNamespace(models=FakeModels())
+
+        with patch.object(
+            self.api,
+            "_resolve_panel_schedule_api_key",
+            return_value="test-key",
+        ), patch.object(
+            self.api,
+            "_ensure_aiohttp",
+            return_value=None,
+        ), patch(
+            "main.genai.Client",
+            return_value=fake_client,
+            create=True,
+        ), patch(
+            "main._open_local_pil_image",
+            side_effect=fake_open,
+        ), patch(
+            "main.cb_enforce_rate_limit",
+            return_value=None,
+        ), patch(
+            "main.types.GenerateContentConfig",
+            side_effect=lambda **kwargs: kwargs,
+            create=True,
+        ), patch(
+            "main.os.path.exists",
+            return_value=True,
+        ):
+            result = self.api._analyze_panel_schedule_images(
+                "MDP",
+                ["breaker_top.HEIC"],
+                ["directory_bottom.HEIC"],
+            )
+
+        self.assertEqual("MDP", result.panel_name)
+        self.assertEqual(
+            ["breaker_top.HEIC", "directory_bottom.HEIC"],
+            opened_paths,
+        )
+        self.assertTrue(all(image.closed for image in fake_images))
+
+    def test_run_panel_schedule_background_returns_job_id_and_seeds_running_status(self):
+        started = {}
+
+        class FakeThread:
+            def __init__(self, target=None, args=(), daemon=None):
+                started["target"] = target
+                started["args"] = args
+                started["daemon"] = daemon
+
+            def start(self):
+                started["called"] = True
+
+        payload = {
+            "outputMode": "new",
+            "outputPath": r"C:\temp\panel_schedule.xlsx",
+            "panels": [
+                {"panelId": "panel_1", "panelName": "MDP"},
+                {"panelId": "panel_2", "panelName": "L1"},
+            ],
+        }
+
+        with patch("main.threading.Thread", FakeThread):
+            result = self.api.run_panel_schedule_background(payload)
+
+        self.assertEqual("started", result["status"])
+        self.assertTrue(result["jobId"])
+        self.assertEqual(2, result["panelCount"])
+        self.assertTrue(started.get("called"))
+        self.assertEqual(self.api._panel_schedule_worker, started["target"])
+        self.assertEqual((result["jobId"], payload), started["args"])
+        self.assertTrue(started["daemon"])
+
+        status = self.api.get_panel_schedule_background_status(result["jobId"])
+        self.assertEqual("running", status["status"])
+        self.assertEqual(result["jobId"], status["jobId"])
+        self.assertEqual(2, status["panelCount"])
+        self.assertEqual(os.path.normpath(payload["outputPath"]), status["outputPath"])
+        self.assertEqual("", status["finishedAt"])
+        self.assertTrue(status["startedAt"])
+
+    def test_panel_schedule_worker_stores_terminal_status_when_js_notification_fails(self):
+        payload = {
+            "outputMode": "existing",
+            "outputPath": r"C:\temp\panel_schedule.xlsx",
+        }
+        job_id = "job_panel_success"
+        self.api._store_panel_schedule_job_record(
+            self.api._build_panel_schedule_job_record(job_id, payload, 1)
+        )
+        self.api._panel_schedule_running = True
+
+        def raise_evaluate_js(_script):
+            raise RuntimeError("js bridge offline")
+
+        fake_window = types.SimpleNamespace(evaluate_js=raise_evaluate_js)
+
+        with patch.object(
+            self.api,
+            "_process_panel_schedule_payload",
+            return_value={
+                "status": "success",
+                "message": "Added 1 panel sheet to schedule.",
+                "outputPath": os.path.normpath(payload["outputPath"]),
+                "outputFolder": r"C:\temp",
+                "successCount": 1,
+                "failureCount": 0,
+                "results": [
+                    {
+                        "panelId": "panel_1",
+                        "panelName": "MDP",
+                        "status": "success",
+                        "sheetName": "MDP",
+                    }
+                ],
+            },
+        ), patch("main.webview.windows", [fake_window]), patch("main.logging.error") as log_error:
+            self.api._panel_schedule_worker(job_id, payload)
+
+        status = self.api.get_panel_schedule_background_status(job_id)
+        self.assertEqual("success", status["status"])
+        self.assertEqual(job_id, status["jobId"])
+        self.assertEqual(1, status["panelCount"])
+        self.assertEqual(1, status["successCount"])
+        self.assertEqual(0, status["failureCount"])
+        self.assertEqual("Added 1 panel sheet to schedule.", status["message"])
+        self.assertEqual(os.path.normpath(payload["outputPath"]), status["outputPath"])
+        self.assertEqual(r"C:\temp", status["outputFolder"])
+        self.assertTrue(status["finishedAt"])
+        self.assertFalse(self.api._panel_schedule_running)
+        log_error.assert_called_once()
+        self.assertIn(
+            "Failed to notify Panel Schedule AI result",
+            log_error.call_args[0][0],
+        )
+
+    def test_get_panel_schedule_background_status_returns_error_and_not_found_states(self):
+        job_id = "job_panel_error"
+        self.api._store_panel_schedule_job_record(
+            self.api._build_panel_schedule_terminal_record(
+                job_id,
+                {
+                    "status": "error",
+                    "message": "Selected panel schedule was not found.",
+                    "outputPath": r"C:\temp\missing.xlsx",
+                    "outputFolder": r"C:\temp",
+                    "successCount": 0,
+                    "failureCount": 1,
+                    "results": [
+                        {
+                            "panelId": "panel_1",
+                            "panelName": "MDP",
+                            "status": "error",
+                            "message": "Selected panel schedule was not found.",
+                        }
+                    ],
+                },
+            )
+        )
+
+        error_status = self.api.get_panel_schedule_background_status(job_id)
+        missing_status = self.api.get_panel_schedule_background_status("missing_job")
+
+        self.assertEqual("error", error_status["status"])
+        self.assertEqual(job_id, error_status["jobId"])
+        self.assertEqual(1, error_status["failureCount"])
+        self.assertEqual("Selected panel schedule was not found.", error_status["message"])
+        self.assertEqual(
+            {"status": "not_found", "jobId": "missing_job"},
+            missing_status,
         )
 
 

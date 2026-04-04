@@ -26,7 +26,10 @@ export interface GECData {
 }
 
 export interface CalculationResult {
-  recommendedSize: string;
+  recommendedSize: string; // Baseline recommended conductor size for the effective set count
+  selectedSize: string; // Actual conductor size used for displayed results
+  isWireSizeForced: boolean;
+  warnings: string[];
   actualAmpacity: number;
   voltageDrop: number;
   voltageDropPercentage: number;
@@ -51,6 +54,8 @@ export interface AppState {
   maxVoltageDrop: number | ''; // percentage
   sets: number | ''; // Parallel runs
   forceSets: boolean; // Force user-defined sets to override recommendation
+  forceWireSize: boolean; // Force a specific conductor size
+  forcedWireSize: string; // Exact conductor size to use when forcing wire size
   powerFactor: number;
   oversizeConduit: boolean;
   groundingTable: GroundingTableType;

@@ -273,7 +273,7 @@
                                     aria-expanded="false"
                                     aria-controls="deliverablesFilterMenu"
                                 >
-                                    <span id="deliverablesFilterTriggerLabel" class="projects-filter-trigger-label">Show only primary deliverables</span>
+                                    <span id="deliverablesFilterTriggerLabel" class="projects-filter-trigger-label">Show only active deliverables</span>
                                     <svg class="projects-filter-chevron" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                                         <polyline points="6 9 12 15 18 9"></polyline>
                                     </svg>
@@ -287,7 +287,7 @@
                                 >
                                     <button type="button" class="projects-filter-option" data-filter-value="all" role="menuitemradio" aria-checked="false" tabindex="-1">Show all deliverables</button>
                                     <button type="button" class="projects-filter-option" data-filter-value="incomplete" role="menuitemradio" aria-checked="false" tabindex="-1">Show all incomplete deliverables</button>
-                                    <button type="button" class="projects-filter-option is-selected" data-filter-value="primary" role="menuitemradio" aria-checked="true" tabindex="-1">Show only primary deliverables</button>
+                                    <button type="button" class="projects-filter-option is-selected" data-filter-value="active" role="menuitemradio" aria-checked="true" tabindex="-1">Show only active deliverables</button>
                                 </div>
                             </div>
                         </div>
@@ -1500,8 +1500,8 @@
                 </div>
                 <div class="setting-row">
                     <div class="setting-info">
-                        <div class="setting-label">Auto-Set Latest as Primary</div>
-                        <div class="setting-desc">Automatically set the deliverable with the latest due date as primary
+                        <div class="setting-label">Auto-Set Latest as Active</div>
+                        <div class="setting-desc">Automatically mark the deliverable with the latest due date as active
                             when merging or updating.</div>
                     </div>
                     <label class="switch">
@@ -2145,7 +2145,7 @@
                                 <div id="cbBreakerDrop" class="cb-drop-zone" role="button" tabindex="0">
                                     <div class="cb-drop-icon" aria-hidden="true">&#128247;</div>
                                     <div class="cb-drop-text">Drag &amp; drop photos or click to select</div>
-                                    <div class="tiny muted">JPG, PNG, HEIC supported. New selections replace the
+                                    <div class="tiny muted">JPG, PNG, HEIC, HEIF supported. New selections replace the
                                         current set.</div>
                                 </div>
                                 <div class="cb-upload-actions">
@@ -2161,7 +2161,7 @@
                                 <div id="cbDirectoryDrop" class="cb-drop-zone" role="button" tabindex="0">
                                     <div class="cb-drop-icon" aria-hidden="true">&#128194;</div>
                                     <div class="cb-drop-text">Drag &amp; drop photos or click to select</div>
-                                    <div class="tiny muted">JPG, PNG, HEIC supported. New selections replace the
+                                    <div class="tiny muted">JPG, PNG, HEIC, HEIF supported. New selections replace the
                                         current set.</div>
                                 </div>
                                 <div class="cb-upload-actions">
@@ -2222,12 +2222,12 @@
                     </button>
                 </div>
                 <div id="cbRunningOverlay" class="cb-running-overlay" hidden>
-                    <div class="cb-running-card">
-                        <div class="spinner">Analyzing photos</div>
-                        <p class="tiny muted">We'll notify you when the schedule is ready.</p>
+                        <div class="cb-running-card">
+                            <div class="spinner">Analyzing photos</div>
+                            <p class="tiny muted">Completion appears on the Panel Schedule AI tool card. Successful runs will open the output folder.</p>
+                        </div>
                     </div>
                 </div>
-            </div>
         </div>
     </dialog>
 
@@ -2486,8 +2486,8 @@
                     </div>
                 </div>
                 <div class="deliverable-controls">
-                    <label class="tiny checkbox-label"><input type="radio" class="d-primary"
-                            style="width:auto">Primary</label>
+                    <label class="tiny checkbox-label"><input type="checkbox" class="d-active"
+                            style="width:auto">Active</label>
                     <div class="deliverable-attachment-control"></div>
                     <button type="button" class="btn tiny btn-remove text-danger">Remove</button>
                 </div>

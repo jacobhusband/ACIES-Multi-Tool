@@ -28,6 +28,68 @@ function Assert-PathExists {
     }
 }
 
+function Test-PythonImports {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PythonPath,
+        [Parameter(Mandatory = $true)]
+        [string[]]$Modules
+    )
+
+    $quotedModules = $Modules | ForEach-Object { "'$_'" }
+    $importScript = "import importlib.util, sys; missing = [name for name in [" + ($quotedModules -join ", ") + "] if importlib.util.find_spec(name) is None]; sys.exit(0 if not missing else 1)"
+
+    $global:LASTEXITCODE = 0
+    & $PythonPath -c $importScript 1>$null 2>$null
+    return $LASTEXITCODE -eq 0
+}
+
+function Ensure-HeifBuildDependencies {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PythonPath,
+        [Parameter(Mandatory = $true)]
+        [string]$RequirementsPath
+    )
+
+    $heifModules = @("pillow_heif", "_pillow_heif")
+    Write-Host "Checking HEIF build dependencies in .venv..." -ForegroundColor Gray
+    if (Test-PythonImports -PythonPath $PythonPath -Modules $heifModules) {
+        Write-Host "HEIF build dependencies already available in .venv." -ForegroundColor Gray
+        return
+    }
+
+    Write-Host "Missing HEIF build dependencies in .venv. Installing from requirements.txt..." -ForegroundColor Yellow
+    Invoke-CheckedCommand -Description "pip install -r requirements.txt" -Command {
+        & $PythonPath -m pip install -r $RequirementsPath
+    }
+
+    if (-not (Test-PythonImports -PythonPath $PythonPath -Modules $heifModules)) {
+        throw "HEIF build dependencies are still unavailable after installing $RequirementsPath."
+    }
+
+    Write-Host "HEIF build dependencies repaired in .venv." -ForegroundColor Green
+}
+
+function Test-PyInstallerArchiveContains {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PythonPath,
+        [Parameter(Mandatory = $true)]
+        [string]$ArchivePath,
+        [Parameter(Mandatory = $true)]
+        [string]$Pattern
+    )
+
+    $global:LASTEXITCODE = 0
+    $archiveOutput = & $PythonPath -m PyInstaller.utils.cliutils.archive_viewer $ArchivePath -r -b 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to inspect PyInstaller archive at $ArchivePath."
+    }
+
+    return [bool]($archiveOutput | Select-String -Pattern $Pattern -Quiet)
+}
+
 try {
     Write-Host "###################################" -ForegroundColor Cyan
     Write-Host "#      Building ACIES Scheduler     #" -ForegroundColor Cyan
@@ -36,8 +98,14 @@ try {
     # Pin the build to the repo-local virtualenv so editor-integrated shells do not change behavior.
     $projectRoot = Split-Path $PSScriptRoot -Parent
     $venvPython = Join-Path $projectRoot ".venv\Scripts\python.exe"
+    $requirementsPath = Join-Path $projectRoot "requirements.txt"
+    $pyInstallerSpecPath = Join-Path $projectRoot "build-config\ACIES Scheduler.spec"
     Assert-PathExists -Path $venvPython -Message "Repo-local Python interpreter not found at $venvPython. Create or refresh .venv before building."
+    Assert-PathExists -Path $requirementsPath -Message "requirements.txt not found at $requirementsPath."
+    Assert-PathExists -Path $pyInstallerSpecPath -Message "PyInstaller spec not found at $pyInstallerSpecPath."
     Write-Host "Using Python: $venvPython" -ForegroundColor Gray
+    Write-Host "Using PyInstaller spec: $pyInstallerSpecPath" -ForegroundColor Gray
+    Ensure-HeifBuildDependencies -PythonPath $venvPython -RequirementsPath $requirementsPath
     Invoke-CheckedCommand -Description "PyInstaller availability check" -Command { & $venvPython -m PyInstaller --version | Out-Null }
 
     $wireSizerDir = Join-Path $projectRoot "WireSizerApplication"
@@ -88,43 +156,15 @@ try {
 
     Push-Location $projectRoot
     try {
-        $pyInstallerSpecPath = "build\pyinstaller"
-        $mainScriptPath = Join-Path $projectRoot "main.py"
-        $iconPath = Join-Path $projectRoot "assets\acies.ico"
-        $indexPath = Join-Path $projectRoot "index.html"
-        $stylesPath = Join-Path $projectRoot "styles.css"
-        $scriptPath = Join-Path $projectRoot "script.js"
+        $pyInstallerWorkPath = Join-Path $projectRoot "build\pyinstaller"
+        $pyInstallerDistPath = Join-Path $projectRoot "dist"
         $envPath = Join-Path $projectRoot ".env"
-        $aciesImagePath = Join-Path $projectRoot "assets\acies.png"
-        $mergePdfsScriptPath = Join-Path $projectRoot "scripts\merge_pdfs.py"
-        $detectPdfSizeScriptPath = Join-Path $projectRoot "scripts\detect_pdf_size.py"
-        $plotDwgsScriptPath = Join-Path $projectRoot "scripts\PlotDWGs.ps1"
-        $freezeLayersScriptPath = Join-Path $projectRoot "scripts\FreezeLayersDWGs.ps1"
-        $thawLayersScriptPath = Join-Path $projectRoot "scripts\ThawLayersDWGs.ps1"
-        $removeXrefPathsScriptPath = Join-Path $projectRoot "scripts\removeXREFPaths.ps1"
-        $stripRefPathsDllPath = Join-Path $projectRoot "scripts\StripRefPaths.dll"
-        $templatesPath = Join-Path $projectRoot "templates"
         Assert-PathExists -Path $envPath -Message "Required build configuration file not found at $envPath. Create the repo-root .env before building."
         $pyInstallerArgs = @(
-            $mainScriptPath, "--noconfirm", "--clean", "--noconsole",
-            "--name", "ACIES Scheduler",
-            "--specpath", $pyInstallerSpecPath,
-            "--icon=$iconPath",
-            "--add-data", "$versionPath;.",
-            "--add-data", "$indexPath;.",
-            "--add-data", "$stylesPath;.",
-            "--add-data", "$scriptPath;.",
-            "--add-data", "$envPath;.",
-            "--add-data", "$aciesImagePath;.",
-            "--add-data", "$mergePdfsScriptPath;scripts",
-            "--add-data", "$detectPdfSizeScriptPath;scripts",
-            "--add-data", "$plotDwgsScriptPath;scripts",
-            "--add-data", "$freezeLayersScriptPath;scripts",
-            "--add-data", "$thawLayersScriptPath;scripts",
-            "--add-data", "$removeXrefPathsScriptPath;scripts",
-            "--add-data", "$stripRefPathsDllPath;scripts",
-            "--add-data", "$templatesPath;templates",
-            "--add-data", "$wireSizerDist;WireSizerApplication\dist"
+            "--noconfirm", "--clean",
+            "--distpath", $pyInstallerDistPath,
+            "--workpath", $pyInstallerWorkPath,
+            $pyInstallerSpecPath
         )
 
         Invoke-CheckedCommand -Description "PyInstaller build" -Command { & $venvPython -m PyInstaller $pyInstallerArgs }
@@ -142,6 +182,20 @@ try {
     foreach ($expectedPath in $expectedBundleFiles) {
         Assert-PathExists -Path $expectedPath -Message "PyInstaller bundle is missing expected output: $expectedPath"
     }
+
+    $bundleExecutable = Join-Path $bundleOutput "ACIES Scheduler.exe"
+    $heifPackagePath = Join-Path $bundleInternal "pillow_heif"
+    $heifPackageBundled = (Test-Path $heifPackagePath) -or (Test-PyInstallerArchiveContains -PythonPath $venvPython -ArchivePath $bundleExecutable -Pattern "^\s*pillow_heif($|\.)")
+    if (-not $heifPackageBundled) {
+        throw "PyInstaller bundle is missing the pillow_heif package in $bundleOutput."
+    }
+
+    $heifNativeModule = Get-ChildItem -Path $bundleInternal -Filter "_pillow_heif*.pyd" -File -Recurse | Select-Object -First 1
+    if (-not $heifNativeModule) {
+        throw "PyInstaller bundle is missing the HEIF native module (_pillow_heif*.pyd) in $bundleInternal."
+    }
+
+    Write-Host "Verified bundled HEIF runtime: $($heifNativeModule.FullName)" -ForegroundColor Gray
 
     Write-Host "`n[3/3] Creating installer with Inno Setup..." -ForegroundColor Yellow
 

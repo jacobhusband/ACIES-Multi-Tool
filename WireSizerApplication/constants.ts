@@ -77,6 +77,7 @@ export const CONDUIT_EMT_40_PERCENT: { size: string; area: number }[] = [
 
 export const K_FACTOR_CU = 12.9;
 export const K_FACTOR_AL = 21.2;
+export const MIN_RECOMMENDED_CONDUCTOR_SIZE = "12";
 
 // Maximum wire sizes by material for parallel set calculations
 export const MAX_WIRE_SIZE_CU = "600"; // 600 kcmil max for copper

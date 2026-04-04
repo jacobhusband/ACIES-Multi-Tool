@@ -3667,6 +3667,79 @@ function getWorkroomServerProjectPath(project) {
   return findWorkroomProjectRootById(projectPath) || projectPath;
 }
 
+function getActiveWorkroomContext() {
+  const hasProjectIndex =
+    activeChecklistProject !== null && activeChecklistProject !== undefined;
+  const projectIndex = hasProjectIndex ? Number(activeChecklistProject) : -1;
+  const project =
+    Number.isInteger(projectIndex) && projectIndex >= 0 ? db[projectIndex] || null : null;
+  if (!project) return { project: null, deliverables: [], deliverable: null };
+
+  const deliverables = getProjectDeliverables(project);
+  const hasDeliverableIndex =
+    activeChecklistDeliverable !== null && activeChecklistDeliverable !== undefined;
+  const deliverableIndex = hasDeliverableIndex ? Number(activeChecklistDeliverable) : -1;
+  const deliverable =
+    Number.isInteger(deliverableIndex) && deliverableIndex >= 0
+      ? deliverables[deliverableIndex] || null
+      : null;
+
+  return { project, deliverables, deliverable };
+}
+
+function ensureWorkroomCadDiscipline(deliverable, disciplines = []) {
+  const options = disciplines.length ? disciplines : getWorkroomAvailableDisciplines();
+  if (!options.length) return "Electrical";
+  if (!deliverable) return options[0];
+
+  const existing = normalizeWorkroomCadDiscipline(deliverable.workroomCadDiscipline, "");
+  if (existing && options.includes(existing)) return existing;
+
+  const fallbackDiscipline = options[0];
+  if (deliverable.workroomCadDiscipline !== fallbackDiscipline) {
+    deliverable.workroomCadDiscipline = fallbackDiscipline;
+    debouncedSave();
+  }
+  return fallbackDiscipline;
+}
+
+function buildWorkroomCadLaunchContext() {
+  const { project, deliverable } = getActiveWorkroomContext();
+  const disciplines = getWorkroomAvailableDisciplines();
+  const activeDiscipline = ensureWorkroomCadDiscipline(deliverable, disciplines);
+  const projectPath = normalizeWorkroomFolderPath(project?.path || "");
+  const rootProjectPath = getWorkroomRootFolderPath(project);
+
+  return {
+    source: "workroom",
+    projectPath,
+    rootProjectPath,
+    discipline: activeDiscipline || disciplines[0] || "Electrical",
+    cadFilePaths: [],
+    projectName: String(project?.name || project?.nick || project?.id || "").trim(),
+    deliverableName: String(deliverable?.name || "").trim(),
+  };
+}
+
+function consumePendingCadLaunchContext() {
+  const context = pendingCadLaunchContext;
+  pendingCadLaunchContext = null;
+  return context;
+}
+
+function resolveCadLaunchContextForTool() {
+  const pendingContext = consumePendingCadLaunchContext();
+  if (pendingContext) return pendingContext;
+
+  const checklistModal = document.getElementById("checklistModal");
+  if (!checklistModal?.open) return null;
+
+  const { project, deliverable } = getActiveWorkroomContext();
+  if (!project || !deliverable) return null;
+
+  return buildWorkroomCadLaunchContext();
+}
+
 async function setWorkroomLocalProjectPath(project, nextPath, { saveNow = true } = {}) {
   if (!project) return false;
   const normalizedNext = normalizeWorkroomFolderPath(nextPath);
@@ -7787,7 +7860,7 @@ let lastCloudComparableFingerprints = {
   checklists: "",
   timesheets: "",
 };
-let deliverablesFilter = "primary";
+let deliverablesFilter = "active";
 let activeNoteTab = null;
 let activeNotebookType = "note";
 let notesSearchQuery = "";
@@ -9635,7 +9708,9 @@ async function acceptOutlookScanSuggestion(suggestionKey) {
     emailRef: (suggestion.emailRefs || [])[0] || null,
   });
   project.deliverables.push(deliverable);
-  project.overviewDeliverableId = deliverable.id;
+  syncProjectActiveDeliverables(project, {
+    fallbackActiveId: deliverable.id,
+  });
   db[suggestion.projectIndex] = project;
 
   const saved = await save({ silent: true });
@@ -12455,6 +12530,7 @@ function normalizeDeliverable(deliverable = {}) {
     emailRefs,
     emailRef: emailRefs[0] || null,
     links: buildLegacyLinksFromAttachments(attachments),
+    active: deliverable.active === true,
     workroomCadDiscipline: normalizeWorkroomCadDiscipline(
       deliverable.workroomCadDiscipline,
       ""
@@ -12499,6 +12575,7 @@ function createDeliverable(seed = {}) {
     statusTags: seed.statusTags || [],
     status: seed.status || "",
     attachments: seedAttachments,
+    active: seed.active !== false,
     workroomCadDiscipline: seed.workroomCadDiscipline || "",
     workroomPhase: seed.workroomPhase || "pre_design",
     workroomReturnType: seed.workroomReturnType || "",
@@ -12733,8 +12810,16 @@ function mergeProjects(base, incoming) {
     },
   };
   if (!Array.isArray(base.deliverables)) base.deliverables = [];
-  if (Array.isArray(incoming.deliverables))
-    base.deliverables.push(...incoming.deliverables);
+  if (Array.isArray(incoming.deliverables)) {
+    base.deliverables.push(
+      ...incoming.deliverables.map((deliverable) =>
+        normalizeDeliverable({
+          ...deliverable,
+          active: true,
+        })
+      )
+    );
+  }
   if (!base.overviewDeliverableId && incoming.overviewDeliverableId)
     base.overviewDeliverableId = incoming.overviewDeliverableId;
 }
@@ -12806,12 +12891,9 @@ function normalizeProject(project) {
   };
   syncProjectAttachmentFields(out);
   if (!out.deliverables.length) out.deliverables = [createDeliverable()];
-  if (
-    !out.overviewDeliverableId ||
-    !out.deliverables.some((d) => d.id === out.overviewDeliverableId)
-  ) {
-    out.overviewDeliverableId = out.deliverables[0]?.id || "";
-  }
+  syncProjectActiveDeliverables(out, {
+    fallbackActiveId: String(project.overviewDeliverableId || "").trim(),
+  });
   return out;
 }
 
@@ -12829,12 +12911,87 @@ function getLatestDueDeliverableId(deliverables = []) {
   return latestId;
 }
 
+function isDeliverableActive(deliverable) {
+  return deliverable?.active === true;
+}
+
+function getProjectActiveDeliverables(project) {
+  return getProjectDeliverables(project).filter((deliverable) =>
+    isDeliverableActive(deliverable)
+  );
+}
+
+function getActiveAnchorDeliverable(project) {
+  const deliverables = getProjectDeliverables(project);
+  if (!deliverables.length) return null;
+  const activeDeliverables = getProjectActiveDeliverables(project);
+  const activeWithDue = activeDeliverables.filter((deliverable) =>
+    parseDueStr(deliverable?.due)
+  );
+  if (activeWithDue.length) {
+    return activeWithDue.sort(compareDeliverablesByDue)[0];
+  }
+  if (activeDeliverables.length) return activeDeliverables[0];
+  return deliverables[0];
+}
+
+function syncProjectActiveDeliverables(project, { fallbackActiveId = "" } = {}) {
+  if (!project) return project;
+  const deliverables = getProjectDeliverables(project);
+  if (!deliverables.length) {
+    const deliverable = createDeliverable();
+    project.deliverables = [deliverable];
+    project.overviewDeliverableId = deliverable.id;
+    return project;
+  }
+
+  const normalizedFallbackId = String(fallbackActiveId || "").trim();
+  const hasExplicitActiveDeliverables = deliverables.some((deliverable) =>
+    isDeliverableActive(deliverable)
+  );
+  if (!hasExplicitActiveDeliverables && normalizedFallbackId) {
+    deliverables.forEach((deliverable) => {
+      deliverable.active = deliverable.id === normalizedFallbackId;
+    });
+  }
+  if (!deliverables.some((deliverable) => deliverable?.active)) {
+    deliverables[0].active = true;
+  }
+
+  const activeAnchorDeliverable = getActiveAnchorDeliverable(project);
+  project.overviewDeliverableId = activeAnchorDeliverable?.id || deliverables[0]?.id || "";
+  return project;
+}
+
+function projectNeedsActiveMigration(sourceProject, normalizedProject) {
+  if (
+    String(sourceProject?.overviewDeliverableId || "").trim() !==
+    String(normalizedProject?.overviewDeliverableId || "").trim()
+  ) {
+    return true;
+  }
+  const sourceDeliverables = Array.isArray(sourceProject?.deliverables)
+    ? sourceProject.deliverables
+    : [];
+  const normalizedDeliverables = Array.isArray(normalizedProject?.deliverables)
+    ? normalizedProject.deliverables
+    : [];
+  if (sourceDeliverables.length !== normalizedDeliverables.length) return true;
+  return normalizedDeliverables.some(
+    (deliverable, index) =>
+      (sourceDeliverables[index]?.active === true) !== (deliverable?.active === true)
+  );
+}
+
 function autoSetPrimary(project) {
   if (!project || !userSettings.autoPrimary) return;
   const latestId = getLatestDueDeliverableId(project.deliverables);
-  if (latestId && project.overviewDeliverableId !== latestId) {
-    project.overviewDeliverableId = latestId;
-  }
+  if (!latestId) return;
+  const latestDeliverable = getProjectDeliverables(project).find(
+    (deliverable) => deliverable.id === latestId
+  );
+  if (latestDeliverable) latestDeliverable.active = true;
+  syncProjectActiveDeliverables(project, { fallbackActiveId: latestId });
 }
 
 function migrateProjects(raw = []) {
@@ -12859,6 +13016,9 @@ function migrateProjects(raw = []) {
       if (project?.path !== normalizeWindowsPath(item?.path || "")) {
         changed = true;
       }
+      if (projectNeedsActiveMigration(item, project)) {
+        changed = true;
+      }
     }
     const key = getProjectMergeKey(project, index);
     if (isLegacy) {
@@ -12880,14 +13040,11 @@ function migrateProjects(raw = []) {
     .map(([key, p]) => {
       const normalized = normalizeProject(p);
       if (normalized && legacyOnlyKeys.has(key)) {
-        const latestDueId = getLatestDueDeliverableId(
-          normalized.deliverables
-        );
-        if (
-          latestDueId &&
-          normalized.overviewDeliverableId !== latestDueId
-        ) {
-          normalized.overviewDeliverableId = latestDueId;
+        const beforeOverviewId = normalized.overviewDeliverableId;
+        syncProjectActiveDeliverables(normalized, {
+          fallbackActiveId: beforeOverviewId,
+        });
+        if (normalized.overviewDeliverableId !== beforeOverviewId) {
           changed = true;
         }
       }
@@ -13311,28 +13468,23 @@ function getPriorityDeliverable(project) {
 }
 
 function getPrimaryDeliverable(project) {
-  const deliverables = getProjectDeliverables(project);
-  if (!deliverables.length) return null;
-  const primaryId = project?.overviewDeliverableId;
-  if (primaryId) {
-    const primary = deliverables.find((d) => d.id === primaryId);
-    if (primary) return primary;
-  }
-  return deliverables[0];
+  return getActiveAnchorDeliverable(project);
 }
 
 function getOverviewDeliverables(project) {
   const deliverables = getProjectDeliverables(project);
   if (!deliverables.length) return [];
   const out = deliverables.slice();
-  sortDeliverablesByPrimaryThenDueDesc(out, project?.overviewDeliverableId);
+  const activeAnchorDeliverable = getActiveAnchorDeliverable(project);
+  sortDeliverablesByPrimaryThenDueDesc(out, activeAnchorDeliverable?.id);
   return out;
 }
 
 function getProjectSortKey(project, projectListContext = null) {
   if (projectListContext?.anchorDueDate) return projectListContext.anchorDueDate;
-  const primary = projectListContext?.primaryDeliverable || getPrimaryDeliverable(project);
-  return parseDueStr(primary?.due);
+  const activeAnchorDeliverable =
+    projectListContext?.activeAnchorDeliverable || getActiveAnchorDeliverable(project);
+  return parseDueStr(activeAnchorDeliverable?.due);
 }
 
 function matchesProjectStatusFilter(deliverable, filter) {
@@ -13344,12 +13496,12 @@ function matchesProjectStatusFilter(deliverable, filter) {
 function matchesProjectDeliverablesFilter(
   deliverable,
   filter,
-  primaryDeliverable
+  activeAnchorDeliverable
 ) {
   if (filter === "all") return true;
   if (filter === "incomplete") return !isFinished(deliverable);
-  if (filter === "primary") {
-    return deliverable?.id === primaryDeliverable?.id;
+  if (filter === "active") {
+    return deliverable?.active === true;
   }
   return true;
 }
@@ -13399,7 +13551,7 @@ function getLatestDeliverableDueDate(deliverables = []) {
 function buildProjectTimeframeNote(
   filter,
   hasAdditionalFilters,
-  primaryMatchesTimeframe
+  activeAnchorMatchesTimeframe
 ) {
   const timeframeLabel = getTimeframeFilterLabel(filter);
   if (!timeframeLabel) return "";
@@ -13409,19 +13561,19 @@ function buildProjectTimeframeNote(
       ? `Showing deliverables based on ${timeframeLabel} and the active filters.`
       : `Showing deliverables based on ${timeframeLabel}.`;
 
-  if (hasAdditionalFilters && primaryMatchesTimeframe) {
-    return `${prefix} Primary deliverable does not match the current filters.`;
+  if (hasAdditionalFilters && activeAnchorMatchesTimeframe) {
+    return `${prefix} Active deliverable does not match the current filters.`;
   }
 
-  return `${prefix} Primary deliverable is outside this timeframe.`;
+  return `${prefix} Active deliverable is outside this timeframe.`;
 }
 
 function getProjectListRenderContext(project) {
   const overviewDeliverables = getOverviewDeliverables(project);
   if (!overviewDeliverables.length) return null;
 
-  const primaryDeliverable = getPrimaryDeliverable(project);
-  if (!primaryDeliverable) return null;
+  const activeAnchorDeliverable = getActiveAnchorDeliverable(project);
+  if (!activeAnchorDeliverable) return null;
 
   const isTimeframeView = dueFilter !== "all";
   const timeframeDeliverables = isTimeframeView
@@ -13436,27 +13588,28 @@ function getProjectListRenderContext(project) {
     matchesProjectDeliverablesFilter(
       deliverable,
       deliverablesFilter,
-      primaryDeliverable
+      activeAnchorDeliverable
     )
   );
   const visibleDeliverables = isTimeframeView
     ? filteredDeliverables.slice().sort(compareDeliverablesByDueDesc)
     : filteredDeliverables;
   const matchesFilters = visibleDeliverables.length > 0;
-  const primaryMatchesTimeframe = isTimeframeView
+  const activeAnchorMatchesTimeframe = isTimeframeView
     ? timeframeDeliverables.some(
-        (deliverable) => deliverable.id === primaryDeliverable.id
+        (deliverable) => deliverable.id === activeAnchorDeliverable.id
       )
     : true;
   const hasAdditionalFilters =
     statusFilter !== "all" || deliverablesFilter !== "all";
-  const primaryVisible = visibleDeliverables.some(
-    (deliverable) => deliverable.id === primaryDeliverable.id
+  const activeAnchorVisible = visibleDeliverables.some(
+    (deliverable) => deliverable.id === activeAnchorDeliverable.id
   );
-  const showTimeframeNote = isTimeframeView && visibleDeliverables.length > 0 && !primaryVisible;
+  const showTimeframeNote =
+    isTimeframeView && visibleDeliverables.length > 0 && !activeAnchorVisible;
 
   return {
-    primaryDeliverable,
+    activeAnchorDeliverable,
     timeframeDeliverables,
     statusMatchingDeliverables,
     visibleDeliverables,
@@ -13470,7 +13623,7 @@ function getProjectListRenderContext(project) {
       ? buildProjectTimeframeNote(
           dueFilter,
           hasAdditionalFilters,
-          primaryMatchesTimeframe
+          activeAnchorMatchesTimeframe
         )
       : "",
   };
@@ -13479,7 +13632,7 @@ function getProjectListRenderContext(project) {
 function getProjectsFilterValue(filterKey) {
   if (filterKey === "timeframe") return dueFilter || "all";
   if (filterKey === "status") return statusFilter || "all";
-  if (filterKey === "deliverables") return deliverablesFilter || "primary";
+  if (filterKey === "deliverables") return deliverablesFilter || "active";
   return "all";
 }
 
@@ -16374,6 +16527,136 @@ function updateDeliverableWorkItemUi(card, deliverable) {
   );
 }
 
+function createWorkItemDoneCheckbox({
+  checked = false,
+  ariaLabel = "Mark task complete",
+  onToggle = async () => {},
+}) {
+  const checkbox = el("input", {
+    className: "work-item-checkbox",
+    type: "checkbox",
+    checked: !!checked,
+    "aria-label": ariaLabel,
+  });
+
+  checkbox.addEventListener("click", (e) => {
+    e.stopPropagation();
+  });
+
+  checkbox.addEventListener("change", async (e) => {
+    e.stopPropagation();
+    await onToggle(checkbox.checked);
+  });
+
+  return checkbox;
+}
+
+function createInlineWorkItemTextControl({
+  textClassName = "",
+  value = "",
+  fallbackText = "",
+  title = "Click to edit",
+  ariaLabel = "Edit text",
+  onCommit = async () => {},
+}) {
+  const wrapper = el("div", { className: "work-item-text-wrap" });
+  const trigger = el("button", {
+    className: `work-item-text-trigger ${textClassName}`.trim(),
+    type: "button",
+    title,
+    "aria-label": ariaLabel,
+  });
+
+  let currentText = String(value || "");
+  let input = null;
+  let isFinishing = false;
+
+  const syncTriggerText = (nextText = currentText) => {
+    currentText = String(nextText || "");
+    trigger.textContent = currentText || fallbackText;
+  };
+
+  const finishEditing = async (mode = "commit") => {
+    if (!input || isFinishing) return;
+    isFinishing = true;
+
+    const activeInput = input;
+    const previousText = String(activeInput.dataset.previousText || "");
+    const trimmedText = activeInput.value.trim();
+    input = null;
+
+    activeInput.remove();
+    wrapper.classList.remove("is-editing");
+    trigger.hidden = false;
+
+    if (mode === "cancel") {
+      syncTriggerText(previousText);
+      isFinishing = false;
+      return;
+    }
+
+    const nextText = trimmedText || previousText;
+    syncTriggerText(nextText);
+
+    try {
+      if (nextText !== previousText) {
+        await onCommit(nextText, previousText);
+      }
+    } finally {
+      isFinishing = false;
+    }
+  };
+
+  trigger.addEventListener("click", (e) => {
+    e.stopPropagation();
+
+    if (input) {
+      input.focus();
+      input.select();
+      return;
+    }
+
+    const previousText = String(currentText || "");
+    input = el("input", {
+      className: "work-item-text-input",
+      type: "text",
+      value: previousText,
+    });
+    input.dataset.previousText = previousText;
+
+    wrapper.classList.add("is-editing");
+    trigger.hidden = true;
+    wrapper.appendChild(input);
+
+    input.focus();
+    input.select();
+
+    input.addEventListener("click", (event) => {
+      event.stopPropagation();
+    });
+
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        event.stopPropagation();
+        void finishEditing("commit");
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        void finishEditing("cancel");
+      }
+    });
+
+    input.addEventListener("blur", () => {
+      void finishEditing("commit");
+    });
+  });
+
+  syncTriggerText();
+  wrapper.appendChild(trigger);
+  return wrapper;
+}
+
 function createNotesSection(deliverable, card, project = null) {
   syncDeliverableNoteFields(deliverable);
   const section = el("div", { className: "deliverable-notes-section" });
@@ -16401,9 +16684,19 @@ function createNotesSection(deliverable, card, project = null) {
       });
       icon.appendChild(createIcon(NOTE_ICON_PATH, 12));
       const content = el("div", { className: "work-item-content" });
-      const text = el("span", {
-        className: "note-text",
-        textContent: liveNote.text || "Note",
+      const textControl = createInlineWorkItemTextControl({
+        textClassName: "note-text",
+        value: liveNote.text || "",
+        fallbackText: "Note",
+        title: "Click to edit note",
+        ariaLabel: "Edit note text",
+        onCommit: async (nextText) => {
+          liveNote.text = nextText;
+          syncDeliverableNoteFields(deliverable);
+          updateDeliverableWorkItemUi(card, deliverable);
+          renderNoteList();
+          await save();
+        },
       });
       const attachments = createWorkItemAttachmentControls({
         kind: "note",
@@ -16422,10 +16715,18 @@ function createNotesSection(deliverable, card, project = null) {
         titleUnpinned: "Pin note",
         onToggle: async (nextPinned) => {
           liveNote.pinned = nextPinned;
-          syncDeliverableNoteFields(deliverable);
-          updateDeliverableWorkItemUi(card, deliverable);
+          if (
+            deliverable.noteItems[index] &&
+            typeof deliverable.noteItems[index] === "object" &&
+            !Array.isArray(deliverable.noteItems[index])
+          ) {
+            deliverable.noteItems[index].pinned = nextPinned;
+          }
+          syncDeliverableWorkItemFields(deliverable);
           renderNoteList();
+          updateDeliverableWorkItemUi(card, deliverable);
           await save();
+          return nextPinned;
         },
       });
       const deleteBtn = el("button", {
@@ -16445,7 +16746,7 @@ function createNotesSection(deliverable, card, project = null) {
         await save();
       });
       actions.append(attachments, pinBtn, deleteBtn);
-      content.append(text);
+      content.append(textControl);
       row.append(icon, content, actions);
       list.appendChild(row);
     });
@@ -16554,14 +16855,29 @@ function createTasksPreview(deliverable, card, project = null) {
       const item = el("div", {
         className: `deliverable-task-item ${liveTask.done ? "done" : "undone"}`,
       });
-      const iconSpan = el("span", {
-        className: "task-icon",
-        textContent: liveTask.done ? "✓" : "○",
+      const checkbox = createWorkItemDoneCheckbox({
+        checked: !!liveTask.done,
+        ariaLabel: liveTask.done ? "Mark task incomplete" : "Mark task complete",
+        onToggle: async (nextDone) => {
+          liveTask.done = nextDone;
+          updateStatsDisplay();
+          renderTaskList();
+          await save();
+        },
       });
       const content = el("div", { className: "work-item-content" });
-      const textSpan = el("span", {
-        className: "task-text",
-        textContent: liveTask.text || "Task",
+      const textControl = createInlineWorkItemTextControl({
+        textClassName: "task-text",
+        value: liveTask.text || "",
+        fallbackText: "Task",
+        title: "Click to edit task",
+        ariaLabel: "Edit task text",
+        onCommit: async (nextText) => {
+          liveTask.text = nextText;
+          updateStatsDisplay();
+          renderTaskList();
+          await save();
+        },
       });
       const attachments = createWorkItemAttachmentControls({
         kind: "task",
@@ -16602,19 +16918,8 @@ function createTasksPreview(deliverable, card, project = null) {
       });
 
       actions.append(attachments, pinBtn, deleteBtn);
-      content.append(textSpan);
-      item.append(iconSpan, content, actions);
-
-      item.addEventListener("click", async (e) => {
-        if (e.target.closest(".work-item-actions, .attachment-control")) return;
-        e.stopPropagation();
-
-        liveTask.done = !liveTask.done;
-
-        updateStatsDisplay();
-        renderTaskList();
-        await save();
-      });
+      content.append(textControl);
+      item.append(checkbox, content, actions);
 
       list.appendChild(item);
     });
@@ -17046,7 +17351,9 @@ function addAiDeliverableToProject(projectIndex, aiProject, rawAiData) {
   if (!target.path && aiProject?.path) target.path = aiProject.path;
   if (!target.id && aiProject?.id) target.id = aiProject.id;
   target.deliverables.push(newDeliverable);
-  target.overviewDeliverableId = newDeliverable.id;
+  syncProjectActiveDeliverables(target, {
+    fallbackActiveId: newDeliverable.id,
+  });
   db[projectIndex] = target;
   editIndex = projectIndex;
   _aiMatchSnapshot = { index: projectIndex, data: snapshot };
@@ -17174,10 +17481,11 @@ function scanAndMergeSimilarProjects() {
       .map((deliverable) => ({
         ...deliverable,
         id: deliverable.id || createId("dlv"),
+        active: true,
       }));
     base.deliverables.sort(compareDeliverablesByDueDesc);
     if (!base.deliverables.length) base.deliverables = [createDeliverable()];
-    base.overviewDeliverableId = base.deliverables[0]?.id || "";
+    syncProjectActiveDeliverables(base);
     autoSetPrimary(base);
     base.overviewSortDir = "desc";
     base.pinned = projects.some((project) => project?.pinned);
@@ -17416,7 +17724,7 @@ function render() {
 
     const tr = rowTemplate.content.cloneNode(true).querySelector("tr");
     const idx = db.indexOf(p);
-    const primary = projectListContext.primaryDeliverable;
+    const primary = projectListContext.activeAnchorDeliverable;
     const totalDeliverables = getProjectDeliverables(p).length;
     const priorityId = primary?.id;
 
@@ -17767,22 +18075,22 @@ function fillForm(project) {
     );
   }
   const sortedDeliverables = p.deliverables.slice();
+  const activeAnchorDeliverable = getActiveAnchorDeliverable(p);
   sortDeliverablesByPrimaryThenDueDesc(
     sortedDeliverables,
-    p.overviewDeliverableId
+    activeAnchorDeliverable?.id
   );
   sortedDeliverables.forEach((deliverable) =>
-    addDeliverableCard(deliverable, p.overviewDeliverableId, { projectDraft: p })
+    addDeliverableCard(deliverable, activeAnchorDeliverable?.id, {
+      projectDraft: p,
+    })
   );
   if (!deliverableList.children.length) {
-    addDeliverableCard(createDeliverable(), p.overviewDeliverableId, {
+    addDeliverableCard(createDeliverable(), activeAnchorDeliverable?.id, {
       projectDraft: p,
     });
   }
-  if (!deliverableList.querySelector(".d-primary:checked")) {
-    const firstPrimary = deliverableList.querySelector(".d-primary");
-    if (firstPrimary) firstPrimary.checked = true;
-  }
+  ensureModalProjectHasActiveDeliverable();
 
   document.getElementById("refList").innerHTML = "";
   (p.refs || []).forEach(addRefRowFrom);
@@ -17955,7 +18263,38 @@ function setModalProjectAttachments(attachments) {
   return draft.attachments;
 }
 
-function addDeliverableCard(deliverable, primaryId, options = {}) {
+function getModalActiveDeliverableInputs(list = document.getElementById("deliverableList")) {
+  if (!list) return [];
+  return Array.from(list.querySelectorAll(".d-active"));
+}
+
+function getModalFallbackActiveDeliverableInput(list, excludedCard = null) {
+  const activeInputs = getModalActiveDeliverableInputs(list);
+  if (!activeInputs.length) return null;
+  if (!excludedCard) return activeInputs[0];
+  const remainingInputs = activeInputs.filter(
+    (input) => input.closest(".deliverable-card") !== excludedCard
+  );
+  return remainingInputs[0] || activeInputs[0];
+}
+
+function ensureModalProjectHasActiveDeliverable({ preferredCard = null } = {}) {
+  const list = document.getElementById("deliverableList");
+  if (!list) return null;
+  const checkedInputs = Array.from(list.querySelectorAll(".d-active:checked"));
+  if (checkedInputs.length) return checkedInputs[0];
+
+  const preferredInput =
+    preferredCard && list.contains(preferredCard)
+      ? preferredCard.querySelector(".d-active")
+      : null;
+  const fallbackInput =
+    preferredInput || getModalFallbackActiveDeliverableInput(list);
+  if (fallbackInput) fallbackInput.checked = true;
+  return fallbackInput;
+}
+
+function addDeliverableCard(deliverable, activeAnchorId, options = {}) {
   const list = document.getElementById("deliverableList");
   const template = document.getElementById("deliverable-card-template");
   if (!list || !template) return;
@@ -17972,11 +18311,17 @@ function addDeliverableCard(deliverable, primaryId, options = {}) {
   card.querySelector(".d-name").value = deliverable.name || "";
   card.querySelector(".d-due").value = deliverable.due || "";
 
-  const primaryInput = card.querySelector(".d-primary");
-  primaryInput.name = "primaryDeliverable";
-  if (primaryId && deliverableId === primaryId) {
-    primaryInput.checked = true;
+  const activeInput = card.querySelector(".d-active");
+  if (deliverable.active === true || (activeAnchorId && deliverableId === activeAnchorId)) {
+    activeInput.checked = true;
   }
+  activeInput.addEventListener("change", () => {
+    if (activeInput.checked) return;
+    const fallbackInput = getModalFallbackActiveDeliverableInput(list, card);
+    if (!list.querySelector(".d-active:checked") && fallbackInput) {
+      fallbackInput.checked = true;
+    }
+  });
 
   const attachmentControlHost = card.querySelector(".deliverable-attachment-control");
   if (attachmentControlHost) {
@@ -17996,8 +18341,6 @@ function addDeliverableCard(deliverable, primaryId, options = {}) {
       )
     );
   }
-
-  // No secondary action needed on primary change anymore
 
   const taskList = card.querySelector(".deliverable-task-list");
   const noteList = card.querySelector(".deliverable-note-list");
@@ -18019,6 +18362,11 @@ function addDeliverableCard(deliverable, primaryId, options = {}) {
       void requestAttachmentPanelClose();
     }
     card.remove();
+    if (!list.querySelector(".deliverable-card")) {
+      addDeliverableCard(createDeliverable(), null, { projectDraft });
+    } else {
+      ensureModalProjectHasActiveDeliverable();
+    }
   };
 
   const statusContainer = card.querySelector(".deliverable-status");
@@ -18065,48 +18413,9 @@ function addDeliverableCard(deliverable, primaryId, options = {}) {
     list.appendChild(card);
   }
 
-  const hasPrimary = list.querySelector(".d-primary:checked");
-  if (!hasPrimary && !primaryId) primaryInput.checked = true;
+  ensureModalProjectHasActiveDeliverable({ preferredCard: card });
 
   return card;
-}
-
-function getMostRecentDeliverableCard() {
-  const list = document.getElementById("deliverableList");
-  if (!list) return null;
-  const primaryInput = list.querySelector(".d-primary:checked");
-  if (primaryInput) return primaryInput.closest(".deliverable-card");
-  const cards = Array.from(list.querySelectorAll(".deliverable-card"));
-  if (!cards.length) return null;
-  let latestCard = null;
-  let latestDue = null;
-  cards.forEach((card) => {
-    const due = parseDueStr(card.querySelector(".d-due")?.value.trim());
-    if (!due) return;
-    if (!latestDue || due > latestDue) {
-      latestDue = due;
-      latestCard = card;
-    }
-  });
-  return latestCard || cards[0];
-}
-
-function isDeliverableCardComplete(card) {
-  if (!card) return false;
-  const statuses = readStatusPickerFrom(
-    card.querySelector(".deliverable-status")
-  );
-  return statuses.includes("Complete");
-}
-
-function setPrimaryDeliverableCard(card) {
-  const list = document.getElementById("deliverableList");
-  if (!list || !card) return;
-  list.querySelectorAll(".d-primary").forEach((input) => {
-    input.checked = false;
-  });
-  const primaryInput = card.querySelector(".d-primary");
-  if (primaryInput) primaryInput.checked = true;
 }
 
 function buildStatusPicker(selected = [], onToggle) {
@@ -18226,6 +18535,7 @@ function createWorkItemPinButton({
   onToggle = null,
 } = {}) {
   let currentPinned = !!pinned;
+  let isTogglePending = false;
   const button = el("button", {
     className: `work-item-pin-btn ${className}`.trim(),
     type: "button",
@@ -18240,13 +18550,29 @@ function createWorkItemPinButton({
       currentPinned ? titlePinned : titleUnpinned
     );
     button.setAttribute("aria-pressed", String(currentPinned));
+    button.setAttribute("aria-busy", String(isTogglePending));
   };
 
-  button.addEventListener("click", (e) => {
+  button.addEventListener("click", async (e) => {
     e.stopPropagation();
-    currentPinned = !currentPinned;
+    if (isTogglePending) return;
+    const previousPinned = currentPinned;
+    const nextPinned = !currentPinned;
+    currentPinned = nextPinned;
+    isTogglePending = true;
     syncState();
-    if (onToggle) onToggle(currentPinned);
+    try {
+      const resolvedPinned = onToggle ? await onToggle(nextPinned) : nextPinned;
+      if (typeof resolvedPinned === "boolean") {
+        currentPinned = resolvedPinned;
+      }
+    } catch (error) {
+      currentPinned = previousPinned;
+      console.warn("Failed to toggle work item pin state:", error);
+    } finally {
+      isTogglePending = false;
+      syncState();
+    }
   });
 
   syncState();
@@ -18472,14 +18798,25 @@ function renderModalDeliverableTaskList(card, container, options = {}) {
     const item = el("div", {
       className: `deliverable-task-item ${liveTask.done ? "done" : "undone"}`,
     });
-    const iconSpan = el("span", {
-      className: "task-icon",
-      textContent: liveTask.done ? "✓" : "○",
+    const checkbox = createWorkItemDoneCheckbox({
+      checked: !!liveTask.done,
+      ariaLabel: liveTask.done ? "Mark task incomplete" : "Mark task complete",
+      onToggle: async (nextDone) => {
+        liveTask.done = nextDone;
+        renderModalDeliverableTaskList(card, container);
+      },
     });
     const content = el("div", { className: "work-item-content" });
-    const textSpan = el("span", {
-      className: "task-text",
-      textContent: liveTask.text || "Task",
+    const textControl = createInlineWorkItemTextControl({
+      textClassName: "task-text",
+      value: liveTask.text || "",
+      fallbackText: "Task",
+      title: "Click to edit task",
+      ariaLabel: "Edit task text",
+      onCommit: async (nextText) => {
+        liveTask.text = nextText;
+        renderModalDeliverableTaskList(card, container);
+      },
     });
     const attachments = createWorkItemAttachmentControls({
       kind: "task",
@@ -18517,14 +18854,8 @@ function renderModalDeliverableTaskList(card, container, options = {}) {
     });
 
     actions.append(attachments, pinBtn, deleteBtn);
-    content.append(textSpan);
-    item.append(iconSpan, content, actions);
-    item.addEventListener("click", (e) => {
-      if (e.target.closest(".work-item-actions, .attachment-control")) return;
-      e.stopPropagation();
-      liveTask.done = !liveTask.done;
-      renderModalDeliverableTaskList(card, container);
-    });
+    content.append(textControl);
+    item.append(checkbox, content, actions);
     container.appendChild(item);
   });
 
@@ -18634,9 +18965,16 @@ function renderModalDeliverableNoteList(card, container, options = {}) {
       });
       iconSpan.appendChild(createIcon(NOTE_ICON_PATH, 12));
       const content = el("div", { className: "work-item-content" });
-      const textSpan = el("span", {
-        className: "note-text",
-        textContent: liveNote.text || "Note",
+      const textControl = createInlineWorkItemTextControl({
+        textClassName: "note-text",
+        value: liveNote.text || "",
+        fallbackText: "Note",
+        title: "Click to edit note",
+        ariaLabel: "Edit note text",
+        onCommit: async (nextText) => {
+          liveNote.text = nextText;
+          renderModalDeliverableNoteList(card, container);
+        },
       });
       const attachments = createWorkItemAttachmentControls({
         kind: "note",
@@ -18654,6 +18992,7 @@ function renderModalDeliverableNoteList(card, container, options = {}) {
         onToggle: (nextPinned) => {
           liveNote.pinned = nextPinned;
           renderModalDeliverableNoteList(card, container);
+          return nextPinned;
         },
       });
       const deleteBtn = el("button", {
@@ -18674,7 +19013,7 @@ function renderModalDeliverableNoteList(card, container, options = {}) {
       });
 
       actions.append(attachments, pinBtn, deleteBtn);
-      content.append(textSpan);
+      content.append(textControl);
       item.append(iconSpan, content, actions);
       container.appendChild(item);
     }
@@ -18843,20 +19182,14 @@ function readForm() {
       tasks,
       statuses,
       attachments,
+      active: !!card.querySelector(".d-active")?.checked,
     });
 
     out.deliverables.push(deliverable);
-    if (card.querySelector(".d-primary").checked)
-      out.overviewDeliverableId = deliverable.id;
   });
 
   if (!out.deliverables.length) {
-    const deliverable = createDeliverable();
-    out.deliverables = [deliverable];
-    out.overviewDeliverableId = deliverable.id;
-  }
-  if (!out.overviewDeliverableId) {
-    out.overviewDeliverableId = out.deliverables[0].id;
+    out.deliverables = [createDeliverable()];
   }
 
   document.querySelectorAll("#refList .ref-row").forEach((row) => {
@@ -18880,14 +19213,10 @@ function addRefRowFrom(L = {}) {
 }
 
 window.addDeliverable = () => {
-  const mostRecentCard = getMostRecentDeliverableCard();
-  const shouldSetPrimary =
-    mostRecentCard && isDeliverableCardComplete(mostRecentCard);
-  const newCard = addDeliverableCard(createDeliverable(), null, {
+  addDeliverableCard(createDeliverable(), null, {
     insertAtTop: true,
     projectDraft: getModalProjectDraft(),
   });
-  if (shouldSetPrimary && newCard) setPrimaryDeliverableCard(newCard);
 };
 window.addRefRow = () => addRefRowFrom({});
 window.closeDlg = closeDlg;
@@ -20875,6 +21204,10 @@ const circuitBreakerState = {
   newOutputPath: "",
   existingOutputPath: "",
   running: false,
+  activeJobId: "",
+  panelSchedulePollTimer: 0,
+  lastHandledTerminalJobId: "",
+  lastPanelScheduleStatus: null,
 };
 
 function generateCircuitBreakerPanelId() {
@@ -21064,6 +21397,38 @@ function setCircuitBreakerStatus(message, isError = false) {
   if (!statusEl) return;
   statusEl.textContent = message || "";
   statusEl.classList.toggle("text-danger", Boolean(isError));
+}
+
+function getPanelScheduleToolCard() {
+  return document.getElementById("toolCircuitBreaker");
+}
+
+function setPanelScheduleToolCardStatus(message, { running = false, error = false } = {}) {
+  const text = String(message || "").trim();
+  if (text || error) {
+    window.updateToolStatus(
+      "toolCircuitBreaker",
+      error ? `ERROR: ${text || "Panel Schedule AI failed."}` : text
+    );
+  }
+  const card = getPanelScheduleToolCard();
+  if (!card || error) return;
+  card.classList.toggle("running", Boolean(running));
+}
+
+function clearPanelScheduleStatusPoll() {
+  if (circuitBreakerState.panelSchedulePollTimer) {
+    clearTimeout(circuitBreakerState.panelSchedulePollTimer);
+    circuitBreakerState.panelSchedulePollTimer = 0;
+  }
+}
+
+function schedulePanelScheduleStatusPoll(jobId, delay = 1000) {
+  clearPanelScheduleStatusPoll();
+  if (!jobId || circuitBreakerState.activeJobId !== jobId) return;
+  circuitBreakerState.panelSchedulePollTimer = window.setTimeout(() => {
+    void pollPanelScheduleBackgroundStatus(jobId);
+  }, Math.max(0, Number(delay) || 0));
 }
 
 function renderCircuitBreakerPanelTabs() {
@@ -21290,6 +21655,7 @@ function updateCircuitBreakerUi() {
 }
 
 function resetCircuitBreakerForm() {
+  clearPanelScheduleStatusPoll();
   circuitBreakerState.panels = [];
   circuitBreakerState.activePanelId = "";
   circuitBreakerState.nextPanelNumber = 1;
@@ -21298,6 +21664,9 @@ function resetCircuitBreakerForm() {
   circuitBreakerState.newOutputPath = "";
   circuitBreakerState.existingOutputPath = "";
   circuitBreakerState.running = false;
+  circuitBreakerState.activeJobId = "";
+  circuitBreakerState.lastHandledTerminalJobId = "";
+  circuitBreakerState.lastPanelScheduleStatus = null;
   ensureCircuitBreakerPanels();
   updateCircuitBreakerUi();
 }
@@ -21340,7 +21709,7 @@ async function selectCircuitBreakerImage(kind) {
   try {
     const result = await window.pywebview.api.select_files({
       allow_multiple: true,
-      file_types: ["Image Files (*.jpg;*.jpeg;*.png;*.bmp;*.gif;*.tif;*.tiff)"],
+      file_types: ["Image Files (*.jpg;*.jpeg;*.png;*.bmp;*.gif;*.tif;*.tiff;*.heic;*.heif)"],
     });
     if (result.status === "success" && result.paths?.length) {
       setCircuitBreakerPaths(kind, result.paths);
@@ -21464,6 +21833,121 @@ async function filesToUploadPayloads(files) {
   return payloads.filter(Boolean);
 }
 
+async function pollPanelScheduleBackgroundStatus(jobId) {
+  if (!jobId || circuitBreakerState.activeJobId !== jobId) return;
+  if (!window.pywebview?.api?.get_panel_schedule_background_status) return;
+  try {
+    const payload = await window.pywebview.api.get_panel_schedule_background_status(
+      jobId
+    );
+    await handlePanelScheduleBackgroundUpdate(payload, { source: "poll" });
+  } catch (e) {
+    if (circuitBreakerState.activeJobId === jobId) {
+      schedulePanelScheduleStatusPoll(jobId, 1000);
+    }
+  }
+}
+
+async function handlePanelScheduleBackgroundUpdate(payload, { source = "push" } = {}) {
+  if (!payload) return;
+  const jobId = String(
+    payload.jobId || circuitBreakerState.activeJobId || ""
+  ).trim();
+  if (!jobId) return;
+
+  const status = String(payload.status || "").trim().toLowerCase();
+  circuitBreakerState.lastPanelScheduleStatus = { jobId, status, source };
+
+  if (status === "running") {
+    if (jobId === circuitBreakerState.activeJobId) {
+      schedulePanelScheduleStatusPoll(jobId, 1000);
+    }
+    return;
+  }
+
+  if (status === "not_found") {
+    if (jobId === circuitBreakerState.activeJobId) {
+      schedulePanelScheduleStatusPoll(jobId, 1000);
+    }
+    return;
+  }
+
+  if (status !== "success" && status !== "error") return;
+  if (circuitBreakerState.lastHandledTerminalJobId === jobId) return;
+  if (circuitBreakerState.activeJobId && jobId !== circuitBreakerState.activeJobId) {
+    return;
+  }
+
+  circuitBreakerState.lastHandledTerminalJobId = jobId;
+  circuitBreakerState.activeJobId = "";
+  clearPanelScheduleStatusPoll();
+  circuitBreakerState.running = false;
+  updateCircuitBreakerUi();
+
+  const parsedSuccess = Number(payload.successCount);
+  const parsedFailure = Number(payload.failureCount);
+  const successCount = Number.isFinite(parsedSuccess)
+    ? Math.max(0, parsedSuccess)
+    : status === "success"
+      ? 1
+      : 0;
+  const failureCount = Number.isFinite(parsedFailure)
+    ? Math.max(0, parsedFailure)
+    : status === "success"
+      ? 0
+      : 1;
+  const results = Array.isArray(payload.results) ? payload.results : [];
+
+  if (status === "success") {
+    let message = payload.message;
+    if (!message) {
+      if (failureCount > 0) {
+        message = `Panel Schedule AI finished: ${successCount} succeeded, ${failureCount} failed.`;
+      } else {
+        message = `Panel Schedule AI complete: ${successCount} panel${successCount === 1 ? "" : "s"} added.`;
+      }
+    } else if (failureCount > 0) {
+      const failedNames = results
+        .filter((item) => item?.status === "error")
+        .map((item) => item?.panelName || item?.panelId)
+        .filter(Boolean);
+      if (failedNames.length) {
+        const listed = failedNames.slice(0, 2).join(", ");
+        message = `${message} Failed: ${listed}${failedNames.length > 2 ? ", ..." : ""}.`;
+      }
+    }
+
+    setPanelScheduleToolCardStatus(message);
+    toast(message, failureCount > 0 ? 6000 : 3500);
+
+    const folder =
+      payload.outputFolder ||
+      (payload.outputPath
+        ? payload.outputPath.split(/[\\/]/).slice(0, -1).join("\\")
+        : "");
+    if (successCount > 0 && folder && window.pywebview?.api?.open_path) {
+      try {
+        await window.pywebview.api.open_path(folder);
+      } catch (e) {
+        // Ignore open errors.
+      }
+    }
+    return;
+  }
+
+  const baseMessage = payload.message || "Panel Schedule AI failed.";
+  const failedNames = results
+    .filter((item) => item?.status === "error")
+    .map((item) => item?.panelName || item?.panelId)
+    .filter(Boolean);
+  const listed = failedNames.length
+    ? ` Failed: ${failedNames.slice(0, 2).join(", ")}${failedNames.length > 2 ? ", ..." : ""}.`
+    : "";
+  const statusMessage = `${baseMessage}${listed}`;
+  setPanelScheduleToolCardStatus(statusMessage, { error: true });
+  toast(statusMessage, 6000);
+}
+
 async function runCircuitBreakerInBackground() {
   ensureCircuitBreakerPanels();
   const outputPath = getCircuitBreakerOutputPath();
@@ -21531,17 +22015,49 @@ async function runCircuitBreakerInBackground() {
   try {
     const res = await window.pywebview.api.run_panel_schedule_background(payload);
     if (res?.status === "error") {
+      clearPanelScheduleStatusPoll();
+      circuitBreakerState.activeJobId = "";
       circuitBreakerState.running = false;
       updateCircuitBreakerUi();
       toast(res.message || "Failed to start Panel Schedule AI.");
       return;
     }
+
+    const jobId = String(res?.jobId || "").trim();
+    if (!jobId) {
+      clearPanelScheduleStatusPoll();
+      circuitBreakerState.activeJobId = "";
+      circuitBreakerState.running = false;
+      updateCircuitBreakerUi();
+      setPanelScheduleToolCardStatus("Panel Schedule AI did not return a job id.", {
+        error: true,
+      });
+      toast("Panel Schedule AI did not return a job id.");
+      return;
+    }
+
+    const parsedPanelCount = Number(res?.panelCount);
+    const jobPanelCount = Number.isFinite(parsedPanelCount)
+      ? Math.max(1, parsedPanelCount)
+      : panels.length;
+    const runningMessage = `Running ${jobPanelCount} panel${jobPanelCount === 1 ? "" : "s"} in background...`;
+    circuitBreakerState.activeJobId = jobId;
+    circuitBreakerState.lastHandledTerminalJobId = "";
+    circuitBreakerState.lastPanelScheduleStatus = {
+      jobId,
+      status: "running",
+      source: "start",
+    };
+    setPanelScheduleToolCardStatus(runningMessage, { running: true });
+    schedulePanelScheduleStatusPoll(jobId, 1000);
     closeCircuitBreaker();
     toast(
-      `Panel Schedule AI is processing ${panels.length} panel${panels.length === 1 ? "" : "s"
+      `Panel Schedule AI is processing ${jobPanelCount} panel${jobPanelCount === 1 ? "" : "s"
       } in the background.`
     );
   } catch (e) {
+    clearPanelScheduleStatusPoll();
+    circuitBreakerState.activeJobId = "";
     circuitBreakerState.running = false;
     updateCircuitBreakerUi();
     toast("Failed to start Panel Schedule AI.");
@@ -21549,65 +22065,7 @@ async function runCircuitBreakerInBackground() {
 }
 
 window.handlePanelScheduleResult = async function (payload) {
-  circuitBreakerState.running = false;
-  updateCircuitBreakerUi();
-  if (!payload) return;
-
-  const parsedSuccess = Number(payload.successCount);
-  const parsedFailure = Number(payload.failureCount);
-  const successCount = Number.isFinite(parsedSuccess)
-    ? Math.max(0, parsedSuccess)
-    : payload.status === "success"
-      ? 1
-      : 0;
-  const failureCount = Number.isFinite(parsedFailure)
-    ? Math.max(0, parsedFailure)
-    : payload.status === "success"
-      ? 0
-      : 1;
-  const results = Array.isArray(payload.results) ? payload.results : [];
-
-  if (payload.status === "success") {
-    let message = payload.message;
-    if (!message) {
-      if (failureCount > 0) {
-        message = `Panel Schedule AI finished: ${successCount} succeeded, ${failureCount} failed.`;
-      } else {
-        message = `Panel Schedule AI complete: ${successCount} panel${successCount === 1 ? "" : "s"} added.`;
-      }
-    } else if (failureCount > 0) {
-      const failedNames = results
-        .filter((item) => item?.status === "error")
-        .map((item) => item?.panelName || item?.panelId)
-        .filter(Boolean);
-      if (failedNames.length) {
-        const listed = failedNames.slice(0, 2).join(", ");
-        message = `${message} Failed: ${listed}${failedNames.length > 2 ? ", ..." : ""}.`;
-      }
-    }
-    toast(message, failureCount > 0 ? 6000 : 3500);
-
-    const folder =
-      payload.outputFolder ||
-      (payload.outputPath ? payload.outputPath.split(/[\\/]/).slice(0, -1).join("\\") : "");
-    if (successCount > 0 && folder && window.pywebview?.api?.open_path) {
-      try {
-        await window.pywebview.api.open_path(folder);
-      } catch (e) {
-        // Ignore open errors.
-      }
-    }
-  } else {
-    const baseMessage = payload.message || "Panel Schedule AI failed.";
-    const failedNames = results
-      .filter((item) => item?.status === "error")
-      .map((item) => item?.panelName || item?.panelId)
-      .filter(Boolean);
-    const listed = failedNames.length
-      ? ` Failed: ${failedNames.slice(0, 2).join(", ")}${failedNames.length > 2 ? ", ..." : ""}.`
-      : "";
-    toast(`${baseMessage}${listed}`, 6000);
-  }
+  await handlePanelScheduleBackgroundUpdate(payload, { source: "push" });
 };
 
 const debouncedSaveLightingSchedule = debounce(

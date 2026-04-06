@@ -5156,10 +5156,12 @@ Return ONLY the JSON object.
     def get_tasks(self):
         """Reads and returns the content of tasks.json."""
         try:
-            with open(TASKS_FILE, 'r', encoding='utf-8') as f:
-                payload = json.load(f)
-                return _overlay_projects_with_lighting_schedule_records(payload)
-        except (FileNotFoundError, json.JSONDecodeError):
+            payload = _read_json_file_strict(TASKS_FILE)
+            return _overlay_projects_with_lighting_schedule_records(payload)
+        except FileNotFoundError:
+            return []
+        except ValueError as e:
+            logging.error(f"Error loading tasks from {TASKS_FILE}: {e}")
             return []
 
     def save_tasks(self, data):

@@ -100,6 +100,66 @@ class StartupStateRecoveryTests(unittest.TestCase):
     def setUp(self):
         self.api = Api.__new__(Api)
 
+    def test_get_tasks_loads_utf8_bom_prefixed_tasks_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            tasks_path = Path(temp_dir) / "tasks.json"
+            payload = [
+                {
+                    "id": "240001",
+                    "name": "BOM Test Project",
+                    "deliverables": [
+                        {
+                            "id": "dlv_1",
+                            "name": "Permit Set",
+                            "due": "04/03/2026",
+                        }
+                    ],
+                }
+            ]
+            tasks_path.write_text(
+                json.dumps(payload, indent=2),
+                encoding="utf-8-sig",
+            )
+
+            with patch.object(main_module, "TASKS_FILE", str(tasks_path)), patch.object(
+                main_module,
+                "_overlay_projects_with_lighting_schedule_records",
+                side_effect=lambda tasks: tasks,
+            ):
+                loaded = self.api.get_tasks()
+
+            self.assertEqual(payload, loaded)
+
+    def test_get_tasks_loads_plain_utf8_tasks_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            tasks_path = Path(temp_dir) / "tasks.json"
+            payload = [
+                {
+                    "id": "240002",
+                    "name": "Plain UTF-8 Project",
+                    "deliverables": [
+                        {
+                            "id": "dlv_2",
+                            "name": "Bid Set",
+                            "due": "04/04/2026",
+                        }
+                    ],
+                }
+            ]
+            tasks_path.write_text(
+                json.dumps(payload, indent=2),
+                encoding="utf-8",
+            )
+
+            with patch.object(main_module, "TASKS_FILE", str(tasks_path)), patch.object(
+                main_module,
+                "_overlay_projects_with_lighting_schedule_records",
+                side_effect=lambda tasks: tasks,
+            ):
+                loaded = self.api.get_tasks()
+
+            self.assertEqual(payload, loaded)
+
     def test_get_user_settings_recovers_missing_identity_fields_from_legacy_appdata(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             user_profile = Path(temp_dir) / "User"

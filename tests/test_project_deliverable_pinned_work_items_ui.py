@@ -44,8 +44,12 @@ class ProjectDeliverablePinnedWorkItemsUiTests(unittest.TestCase):
             "function getPinnedDeliverableTaskEntries(deliverable) {",
             "function getPinnedDeliverableNoteEntries(deliverable) {",
             "function getPinnedDeliverablePreviewItems(deliverable) {",
+            "function getExpandedProjectDeliverableIds() {",
+            "function restoreExpandedProjectDeliverables(expandedIds = []) {",
+            "function renderProjectsPreservingExpandedDeliverables() {",
             "function createWorkItemPinButton({",
             "function renderDeliverableStatusBadges(container, deliverable) {",
+            "function createDeliverableStatusSection(deliverable, project, card) {",
             "function renderDeliverablePinnedPreview(container, deliverable) {",
             "function updateDeliverableWorkItemUi(card, deliverable) {",
             "function createPinnedAttachmentPreviewButton(attachment) {",
@@ -53,6 +57,7 @@ class ProjectDeliverablePinnedWorkItemsUiTests(unittest.TestCase):
             "function createNotesSection(deliverable, card, project = null) {",
             "function createTasksPreview(deliverable, card, project = null) {",
             "function renderDeliverableCard(deliverable, isPrimary, project) {",
+            'className: "deliverable-status-inline-group",',
             'className: "deliverable-pinned-inline-group"',
             'titleUnpinned: "Pin task",',
             'titleUnpinned: "Pin note",',
@@ -66,8 +71,9 @@ class ProjectDeliverablePinnedWorkItemsUiTests(unittest.TestCase):
             'className: "deliverable-pinned-inline-pill-text"',
             'className: "deliverable-pinned-item-attachments"',
             'className: "deliverable-pinned-link"',
-            "renderDeliverableStatusBadges(badgesContainer, deliverable);",
+            "renderProjectsPreservingExpandedDeliverables();",
             "const notesSection = createNotesSection(deliverable, card, project);",
+            'card.dataset.deliverableId = deliverableId;',
         ):
             self.assertIn(expected, script)
 
@@ -80,10 +86,114 @@ class ProjectDeliverablePinnedWorkItemsUiTests(unittest.TestCase):
         self.assertNotIn('className: "deliverable-pinned-item-kind-label"', script)
         self.assertNotIn("createPinnedWorkItemAttachments(previewItem);", script)
 
+    def test_status_row_groups_pinned_preview_with_status_menu(self):
+        script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
+
+        status_badges_block = self._script_block(
+            script,
+            "function renderDeliverableStatusBadges(container, deliverable) {",
+            "function setDeliverableStatusDropdownState(dropdown, isOpen) {",
+        )
+        self.assertNotIn('className: "deliverable-pinned-inline-group"', status_badges_block)
+        self.assertNotIn("renderDeliverablePinnedPreview(", status_badges_block)
+
+        status_section_block = self._script_block(
+            script,
+            "function createDeliverableStatusSection(deliverable, project, card) {",
+            "function createNotesSectionLegacy(deliverable, project) {",
+        )
+        for expected in (
+            'className: "deliverable-status-row"',
+            'className: "deliverable-status-inline-group"',
+            'className: "deliverable-pinned-inline-group"',
+            "const statusDropdown = createStatusDropdown(deliverable, project, card);",
+            "renderDeliverablePinnedPreview(pinnedHost, deliverable);",
+            "statusInlineGroup.append(pinnedHost, statusDropdown);",
+            "statusSection.append(statusBadges, statusInlineGroup);",
+        ):
+            self.assertIn(expected, status_section_block)
+
+        update_work_item_ui_block = self._script_block(
+            script,
+            "function updateDeliverableWorkItemUi(card, deliverable) {",
+            "function createWorkItemDoneCheckbox({",
+        )
+        for expected in (
+            "renderDeliverableStatusBadges(",
+            'card?.querySelector(".deliverable-status-badges")',
+            "renderDeliverablePinnedPreview(",
+            'card?.querySelector(".deliverable-pinned-inline-group")',
+        ):
+            self.assertIn(expected, update_work_item_ui_block)
+
+        legacy_card_block = self._script_block(
+            script,
+            "function renderDeliverableCardLegacy(deliverable, isPrimary, project) {",
+            "function renderDeliverablePinnedPreview(container, deliverable) {",
+        )
+        current_card_block = self._script_block(
+            script,
+            "function renderDeliverableCard(deliverable, isPrimary, project) {",
+            "function normalizeProjectMatchValue(value) {",
+        )
+        self.assertIn(
+            "const statusSection = createDeliverableStatusSection(",
+            legacy_card_block,
+        )
+        self.assertIn(
+            "const statusSection = createDeliverableStatusSection(",
+            current_card_block,
+        )
+
+    def test_status_change_rerenders_projects_while_restoring_expanded_cards(self):
+        script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
+
+        helper_block = self._script_block(
+            script,
+            "function getExpandedProjectDeliverableIds() {",
+            "function renderDeliverableCardLegacy(deliverable, isPrimary, project) {",
+        )
+        for expected in (
+            'document.getElementById("tbody")',
+            '.querySelectorAll(".deliverable-card-new[data-deliverable-id]")',
+            'if (card.classList.contains("details-collapsed")) return;',
+            "setDeliverableDetailsCollapsed(card, false);",
+            "function renderProjectsPreservingExpandedDeliverables() {",
+            "const expandedIds = getExpandedProjectDeliverableIds();",
+            "render();",
+            "restoreExpandedProjectDeliverables(expandedIds);",
+        ):
+            self.assertIn(expected, helper_block)
+
+        status_dropdown_block = self._script_block(
+            script,
+            "function createStatusDropdown(deliverable, project, card) {",
+            "function createDeliverableStatusSection(deliverable, project, card) {",
+        )
+        for expected in (
+            "await save();",
+            "setDeliverableStatusDropdownState(dropdown, false);",
+            "renderProjectsPreservingExpandedDeliverables();",
+        ):
+            self.assertIn(expected, status_dropdown_block)
+
+        self.assertNotIn(
+            'const badgesContainer = card.querySelector(".deliverable-status-badges");',
+            status_dropdown_block,
+        )
+        self.assertNotIn(
+            "renderDeliverableStatusBadges(badgesContainer, deliverable);",
+            status_dropdown_block,
+        )
+
     def test_projects_pinned_work_items_styles_exist(self):
         css = STYLES_CSS_PATH.read_text(encoding="utf-8")
 
         for expected in (
+            ".deliverable-status-row {",
+            ".deliverable-status-badges {",
+            ".deliverable-status-inline-group {",
+            ".deliverable-status-dropdown {",
             ".work-item-actions {",
             ".work-item-pin-btn {",
             ".work-item-pin-btn.is-pinned {",
@@ -102,7 +212,48 @@ class ProjectDeliverablePinnedWorkItemsUiTests(unittest.TestCase):
         self.assertNotIn(".deliverable-pinned-preview {", css)
         self.assertNotIn(".deliverable-pinned-item-kind {", css)
 
+        status_row_block = self._css_block(css, ".deliverable-status-row {")
+        self.assertIn("display: flex;", status_row_block)
+        self.assertIn("align-items: flex-start;", status_row_block)
+        self.assertIn("flex-wrap: wrap;", status_row_block)
+        self.assertIn("gap: 0.5rem;", status_row_block)
+        self.assertNotIn("display: block;", status_row_block)
+
+        status_badges_block = self._css_block(css, ".deliverable-status-badges {")
+        self.assertIn("align-items: center;", status_badges_block)
+        self.assertNotIn("width: fit-content;", status_badges_block)
+        self.assertNotIn("vertical-align: top;", status_badges_block)
+
+        status_inline_group_block = self._css_block(
+            css,
+            ".deliverable-status-inline-group {",
+        )
+        self.assertIn("display: inline-flex;", status_inline_group_block)
+        self.assertIn("align-items: flex-start;", status_inline_group_block)
+        self.assertIn("flex-wrap: wrap;", status_inline_group_block)
+        self.assertIn("gap: 0.375rem;", status_inline_group_block)
+        self.assertIn("max-width: 100%;", status_inline_group_block)
+
+        status_dropdown_block = self._css_block(css, ".deliverable-status-dropdown {")
+        self.assertIn("display: inline-block;", status_dropdown_block)
+        self.assertIn("flex: 0 0 auto;", status_dropdown_block)
+        self.assertNotIn("margin-inline-start:", status_dropdown_block)
+        self.assertNotIn("vertical-align:", status_dropdown_block)
+
+        pinned_group_block = self._css_block(css, ".deliverable-pinned-inline-group {")
+        self.assertIn("display: contents;", pinned_group_block)
+        self.assertNotIn("display: inline-flex;", pinned_group_block)
+        self.assertNotIn("align-items:", pinned_group_block)
+        self.assertNotIn("max-width:", pinned_group_block)
+
+        pinned_group_hidden_block = self._css_block(
+            css,
+            ".deliverable-pinned-inline-group[hidden] {",
+        )
+        self.assertIn("display: none;", pinned_group_hidden_block)
+
         pill_block = self._css_block(css, ".deliverable-pinned-inline-pill {")
+        self.assertIn("flex: 0 1 auto;", pill_block)
         self.assertIn("align-items: flex-start;", pill_block)
         self.assertIn("max-width: min(100%, 240px);", pill_block)
 

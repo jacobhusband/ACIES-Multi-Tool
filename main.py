@@ -11,6 +11,7 @@ import io
 import logging
 import tempfile
 import time
+import stat as stat_module
 import sqlite3
 import http.server
 import html
@@ -7319,23 +7320,15 @@ Return ONLY the JSON object.
     def get_local_project_copy_info(self, server_project_path):
         """Returns the expected local copy path for a server project and whether it exists."""
         try:
-            normalized_server_path = os.path.normpath(str(server_project_path or '').strip())
-            if not normalized_server_path:
-                return {'status': 'error', 'message': 'Server project path is required.'}
-
-            project_name = os.path.basename(normalized_server_path.rstrip('\\/'))
-            if not project_name:
-                return {'status': 'error', 'message': 'Invalid server project path.'}
-
-            local_root = os.path.join(_get_windows_documents_dir(), 'Local Projects')
-            local_project_path = os.path.normpath(os.path.join(local_root, project_name))
-            exists = os.path.isdir(self._to_windows_extended_path(local_project_path))
+            target_info = self._get_copy_project_target_info(server_project_path)
+            if target_info.get('status') != 'success':
+                return target_info
             return {
                 'status': 'success',
-                'serverProjectPath': normalized_server_path,
-                'projectName': project_name,
-                'path': local_project_path,
-                'exists': exists,
+                'serverProjectPath': target_info.get('serverProjectPath') or '',
+                'projectName': target_info.get('projectName') or '',
+                'path': target_info.get('localProjectPath') or '',
+                'exists': bool(target_info.get('localProjectExists')),
             }
         except Exception as e:
             logging.error(f"Error reading local project copy info: {e}")
@@ -7442,6 +7435,47 @@ Return ONLY the JSON object.
 
         return result or ['Electrical']
 
+    def _normalize_copy_project_folder_names(self, folder_names):
+        normalized_names = []
+        seen_names = set()
+        for folder_name in folder_names or []:
+            clean_name = str(folder_name or '').strip()
+            if not clean_name:
+                continue
+            key = clean_name.lower()
+            if key in seen_names:
+                continue
+            seen_names.add(key)
+            normalized_names.append(clean_name)
+        return normalized_names
+
+    def _get_copy_project_default_folder_names(self, settings):
+        return self._normalize_copy_project_folder_names(
+            ['Arch', *self._get_copy_project_disciplines(settings), 'Xrefs', 'Documents', 'RFI']
+        )
+
+    def _get_copy_project_target_info(self, server_project_path):
+        normalized_server_path = os.path.normpath(str(server_project_path or '').strip())
+        if not normalized_server_path:
+            return {'status': 'error', 'message': 'Server project path is required.'}
+
+        project_name = os.path.basename(normalized_server_path.rstrip('\\/'))
+        if not project_name:
+            return {'status': 'error', 'message': 'Invalid server project path.'}
+
+        local_root = os.path.join(_get_windows_documents_dir(), 'Local Projects')
+        local_project_path = os.path.normpath(os.path.join(local_root, project_name))
+        local_project_exists = os.path.isdir(self._to_windows_extended_path(local_project_path))
+
+        return {
+            'status': 'success',
+            'serverProjectPath': normalized_server_path,
+            'projectName': project_name,
+            'localRootPath': local_root,
+            'localProjectPath': local_project_path,
+            'localProjectExists': local_project_exists,
+        }
+
     def _to_windows_extended_path(self, path):
         """Prefix Windows absolute paths so copy operations can exceed MAX_PATH."""
         normalized = os.path.normpath(str(path or ''))
@@ -7455,6 +7489,68 @@ Return ONLY the JSON object.
         if re.match(r'^[A-Za-z]:\\', normalized):
             return f"\\\\?\\{normalized}"
         return normalized
+
+    def _is_copy_project_reparse_point(self, stat_result):
+        reparse_flag = getattr(stat_module, 'FILE_ATTRIBUTE_REPARSE_POINT', 0)
+        if not reparse_flag:
+            return False
+        file_attributes = getattr(stat_result, 'st_file_attributes', 0)
+        return bool(file_attributes & reparse_flag)
+
+    def _format_copy_project_size_label(self, size_bytes):
+        size_value = max(0, int(size_bytes or 0))
+        gigabyte = 1024 ** 3
+        megabyte = 1024 ** 2
+        if size_value >= gigabyte:
+            return f"{size_value / gigabyte:.1f} GB"
+        return f"{size_value / megabyte:.1f} MB"
+
+    def _get_copy_project_folder_size_info(self, folder_path):
+        unavailable_result = {
+            'sizeBytes': None,
+            'sizeLabel': 'Size unavailable',
+            'sizeStatus': 'unavailable',
+        }
+
+        normalized_folder_path = os.path.normpath(str(folder_path or '').strip())
+        if not normalized_folder_path:
+            return unavailable_result
+
+        total_size = 0
+        pending_paths = [normalized_folder_path]
+        while pending_paths:
+            current_path = pending_paths.pop()
+            current_copy_path = self._to_windows_extended_path(current_path)
+            try:
+                with os.scandir(current_copy_path) as entries:
+                    for entry in entries:
+                        try:
+                            entry_stat = entry.stat(follow_symlinks=False)
+                        except Exception:
+                            return unavailable_result
+
+                        try:
+                            if entry.is_symlink() or self._is_copy_project_reparse_point(entry_stat):
+                                continue
+                        except Exception:
+                            return unavailable_result
+
+                        try:
+                            if entry.is_dir(follow_symlinks=False):
+                                pending_paths.append(os.path.join(current_path, entry.name))
+                                continue
+                            if entry.is_file(follow_symlinks=False):
+                                total_size += max(0, int(getattr(entry_stat, 'st_size', 0) or 0))
+                        except Exception:
+                            return unavailable_result
+            except Exception:
+                return unavailable_result
+
+        return {
+            'sizeBytes': total_size,
+            'sizeLabel': self._format_copy_project_size_label(total_size),
+            'sizeStatus': 'available',
+        }
 
     def _copy_folder_contents(self, source_folder, destination_folder):
         """Recursively copy a folder with per-file failure tracking."""
@@ -7580,18 +7676,9 @@ Return ONLY the JSON object.
         }
 
     def _get_backup_drawings_folder_names(self, settings):
-        required_folders = []
-        seen_required = set()
-        for folder_name in [*self._get_copy_project_disciplines(settings), 'Xrefs']:
-            clean_name = str(folder_name or '').strip()
-            if not clean_name:
-                continue
-            key = clean_name.lower()
-            if key in seen_required:
-                continue
-            seen_required.add(key)
-            required_folders.append(clean_name)
-        return required_folders
+        return self._normalize_copy_project_folder_names(
+            [*self._get_copy_project_disciplines(settings), 'Xrefs']
+        )
 
     def _build_backup_drawings_timestamp(self, now=None):
         return (now or datetime.datetime.now()).strftime("%Y%m%d_%H%M%S")
@@ -7715,7 +7802,97 @@ Return ONLY the JSON object.
             logging.error(f"Error backing up project drawings: {e}")
             return {'status': 'error', 'message': str(e)}
 
-    def copy_project_locally(self, server_project_path=None, launch_context=None):
+    def preview_copy_project_locally(self, server_project_path=None, launch_context=None):
+        """Return subfolder options and sizes before copying a project locally."""
+        try:
+            settings = self.get_user_settings()
+            source_resolution = self._resolve_copy_project_source_path(
+                server_project_path, launch_context, settings
+            )
+            if source_resolution.get('status') != 'success':
+                return source_resolution
+
+            normalized_server_path = source_resolution.get('path') or ''
+            resolved_from_workroom = bool(source_resolution.get('resolvedFromWorkroom'))
+            resolution_mode = str(source_resolution.get('resolutionMode') or '').strip()
+            workroom_project_path = str(source_resolution.get('workroomProjectPath') or '').strip()
+
+            if not os.path.isdir(self._to_windows_extended_path(normalized_server_path)):
+                if resolved_from_workroom:
+                    return {
+                        'status': 'error',
+                        'code': 'manual_selection_required',
+                        'message': 'Could not auto-resolve project folder from Project Workroom. Please select it manually.',
+                        'resolvedFromWorkroom': True,
+                        'resolvedServerProjectPath': normalized_server_path,
+                        'resolutionMode': 'project_id_ancestor_not_accessible',
+                        'workroomProjectPath': workroom_project_path,
+                    }
+                return {'status': 'error', 'message': 'Server project path does not exist.'}
+
+            target_info = self._get_copy_project_target_info(normalized_server_path)
+            if target_info.get('status') != 'success':
+                return target_info
+
+            local_project_path = target_info.get('localProjectPath') or ''
+            local_project_copy_path = self._to_windows_extended_path(local_project_path)
+            if os.path.exists(local_project_copy_path) and not os.path.isdir(local_project_copy_path):
+                return {
+                    'status': 'error',
+                    'message': f'Local project path is unavailable: {local_project_path}'
+                }
+
+            default_folder_names = self._get_copy_project_default_folder_names(settings)
+            default_folder_keys = {folder_name.lower() for folder_name in default_folder_names}
+            folder_options = []
+
+            with os.scandir(self._to_windows_extended_path(normalized_server_path)) as entries:
+                for entry in entries:
+                    try:
+                        if not entry.is_dir(follow_symlinks=False):
+                            continue
+                    except Exception:
+                        continue
+
+                    folder_name = str(entry.name or '').strip()
+                    if not folder_name:
+                        continue
+
+                    folder_path = os.path.normpath(os.path.join(normalized_server_path, folder_name))
+                    size_info = self._get_copy_project_folder_size_info(folder_path)
+                    folder_options.append({
+                        'name': folder_name,
+                        'path': folder_path,
+                        'sizeBytes': size_info.get('sizeBytes'),
+                        'sizeLabel': size_info.get('sizeLabel') or 'Size unavailable',
+                        'selectedByDefault': folder_name.lower() in default_folder_keys,
+                        'sizeStatus': size_info.get('sizeStatus') or 'unavailable',
+                    })
+
+            folder_options.sort(
+                key=lambda item: (
+                    not bool(item.get('selectedByDefault')),
+                    str(item.get('name') or '').lower(),
+                )
+            )
+
+            return {
+                'status': 'success',
+                'serverProjectPath': normalized_server_path,
+                'resolvedServerProjectPath': normalized_server_path,
+                'resolvedFromWorkroom': resolved_from_workroom,
+                'resolutionMode': resolution_mode or 'manual_selection',
+                'workroomProjectPath': workroom_project_path,
+                'localProjectPath': local_project_path,
+                'projectName': target_info.get('projectName') or '',
+                'localProjectExists': bool(target_info.get('localProjectExists')),
+                'folderOptions': folder_options,
+            }
+        except Exception as e:
+            logging.error(f"Error previewing local project copy: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def copy_project_locally(self, server_project_path=None, launch_context=None, selected_folder_names=None):
         """Copy key project folders from server to local Documents\\Local Projects."""
         try:
             settings = self.get_user_settings()
@@ -7743,13 +7920,14 @@ Return ONLY the JSON object.
                     }
                 return {'status': 'error', 'message': 'Server project path does not exist.'}
 
-            project_name = os.path.basename(normalized_server_path.rstrip('\\/'))
-            if not project_name:
-                return {'status': 'error', 'message': 'Invalid server project path.'}
+            target_info = self._get_copy_project_target_info(normalized_server_path)
+            if target_info.get('status') != 'success':
+                return target_info
 
-            local_root = os.path.join(_get_windows_documents_dir(), 'Local Projects')
+            project_name = target_info.get('projectName') or ''
+            local_root = target_info.get('localRootPath') or ''
+            local_project_path = target_info.get('localProjectPath') or ''
             os.makedirs(self._to_windows_extended_path(local_root), exist_ok=True)
-            local_project_path = os.path.normpath(os.path.join(local_root, project_name))
             local_project_copy_path = self._to_windows_extended_path(local_project_path)
 
             if os.path.exists(local_project_copy_path):
@@ -7772,18 +7950,17 @@ Return ONLY the JSON object.
                 }
 
             disciplines = self._get_copy_project_disciplines(settings)
+            if selected_folder_names is None:
+                required_folders = self._get_copy_project_default_folder_names(settings)
+            else:
+                required_folders = self._normalize_copy_project_folder_names(selected_folder_names)
 
-            required_folders = []
-            seen_required = set()
-            for folder_name in ['Arch', *disciplines, 'Xrefs', 'Documents', 'RFI']:
-                clean_name = str(folder_name or '').strip()
-                if not clean_name:
-                    continue
-                key = clean_name.lower()
-                if key in seen_required:
-                    continue
-                seen_required.add(key)
-                required_folders.append(clean_name)
+            if not required_folders:
+                return {
+                    'status': 'error',
+                    'code': 'no_folders_selected',
+                    'message': 'Select at least one folder to copy locally.',
+                }
 
             os.makedirs(local_project_copy_path, exist_ok=False)
             for folder_name in required_folders:

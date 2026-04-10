@@ -4854,6 +4854,141 @@ dialog::backdrop {
   border-radius: var(--radius);
 }
 
+.copy-project-locally-dialog {
+  width: min(960px, 96vw);
+}
+
+.copy-project-locally-intro {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.copy-project-locally-path-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.copy-project-locally-path-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.copy-project-locally-path-value {
+  font-size: 0.86rem;
+  line-height: 1.4;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.copy-project-locally-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.copy-project-locally-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.copy-project-locally-list {
+  min-height: 320px;
+  max-height: 50vh;
+  padding: 0.25rem 0;
+  gap: 0.4rem;
+}
+
+.copy-project-locally-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.7rem;
+  width: 100%;
+  min-width: 0;
+  padding: 0.55rem 0.8rem;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.03);
+  cursor: pointer;
+  transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.copy-project-locally-row:hover {
+  border-color: rgba(52, 211, 153, 0.55);
+  background: rgba(34, 197, 94, 0.08);
+  transform: translateY(-1px);
+}
+
+.copy-project-locally-row.is-selected,
+.copy-project-locally-row[data-selected="true"] {
+  border-color: rgba(52, 211, 153, 0.7);
+  background: rgba(34, 197, 94, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(52, 211, 153, 0.15);
+}
+
+[data-theme="light"] .copy-project-locally-row {
+  background: rgba(15, 23, 42, 0.02);
+}
+
+[data-theme="light"] .copy-project-locally-row:hover {
+  background: rgba(34, 197, 94, 0.08);
+}
+
+[data-theme="light"] .copy-project-locally-row.is-selected,
+[data-theme="light"] .copy-project-locally-row[data-selected="true"] {
+  background: rgba(34, 197, 94, 0.12);
+}
+
+.copy-project-locally-checkbox {
+  align-self: center;
+}
+
+.copy-project-locally-checkbox .checkmark {
+  border-color: rgba(148, 163, 184, 0.45);
+  background: rgba(15, 23, 42, 0.45);
+}
+
+[data-theme="light"] .copy-project-locally-checkbox .checkmark {
+  background: rgba(255, 255, 255, 0.95);
+}
+
+.copy-project-locally-row-content {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.copy-project-locally-row-title {
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.copy-project-locally-row-size {
+  min-width: max-content;
+  text-align: right;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.copy-project-locally-row.is-selected .copy-project-locally-row-size,
+.copy-project-locally-row[data-selected="true"] .copy-project-locally-row-size {
+  color: var(--text);
+}
+
 @media (max-width: 900px) {
   .deliverable-notepad-dialog {
     width: min(96vw, 720px);
@@ -4874,6 +5009,21 @@ dialog::backdrop {
   .deliverable-notepad-transfer .btn {
     flex: 1;
     min-width: 0;
+  }
+
+  .copy-project-locally-toolbar {
+    align-items: flex-start;
+  }
+
+  .copy-project-locally-row {
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: flex-start;
+  }
+
+  .copy-project-locally-row-size {
+    grid-column: 2;
+    text-align: left;
+    white-space: normal;
   }
 }
 
@@ -6355,12 +6505,21 @@ dialog::backdrop {
 
 .deliverable-status-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   flex-wrap: wrap;
   gap: 0.5rem;
   margin-bottom: 0.625rem;
   position: relative;
   overflow: visible;
+}
+
+.deliverable-status-inline-group {
+  display: inline-flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .deliverable-status-badge {
@@ -6486,6 +6645,7 @@ dialog::backdrop {
 .deliverable-status-dropdown {
   position: relative;
   display: inline-block;
+  flex: 0 0 auto;
 }
 
 .deliverable-status-dropdown.open {
@@ -7150,10 +7310,7 @@ dialog::backdrop {
 }
 
 .deliverable-pinned-inline-group {
-  display: inline-flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.375rem;
+  display: contents;
 }
 
 .deliverable-pinned-inline-group[hidden] {
@@ -7162,6 +7319,7 @@ dialog::backdrop {
 
 .deliverable-pinned-inline-pill {
   display: inline-flex;
+  flex: 0 1 auto;
   align-items: flex-start;
   gap: 0.3rem;
   max-width: min(100%, 240px);
@@ -9975,9 +10133,16 @@ input:checked+.slider:before {
 
 .custom-check input {
   position: absolute;
+  inset: 0;
   opacity: 0;
-  width: 0;
-  height: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  cursor: pointer;
 }
 
 .custom-check .checkmark {
@@ -9992,6 +10157,11 @@ input:checked+.slider:before {
 .custom-check input:checked+.checkmark {
   background: var(--accent);
   border-color: var(--accent);
+}
+
+.custom-check input:focus-visible+.checkmark {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .custom-check .checkmark::after {

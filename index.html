@@ -309,7 +309,7 @@
                             </th>
                             <th style="width:90px" data-sort="id">ID</th>
                             <th data-sort="name">Project Details</th>
-                            <th class="deliverables-header" data-sort="due" colspan="3">Deliverables</th>
+                            <th class="deliverables-header" data-sort="due" colspan="3">Deliverable</th>
                             <th class="nowrap" style="width:150px;text-align:center">Actions</th>
                         </tr>
                     </thead>
@@ -467,6 +467,23 @@
                         <h4 class="tools-section-title">General</h4>
                     </div>
                     <div class="tools-grid">
+                        <div id="toolCopyProjectLocally" class="tool-card" role="button" tabindex="0">
+                            <div class="tool-card-content">
+                                <div class="tool-icon">
+                                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                        stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                    </svg>
+                                </div>
+                                <div class="tool-card-header">Copy Project Locally</div>
+                                <div class="tool-card-body">
+                                    Select a server project folder, review subfolders and sizes, then choose what to
+                                    copy into Documents\Local Projects.
+                                </div>
+                            </div>
+                            <div class="tool-card-status"></div>
+                        </div>
                         <!-- Card 1: Publish DWGs -->
                         <div id="toolPublishDwgs" class="tool-card" role="button" tabindex="0">
                             <button type="button" class="tool-card-settings" data-settings-target="publishSettingsDlg"
@@ -561,6 +578,14 @@
                             </div>
                             <div class="tool-card-status"></div>
                         </div>
+                    </div>
+                </div>
+
+                <div class="tools-section">
+                    <div class="tools-section-header">
+                        <h4 class="tools-section-title">Templates</h4>
+                    </div>
+                    <div class="tools-grid">
                         <div id="toolCreateNarrativeTemplate" class="tool-card" role="button" tabindex="0">
                             <div class="tool-card-content">
                                 <div class="tool-icon">
@@ -593,23 +618,6 @@
                                 <div class="tool-card-header">Create Plan Check Comments Template</div>
                                 <div class="tool-card-body">
                                     Generates a Plan Check Comments document from the bundled template.
-                                </div>
-                            </div>
-                            <div class="tool-card-status"></div>
-                        </div>
-                        <div id="toolCopyProjectLocally" class="tool-card" role="button" tabindex="0">
-                            <div class="tool-card-content">
-                                <div class="tool-icon">
-                                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                        stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                                    </svg>
-                                </div>
-                                <div class="tool-card-header">Copy Project Locally</div>
-                                <div class="tool-card-body">
-                                    Select a server project folder to copy Arch, your discipline folders, Xrefs,
-                                    Documents, and RFI into Documents\Local Projects.
                                 </div>
                             </div>
                             <div class="tool-card-status"></div>
@@ -974,6 +982,44 @@
             </div>
             <div class="modal-footer">
                 <button class="btn-primary" id="deliverableNotepadExportBtn" type="button" disabled>Export to Excel</button>
+            </div>
+        </div>
+    </dialog>
+    <dialog id="copyProjectLocallyDlg" class="deliverable-notepad-dialog copy-project-locally-dialog">
+        <div class="modal-header">
+            <div>
+                <div class="title">Copy Project Locally</div>
+                <div class="muted tiny">Review the subfolders and total size before copying into
+                    Documents\Local Projects.</div>
+            </div>
+            <button class="btn ghost" type="button" onclick="closeDlg('copyProjectLocallyDlg')">Cancel</button>
+        </div>
+        <div class="modal-body stack tool-settings-body">
+            <div class="tool-settings-intro copy-project-locally-intro">
+                <div id="copyProjectLocallyProjectName" class="tool-settings-title">Copy Project Locally</div>
+                <div class="copy-project-locally-path-row">
+                    <div class="copy-project-locally-path-label">Server project</div>
+                    <div id="copyProjectLocallyServerPath" class="copy-project-locally-path-value">--</div>
+                </div>
+                <div class="copy-project-locally-path-row">
+                    <div class="copy-project-locally-path-label">Local destination</div>
+                    <div id="copyProjectLocallyLocalPath" class="copy-project-locally-path-value">--</div>
+                </div>
+            </div>
+            <div class="copy-project-locally-toolbar">
+                <div id="copyProjectLocallySummary" class="muted tiny">No folders selected.</div>
+                <div class="copy-project-locally-actions">
+                    <button class="btn ghost tiny" id="copyProjectLocallySelectDefaultsBtn" type="button">Select
+                        defaults</button>
+                    <button class="btn ghost tiny" id="copyProjectLocallySelectAllBtn" type="button">Select all</button>
+                    <button class="btn ghost tiny" id="copyProjectLocallyClearAllBtn" type="button">Clear all</button>
+                </div>
+            </div>
+            <div id="copyProjectLocallyFolderList" class="deliverable-notepad-list copy-project-locally-list" role="list"></div>
+            <div class="modal-footer">
+                <button class="btn ghost" type="button" onclick="closeDlg('copyProjectLocallyDlg')">Cancel</button>
+                <button class="btn-primary" id="copyProjectLocallyConfirmBtn" type="button" disabled>Copy Selected
+                    Folders</button>
             </div>
         </div>
     </dialog>
@@ -1506,6 +1552,26 @@
                     </div>
                     <label class="switch">
                         <input type="checkbox" id="settings_autoPrimary">
+                        <span class="slider round"></span>
+                    </label>
+                </div>
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <div class="setting-label">Separate Incomplete and Complete Deliverables</div>
+                        <div class="setting-desc">When enabled, the Projects tab shows incomplete and complete deliverables in separate sections.</div>
+                    </div>
+                    <label class="switch">
+                        <input type="checkbox" id="settings_separateDeliverableCompletionGroups">
+                        <span class="slider round"></span>
+                    </label>
+                </div>
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <div class="setting-label">Group Deliverables by Project</div>
+                        <div class="setting-desc">When enabled, the Projects tab groups deliverables under each project instead of showing one row per deliverable.</div>
+                    </div>
+                    <label class="switch">
+                        <input type="checkbox" id="settings_groupDeliverablesByProject">
                         <span class="slider round"></span>
                     </label>
                 </div>

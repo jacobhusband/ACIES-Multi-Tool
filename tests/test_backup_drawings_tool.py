@@ -133,6 +133,7 @@ from main import Api
 REPO_ROOT = Path(__file__).resolve().parents[1]
 INDEX_HTML_PATH = REPO_ROOT / "index.html"
 SCRIPT_JS_PATH = REPO_ROOT / "script.js"
+STYLES_CSS_PATH = REPO_ROOT / "styles.css"
 
 
 class BackupDrawingsBackendTests(unittest.TestCase):
@@ -305,6 +306,209 @@ class BackupDrawingsBackendTests(unittest.TestCase):
             self.assertTrue((archive_path / "Electrical" / "power.dwg").exists())
 
 
+class CopyProjectLocallyBackendTests(unittest.TestCase):
+    def setUp(self):
+        self.api = Api.__new__(Api)
+
+    def _settings(self, disciplines=None):
+        return {"discipline": disciplines or ["Electrical"]}
+
+    def _write_file(self, path, content):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+
+    def _write_binary_file(self, path, size_bytes):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"x" * size_bytes)
+
+    def test_preview_copy_project_locally_returns_direct_subfolders_with_default_flags(self):
+        with tempfile.TemporaryDirectory(prefix="acies-copy-project-local-preview-") as temp_dir:
+            project_root = Path(temp_dir) / "260243 BofA - Eastport Plaza"
+            for folder_name in ["Specs", "Mechanical", "Electrical", "Arch", "Xrefs", "Documents", "RFI"]:
+                (project_root / folder_name).mkdir(parents=True, exist_ok=True)
+
+            docs_root = Path(temp_dir) / "DocumentsRoot"
+            with patch.object(self.api, "get_user_settings", return_value=self._settings(["Electrical", "Mechanical"])), patch.object(
+                main_module,
+                "_get_windows_documents_dir",
+                return_value=str(docs_root),
+            ):
+                result = self.api.preview_copy_project_locally(str(project_root))
+
+            self.assertEqual("success", result["status"])
+            self.assertFalse(result["localProjectExists"])
+            self.assertEqual(
+                os.path.normpath(str(docs_root / "Local Projects" / project_root.name)),
+                os.path.normpath(result["localProjectPath"]),
+            )
+            folder_names = [entry["name"] for entry in result["folderOptions"]]
+            self.assertEqual(
+                ["Arch", "Documents", "Electrical", "Mechanical", "RFI", "Xrefs", "Specs"],
+                folder_names,
+            )
+            selection_lookup = {
+                entry["name"]: bool(entry["selectedByDefault"])
+                for entry in result["folderOptions"]
+            }
+            self.assertTrue(selection_lookup["Arch"])
+            self.assertTrue(selection_lookup["Electrical"])
+            self.assertTrue(selection_lookup["Mechanical"])
+            self.assertTrue(selection_lookup["Xrefs"])
+            self.assertTrue(selection_lookup["Documents"])
+            self.assertTrue(selection_lookup["RFI"])
+            self.assertFalse(selection_lookup["Specs"])
+
+    def test_preview_copy_project_locally_reports_recursive_sizes_and_labels(self):
+        with tempfile.TemporaryDirectory(prefix="acies-copy-project-local-size-") as temp_dir:
+            project_root = Path(temp_dir) / "260243 BofA - Eastport Plaza"
+            self._write_binary_file(project_root / "Electrical" / "Sheets" / "power.dwg", 1024 * 1024)
+            self._write_binary_file(project_root / "Electrical" / "Reports" / "load.txt", 512 * 1024)
+            docs_root = Path(temp_dir) / "DocumentsRoot"
+
+            with patch.object(self.api, "get_user_settings", return_value=self._settings()), patch.object(
+                main_module,
+                "_get_windows_documents_dir",
+                return_value=str(docs_root),
+            ):
+                result = self.api.preview_copy_project_locally(str(project_root))
+
+            electrical_entry = next(
+                entry for entry in result["folderOptions"] if entry["name"] == "Electrical"
+            )
+            self.assertEqual("success", result["status"])
+            self.assertEqual(1572864, electrical_entry["sizeBytes"])
+            self.assertEqual("1.5 MB", electrical_entry["sizeLabel"])
+            self.assertEqual("available", electrical_entry["sizeStatus"])
+
+    def test_preview_copy_project_locally_preserves_workroom_resolution_details(self):
+        with tempfile.TemporaryDirectory(prefix="acies-copy-project-local-workroom-") as temp_dir:
+            project_root = Path(temp_dir) / "260243 BofA - Eastport Plaza"
+            self._write_file(project_root / "Electrical" / "power.dwg", "power")
+            docs_root = Path(temp_dir) / "DocumentsRoot"
+
+            with patch.object(self.api, "get_user_settings", return_value=self._settings()), patch.object(
+                self.api,
+                "_resolve_copy_project_source_path",
+                return_value={
+                    "status": "success",
+                    "path": os.path.normpath(str(project_root)),
+                    "resolvedFromWorkroom": True,
+                    "resolutionMode": "project_id_ancestor",
+                    "workroomProjectPath": os.path.normpath(str(project_root / "Electrical")),
+                },
+            ), patch.object(
+                main_module,
+                "_get_windows_documents_dir",
+                return_value=str(docs_root),
+            ):
+                result = self.api.preview_copy_project_locally(None, {"source": "workroom"})
+
+            self.assertEqual("success", result["status"])
+            self.assertTrue(result["resolvedFromWorkroom"])
+            self.assertEqual("project_id_ancestor", result["resolutionMode"])
+            self.assertEqual(
+                os.path.normpath(str(project_root / "Electrical")),
+                os.path.normpath(result["workroomProjectPath"]),
+            )
+
+    def test_copy_project_locally_existing_local_project_keeps_current_short_circuit(self):
+        with tempfile.TemporaryDirectory(prefix="acies-copy-project-local-existing-") as temp_dir:
+            project_root = Path(temp_dir) / "260243 BofA - Eastport Plaza"
+            self._write_file(project_root / "Electrical" / "power.dwg", "power")
+            docs_root = Path(temp_dir) / "DocumentsRoot"
+            local_project_path = docs_root / "Local Projects" / project_root.name
+            local_project_path.mkdir(parents=True, exist_ok=True)
+
+            with patch.object(self.api, "get_user_settings", return_value=self._settings()), patch.object(
+                main_module,
+                "_get_windows_documents_dir",
+                return_value=str(docs_root),
+            ):
+                result = self.api.copy_project_locally(str(project_root))
+
+            self.assertEqual("error", result["status"])
+            self.assertEqual("local_project_exists", result["code"])
+            self.assertEqual(
+                os.path.normpath(str(local_project_path)),
+                os.path.normpath(result["localProjectPath"]),
+            )
+
+    def test_copy_project_locally_selected_folders_only_copies_selected_subfolders(self):
+        with tempfile.TemporaryDirectory(prefix="acies-copy-project-local-selected-") as temp_dir:
+            project_root = Path(temp_dir) / "260243 BofA - Eastport Plaza"
+            self._write_file(project_root / "Electrical" / "power.dwg", "power")
+            self._write_file(project_root / "Specs" / "spec.txt", "spec")
+            self._write_file(project_root / "Xrefs" / "arch.dwg", "xref")
+            docs_root = Path(temp_dir) / "DocumentsRoot"
+
+            with patch.object(self.api, "get_user_settings", return_value=self._settings()), patch.object(
+                main_module,
+                "_get_windows_documents_dir",
+                return_value=str(docs_root),
+            ):
+                result = self.api.copy_project_locally(
+                    str(project_root), None, ["Electrical", "Specs"]
+                )
+
+            local_project_path = docs_root / "Local Projects" / project_root.name
+            self.assertEqual("success", result["status"])
+            self.assertEqual(["Electrical", "Specs"], result["copiedFolders"])
+            self.assertTrue((local_project_path / "Electrical" / "power.dwg").exists())
+            self.assertTrue((local_project_path / "Specs" / "spec.txt").exists())
+            self.assertFalse((local_project_path / "Arch").exists())
+            self.assertFalse((local_project_path / "Xrefs").exists())
+            self.assertFalse((local_project_path / "Documents").exists())
+            self.assertFalse((local_project_path / "RFI").exists())
+
+    def test_copy_project_locally_reports_missing_selected_folders_without_aborting(self):
+        with tempfile.TemporaryDirectory(prefix="acies-copy-project-local-missing-") as temp_dir:
+            project_root = Path(temp_dir) / "260243 BofA - Eastport Plaza"
+            self._write_file(project_root / "Electrical" / "power.dwg", "power")
+            docs_root = Path(temp_dir) / "DocumentsRoot"
+
+            with patch.object(self.api, "get_user_settings", return_value=self._settings()), patch.object(
+                main_module,
+                "_get_windows_documents_dir",
+                return_value=str(docs_root),
+            ):
+                result = self.api.copy_project_locally(
+                    str(project_root), None, ["Electrical", "Xrefs"]
+                )
+
+            local_project_path = docs_root / "Local Projects" / project_root.name
+            self.assertEqual("success", result["status"])
+            self.assertEqual(["Electrical"], result["copiedFolders"])
+            self.assertEqual(["Xrefs"], result["missingServerFolders"])
+            self.assertEqual(1, result["copiedFileCount"])
+            self.assertTrue((local_project_path / "Electrical" / "power.dwg").exists())
+
+    def test_copy_project_locally_without_selected_folders_preserves_default_folder_behavior(self):
+        with tempfile.TemporaryDirectory(prefix="acies-copy-project-local-defaults-") as temp_dir:
+            project_root = Path(temp_dir) / "260243 BofA - Eastport Plaza"
+            self._write_file(project_root / "Electrical" / "power.dwg", "power")
+            docs_root = Path(temp_dir) / "DocumentsRoot"
+
+            with patch.object(self.api, "get_user_settings", return_value=self._settings()), patch.object(
+                main_module,
+                "_get_windows_documents_dir",
+                return_value=str(docs_root),
+            ):
+                result = self.api.copy_project_locally(str(project_root))
+
+            local_project_path = docs_root / "Local Projects" / project_root.name
+            self.assertEqual("success", result["status"])
+            self.assertEqual(["Electrical"], result["copiedFolders"])
+            self.assertEqual(
+                ["Arch", "Xrefs", "Documents", "RFI"],
+                result["missingServerFolders"],
+            )
+            self.assertTrue((local_project_path / "Arch").exists())
+            self.assertTrue((local_project_path / "Electrical" / "power.dwg").exists())
+            self.assertTrue((local_project_path / "Xrefs").exists())
+            self.assertTrue((local_project_path / "Documents").exists())
+            self.assertTrue((local_project_path / "RFI").exists())
+
+
 class BackupDrawingsUiTests(unittest.TestCase):
     def test_backup_drawings_markup_exists(self):
         html = INDEX_HTML_PATH.read_text(encoding="utf-8")
@@ -326,6 +530,54 @@ class BackupDrawingsUiTests(unittest.TestCase):
         self.assertIn('toast(`Failed files: ${failedPreview.join(", ")}${suffix}`, 9000);', text)
         self.assertIn("await window.pywebview.api.open_path(result.archivePath);", text)
         self.assertIn('window.updateToolStatus("toolBackupDrawings", "DONE");', text)
+
+
+class CopyProjectLocallyUiTests(unittest.TestCase):
+    def test_copy_project_locally_dialog_markup_exists(self):
+        html = INDEX_HTML_PATH.read_text(encoding="utf-8")
+        normalized_html = " ".join(html.split())
+        general_title = '<h4 class="tools-section-title">General</h4>'
+        templates_title = '<h4 class="tools-section-title">Templates</h4>'
+
+        self.assertIn('id="copyProjectLocallyDlg"', html)
+        self.assertIn('id="copyProjectLocallyFolderList"', html)
+        self.assertIn('id="copyProjectLocallyConfirmBtn"', html)
+        self.assertIn("Select defaults", normalized_html)
+        self.assertIn("Copy Selected Folders", normalized_html)
+        self.assertEqual(1, html.count('id="toolCopyProjectLocally"'))
+        self.assertLess(html.index(general_title), html.index('id="toolCopyProjectLocally"'))
+        self.assertLess(html.index('id="toolCopyProjectLocally"'), html.index(templates_title))
+
+    def test_copy_project_locally_script_uses_preview_flow(self):
+        text = SCRIPT_JS_PATH.read_text(encoding="utf-8")
+
+        self.assertIn('className: "copy-project-locally-row"', text)
+        self.assertIn('className: "custom-check copy-project-locally-checkbox"', text)
+        self.assertNotIn('textContent: "Default"', text)
+        self.assertIn("window.pywebview.api.preview_copy_project_locally(", text)
+        self.assertIn(
+            'window.updateToolStatus("toolCopyProjectLocally", "Loading folder list...");',
+            text,
+        )
+        self.assertIn(
+            'window.updateToolStatus("toolCopyProjectLocally", "Copying selected folders...");',
+            text,
+        )
+        self.assertIn(
+            "const selectedFolderNames = await openCopyProjectLocallyDialog(preview);",
+            text,
+        )
+        self.assertIn("window.pywebview.api.copy_project_locally(", text)
+
+    def test_copy_project_locally_styles_exist(self):
+        styles = STYLES_CSS_PATH.read_text(encoding="utf-8")
+
+        self.assertIn(".copy-project-locally-dialog", styles)
+        self.assertIn(".copy-project-locally-toolbar", styles)
+        self.assertIn(".copy-project-locally-row", styles)
+        self.assertIn(".copy-project-locally-checkbox", styles)
+        self.assertIn(".copy-project-locally-row-size", styles)
+        self.assertNotIn(".copy-project-locally-badge", styles)
 
 
 if __name__ == "__main__":

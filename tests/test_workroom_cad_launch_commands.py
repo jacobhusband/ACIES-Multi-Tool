@@ -1,7 +1,9 @@
+import io
 import sys
 import tempfile
 import types
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -249,7 +251,7 @@ class WorkroomCadLaunchCommandTests(unittest.TestCase):
         ), patch.object(
             self.api,
             "_run_script_with_progress",
-            side_effect=lambda command, tool_id: captured.append((command, tool_id)),
+            side_effect=lambda command, tool_id, **kwargs: captured.append((command, tool_id, kwargs)),
         ), patch.object(self.api, "_notify_tool_status") as notify_mock:
             result = getattr(self.api, case["method_name"])({"source": "workroom"})
         return result, captured, notify_mock
@@ -261,11 +263,13 @@ class WorkroomCadLaunchCommandTests(unittest.TestCase):
             with self.subTest(method=case["method_name"]):
                 result, captured, notify_mock = self._run_tool(case, auto_selection)
 
-                self.assertEqual({"status": "success"}, result)
+                self.assertEqual("success", result["status"])
+                self.assertEqual("", result["activityId"])
                 self.assertEqual(1, len(captured))
 
-                command, tool_id = captured[0]
+                command, tool_id, kwargs = captured[0]
                 self.assertEqual(case["tool_id"], tool_id)
+                self.assertEqual({"activity_id": None}, kwargs)
                 self.assertIsInstance(command, list)
                 self.assertGreaterEqual(len(command), 6)
                 self.assertEqual("powershell.exe", command[0])
@@ -286,18 +290,69 @@ class WorkroomCadLaunchCommandTests(unittest.TestCase):
             with self.subTest(method=case["method_name"]):
                 result, captured, notify_mock = self._run_tool(case, auto_selection=None)
 
-                self.assertEqual({"status": "success"}, result)
+                self.assertEqual("success", result["status"])
+                self.assertEqual("", result["activityId"])
                 self.assertEqual(1, len(captured))
 
-                command, tool_id = captured[0]
+                command, tool_id, kwargs = captured[0]
                 self.assertEqual(case["tool_id"], tool_id)
+                self.assertEqual({"activity_id": None}, kwargs)
                 self.assertIsInstance(command, list)
                 self.assertNotIn("-FilesListPath", command)
 
                 for expected_arg in case["expected_args"]:
                     self.assertIn(expected_arg, command)
 
-                notify_mock.assert_called_once_with(case["tool_id"], FALLBACK_STATUS_MESSAGE)
+                notify_mock.assert_called_once_with(
+                    case["tool_id"],
+                    FALLBACK_STATUS_MESSAGE,
+                    activity_id=None,
+                )
+
+    def test_projects_tab_cad_tools_pass_default_directory_for_manual_picker(self):
+        default_directory = r"C:\Projects\260243 BofA - Eastport Plaza"
+
+        for case in TOOL_CASES:
+            with self.subTest(method=case["method_name"]):
+                captured = []
+                with patch.object(self.api, "get_user_settings", return_value=case["settings"]), patch.object(
+                    self.api,
+                    "_resolve_workroom_auto_file_selection",
+                    return_value=None,
+                ), patch.object(
+                    self.api,
+                    "_is_workroom_auto_select_enabled",
+                    return_value=False,
+                ), patch.object(
+                    self.api,
+                    "_resolve_launch_context_default_directory",
+                    return_value=default_directory,
+                ), patch.object(
+                    self.api,
+                    "_run_script_with_progress",
+                    side_effect=lambda command, tool_id, **kwargs: captured.append((command, tool_id, kwargs)),
+                ):
+                    result = getattr(self.api, case["method_name"])(
+                        {"source": "projects-tab", "projectPath": default_directory}
+                    )
+
+                self.assertEqual("success", result["status"])
+                self.assertEqual("", result["activityId"])
+                self.assertEqual(1, len(captured))
+
+                command, tool_id, kwargs = captured[0]
+                self.assertEqual(case["tool_id"], tool_id)
+                self.assertEqual({"activity_id": None}, kwargs)
+                self.assertIsInstance(command, list)
+                self.assertNotIn("-FilesListPath", command)
+                self.assertIn("-DefaultDirectory", command)
+                self.assertEqual(
+                    default_directory,
+                    command[command.index("-DefaultDirectory") + 1],
+                )
+
+                for expected_arg in case["expected_args"]:
+                    self.assertIn(expected_arg, command)
 
     def test_resolve_workroom_auto_file_selection_prefers_explicit_launch_context_paths(self):
         with tempfile.TemporaryDirectory(prefix="acies-workroom-cad-") as temp_dir:
@@ -660,6 +715,52 @@ class BundleStatusVisibilityTests(unittest.TestCase):
         bundle_names = [item["bundle_name"] for item in result["data"]]
         self.assertIn("ElectricalCommands.CleanCADCommands.bundle", bundle_names)
         self.assertNotIn("ElectricalCommands.GetAttributesCommands.bundle", bundle_names)
+
+    def test_install_single_bundle_returns_bundle_folder_metadata(self):
+        with tempfile.TemporaryDirectory(prefix="acies-install-bundle-") as temp_dir:
+            plugins_dir = Path(temp_dir)
+            self.api.app_plugins_folder = str(plugins_dir)
+            self.api._is_autocad_running = lambda: False
+            self.api.release_tag = "v1.2.3"
+
+            archive_bytes = io.BytesIO()
+            with zipfile.ZipFile(archive_bytes, "w") as bundle_zip:
+                bundle_zip.writestr("PackageContents.xml", "<ApplicationPackage />")
+
+            class FakeResponse:
+                def __init__(self, content):
+                    self.content = content
+
+                def raise_for_status(self):
+                    return None
+
+            asset = {
+                "name": "ElectricalCommands.CleanCADCommands-v1.2.3.zip",
+                "browser_download_url": "https://example.com/clean.zip",
+            }
+
+            with patch("main.requests.get", return_value=FakeResponse(archive_bytes.getvalue())):
+                result = self.api.install_single_bundle(asset)
+
+            expected_bundle = plugins_dir / "ElectricalCommands.CleanCADCommands.bundle"
+            self.assertEqual("success", result["status"])
+            self.assertEqual(str(expected_bundle), result["bundlePath"])
+            self.assertEqual(str(plugins_dir), result["pluginsFolderPath"])
+            self.assertTrue((expected_bundle / "version.txt").exists())
+
+    def test_uninstall_bundle_returns_plugins_folder_metadata(self):
+        with tempfile.TemporaryDirectory(prefix="acies-uninstall-bundle-") as temp_dir:
+            plugins_dir = Path(temp_dir)
+            bundle_dir = plugins_dir / "ElectricalCommands.CleanCADCommands.bundle"
+            bundle_dir.mkdir(parents=True)
+            self.api.app_plugins_folder = str(plugins_dir)
+            self.api._is_autocad_running = lambda: False
+
+            result = self.api.uninstall_bundle("ElectricalCommands.CleanCADCommands.bundle")
+
+            self.assertEqual("success", result["status"])
+            self.assertEqual(str(plugins_dir), result["pluginsFolderPath"])
+            self.assertFalse(bundle_dir.exists())
 
 
 if __name__ == "__main__":

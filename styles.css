@@ -1565,6 +1565,26 @@ main {
   box-shadow: var(--glow);
 }
 
+.project-row.is-pinned-project .pin-btn {
+  cursor: grab;
+}
+
+.project-row.is-pinned-project .pin-btn:active {
+  cursor: grabbing;
+}
+
+.project-row.project-dragging {
+  opacity: 0.6;
+}
+
+.project-row.project-drop-before td {
+  border-top: 2px solid var(--accent);
+}
+
+.project-row.project-drop-after td {
+  border-bottom: 2px solid var(--accent);
+}
+
 .icon-btn.is-active {
   background: var(--accent-dim);
   color: var(--accent);
@@ -3556,6 +3576,12 @@ select:focus {
   background: rgba(16, 185, 129, 0.08);
 }
 
+#tools-panel .tool-card.running {
+  border-color: rgba(16, 185, 129, 0.45);
+  box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.14), var(--shadow-md);
+  background: linear-gradient(180deg, rgba(16, 185, 129, 0.08) 0%, var(--surface) 100%);
+}
+
 #tools-panel .tool-card-status {
   flex: 1;
   min-width: 0;
@@ -3565,6 +3591,10 @@ select:focus {
   line-height: 1.2;
   color: var(--accent);
   text-align: right;
+}
+
+#tools-panel .tool-card:not(.tool-card-under-construction) .tool-card-status {
+  display: none;
 }
 
 #tools-panel .tool-card.tool-card-under-construction .tool-card-status {
@@ -6071,9 +6101,276 @@ dialog::backdrop {
   transform: translateY(0);
 }
 
+.activity-tray {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 1100;
+  width: min(420px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.activity-tray-shell {
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  border-radius: 18px;
+  border: 1px solid var(--glass-border);
+  background: color-mix(in srgb, var(--panel-bg) 92%, black 8%);
+  box-shadow: var(--shadow-md);
+  backdrop-filter: blur(18px);
+  overflow: hidden;
+}
+
+.activity-tray-toggle {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.9rem 1rem;
+  cursor: pointer;
+  text-align: left;
+}
+
+.activity-tray-toggle:hover,
+.activity-tray-toggle:focus-visible {
+  background: var(--hover-overlay);
+  outline: none;
+}
+
+.activity-tray-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.activity-tray-title {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.activity-tray-counts {
+  font-size: 0.76rem;
+  color: var(--text-secondary);
+}
+
+.activity-tray-toggle-icon {
+  font-size: 1rem;
+  color: var(--text-secondary);
+  transition: transform 0.2s ease;
+}
+
+.activity-tray.is-collapsed .activity-tray-toggle-icon {
+  transform: rotate(180deg);
+}
+
+.activity-tray-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0 1rem 1rem;
+}
+
+.activity-tray.is-collapsed .activity-tray-body {
+  display: none;
+}
+
+.activity-tray-empty {
+  padding: 0.85rem 0.9rem;
+  border-radius: 14px;
+  border: 1px dashed var(--glass-border);
+  color: var(--muted);
+  font-size: 0.78rem;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.activity-tray-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  max-height: min(50vh, 420px);
+  overflow-y: auto;
+  padding-right: 0.15rem;
+}
+
+.activity-card {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.75rem;
+  padding: 0.9rem;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: color-mix(in srgb, var(--surface) 90%, white 10%);
+}
+
+.activity-card[data-status="running"] {
+  border-color: rgba(16, 185, 129, 0.24);
+}
+
+.activity-card[data-status="success"] {
+  border-color: rgba(16, 185, 129, 0.3);
+}
+
+.activity-card[data-status="warning"] {
+  border-color: rgba(245, 158, 11, 0.3);
+}
+
+.activity-card[data-status="error"] {
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.activity-card-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.95rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.activity-card-icon.running {
+  color: var(--accent);
+  background: rgba(16, 185, 129, 0.12);
+}
+
+.activity-card-icon.success {
+  color: var(--accent);
+  background: rgba(16, 185, 129, 0.16);
+}
+
+.activity-card-icon.warning {
+  color: var(--warning);
+  background: rgba(245, 158, 11, 0.16);
+}
+
+.activity-card-icon.error {
+  color: var(--danger);
+  background: rgba(239, 68, 68, 0.16);
+}
+
+.activity-card-content {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.activity-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.activity-card-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.activity-card-percent {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.activity-card-message {
+  font-size: 0.79rem;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.activity-card-progress {
+  position: relative;
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.activity-card-progress-bar {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 0.2s ease;
+}
+
+.activity-card[data-status="warning"] .activity-card-progress-bar {
+  background: var(--warning);
+}
+
+.activity-card[data-status="error"] .activity-card-progress-bar {
+  background: var(--danger);
+}
+
+.activity-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.activity-card-action {
+  border: 1px solid var(--glass-border);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 0.32rem 0.75rem;
+  font-size: 0.74rem;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.activity-card-action:hover,
+.activity-card-action:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
+  outline: none;
+}
+
+.activity-card-action.accept {
+  color: var(--text-secondary);
+}
+
+.activity-card-action.accept:hover,
+.activity-card-action.accept:focus-visible {
+  border-color: var(--text-secondary);
+  color: var(--text);
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 720px) {
+  .activity-tray {
+    right: 8px;
+    bottom: 8px;
+    width: calc(100vw - 16px);
+  }
+
+  .activity-tray-body {
+    padding: 0 0.8rem 0.8rem;
+  }
+
+  .activity-card {
+    padding: 0.8rem;
   }
 }
 
@@ -7721,6 +8018,91 @@ dialog::backdrop {
   justify-content: flex-end;
   gap: 0.45rem;
   margin-left: auto;
+}
+
+.deliverable-tool-dropdown {
+  position: relative;
+  display: inline-block;
+  flex: 0 0 auto;
+}
+
+.deliverable-tool-dropdown.open {
+  z-index: 220;
+}
+
+.deliverable-tool-trigger {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid var(--glass-border);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.deliverable-tool-trigger:hover,
+.deliverable-tool-trigger.open {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.deliverable-tool-trigger.open {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.deliverable-tool-trigger-icon {
+  width: 14px;
+  height: 14px;
+  pointer-events: none;
+}
+
+.deliverable-tool-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 240px;
+  max-width: min(320px, calc(100vw - 24px));
+  display: none;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.35rem;
+  border-radius: 12px;
+  border: 1px solid var(--glass-border);
+  background: color-mix(in srgb, var(--surface) 94%, white 6%);
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(12px);
+}
+
+.deliverable-tool-menu.open {
+  display: flex;
+}
+
+.deliverable-tool-option {
+  width: 100%;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font-size: 0.82rem;
+  line-height: 1.35;
+  padding: 0.55rem 0.65rem;
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease;
+}
+
+.deliverable-tool-option:hover,
+.deliverable-tool-option:focus-visible {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  outline: none;
 }
 
 .deliverable-card-new.details-collapsed .deliverable-task-count-badge {

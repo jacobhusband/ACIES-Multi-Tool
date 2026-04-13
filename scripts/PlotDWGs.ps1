@@ -2,7 +2,8 @@ param(
   [string]$AcadCore,
   [string]$AutoDetectPaperSize = "true",
   [int]$ShrinkPercent = 100,
-  [string]$FilesListPath = ""
+  [string]$FilesListPath = "",
+  [string]$DefaultDirectory = ""
 )
 
 function Convert-ToBool {
@@ -25,6 +26,23 @@ $AutoDetectPaperSize = Convert-ToBool $AutoDetectPaperSize $true
 function Ensure-WinFormsAssemblies {
   Add-Type -AssemblyName System.Windows.Forms
   Add-Type -AssemblyName System.Drawing
+}
+
+function Resolve-DialogInitialDirectory {
+  param(
+    [string]$CandidatePath,
+    [string]$FallbackPath = ""
+  )
+
+  if ([string]::IsNullOrWhiteSpace($CandidatePath)) { return $FallbackPath }
+  $resolvedPath = $CandidatePath.Trim()
+  if (Test-Path -Path $resolvedPath -PathType Leaf) {
+    $resolvedPath = Split-Path -Path $resolvedPath -Parent
+  }
+  if (-not [string]::IsNullOrWhiteSpace($resolvedPath) -and (Test-Path -Path $resolvedPath -PathType Container)) {
+    return $resolvedPath
+  }
+  return $FallbackPath
 }
 
 function Move-FormToPrimaryScreen {
@@ -120,6 +138,9 @@ if ([System.Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') {
   if ($PSBoundParameters.ContainsKey('FilesListPath') -and -not [string]::IsNullOrWhiteSpace($FilesListPath)) {
     $argsList += @("-FilesListPath", $FilesListPath)
   }
+  if ($PSBoundParameters.ContainsKey('DefaultDirectory') -and -not [string]::IsNullOrWhiteSpace($DefaultDirectory)) {
+    $argsList += @("-DefaultDirectory", $DefaultDirectory)
+  }
   $child = Start-Process -FilePath $ps -ArgumentList $argsList -Wait -PassThru
   exit $child.ExitCode
 }
@@ -211,7 +232,9 @@ if (-not $files -or $files.Count -eq 0) {
   $dlg.Title = "Select DWG file(s) to plot"
   $dlg.Filter = "DWG files (*.dwg)|*.dwg|All files (*.*)|*.*"
   $dlg.Multiselect = $true
-  $dlg.InitialDirectory = [Environment]::GetFolderPath("Desktop")
+  $dlg.InitialDirectory = Resolve-DialogInitialDirectory `
+    -CandidatePath $DefaultDirectory `
+    -FallbackPath ([Environment]::GetFolderPath("Desktop"))
   if ($dlg.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK -or -not $dlg.FileNames) {
     Write-Host "PROGRESS: ERROR: No files selected."; exit
   }
@@ -768,8 +791,7 @@ if ($failed.Count) {
   $failMsg | Out-File $logFile -Append
 }
 
-# Open the final output folder as the very last step
-Invoke-Item $batchOutputDir
+Write-Host "PROGRESS: OUTPUT_FOLDER: $batchOutputDir"
 
 if ($failed.Count) {
   exit 1

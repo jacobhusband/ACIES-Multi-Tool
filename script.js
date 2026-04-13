@@ -131,6 +131,19 @@ let workroomToolStatusState = {
   message: "Ready.",
   phase: "idle",
 };
+const ACTIVITY_STATUS = Object.freeze({
+  RUNNING: "running",
+  SUCCESS: "success",
+  WARNING: "warning",
+  ERROR: "error",
+});
+const activityTrayState = {
+  items: [],
+  collapsed: false,
+  hasAutoExpanded: false,
+  initialized: false,
+};
+const activeToolActivityIds = new Map();
 
 // ===================== CHECKLISTS SYSTEM =====================
 
@@ -3721,6 +3734,176 @@ function buildWorkroomCadLaunchContext() {
   };
 }
 
+const SHARED_TOOL_LAUNCH_REGISTRY = Object.freeze([
+  {
+    id: "toolCopyProjectLocally",
+    label: "Local Project Manager",
+    menuLabel: "Local Projects",
+    launchType: "project-manager",
+    isReady: true,
+  },
+  {
+    id: "toolPublishDwgs",
+    label: "Publish CAD DWGs in Headless Mode",
+    menuLabel: "Publish",
+    launchType: "user-selects-files",
+    isReady: true,
+  },
+  {
+    id: "toolFreezeLayers",
+    label: "Freeze Layers in CAD DWGs Headless Mode",
+    menuLabel: "Freeze",
+    launchType: "user-selects-files",
+    isReady: true,
+  },
+  {
+    id: "toolThawLayers",
+    label: "Thaw Layers in CAD DWGs Headless Mode",
+    menuLabel: "Thaw",
+    launchType: "user-selects-files",
+    isReady: true,
+  },
+  {
+    id: "toolCleanXrefs",
+    label: "Prepare CAD DWG for Reference",
+    menuLabel: "Prepare XREFs",
+    launchType: "user-selects-files",
+    isReady: true,
+  },
+  {
+    id: "toolCreateNarrativeTemplate",
+    label: "Create Narrative of Changes Template",
+    menuLabel: "Create NOC",
+    launchType: "user-selects-folder",
+    isReady: true,
+  },
+  {
+    id: "toolCreatePlanCheckTemplate",
+    label: "Create Plan Check Comments Template",
+    menuLabel: "Create PCC",
+    launchType: "user-selects-folder",
+    isReady: true,
+  },
+  {
+    id: "toolWireSizer",
+    label: "Wire Sizer",
+    menuLabel: "Wire Sizer",
+    launchType: "modal",
+    isReady: true,
+  },
+  {
+    id: "toolCircuitBreaker",
+    label: "Panel Schedule AI",
+    menuLabel: "Panel Schedule AI",
+    launchType: "modal",
+    isReady: true,
+  },
+  {
+    id: "toolBackupDrawings",
+    label: "Backup Drawings",
+    menuLabel: "Backup DWGs",
+    launchType: "archive-project",
+    isReady: true,
+  },
+  {
+    id: "toolLightingSchedule",
+    label: "Lighting Schedule AI",
+    menuLabel: "Lighting Schedule AI",
+    launchType: "modal",
+    isReady: false,
+  },
+  {
+    id: "toolTitle24Compliance",
+    label: "Title 24 Compliance",
+    menuLabel: "Title 24 Compliance",
+    launchType: "modal",
+    isReady: false,
+  },
+]);
+
+function getSharedToolLaunchEntry(toolId) {
+  return (
+    SHARED_TOOL_LAUNCH_REGISTRY.find(
+      (entry) => String(entry?.id || "").trim() === String(toolId || "").trim()
+    ) || null
+  );
+}
+
+function getReadySharedToolLaunchEntries() {
+  return SHARED_TOOL_LAUNCH_REGISTRY.filter((entry) => entry.isReady === true);
+}
+
+function getDeliverableToolMenuEntries() {
+  const deliverableMenuOrder = [
+    "toolPublishDwgs",
+    "toolFreezeLayers",
+    "toolThawLayers",
+    "toolCleanXrefs",
+    "toolCreateNarrativeTemplate",
+    "toolCreatePlanCheckTemplate",
+    "toolWireSizer",
+    "toolCircuitBreaker",
+    "toolBackupDrawings",
+    "toolCopyProjectLocally",
+  ];
+  const readyEntryMap = new Map(
+    getReadySharedToolLaunchEntries()
+      .filter((entry) => entry.includeInDeliverableMenu !== false)
+      .map((entry) => [String(entry.id || "").trim(), entry])
+  );
+  return deliverableMenuOrder
+    .map((toolId) => readyEntryMap.get(toolId) || null)
+    .filter(Boolean);
+}
+
+function getLaunchContextProjectRoot(launchContext = null) {
+  if (!launchContext || typeof launchContext !== "object") return "";
+  const source = String(launchContext?.source || "").trim().toLowerCase();
+  const rawPath = String(
+    launchContext?.rootProjectPath || launchContext?.projectPath || ""
+  ).trim();
+  if (!rawPath) return "";
+  if (source === "workroom") {
+    return normalizeWorkroomFolderPath(rawPath);
+  }
+  return normalizeProjectPath(rawPath) || normalizeWindowsPath(rawPath);
+}
+
+function hasLaunchContextProjectPath(launchContext = null) {
+  return Boolean(getLaunchContextProjectRoot(launchContext));
+}
+
+function buildProjectsTabToolLaunchContext(project, deliverable) {
+  const projectPath = normalizeProjectPath(project?.path || "");
+  return {
+    source: "projects-tab",
+    projectPath,
+    rootProjectPath: projectPath,
+    cadFilePaths: [],
+    projectName: String(project?.name || project?.nick || project?.id || "").trim(),
+    deliverableName: String(deliverable?.name || "").trim(),
+  };
+}
+
+function queuePendingCadLaunchContext(launchContext = null) {
+  pendingCadLaunchContext = launchContext ? deepCloneJson(launchContext, null) : null;
+}
+
+function launchSharedToolCard(toolId, launchContext = null) {
+  const entry = getSharedToolLaunchEntry(toolId);
+  if (!entry || entry.isReady !== true) return false;
+  const card = document.getElementById(entry.id);
+  if (!card) {
+    toast(`${entry.label} is unavailable.`);
+    return false;
+  }
+  if (launchContext) {
+    queuePendingCadLaunchContext(launchContext);
+  }
+  card.click();
+  return true;
+}
+
 function consumePendingCadLaunchContext() {
   const context = pendingCadLaunchContext;
   pendingCadLaunchContext = null;
@@ -3766,16 +3949,16 @@ function findProjectByNormalizedPath(rawPath) {
 function getTemplateToolContext(options = {}) {
   const launchContext = options?.launchContext || null;
   const launchSource = String(launchContext?.source || "").trim().toLowerCase();
-  if (launchSource === "workroom") {
+  const launchProjectPath = getLaunchContextProjectRoot(launchContext);
+  if (launchProjectPath) {
     const project =
       findProjectByNormalizedPath(launchContext?.projectPath || "") ||
-      findProjectByNormalizedPath(launchContext?.rootProjectPath || "");
+      findProjectByNormalizedPath(launchContext?.rootProjectPath || "") ||
+      findProjectByNormalizedPath(launchProjectPath);
     return {
-      projectPath: normalizeWorkroomFolderPath(
-        launchContext?.rootProjectPath ||
-        launchContext?.projectPath ||
-        getWorkroomRootFolderPath(project)
-      ),
+      projectPath:
+        launchProjectPath ||
+        (launchSource === "workroom" ? getWorkroomRootFolderPath(project) : ""),
       projectName: String(
         launchContext?.projectName ||
           project?.name ||
@@ -3784,7 +3967,7 @@ function getTemplateToolContext(options = {}) {
           ""
       ).trim(),
       deliverableName: String(launchContext?.deliverableName || "").trim(),
-      source: "workroom",
+      source: launchSource || "default",
     };
   }
 
@@ -3813,12 +3996,22 @@ async function handleTemplateToolSave(templateKey, label, options = {}) {
   ).trim();
   const card = toolId ? document.getElementById(toolId) : null;
   if (card?.classList.contains("running")) return;
+  const activityId = beginActivity({
+    activityId: createActivityId(toolId || `template_${templateKey}`),
+    toolId,
+    label,
+    message: "Initializing...",
+    progress: 5,
+  });
   if (card) {
     card.classList.add("running");
-    window.updateToolStatus(toolId, "Initializing...");
   }
 
   try {
+    updateActivity(activityId, {
+      message: "Loading templates...",
+      progress: 12,
+    });
     await loadTemplates();
   } catch (e) {
     console.warn("Failed to refresh templates:", e);
@@ -3826,13 +4019,9 @@ async function handleTemplateToolSave(templateKey, label, options = {}) {
 
   const template = getTemplateByKey(templateKey);
   if (!template) {
-    if (toolId) {
-      window.updateToolStatus(
-        toolId,
-        `ERROR: Template "${label}" not found.`
-      );
-    }
-    toast(`Template "${label}" not found.`);
+    failActivity(activityId, {
+      message: `Template "${label}" not found.`,
+    });
     return;
   }
 
@@ -3845,33 +4034,39 @@ async function handleTemplateToolSave(templateKey, label, options = {}) {
   const defaultFolder = projectPath || null;
   let selection = null;
   try {
+    updateActivity(activityId, {
+      message: "Select output folder...",
+      progress: 18,
+    });
     selection = await window.pywebview.api.select_template_output_folder(
       defaultFolder
     );
   } catch (e) {
-    if (toolId) window.updateToolStatus(toolId, "ERROR: Error selecting output folder.");
-    toast("Error selecting output folder.");
+    failActivity(activityId, {
+      message: "Error selecting output folder.",
+    });
     return;
   }
 
   if (!selection || selection.status === "cancelled") {
+    acceptActivity(activityId);
     clearTemplateToolRunState(toolId);
     return;
   }
   if (selection.status !== "success" || !selection.path) {
-    if (toolId) {
-      window.updateToolStatus(
-        toolId,
-        `ERROR: ${selection.message || "Failed to select output folder."}`
-      );
-    }
-    toast(selection.message || "Failed to select output folder.");
+    failActivity(activityId, {
+      message: selection.message || "Failed to select output folder.",
+    });
     return;
   }
 
-  const templateOptions = { templateKey, openOutputs: true };
+  const templateOptions = { templateKey };
 
   try {
+    updateActivity(activityId, {
+      message: "Saving template...",
+      progress: 45,
+    });
     const result = await window.pywebview.api.copy_template_to_folder(
       template.id,
       selection.path,
@@ -3883,26 +4078,33 @@ async function handleTemplateToolSave(templateKey, label, options = {}) {
       const warnings = Array.isArray(result.warnings)
         ? result.warnings.filter(Boolean)
         : [];
+      const openFolderPath = String(
+        result.outputFolderPath || result.openedFolderPath || selection.path || ""
+      ).trim();
       if (warnings.length) {
-        if (toolId) window.updateToolStatus(toolId, "WARN: Saved with warnings.");
-        toast(`Template saved. ${warnings.join(" ")}`);
+        completeActivity(activityId, {
+          status: ACTIVITY_STATUS.WARNING,
+          message: `Template saved. ${warnings.join(" ")}`,
+          openFolderPath,
+        });
       } else {
-        if (toolId) window.updateToolStatus(toolId, "DONE");
-        toast("Template saved.");
+        completeActivity(activityId, {
+          message: "Template saved.",
+          openFolderPath,
+        });
       }
       return result;
     } else {
-      if (toolId) {
-        window.updateToolStatus(
-          toolId,
-          `ERROR: ${result.message || "Failed to save template."}`
-        );
-      }
-      toast(result.message || "Failed to save template.");
+      failActivity(activityId, {
+        message: result.message || "Failed to save template.",
+      });
     }
   } catch (e) {
-    if (toolId) window.updateToolStatus(toolId, "ERROR: Error saving template.");
-    toast("Error saving template.");
+    failActivity(activityId, {
+      message: "Error saving template.",
+    });
+  } finally {
+    clearTemplateToolRunState(toolId);
   }
 }
 
@@ -7478,6 +7680,565 @@ function toast(msg, duration = 2500) {
   }, duration);
 }
 
+function createActivityId(prefix = "activity") {
+  const normalizedPrefix = String(prefix || "activity")
+    .trim()
+    .replace(/[^a-z0-9_-]+/gi, "-")
+    .replace(/^-+|-+$/g, "") || "activity";
+  if (window.crypto?.randomUUID) {
+    return `${normalizedPrefix}_${window.crypto.randomUUID()}`;
+  }
+  return `${normalizedPrefix}_${Date.now().toString(36)}_${Math.random()
+    .toString(36)
+    .slice(2, 8)}`;
+}
+
+function isTerminalActivityStatus(status) {
+  return [ACTIVITY_STATUS.SUCCESS, ACTIVITY_STATUS.WARNING, ACTIVITY_STATUS.ERROR].includes(
+    String(status || "").trim().toLowerCase()
+  );
+}
+
+function clampActivityProgress(value, fallback = 0) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return Math.max(0, Math.min(100, Number(fallback) || 0));
+  return Math.max(0, Math.min(100, Math.round(numeric)));
+}
+
+function getActivityTrayElements() {
+  return {
+    tray: document.getElementById("activityTray"),
+    toggle: document.getElementById("activityTrayToggle"),
+    counts: document.getElementById("activityTrayCounts"),
+    body: document.getElementById("activityTrayBody"),
+    empty: document.getElementById("activityTrayEmpty"),
+    list: document.getElementById("activityTrayList"),
+  };
+}
+
+function getToolActivityLabel(toolId, fallback = "") {
+  const normalizedToolId = String(toolId || "").trim();
+  if (normalizedToolId && typeof getSharedToolLaunchEntry === "function") {
+    const entry = getSharedToolLaunchEntry(normalizedToolId);
+    if (entry?.label) return entry.label;
+  }
+  return String(fallback || normalizedToolId || "Activity").trim();
+}
+
+function getActivityById(activityId) {
+  return activityTrayState.items.find((item) => item.id === activityId) || null;
+}
+
+function setToolCardRunning(toolId, isRunning) {
+  const card = document.getElementById(String(toolId || "").trim());
+  if (!card) return;
+  card.classList.toggle("running", Boolean(isRunning));
+}
+
+function bindToolActivity(toolId, activityId) {
+  const normalizedToolId = String(toolId || "").trim();
+  const normalizedActivityId = String(activityId || "").trim();
+  if (!normalizedToolId || !normalizedActivityId) return;
+  activeToolActivityIds.set(normalizedToolId, normalizedActivityId);
+}
+
+function releaseToolActivity(toolId, activityId = "") {
+  const normalizedToolId = String(toolId || "").trim();
+  if (!normalizedToolId) return;
+  const boundId = activeToolActivityIds.get(normalizedToolId);
+  if (!boundId) return;
+  if (activityId && boundId !== activityId) return;
+  activeToolActivityIds.delete(normalizedToolId);
+}
+
+function sortActivityItems(items = []) {
+  return [...items].sort((left, right) => {
+    const leftTerminal = isTerminalActivityStatus(left?.status);
+    const rightTerminal = isTerminalActivityStatus(right?.status);
+    if (leftTerminal !== rightTerminal) return leftTerminal ? 1 : -1;
+    return Number(right?.updatedAt || 0) - Number(left?.updatedAt || 0);
+  });
+}
+
+function toggleActivityTrayCollapsed(nextCollapsed, { force = false } = {}) {
+  const { tray, toggle, body } = getActivityTrayElements();
+  if (!tray || !toggle || !body) return;
+  const hasItems = activityTrayState.items.length > 0;
+  if (!hasItems && !force) return;
+  activityTrayState.collapsed = Boolean(nextCollapsed);
+  tray.classList.toggle("is-collapsed", activityTrayState.collapsed);
+  toggle.setAttribute("aria-expanded", String(!activityTrayState.collapsed));
+  body.hidden = activityTrayState.collapsed;
+}
+
+function maybeExpandActivityTray(reason = "update") {
+  if (!activityTrayState.items.length) return;
+  if (reason === "first" && !activityTrayState.hasAutoExpanded) {
+    activityTrayState.hasAutoExpanded = true;
+    toggleActivityTrayCollapsed(false, { force: true });
+    return;
+  }
+  if (reason === "error") {
+    toggleActivityTrayCollapsed(false, { force: true });
+  }
+}
+
+function renderActivityTray() {
+  const { tray, counts, empty, list } = getActivityTrayElements();
+  if (!tray || !counts || !empty || !list) return;
+
+  const items = sortActivityItems(activityTrayState.items);
+  const activeCount = items.filter((item) => !isTerminalActivityStatus(item.status)).length;
+  const completedCount = items.length - activeCount;
+  counts.textContent = `${activeCount} active, ${completedCount} completed`;
+
+  if (!items.length) {
+    tray.hidden = true;
+    empty.hidden = false;
+    list.replaceChildren();
+    toggleActivityTrayCollapsed(false, { force: true });
+    activityTrayState.hasAutoExpanded = false;
+    return;
+  }
+
+  tray.hidden = false;
+  empty.hidden = true;
+  list.replaceChildren();
+
+  items.forEach((item) => {
+    const status = String(item.status || ACTIVITY_STATUS.RUNNING).trim().toLowerCase();
+    const iconText =
+      status === ACTIVITY_STATUS.SUCCESS
+        ? "✓"
+        : status === ACTIVITY_STATUS.WARNING
+          ? "!"
+          : status === ACTIVITY_STATUS.ERROR
+            ? "×"
+            : "•";
+
+    const card = el("article", {
+      className: "activity-card",
+      "data-status": status,
+    });
+    const icon = el("div", {
+      className: `activity-card-icon ${status}`,
+      textContent: iconText,
+      title: status,
+    });
+    const content = el("div", { className: "activity-card-content" });
+    const header = el("div", { className: "activity-card-header" });
+    header.append(
+      el("div", {
+        className: "activity-card-title",
+        textContent: item.label || "Activity",
+      }),
+      el("div", {
+        className: "activity-card-percent",
+        textContent: `${clampActivityProgress(item.progress, 0)}%`,
+      })
+    );
+    const message = el("div", {
+      className: "activity-card-message",
+      textContent: item.message || "Working...",
+    });
+    const progress = el("div", { className: "activity-card-progress" }, [
+      el("div", {
+        className: "activity-card-progress-bar",
+        style: `width:${clampActivityProgress(item.progress, 0)}%`,
+      }),
+    ]);
+    const actions = el("div", { className: "activity-card-actions" });
+    if (isTerminalActivityStatus(status) && item.openFolderPath) {
+      actions.appendChild(
+        el("button", {
+          className: "activity-card-action",
+          type: "button",
+          textContent: item.openFolderLabel || "Open Folder",
+          "data-activity-action": "open",
+          "data-activity-id": item.id,
+        })
+      );
+    }
+    if (isTerminalActivityStatus(status)) {
+      actions.appendChild(
+        el("button", {
+          className: "activity-card-action accept",
+          type: "button",
+          textContent: "Accept",
+          "data-activity-action": "accept",
+          "data-activity-id": item.id,
+        })
+      );
+    }
+
+    content.append(header, message, progress);
+    if (actions.childNodes.length) {
+      content.appendChild(actions);
+    }
+    card.append(icon, content);
+    list.appendChild(card);
+  });
+
+  toggleActivityTrayCollapsed(activityTrayState.collapsed, { force: true });
+}
+
+function initActivityTray() {
+  if (activityTrayState.initialized) return;
+  activityTrayState.initialized = true;
+  const { toggle, list } = getActivityTrayElements();
+  toggle?.addEventListener("click", () => {
+    toggleActivityTrayCollapsed(!activityTrayState.collapsed, { force: true });
+  });
+  list?.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-activity-action]");
+    if (!button) return;
+    const activityId = String(button.dataset.activityId || "").trim();
+    const activity = getActivityById(activityId);
+    if (!activity) return;
+    const action = String(button.dataset.activityAction || "").trim().toLowerCase();
+    if (action === "accept") {
+      acceptActivity(activityId);
+      return;
+    }
+    if (action === "open") {
+      if (!activity.openFolderPath || !window.pywebview?.api?.open_path) return;
+      try {
+        await window.pywebview.api.open_path(activity.openFolderPath);
+      } catch (error) {
+        toast(error?.message || "Unable to open folder.");
+      }
+    }
+  });
+  renderActivityTray();
+}
+
+function upsertActivity(nextItem, { autoExpandReason = "update" } = {}) {
+  const incoming = nextItem && typeof nextItem === "object" ? nextItem : null;
+  if (!incoming?.id) return null;
+
+  const now = Date.now();
+  const existing = getActivityById(incoming.id);
+  const merged = {
+    id: incoming.id,
+    kind: existing?.kind || incoming.kind || "tool",
+    toolId: String(incoming.toolId || existing?.toolId || "").trim(),
+    label: String(incoming.label || existing?.label || "Activity").trim(),
+    message: String(
+      incoming.message == null ? existing?.message || "" : incoming.message
+    ).trim(),
+    status: String(incoming.status || existing?.status || ACTIVITY_STATUS.RUNNING)
+      .trim()
+      .toLowerCase(),
+    progress: clampActivityProgress(
+      incoming.progress == null ? existing?.progress ?? 0 : incoming.progress,
+      existing?.progress ?? 0
+    ),
+    openFolderPath: String(
+      incoming.openFolderPath || existing?.openFolderPath || ""
+    ).trim(),
+    openFolderLabel: String(
+      incoming.openFolderLabel || existing?.openFolderLabel || "Open Folder"
+    ).trim(),
+    panelCount: Math.max(
+      Number(incoming.panelCount ?? existing?.panelCount ?? 0) || 0,
+      0
+    ),
+    completedCount: Math.max(
+      Number(incoming.completedCount ?? existing?.completedCount ?? 0) || 0,
+      0
+    ),
+    createdAt: Number(existing?.createdAt || now),
+    updatedAt: now,
+  };
+
+  if (existing) {
+    const index = activityTrayState.items.findIndex((item) => item.id === merged.id);
+    if (index >= 0) {
+      activityTrayState.items.splice(index, 1, merged);
+    }
+  } else {
+    activityTrayState.items.push(merged);
+  }
+
+  if (merged.toolId) {
+    bindToolActivity(merged.toolId, merged.id);
+    setToolCardRunning(merged.toolId, !isTerminalActivityStatus(merged.status));
+    if (isTerminalActivityStatus(merged.status)) {
+      releaseToolActivity(merged.toolId, merged.id);
+    }
+  }
+
+  renderActivityTray();
+  maybeExpandActivityTray(autoExpandReason);
+  return merged;
+}
+
+function beginActivity({
+  activityId = "",
+  toolId = "",
+  label = "",
+  message = "Starting...",
+  progress = 5,
+  kind = "tool",
+  openFolderPath = "",
+  openFolderLabel = "Open Folder",
+} = {}) {
+  const resolvedId = String(activityId || createActivityId(toolId || kind)).trim();
+  return upsertActivity(
+    {
+      id: resolvedId,
+      kind,
+      toolId,
+      label: getToolActivityLabel(toolId, label),
+      message,
+      status: ACTIVITY_STATUS.RUNNING,
+      progress,
+      openFolderPath,
+      openFolderLabel,
+    },
+    { autoExpandReason: activityTrayState.items.length ? "update" : "first" }
+  )?.id || resolvedId;
+}
+
+function updateActivity(activityId, patch = {}) {
+  const existing = getActivityById(activityId);
+  if (!existing) return null;
+  const nextStatus = String(patch.status || existing.status || ACTIVITY_STATUS.RUNNING)
+    .trim()
+    .toLowerCase();
+  return upsertActivity(
+    {
+      ...existing,
+      ...patch,
+      id: existing.id,
+      status: nextStatus,
+    },
+    {
+      autoExpandReason:
+        nextStatus === ACTIVITY_STATUS.ERROR ? "error" : "update",
+    }
+  );
+}
+
+function completeActivity(activityId, patch = {}) {
+  const existing = getActivityById(activityId);
+  if (!existing) return null;
+  const nextStatus = String(patch.status || ACTIVITY_STATUS.SUCCESS).trim().toLowerCase();
+  return upsertActivity(
+    {
+      ...existing,
+      ...patch,
+      id: existing.id,
+      status: nextStatus,
+      progress: 100,
+    },
+    {
+      autoExpandReason: nextStatus === ACTIVITY_STATUS.ERROR ? "error" : "update",
+    }
+  );
+}
+
+function failActivity(activityId, patch = {}) {
+  return completeActivity(activityId, {
+    ...patch,
+    status: ACTIVITY_STATUS.ERROR,
+    progress: 100,
+  });
+}
+
+function acceptActivity(activityId) {
+  const existing = getActivityById(activityId);
+  if (!existing) return;
+  if (existing.toolId) {
+    releaseToolActivity(existing.toolId, activityId);
+    setToolCardRunning(existing.toolId, false);
+  }
+  activityTrayState.items = activityTrayState.items.filter((item) => item.id !== activityId);
+  renderActivityTray();
+}
+
+function getActivityIdForTool(toolId, { create = false, label = "" } = {}) {
+  const normalizedToolId = String(toolId || "").trim();
+  if (!normalizedToolId) return "";
+  const boundId = activeToolActivityIds.get(normalizedToolId);
+  if (boundId && getActivityById(boundId)) return boundId;
+  if (!create) return "";
+  return beginActivity({
+    toolId: normalizedToolId,
+    label,
+    message: "Starting...",
+    progress: 5,
+  });
+}
+
+function normalizeActivityStatusFromPayload(payload = {}, message = "", fallback = ACTIVITY_STATUS.RUNNING) {
+  const rawStatus = String(payload?.status || "").trim().toLowerCase();
+  if (
+    [ACTIVITY_STATUS.RUNNING, ACTIVITY_STATUS.SUCCESS, ACTIVITY_STATUS.WARNING, ACTIVITY_STATUS.ERROR].includes(
+      rawStatus
+    )
+  ) {
+    return rawStatus;
+  }
+  if (message === "DONE") return ACTIVITY_STATUS.SUCCESS;
+  if (message.startsWith("WARN:") || message.startsWith("WARNING:")) {
+    return ACTIVITY_STATUS.WARNING;
+  }
+  if (message.startsWith("ERROR:")) return ACTIVITY_STATUS.ERROR;
+  return String(fallback || ACTIVITY_STATUS.RUNNING).trim().toLowerCase();
+}
+
+function deriveToolActivityProgress(toolId, message, currentProgress = 5) {
+  const normalizedToolId = String(toolId || "").trim();
+  const text = String(message || "").trim();
+  if (!text) return clampActivityProgress(currentProgress, 5);
+  if (text === "DONE" || text.startsWith("WARN:") || text.startsWith("ERROR:")) {
+    return 100;
+  }
+
+  const fileMatch = text.match(/(?:Plotting|Processing)\s+(\d+)\s+of\s+(\d+)\s*:/i);
+  if (fileMatch) {
+    const completed = Number(fileMatch[1]);
+    const total = Math.max(Number(fileMatch[2]), 1);
+    if (Number.isFinite(completed) && Number.isFinite(total)) {
+      return clampActivityProgress(20 + (completed / total) * 65, currentProgress);
+    }
+  }
+
+  if (normalizedToolId === "toolPublishDwgs") {
+    if (/Waiting for paper size/i.test(text)) return 15;
+    if (/Using auto-selected|Received auto-selected|Found AutoCAD|Using specified AutoCAD/i.test(text)) return 10;
+    if (/Combining/i.test(text)) return 90;
+    if (/Shrinking/i.test(text)) return 95;
+    if (/No PDFs were generated/i.test(text)) return 95;
+  }
+
+  if (
+    ["toolFreezeLayers", "toolThawLayers", "toolCleanXrefs"].includes(normalizedToolId)
+  ) {
+    if (/Waiting for layer selection|Waiting for user input/i.test(text)) return 15;
+    if (/Reading extracted data|Using \d+ DWG|ZIP source selected|Found \d+ DWG/i.test(text)) {
+      return 20;
+    }
+    if (/Successfully processed|Processing \d+ file\(s\)/i.test(text)) return 92;
+  }
+
+  if (/Select project folder|Select output folder/i.test(text)) return 10;
+  if (/Resolving project folder|Resolving/i.test(text)) return 18;
+  if (/Copying|Syncing|Creating archive backup|Saving|Installing|Updating|Uninstalling/i.test(text)) {
+    return Math.max(clampActivityProgress(currentProgress, 25), 35);
+  }
+
+  return clampActivityProgress(currentProgress, 12);
+}
+
+function updateActivityStatusFromPayload(payload = {}) {
+  const toolId = String(payload?.toolId || "").trim();
+  const activityId =
+    String(payload?.activityId || "").trim() ||
+    (toolId ? getActivityIdForTool(toolId, { create: true }) : beginActivity({ kind: "activity" }));
+  const existing = getActivityById(activityId);
+  const rawMessage = String(payload?.message || "").trim();
+  const status = normalizeActivityStatusFromPayload(payload, rawMessage, existing?.status);
+
+  let nextMessage = rawMessage;
+  let openFolderPath = String(
+    payload?.openFolderPath ||
+      payload?.outputFolderPath ||
+      payload?.bundlePath ||
+      payload?.pluginsFolderPath ||
+      payload?.archivePath ||
+      payload?.localProjectPath ||
+      payload?.serverProjectPath ||
+      payload?.outputFolder ||
+      payload?.folderPath ||
+      existing?.openFolderPath ||
+      ""
+  ).trim();
+
+  if (rawMessage.startsWith("OUTPUT_FOLDER:")) {
+    openFolderPath = rawMessage.substring("OUTPUT_FOLDER:".length).trim();
+    nextMessage = existing?.message || "Working...";
+  } else if (rawMessage.startsWith("WARN:")) {
+    nextMessage = rawMessage.substring(5).trim() || "Completed with warnings.";
+  } else if (rawMessage.startsWith("WARNING:")) {
+    nextMessage = rawMessage.substring(8).trim() || "Completed with warnings.";
+  } else if (rawMessage.startsWith("ERROR:")) {
+    nextMessage = rawMessage.substring(6).trim() || "Activity failed.";
+  } else if (rawMessage === "DONE") {
+    nextMessage = payload?.completedMessage || existing?.message || "Done.";
+  }
+
+  const explicitProgress = Number(payload?.progress);
+  let nextProgress = Number.isFinite(explicitProgress)
+    ? clampActivityProgress(explicitProgress, existing?.progress ?? 0)
+    : deriveToolActivityProgress(toolId, rawMessage, existing?.progress ?? 5);
+
+  if (toolId === "toolCircuitBreaker") {
+    const panelCount = Math.max(Number(payload?.panelCount || existing?.panelCount || 0), 0);
+    const completedCount = Math.max(
+      Number(
+        payload?.completedCount ??
+          (Number(payload?.successCount || 0) + Number(payload?.failureCount || 0))
+      ) || 0,
+      0
+    );
+    if (status === ACTIVITY_STATUS.RUNNING && panelCount > 0) {
+      nextProgress = clampActivityProgress(20 + (completedCount / panelCount) * 70, nextProgress);
+    }
+  }
+
+  if (!existing) {
+    beginActivity({
+      activityId,
+      toolId,
+      label: getToolActivityLabel(toolId, payload?.label || ""),
+      message: nextMessage || "Starting...",
+      progress: nextProgress,
+      openFolderPath,
+      openFolderLabel: payload?.openFolderLabel || "Open Folder",
+      kind: payload?.kind || "tool",
+    });
+  }
+
+  const commonPatch = {
+    label: getToolActivityLabel(toolId, payload?.label || existing?.label || ""),
+    message:
+      nextMessage ||
+      existing?.message ||
+      (status === ACTIVITY_STATUS.ERROR ? "Activity failed." : "Working..."),
+    progress: isTerminalActivityStatus(status) ? 100 : nextProgress,
+    openFolderPath,
+    openFolderLabel: String(
+      payload?.openFolderLabel || existing?.openFolderLabel || "Open Folder"
+    ).trim(),
+    panelCount: payload?.panelCount,
+    completedCount: payload?.completedCount,
+  };
+
+  if (status === ACTIVITY_STATUS.ERROR) {
+    failActivity(activityId, commonPatch);
+    return activityId;
+  }
+  if (status === ACTIVITY_STATUS.SUCCESS || status === ACTIVITY_STATUS.WARNING) {
+    completeActivity(activityId, {
+      ...commonPatch,
+      status,
+    });
+    return activityId;
+  }
+  updateActivity(activityId, {
+    ...commonPatch,
+    status: ACTIVITY_STATUS.RUNNING,
+  });
+  return activityId;
+}
+
+window.updateActivityStatus = function (payload) {
+  initActivityTray();
+  return updateActivityStatusFromPayload(payload);
+};
+
 function reportClientError(message, error) {
   const detail = error?.message || error?.toString?.() || "";
   const payload = detail ? `${message}: ${detail}` : message;
@@ -7582,6 +8343,8 @@ let noteTabs = [];
 let editIndex = -1;
 let _aiMatchSnapshot = null;
 let currentSort = { key: "due", dir: "asc" };
+let pinnedProjectDragState = null;
+let projectPinHandleSuppressClickUntil = 0;
 let statusFilter = "all";
 let dueFilter = "all";
 let pendingCadLaunchContext = null;
@@ -11724,6 +12487,7 @@ async function save({
   timestamp = new Date().toISOString(),
   silent = false,
 } = {}) {
+  syncPinnedProjectOrders(db, { seedMissing: true });
   db.forEach((project) => {
     syncProjectAttachmentFields(project);
     getProjectDeliverables(project).forEach((deliverable) => {
@@ -12423,6 +13187,218 @@ function getPinnedDeliverablePreviewItems(deliverable) {
   ];
 }
 
+function normalizePinnedProjectOrder(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  const normalized = Math.trunc(numeric);
+  return normalized >= 0 ? normalized : null;
+}
+
+function compareProjectsByStableIdentity(a, b) {
+  const idDiff = String(a?.id || "").localeCompare(String(b?.id || ""), undefined, {
+    numeric: true,
+    sensitivity: "base",
+  });
+  if (idDiff) return idDiff;
+
+  const nameDiff = String(a?.name || "").localeCompare(
+    String(b?.name || ""),
+    undefined,
+    {
+      numeric: true,
+      sensitivity: "base",
+    }
+  );
+  if (nameDiff) return nameDiff;
+
+  return String(a?.nick || "").localeCompare(String(b?.nick || ""), undefined, {
+    numeric: true,
+    sensitivity: "base",
+  });
+}
+
+function buildLegacyPinnedProjectSortContextMap(items = []) {
+  return new Map(
+    (Array.isArray(items) ? items : []).map((project) => {
+      const priority = getProjectListPriorityMeta(project);
+      return [
+        project,
+        {
+          activeAnchorDeliverable: priority.priorityDeliverable,
+          anchorDueDate: priority.hasIncompleteActiveWork
+            ? priority.sortDueDate
+            : priority.fallbackDueDate,
+          sortBucket: priority.sortBucket,
+          fallbackDueDate: priority.fallbackDueDate,
+        },
+      ];
+    })
+  );
+}
+
+function compareProjectsByLegacyPinnedOrder(a, b, projectListContextMap = null) {
+  const bucketDiff = compareProjectListSortBuckets(a, b, projectListContextMap);
+  if (bucketDiff) return bucketDiff;
+  const da = getProjectSortKey(a, projectListContextMap?.get(a));
+  const dbb = getProjectSortKey(b, projectListContextMap?.get(b));
+  if (!da && !dbb) return 0;
+  if (!da) return 1;
+  if (!dbb) return -1;
+  const dueDiff = da - dbb;
+  if (dueDiff) return dueDiff;
+  return 0;
+}
+
+function getPinnedProjectsInManualOrder(items = db) {
+  return (Array.isArray(items) ? items : [])
+    .map((project, index) => ({
+      project,
+      index,
+      pinnedOrder: normalizePinnedProjectOrder(project?.pinnedOrder),
+    }))
+    .filter(({ project }) => project?.pinned)
+    .sort((left, right) => {
+      if (left.pinnedOrder !== null && right.pinnedOrder !== null) {
+        if (left.pinnedOrder !== right.pinnedOrder) {
+          return left.pinnedOrder - right.pinnedOrder;
+        }
+      } else if (left.pinnedOrder !== null || right.pinnedOrder !== null) {
+        return left.pinnedOrder !== null ? -1 : 1;
+      }
+      return left.index - right.index;
+    })
+    .map(({ project }) => project);
+}
+
+function syncPinnedProjectOrders(items = db, { seedMissing = false } = {}) {
+  if (!Array.isArray(items)) return false;
+
+  let changed = false;
+  const orderedPinned = [];
+  const missingPinned = [];
+
+  items.forEach((project, index) => {
+    if (!project || typeof project !== "object") return;
+
+    const isPinned = project.pinned === true;
+    if (project.pinned !== isPinned) {
+      project.pinned = isPinned;
+      changed = true;
+    }
+
+    const normalizedOrder = normalizePinnedProjectOrder(project.pinnedOrder);
+    if (!isPinned) {
+      if (project.pinnedOrder != null) changed = true;
+      project.pinnedOrder = null;
+      return;
+    }
+
+    if (project.pinnedOrder !== normalizedOrder) {
+      project.pinnedOrder = normalizedOrder;
+      changed = true;
+    }
+
+    const entry = { project, index };
+    if (normalizedOrder === null) {
+      missingPinned.push(entry);
+      return;
+    }
+    orderedPinned.push({ ...entry, pinnedOrder: normalizedOrder });
+  });
+
+  orderedPinned.sort((left, right) => {
+    if (left.pinnedOrder !== right.pinnedOrder) {
+      return left.pinnedOrder - right.pinnedOrder;
+    }
+    return left.index - right.index;
+  });
+
+  if (missingPinned.length) {
+    if (seedMissing) {
+      const projectListContextMap = buildLegacyPinnedProjectSortContextMap(
+        missingPinned.map(({ project }) => project)
+      );
+      missingPinned.sort((left, right) => {
+        const legacyDiff = compareProjectsByLegacyPinnedOrder(
+          left.project,
+          right.project,
+          projectListContextMap
+        );
+        if (legacyDiff) return legacyDiff;
+        return left.index - right.index;
+      });
+    } else {
+      missingPinned.sort((left, right) => left.index - right.index);
+    }
+  }
+
+  orderedPinned
+    .map(({ project }) => project)
+    .concat(missingPinned.map(({ project }) => project))
+    .forEach((project, index) => {
+      if (project.pinnedOrder !== index) {
+        project.pinnedOrder = index;
+        changed = true;
+      }
+    });
+
+  return changed;
+}
+
+function getNextPinnedProjectOrder(items = db) {
+  return getPinnedProjectsInManualOrder(items).length;
+}
+
+function getLowestPinnedProjectOrder(projects = []) {
+  let lowest = null;
+  (Array.isArray(projects) ? projects : []).forEach((project) => {
+    if (!project?.pinned) return;
+    const pinnedOrder = normalizePinnedProjectOrder(project?.pinnedOrder);
+    if (pinnedOrder === null) return;
+    if (lowest === null || pinnedOrder < lowest) lowest = pinnedOrder;
+  });
+  return lowest;
+}
+
+function setProjectPinnedState(project, nextPinned, items = db) {
+  if (!project || typeof project !== "object") return false;
+
+  if (nextPinned) {
+    project.pinned = true;
+    if (normalizePinnedProjectOrder(project.pinnedOrder) === null) {
+      project.pinnedOrder = getNextPinnedProjectOrder(items);
+    }
+  } else {
+    project.pinned = false;
+    project.pinnedOrder = null;
+  }
+
+  syncPinnedProjectOrders(items);
+  return project.pinned === true;
+}
+
+function movePinnedProjectToTarget(project, targetProject, before = true, items = db) {
+  if (!project?.pinned || !targetProject?.pinned || project === targetProject) {
+    return false;
+  }
+
+  const orderedPinned = getPinnedProjectsInManualOrder(items);
+  const fromIndex = orderedPinned.indexOf(project);
+  const targetIndex = orderedPinned.indexOf(targetProject);
+  if (fromIndex < 0 || targetIndex < 0 || fromIndex === targetIndex) return false;
+
+  const [movedProject] = orderedPinned.splice(fromIndex, 1);
+  let insertIndex = before ? targetIndex : targetIndex + 1;
+  if (fromIndex < insertIndex) insertIndex -= 1;
+  orderedPinned.splice(insertIndex, 0, movedProject);
+  orderedPinned.forEach((pinnedProject, index) => {
+    pinnedProject.pinned = true;
+    pinnedProject.pinnedOrder = index;
+  });
+  syncPinnedProjectOrders(items);
+  return true;
+}
+
 const NUMBERED_DELIVERABLE_NAME_RULES = [
   { regex: /\bRFI\s*#?\s*0*(\d+)\b/i, label: "RFI" },
   { regex: /\bASR\s*#?\s*0*(\d+)\b/i, label: "ASR" },
@@ -12914,6 +13890,10 @@ function mergeProjects(base, incoming) {
   }
   if (!base.overviewDeliverableId && incoming.overviewDeliverableId)
     base.overviewDeliverableId = incoming.overviewDeliverableId;
+  base.pinned = base?.pinned === true || incoming?.pinned === true;
+  base.pinnedOrder = base.pinned
+    ? getLowestPinnedProjectOrder([base, incoming])
+    : null;
 }
 
 function convertLegacyProject(legacy) {
@@ -12943,6 +13923,8 @@ function convertLegacyProject(legacy) {
     links: [],
     deliverables: [deliverable],
     overviewDeliverableId: deliverable.id,
+    pinned: !!legacy?.pinned,
+    pinnedOrder: normalizePinnedProjectOrder(legacy?.pinnedOrder),
     lightingSchedule: legacy?.lightingSchedule || null,
     title24: legacy?.title24 || null,
   };
@@ -12970,6 +13952,8 @@ function normalizeProject(project) {
       : [],
     attachments,
     links: buildLegacyLinksFromAttachments(attachments),
+    pinned: project?.pinned === true,
+    pinnedOrder: normalizePinnedProjectOrder(project?.pinnedOrder),
     deliverables: Array.isArray(project.deliverables)
       ? project.deliverables.map(normalizeDeliverable)
       : [],
@@ -12982,6 +13966,7 @@ function normalizeProject(project) {
     title24: normalizeTitle24(project.title24 || createDefaultTitle24()),
   };
   syncProjectAttachmentFields(out);
+  if (!out.pinned) out.pinnedOrder = null;
   if (!out.deliverables.length) out.deliverables = [createDeliverable()];
   syncProjectActiveDeliverables(out, {
     fallbackActiveId: String(project.overviewDeliverableId || "").trim(),
@@ -13143,6 +14128,9 @@ function migrateProjects(raw = []) {
       return normalized;
     })
     .filter(Boolean);
+  if (syncPinnedProjectOrders(merged, { seedMissing: true })) {
+    changed = true;
+  }
   return { data: merged, didMigrate: changed };
 }
 
@@ -13183,7 +14171,7 @@ async function pinUrgentDeliverables() {
     if (!urgentIncompleteCount) return;
     deliverablesMatched += urgentIncompleteCount;
     if (!project.pinned) {
-      project.pinned = true;
+      setProjectPinnedState(project, true, db);
       projectsPinned += 1;
     }
   });
@@ -13876,14 +14864,15 @@ async function openCopyProjectLocallyDialog(preview, launchContext = null) {
   }
 
   const previewStatus = String(preview?.status || "").trim().toLowerCase();
+  const launchProjectPath = getLaunchContextProjectRoot(launchContext);
   copyProjectLocallyDialogState = {
     ...DEFAULT_COPY_PROJECT_LOCALLY_DIALOG_STATE,
     activeTab: "copy",
     serverProjectPath: String(
-      preview?.serverProjectPath || preview?.resolvedServerProjectPath || ""
+      preview?.serverProjectPath || preview?.resolvedServerProjectPath || launchProjectPath || ""
     ).trim(),
     localProjectPath: String(preview?.localProjectPath || "").trim(),
-    projectName: String(preview?.projectName || "").trim(),
+    projectName: String(preview?.projectName || launchContext?.projectName || "").trim(),
     resolvedFromWorkroom: preview?.resolvedFromWorkroom === true,
     resolutionMode: String(preview?.resolutionMode || "").trim(),
     workroomProjectPath: String(preview?.workroomProjectPath || "").trim(),
@@ -14240,6 +15229,9 @@ function getLocalProjectManagerSyncServerPathInfo() {
   const launchSource = String(copyProjectLocallyDialogState.launchContext?.source || "")
     .trim()
     .toLowerCase();
+  const launchProjectPath = getLaunchContextProjectRoot(
+    copyProjectLocallyDialogState.launchContext
+  );
   if (launchSource === "workroom") {
     const activeProject = db[activeChecklistProject] || null;
     const workroomPath =
@@ -14250,6 +15242,9 @@ function getLocalProjectManagerSyncServerPathInfo() {
           ""
       );
     if (workroomPath) return { path: workroomPath, source: "workroom" };
+  }
+  if (launchProjectPath) {
+    return { path: launchProjectPath, source: launchSource || "launch_context" };
   }
 
   const matchedProject =
@@ -14654,7 +15649,9 @@ async function browseLocalProjectManagerLocalPath() {
 }
 
 async function browseLocalProjectManagerServerPath() {
-  const selection = await window.pywebview.api.select_folder();
+  const selection = await window.pywebview.api.select_folder(
+    getLaunchContextProjectRoot(copyProjectLocallyDialogState.launchContext) || null
+  );
   if (selection?.status === "error") {
     throw new Error(selection.message || "Failed to choose a server project folder.");
   }
@@ -14694,7 +15691,9 @@ function applyCopyProjectLocallyPreviewResult(preview, launchContext = null) {
 }
 
 async function chooseAndPreviewCopyProjectLocallyServerFolder() {
-  const selection = await window.pywebview.api.select_folder();
+  const selection = await window.pywebview.api.select_folder(
+    getLaunchContextProjectRoot(copyProjectLocallyDialogState.launchContext) || null
+  );
   if (selection?.status === "error") {
     throw new Error(selection.message || "Failed to choose a folder.");
   }
@@ -17527,9 +18526,8 @@ function createAttachmentControl(descriptor = {}, options = {}) {
 
   trigger.addEventListener("click", (event) => {
     event.stopPropagation();
-    document
-      .querySelectorAll(".deliverable-status-dropdown.open")
-      .forEach((dropdown) => setDeliverableStatusDropdownState(dropdown, false));
+    closeOpenDeliverableStatusDropdowns();
+    closeOpenDeliverableToolDropdown();
     openAttachmentPanel(attachmentContext);
   });
 
@@ -17640,6 +18638,132 @@ function createAttachmentControl(descriptor = {}, options = {}) {
   }
 
   return control;
+}
+
+let openDeliverableToolDropdown = null;
+let deliverableToolDropdownGlobalHandlersBound = false;
+
+function createDeliverableToolTriggerIcon() {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "1.9");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  svg.setAttribute("class", "deliverable-tool-trigger-icon");
+  svg.innerHTML =
+    '<path d="M21 7.5a5.5 5.5 0 0 1-7.6 5.08L7.5 18.5a2.12 2.12 0 1 1-3-3l5.92-5.9A5.5 5.5 0 0 1 16.5 3l-3 3 4.5 4.5 3-3Z"></path>';
+  return svg;
+}
+
+function setDeliverableToolDropdownState(dropdown, isOpen) {
+  if (!dropdown) return;
+
+  const menu = dropdown.querySelector(".deliverable-tool-menu");
+  const trigger = dropdown.querySelector(".deliverable-tool-trigger");
+  const card = dropdown.closest(".deliverable-card-new");
+  const cell = dropdown.closest(".cell-deliverables");
+  const row = dropdown.closest(".row");
+
+  menu?.classList.toggle("open", isOpen);
+  trigger?.classList.toggle("open", isOpen);
+  trigger?.setAttribute("aria-expanded", String(isOpen));
+  dropdown.classList.toggle("open", isOpen);
+  card?.classList.toggle("deliverable-menu-open", isOpen);
+  cell?.classList.toggle("deliverable-menu-open", isOpen);
+  row?.classList.toggle("deliverable-menu-open", isOpen);
+
+  if (isOpen) {
+    openDeliverableToolDropdown = dropdown;
+  } else if (openDeliverableToolDropdown === dropdown) {
+    openDeliverableToolDropdown = null;
+  }
+}
+
+function closeOpenDeliverableToolDropdown({ except = null, focusTrigger = false } = {}) {
+  if (!openDeliverableToolDropdown || openDeliverableToolDropdown === except) return;
+  const dropdown = openDeliverableToolDropdown;
+  setDeliverableToolDropdownState(dropdown, false);
+  if (focusTrigger) {
+    dropdown.querySelector(".deliverable-tool-trigger")?.focus();
+  }
+}
+
+function closeOpenDeliverableStatusDropdowns(exceptDropdown = null) {
+  document.querySelectorAll(".deliverable-status-dropdown.open").forEach((dropdown) => {
+    if (dropdown !== exceptDropdown) {
+      setDeliverableStatusDropdownState(dropdown, false);
+    }
+  });
+}
+
+function ensureDeliverableToolDropdownGlobalHandlers() {
+  if (deliverableToolDropdownGlobalHandlersBound) return;
+  deliverableToolDropdownGlobalHandlersBound = true;
+
+  document.addEventListener("click", (e) => {
+    if (!openDeliverableToolDropdown) return;
+    if (openDeliverableToolDropdown.contains(e.target)) return;
+    setDeliverableToolDropdownState(openDeliverableToolDropdown, false);
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || !openDeliverableToolDropdown) return;
+    e.preventDefault();
+    closeOpenDeliverableToolDropdown({ focusTrigger: true });
+  });
+}
+
+function createDeliverableToolDropdown(deliverable, project, card) {
+  ensureDeliverableToolDropdownGlobalHandlers();
+
+  const dropdown = el("div", { className: "deliverable-tool-dropdown" });
+  const trigger = el("button", {
+    className: "deliverable-tool-trigger",
+    type: "button",
+    title: "Launch tools",
+    "aria-label": "Launch tools",
+    "aria-expanded": "false",
+  });
+  trigger.appendChild(createDeliverableToolTriggerIcon());
+
+  const menu = el("div", { className: "deliverable-tool-menu" });
+  getDeliverableToolMenuEntries().forEach((entry) => {
+    const option = el("button", {
+      className: "deliverable-tool-option",
+      type: "button",
+      textContent: entry.menuLabel || entry.label,
+      "data-shared-tool-id": entry.id,
+      "data-launch-type": entry.launchType,
+    });
+    option.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setDeliverableToolDropdownState(dropdown, false);
+      const launchContext = buildProjectsTabToolLaunchContext(project, deliverable);
+      launchSharedToolCard(entry.id, launchContext);
+    });
+    menu.appendChild(option);
+  });
+
+  trigger.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const isOpen = !dropdown.classList.contains("open");
+
+    closeOpenDeliverableToolDropdown({ except: dropdown });
+    closeOpenDeliverableStatusDropdowns();
+    if (openAttachmentPanelContext) {
+      void requestAttachmentPanelClose();
+    }
+
+    setDeliverableToolDropdownState(dropdown, isOpen);
+  });
+
+  dropdown.append(trigger, menu);
+  card?.classList.remove("deliverable-menu-open");
+  return dropdown;
 }
 
 function createCardHeader(deliverable, isPrimary, card, project) {
@@ -17753,6 +18877,7 @@ function createCardHeader(deliverable, isPrimary, card, project) {
   // Right section: attachments + expand/contract controls
   const actions = el("div", { className: "deliverable-header-actions" });
   const expandToggle = createExpandToggle(card);
+  const toolDropdown = createDeliverableToolDropdown(deliverable, project, card);
   const attachmentControl = createAttachmentControl(
     {
       kind: "deliverable",
@@ -17766,7 +18891,7 @@ function createCardHeader(deliverable, isPrimary, card, project) {
       onChange: () => updateDeliverableWorkItemUi(card, deliverable),
     }
   );
-  actions.append(attachmentControl, expandToggle);
+  actions.append(attachmentControl, toolDropdown, expandToggle);
   header.appendChild(actions);
 
   return header;
@@ -17949,12 +19074,8 @@ function createStatusDropdown(deliverable, project, card) {
     e.stopPropagation();
     const isOpen = !dropdown.classList.contains("open");
 
-    // Close other open dropdowns
-    document.querySelectorAll(".deliverable-status-dropdown.open").forEach((openDropdown) => {
-      if (openDropdown !== dropdown) {
-        setDeliverableStatusDropdownState(openDropdown, false);
-      }
-    });
+    closeOpenDeliverableStatusDropdowns(dropdown);
+    closeOpenDeliverableToolDropdown();
     if (openAttachmentPanelContext) {
       void requestAttachmentPanelClose();
     }
@@ -19286,6 +20407,7 @@ function scanAndMergeSimilarProjects() {
     autoSetPrimary(base);
     base.overviewSortDir = "desc";
     base.pinned = projects.some((project) => project?.pinned);
+    base.pinnedOrder = base.pinned ? getLowestPinnedProjectOrder(projects) : null;
 
     db[sorted[0]] = base;
     for (let i = sorted.length - 1; i >= 1; i--) {
@@ -19295,6 +20417,7 @@ function scanAndMergeSimilarProjects() {
     mergedCount++;
   });
 
+  syncPinnedProjectOrders(db);
   save();
   render();
   toast(`Merged ${mergedCount} group${mergedCount === 1 ? "" : "s"} (${removedCount} removed).`);
@@ -19468,24 +20591,109 @@ function sortProjectDeliverableRows(items) {
   items.sort((a, b) => compareProjectDeliverableRows(a, b));
 }
 
+function clearPinnedProjectDragStyles() {
+  const tbody = document.getElementById("tbody");
+  if (!tbody) return;
+  tbody.querySelectorAll(".project-row").forEach((row) => {
+    row.classList.remove("project-dragging", "project-drop-before", "project-drop-after");
+    delete row.dataset.dropPosition;
+  });
+}
+
+function enablePinnedProjectRowDrag(row, handle, project) {
+  if (!row || !handle || !project?.pinned) return;
+  handle.draggable = true;
+
+  handle.addEventListener("dragstart", (e) => {
+    pinnedProjectDragState = {
+      project,
+      didMove: false,
+    };
+    row.classList.add("project-dragging");
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData(
+        "text/plain",
+        String(project?.id || project?.name || "pinned-project")
+      );
+    }
+  });
+
+  handle.addEventListener("dragend", () => {
+    row.classList.remove("project-dragging");
+    clearPinnedProjectDragStyles();
+    if (pinnedProjectDragState?.project === project && pinnedProjectDragState.didMove) {
+      projectPinHandleSuppressClickUntil = Date.now() + 250;
+    }
+    if (pinnedProjectDragState?.project === project) {
+      pinnedProjectDragState = null;
+    }
+  });
+
+  row.addEventListener("dragover", (e) => {
+    if (!pinnedProjectDragState?.project?.pinned || pinnedProjectDragState.project === project) {
+      return;
+    }
+    e.preventDefault();
+    const rect = row.getBoundingClientRect();
+    const before = e.clientY < rect.top + rect.height / 2;
+    row.classList.toggle("project-drop-before", before);
+    row.classList.toggle("project-drop-after", !before);
+    row.dataset.dropPosition = before ? "before" : "after";
+  });
+
+  row.addEventListener("dragleave", () => {
+    row.classList.remove("project-drop-before", "project-drop-after");
+    delete row.dataset.dropPosition;
+  });
+
+  row.addEventListener("drop", async (e) => {
+    if (!pinnedProjectDragState?.project?.pinned || pinnedProjectDragState.project === project) {
+      return;
+    }
+    e.preventDefault();
+    const before = row.dataset.dropPosition !== "after";
+    const moved = movePinnedProjectToTarget(
+      pinnedProjectDragState.project,
+      project,
+      before,
+      db
+    );
+    clearPinnedProjectDragStyles();
+    if (pinnedProjectDragState) {
+      pinnedProjectDragState.didMove = moved;
+    }
+    pinnedProjectDragState = null;
+    if (!moved) return;
+    projectPinHandleSuppressClickUntil = Date.now() + 250;
+    await save();
+    renderProjectsPreservingExpandedDeliverables();
+  });
+}
+
 function buildProjectTableRow(project, projectIndex, rowTemplate) {
   const tr = rowTemplate.content.cloneNode(true).querySelector("tr");
+  tr.classList.add("project-row");
 
   const selectCell = tr.querySelector(".cell-select");
   const pinBtn = selectCell?.querySelector(".pin-btn");
   if (pinBtn) {
     const isPinned = !!project?.pinned;
+    tr.classList.toggle("is-pinned-project", isPinned);
     pinBtn.classList.toggle("is-pinned", isPinned);
     pinBtn.setAttribute("aria-pressed", String(isPinned));
     pinBtn.setAttribute("aria-label", isPinned ? "Unpin project" : "Pin project");
     pinBtn.setAttribute("title", isPinned ? "Unpin project" : "Pin project");
     pinBtn.textContent = "";
     pinBtn.appendChild(createIcon(PIN_ICON_PATH, 14));
+    pinBtn.draggable = false;
+    if (isPinned) enablePinnedProjectRowDrag(tr, pinBtn, project);
     pinBtn.onclick = async (e) => {
       e.stopPropagation();
-      project.pinned = !project.pinned;
+      if (Date.now() < projectPinHandleSuppressClickUntil) return;
+      setProjectPinnedState(project, !project?.pinned, db);
       await save();
-      render();
+      renderProjectsPreservingExpandedDeliverables();
     };
   }
 
@@ -19733,6 +20941,27 @@ function renderUngroupedDeliverableRows({
     projectListContextMap
   );
   sortProjectDeliverableRows(deliverableRows);
+  const orderedDeliverableRows = [];
+  if (items.some((project) => project?.pinned)) {
+    const pinnedDeliverableRows = new Map();
+    const unpinnedDeliverableRows = [];
+    deliverableRows.forEach((row) => {
+      if (row?.isPinnedProject) {
+        const projectRows = pinnedDeliverableRows.get(row.project) || [];
+        projectRows.push(row);
+        pinnedDeliverableRows.set(row.project, projectRows);
+      } else {
+        unpinnedDeliverableRows.push(row);
+      }
+    });
+    items.filter((project) => project?.pinned).forEach((project) => {
+      const projectRows = pinnedDeliverableRows.get(project);
+      if (projectRows?.length) orderedDeliverableRows.push(...projectRows);
+    });
+    orderedDeliverableRows.push(...unpinnedDeliverableRows);
+  } else {
+    orderedDeliverableRows.push(...deliverableRows);
+  }
 
   let lastWeekKey = null;
   let lastCompleteWeekKey = null;
@@ -19740,7 +20969,7 @@ function renderUngroupedDeliverableRows({
   let completeDeliverablesSectionShown = false;
   const searchContextProjects = new Set();
 
-  deliverableRows.forEach((row) => {
+  orderedDeliverableRows.forEach((row) => {
     const {
       project,
       projectIndex,
@@ -19882,9 +21111,8 @@ function render() {
     return projectListContext.matchesFilters;
   });
 
-  const pinned = items.filter((p) => p?.pinned);
+  const pinned = getPinnedProjectsInManualOrder(items);
   const unpinned = items.filter((p) => !p?.pinned);
-  sortProjectsByDueDesc(pinned, projectListContextMap);
   sortProjectsByCurrent(unpinned, projectListContextMap);
   items = pinned.concat(unpinned);
 
@@ -20089,6 +21317,8 @@ function createBlankProject() {
     links: [],
     deliverables: [deliverable],
     overviewDeliverableId: deliverable.id,
+    pinned: false,
+    pinnedOrder: null,
     lightingSchedule: createDefaultLightingSchedule(),
     title24: createDefaultTitle24(),
   };
@@ -21236,6 +22466,7 @@ function readForm() {
     deliverables: [],
     overviewDeliverableId: "",
     pinned: !!existingProject?.pinned,
+    pinnedOrder: normalizePinnedProjectOrder(existingProject?.pinnedOrder),
     lightingSchedule,
     title24,
   };
@@ -23145,7 +24376,24 @@ async function handleBundleAction(e) {
   const button = e.target.closest("[data-action-type]");
   if (!button) return;
 
-  const actionType = button.dataset.actionType;
+  const actionType = String(button.dataset.actionType || "").trim();
+  const bundleName = String(button.dataset.bundleName || "").trim();
+  const bundleLabel = normalizeBundleCoreName(bundleName) || "AutoCAD Plugin";
+  const actionVerb =
+    actionType === "Uninstall"
+      ? "Uninstalling"
+      : actionType === "Update"
+        ? "Updating"
+        : "Installing";
+  const activityId = beginActivity({
+    activityId: createActivityId(`bundle_${bundleName || actionType}`),
+    label: bundleLabel,
+    message: `${actionVerb} plugin...`,
+    progress: 25,
+    kind: "plugin",
+    openFolderLabel:
+      actionType === "Uninstall" ? "Open Plugins Folder" : "Open Folder",
+  });
   button.disabled = true;
   button.textContent = "Processing...";
 
@@ -23161,8 +24409,19 @@ async function handleBundleAction(e) {
       );
     }
     if (response.status !== "success") throw new Error(response.message);
-    toast(`${actionType} successful.`);
+    completeActivity(activityId, {
+      message: `${actionType} successful.`,
+      openFolderPath: String(
+        response.bundlePath || response.pluginsFolderPath || ""
+      ).trim(),
+      openFolderLabel:
+        actionType === "Uninstall" ? "Open Plugins Folder" : "Open Folder",
+    });
   } catch (err) {
+    failActivity(activityId, {
+      message: err?.message || `${actionType} failed.`,
+    });
+    return;
     toast(`⚠️ ${err.message}`, 5000);
   } finally {
     await ensureBundlesRendered({ force: true });
@@ -23172,27 +24431,8 @@ async function handleBundleAction(e) {
 
 // ===================== TOOLS & SCRIPTS =====================
 window.updateToolStatus = function (toolId, message) {
-  const card = document.getElementById(toolId);
-  if (!card) return;
-  const statusEl = card.querySelector(".tool-card-status");
   const abortBtn = document.getElementById("abortBtn");
   const nextMessage = String(message || "").trim();
-  let footerPhase = "running";
-  let footerMessage = nextMessage || "Running...";
-
-  if (nextMessage.startsWith("ERROR:")) {
-    footerPhase = "error";
-    footerMessage = nextMessage.substring(6).trim() || "Error.";
-  } else if (nextMessage.startsWith("WARN:")) {
-    footerPhase = "done";
-    footerMessage = nextMessage.substring(5).trim() || "Done with warnings.";
-  } else if (nextMessage === "DONE") {
-    footerPhase = "done";
-    footerMessage = "Done.";
-  }
-
-  if (!statusEl) return;
-  statusEl.classList.remove("error");
   if (toolId === "toolCleanDwgs" && abortBtn) {
     if (nextMessage && nextMessage !== "DONE" && !nextMessage.startsWith("ERROR:")) {
       abortBtn.style.display = "inline-block";
@@ -23206,29 +24446,25 @@ window.updateToolStatus = function (toolId, message) {
       abortBtn.style.display = "none";
     }
   }
-  if (nextMessage.startsWith("ERROR:")) {
-    statusEl.textContent = nextMessage.substring(6).trim();
-    statusEl.classList.add("error");
-    card.classList.add("running");
-    setTimeout(() => {
-      card.classList.remove("running");
-      if (abortBtn) abortBtn.style.display = "none";
-    }, 5000);
-  } else if (nextMessage.startsWith("WARN:")) {
-    statusEl.textContent = nextMessage.substring(5).trim() || "Done with warnings.";
-    setTimeout(() => {
-      card.classList.remove("running");
-      if (abortBtn) abortBtn.style.display = "none";
-    }, 4000);
-  } else if (nextMessage === "DONE") {
-    statusEl.textContent = "Done!";
-    setTimeout(() => {
-      card.classList.remove("running");
-      if (abortBtn) abortBtn.style.display = "none";
-    }, 2000);
-  } else {
-    statusEl.textContent = nextMessage;
+
+  if (!nextMessage) {
+    if (toolId) {
+      const activityId = activeToolActivityIds.get(String(toolId || "").trim());
+      if (activityId) {
+        updateActivity(activityId, {
+          message: getActivityById(activityId)?.message || "Working...",
+        });
+      }
+    }
+    return;
   }
+
+  initActivityTray();
+  updateActivityStatusFromPayload({
+    toolId,
+    activityId: activeToolActivityIds.get(String(toolId || "").trim()) || "",
+    message: nextMessage,
+  });
 };
 
 
@@ -23247,6 +24483,7 @@ function setWireSizerMessage(message) {
 }
 
 async function openWireSizer() {
+  resolveCadLaunchContextForTool();
   const dlg = document.getElementById("wireSizerDlg");
   const frame = document.getElementById("wireSizerFrame");
   if (!dlg || !frame) return;
@@ -23308,8 +24545,10 @@ const circuitBreakerState = {
   newOutputExtension: "xlsx",
   newOutputPath: "",
   existingOutputPath: "",
+  launchContext: null,
   running: false,
   activeJobId: "",
+  activeActivityId: "",
   panelSchedulePollTimer: 0,
   lastHandledTerminalJobId: "",
   lastPanelScheduleStatus: null,
@@ -23472,6 +24711,10 @@ function getCircuitBreakerOutputPath() {
   return circuitBreakerState.outputMode === "existing"
     ? circuitBreakerState.existingOutputPath
     : circuitBreakerState.newOutputPath;
+}
+
+function getCircuitBreakerLaunchDefaultDirectory() {
+  return getLaunchContextProjectRoot(circuitBreakerState.launchContext);
 }
 
 function normalizeCircuitBreakerOutputExtension(value) {
@@ -23759,7 +25002,7 @@ function updateCircuitBreakerUi() {
   }
 }
 
-function resetCircuitBreakerForm() {
+function resetCircuitBreakerForm({ launchContext = null } = {}) {
   clearPanelScheduleStatusPoll();
   circuitBreakerState.panels = [];
   circuitBreakerState.activePanelId = "";
@@ -23768,8 +25011,10 @@ function resetCircuitBreakerForm() {
   circuitBreakerState.newOutputExtension = "xlsx";
   circuitBreakerState.newOutputPath = "";
   circuitBreakerState.existingOutputPath = "";
+  circuitBreakerState.launchContext = deepCloneJson(launchContext, null);
   circuitBreakerState.running = false;
   circuitBreakerState.activeJobId = "";
+  circuitBreakerState.activeActivityId = "";
   circuitBreakerState.lastHandledTerminalJobId = "";
   circuitBreakerState.lastPanelScheduleStatus = null;
   ensureCircuitBreakerPanels();
@@ -23811,10 +25056,12 @@ async function selectCircuitBreakerImage(kind) {
     toast("File picker is unavailable.");
     return;
   }
+  const defaultDirectory = getCircuitBreakerLaunchDefaultDirectory();
   try {
     const result = await window.pywebview.api.select_files({
       allow_multiple: true,
       file_types: ["Image Files (*.jpg;*.jpeg;*.png;*.bmp;*.gif;*.tif;*.tiff;*.heic;*.heif)"],
+      default_directory: defaultDirectory,
     });
     if (result.status === "success" && result.paths?.length) {
       setCircuitBreakerPaths(kind, result.paths);
@@ -23829,13 +25076,14 @@ async function selectCircuitBreakerSchedulePath(mode) {
     toast("File picker is unavailable.");
     return;
   }
+  const defaultDirectory = getCircuitBreakerLaunchDefaultDirectory();
   if (mode === "new") {
     try {
       const outputExtension = normalizeCircuitBreakerOutputExtension(
         circuitBreakerState.newOutputExtension
       );
       const selection = await window.pywebview.api.select_template_save_location(
-        null,
+        defaultDirectory || null,
         "Panel_Schedule",
         outputExtension
       );
@@ -23859,6 +25107,7 @@ async function selectCircuitBreakerSchedulePath(mode) {
     const selection = await window.pywebview.api.select_files({
       allow_multiple: false,
       file_types: ["Excel Files (*.xlsx;*.xls)"],
+      default_directory: defaultDirectory,
     });
     if (selection?.status === "success" && selection.paths?.length) {
       circuitBreakerState.existingOutputPath = selection.paths[0];
@@ -23870,10 +25119,11 @@ async function selectCircuitBreakerSchedulePath(mode) {
 }
 
 async function openCircuitBreaker() {
+  const launchContext = resolveCadLaunchContextForTool();
   const dlg = document.getElementById("circuitBreakerDlg");
   if (!dlg) return;
   if (!circuitBreakerState.running) {
-    resetCircuitBreakerForm();
+    resetCircuitBreakerForm({ launchContext });
   }
   if (!dlg.open) dlg.showModal();
   updateCircuitBreakerUi();
@@ -23961,9 +25211,54 @@ async function handlePanelScheduleBackgroundUpdate(payload, { source = "push" } 
   if (!jobId) return;
 
   const status = String(payload.status || "").trim().toLowerCase();
-  circuitBreakerState.lastPanelScheduleStatus = { jobId, status, source };
+  const activityId = String(
+    payload.activityId || circuitBreakerState.activeActivityId || ""
+  ).trim();
+  const parsedPanelCount = Number(payload.panelCount);
+  const panelCount = Number.isFinite(parsedPanelCount)
+    ? Math.max(1, parsedPanelCount)
+    : 1;
+  const parsedSuccess = Number(payload.successCount);
+  const parsedFailure = Number(payload.failureCount);
+  const successCount = Number.isFinite(parsedSuccess)
+    ? Math.max(0, parsedSuccess)
+    : status === "success"
+      ? 1
+      : 0;
+  const failureCount = Number.isFinite(parsedFailure)
+    ? Math.max(0, parsedFailure)
+    : status === "success"
+      ? 0
+      : 1;
+  const completedCount = Math.min(panelCount, successCount + failureCount);
+  const results = Array.isArray(payload.results) ? payload.results : [];
+  const openFolderPath = String(
+    payload.outputFolder ||
+      (payload.outputPath ? payload.outputPath.split(/[\\/]/).slice(0, -1).join("\\") : "")
+  ).trim();
+  circuitBreakerState.lastPanelScheduleStatus = {
+    jobId,
+    status,
+    source,
+    activityId,
+  };
+  if (activityId) {
+    circuitBreakerState.activeActivityId = activityId;
+  }
 
   if (status === "running") {
+    window.updateActivityStatus({
+      ...payload,
+      toolId: "toolCircuitBreaker",
+      activityId: activityId || getActivityIdForTool("toolCircuitBreaker", { create: true }),
+      label: "Panel Schedule AI",
+      message:
+        payload.message ||
+        `Running ${panelCount} panel${panelCount === 1 ? "" : "s"} in background...`,
+      panelCount,
+      completedCount,
+      openFolderPath,
+    });
     if (jobId === circuitBreakerState.activeJobId) {
       schedulePanelScheduleStatusPoll(jobId, 1000);
     }
@@ -23985,23 +25280,12 @@ async function handlePanelScheduleBackgroundUpdate(payload, { source = "push" } 
 
   circuitBreakerState.lastHandledTerminalJobId = jobId;
   circuitBreakerState.activeJobId = "";
+  const terminalActivityId =
+    activityId || getActivityIdForTool("toolCircuitBreaker", { create: true });
+  circuitBreakerState.activeActivityId = "";
   clearPanelScheduleStatusPoll();
   circuitBreakerState.running = false;
   updateCircuitBreakerUi();
-
-  const parsedSuccess = Number(payload.successCount);
-  const parsedFailure = Number(payload.failureCount);
-  const successCount = Number.isFinite(parsedSuccess)
-    ? Math.max(0, parsedSuccess)
-    : status === "success"
-      ? 1
-      : 0;
-  const failureCount = Number.isFinite(parsedFailure)
-    ? Math.max(0, parsedFailure)
-    : status === "success"
-      ? 0
-      : 1;
-  const results = Array.isArray(payload.results) ? payload.results : [];
 
   if (status === "success") {
     let message = payload.message;
@@ -24022,21 +25306,19 @@ async function handlePanelScheduleBackgroundUpdate(payload, { source = "push" } 
       }
     }
 
-    setPanelScheduleToolCardStatus(message);
-    toast(message, failureCount > 0 ? 6000 : 3500);
-
-    const folder =
-      payload.outputFolder ||
-      (payload.outputPath
-        ? payload.outputPath.split(/[\\/]/).slice(0, -1).join("\\")
-        : "");
-    if (successCount > 0 && folder && window.pywebview?.api?.open_path) {
-      try {
-        await window.pywebview.api.open_path(folder);
-      } catch (e) {
-        // Ignore open errors.
-      }
-    }
+    window.updateActivityStatus({
+      ...payload,
+      toolId: "toolCircuitBreaker",
+      activityId: terminalActivityId,
+      label: "Panel Schedule AI",
+      status:
+        failureCount > 0 ? ACTIVITY_STATUS.WARNING : ACTIVITY_STATUS.SUCCESS,
+      message,
+      panelCount,
+      completedCount,
+      openFolderPath,
+      openFolderLabel: "Open Folder",
+    });
     return;
   }
 
@@ -24049,8 +25331,18 @@ async function handlePanelScheduleBackgroundUpdate(payload, { source = "push" } 
     ? ` Failed: ${failedNames.slice(0, 2).join(", ")}${failedNames.length > 2 ? ", ..." : ""}.`
     : "";
   const statusMessage = `${baseMessage}${listed}`;
-  setPanelScheduleToolCardStatus(statusMessage, { error: true });
-  toast(statusMessage, 6000);
+  window.updateActivityStatus({
+    ...payload,
+    toolId: "toolCircuitBreaker",
+    activityId: terminalActivityId,
+    label: "Panel Schedule AI",
+    status: ACTIVITY_STATUS.ERROR,
+    message: statusMessage,
+    panelCount,
+    completedCount,
+    openFolderPath,
+    openFolderLabel: "Open Folder",
+  });
 }
 
 async function runCircuitBreakerInBackground() {
@@ -24116,15 +25408,26 @@ async function runCircuitBreakerInBackground() {
     directoryUploads: firstPanel.directoryUploads || [],
     panelName: firstPanel.panelName || "",
   };
+  const activityId = beginActivity({
+    activityId: createActivityId("toolCircuitBreaker"),
+    toolId: "toolCircuitBreaker",
+    label: "Panel Schedule AI",
+    message: "Preparing panel schedule job...",
+    progress: 10,
+  });
+  payload.activityId = activityId;
 
   try {
     const res = await window.pywebview.api.run_panel_schedule_background(payload);
     if (res?.status === "error") {
       clearPanelScheduleStatusPoll();
       circuitBreakerState.activeJobId = "";
+      circuitBreakerState.activeActivityId = "";
       circuitBreakerState.running = false;
       updateCircuitBreakerUi();
-      toast(res.message || "Failed to start Panel Schedule AI.");
+      failActivity(activityId, {
+        message: res.message || "Failed to start Panel Schedule AI.",
+      });
       return;
     }
 
@@ -24132,12 +25435,12 @@ async function runCircuitBreakerInBackground() {
     if (!jobId) {
       clearPanelScheduleStatusPoll();
       circuitBreakerState.activeJobId = "";
+      circuitBreakerState.activeActivityId = "";
       circuitBreakerState.running = false;
       updateCircuitBreakerUi();
-      setPanelScheduleToolCardStatus("Panel Schedule AI did not return a job id.", {
-        error: true,
+      failActivity(activityId, {
+        message: "Panel Schedule AI did not return a job id.",
       });
-      toast("Panel Schedule AI did not return a job id.");
       return;
     }
 
@@ -24147,25 +25450,37 @@ async function runCircuitBreakerInBackground() {
       : panels.length;
     const runningMessage = `Running ${jobPanelCount} panel${jobPanelCount === 1 ? "" : "s"} in background...`;
     circuitBreakerState.activeJobId = jobId;
+    circuitBreakerState.activeActivityId = String(
+      res?.activityId || activityId
+    ).trim() || activityId;
     circuitBreakerState.lastHandledTerminalJobId = "";
     circuitBreakerState.lastPanelScheduleStatus = {
       jobId,
       status: "running",
       source: "start",
+      activityId: circuitBreakerState.activeActivityId,
     };
-    setPanelScheduleToolCardStatus(runningMessage, { running: true });
+    updateActivity(circuitBreakerState.activeActivityId, {
+      message: runningMessage,
+      progress: 20,
+      panelCount: jobPanelCount,
+      completedCount: 0,
+      openFolderPath:
+        circuitBreakerState.outputMode === "existing"
+          ? outputPath.split(/[\\/]/).slice(0, -1).join("\\")
+          : outputPath.split(/[\\/]/).slice(0, -1).join("\\"),
+    });
     schedulePanelScheduleStatusPoll(jobId, 1000);
     closeCircuitBreaker();
-    toast(
-      `Panel Schedule AI is processing ${jobPanelCount} panel${jobPanelCount === 1 ? "" : "s"
-      } in the background.`
-    );
   } catch (e) {
     clearPanelScheduleStatusPoll();
     circuitBreakerState.activeJobId = "";
+    circuitBreakerState.activeActivityId = "";
     circuitBreakerState.running = false;
     updateCircuitBreakerUi();
-    toast("Failed to start Panel Schedule AI.");
+    failActivity(activityId, {
+      message: e?.message || "Failed to start Panel Schedule AI.",
+    });
   }
 }
 
@@ -27415,12 +28730,24 @@ function initEventListeners() {
         await showAutocadSelectModal();
         return;
       }
-      e.currentTarget.classList.add("running");
-      window.updateToolStatus("toolPublishDwgs", "Initializing...");
-      if (launchContext) {
-        await window.pywebview.api.run_publish_script(launchContext);
-      } else {
-        await window.pywebview.api.run_publish_script();
+      const activityId = beginActivity({
+        toolId: "toolPublishDwgs",
+        message: "Initializing...",
+        progress: 5,
+      });
+      try {
+        const result = launchContext
+          ? await window.pywebview.api.run_publish_script(launchContext, activityId)
+          : await window.pywebview.api.run_publish_script(null, activityId);
+        if (result?.status === "error") {
+          failActivity(activityId, {
+            message: result.message || "Failed to start Publish DWGs.",
+          });
+        }
+      } catch (error) {
+        failActivity(activityId, {
+          message: error?.message || "Failed to start Publish DWGs.",
+        });
       }
     });
 
@@ -27434,12 +28761,27 @@ function initEventListeners() {
         await showAutocadSelectModal();
         return;
       }
-      e.currentTarget.classList.add("running");
-      window.updateToolStatus("toolFreezeLayers", "Initializing...");
-      if (launchContext) {
-        await window.pywebview.api.run_freeze_layers_script(launchContext);
-      } else {
-        await window.pywebview.api.run_freeze_layers_script();
+      const activityId = beginActivity({
+        toolId: "toolFreezeLayers",
+        message: "Initializing...",
+        progress: 5,
+      });
+      try {
+        const result = launchContext
+          ? await window.pywebview.api.run_freeze_layers_script(
+              launchContext,
+              activityId
+            )
+          : await window.pywebview.api.run_freeze_layers_script(null, activityId);
+        if (result?.status === "error") {
+          failActivity(activityId, {
+            message: result.message || "Failed to start Freeze Layers.",
+          });
+        }
+      } catch (error) {
+        failActivity(activityId, {
+          message: error?.message || "Failed to start Freeze Layers.",
+        });
       }
     });
 
@@ -27453,12 +28795,24 @@ function initEventListeners() {
         await showAutocadSelectModal();
         return;
       }
-      e.currentTarget.classList.add("running");
-      window.updateToolStatus("toolThawLayers", "Initializing...");
-      if (launchContext) {
-        await window.pywebview.api.run_thaw_layers_script(launchContext);
-      } else {
-        await window.pywebview.api.run_thaw_layers_script();
+      const activityId = beginActivity({
+        toolId: "toolThawLayers",
+        message: "Initializing...",
+        progress: 5,
+      });
+      try {
+        const result = launchContext
+          ? await window.pywebview.api.run_thaw_layers_script(launchContext, activityId)
+          : await window.pywebview.api.run_thaw_layers_script(null, activityId);
+        if (result?.status === "error") {
+          failActivity(activityId, {
+            message: result.message || "Failed to start Thaw Layers.",
+          });
+        }
+      } catch (error) {
+        failActivity(activityId, {
+          message: error?.message || "Failed to start Thaw Layers.",
+        });
       }
     });
 
@@ -27471,12 +28825,24 @@ function initEventListeners() {
         await showAutocadSelectModal();
         return;
       }
-      e.currentTarget.classList.add("running");
-      window.updateToolStatus("toolCleanXrefs", "Initializing...");
-      if (launchContext) {
-        await window.pywebview.api.run_clean_xrefs_script(launchContext);
-      } else {
-        await window.pywebview.api.run_clean_xrefs_script();
+      const activityId = beginActivity({
+        toolId: "toolCleanXrefs",
+        message: "Initializing...",
+        progress: 5,
+      });
+      try {
+        const result = launchContext
+          ? await window.pywebview.api.run_clean_xrefs_script(launchContext, activityId)
+          : await window.pywebview.api.run_clean_xrefs_script(null, activityId);
+        if (result?.status === "error") {
+          failActivity(activityId, {
+            message: result.message || "Failed to start Clean Xrefs.",
+          });
+        }
+      } catch (error) {
+        failActivity(activityId, {
+          message: error?.message || "Failed to start Clean Xrefs.",
+        });
       }
     });
 
@@ -27511,29 +28877,49 @@ function initEventListeners() {
     "Plan Check Comments"
   );
   const backupDrawingsBtn = document.getElementById("toolBackupDrawings");
-  if (backupDrawingsBtn) {
-    const generalToolsGrid = Array.from(document.querySelectorAll(".tools-section"))
-      .find(
-        (section) =>
-          section.querySelector(".tools-section-title")?.textContent?.trim() === "General"
-      )
-      ?.querySelector(".tools-grid");
-    if (generalToolsGrid && backupDrawingsBtn.parentElement !== generalToolsGrid) {
-      generalToolsGrid.appendChild(backupDrawingsBtn);
-    }
+  const generalToolsGrid = Array.from(document.querySelectorAll(".tools-section"))
+    .find(
+      (section) => section.querySelector(".tools-section-title")?.textContent?.trim() === "General"
+    )
+    ?.querySelector(".tools-grid");
+  if (generalToolsGrid) {
+    const generalToolOrder = [
+      "toolPublishDwgs",
+      "toolFreezeLayers",
+      "toolThawLayers",
+      "toolCleanXrefs",
+      "toolCopyProjectLocally",
+      "toolBackupDrawings",
+    ];
+    generalToolOrder
+      .map((toolId) => document.getElementById(toolId))
+      .filter(Boolean)
+      .forEach((toolCard) => {
+        generalToolsGrid.appendChild(toolCard);
+      });
   }
 
   if (backupDrawingsBtn) {
     const handler = async () => {
       if (backupDrawingsBtn.classList.contains("running")) return;
-      backupDrawingsBtn.classList.add("running");
+      const activityId = beginActivity({
+        toolId: "toolBackupDrawings",
+        message: "Resolving project folder...",
+        progress: 8,
+      });
       const launchContext = resolveCadLaunchContextForTool();
       const launchSource = String(launchContext?.source || "").trim().toLowerCase();
+      const hasContextProjectPath = hasLaunchContextProjectPath(launchContext);
 
       try {
         const selectProjectFolder = async () => {
-          window.updateToolStatus("toolBackupDrawings", "Select project folder...");
-          const selection = await window.pywebview.api.select_folder();
+          updateActivity(activityId, {
+            message: "Select project folder...",
+            progress: 10,
+          });
+          const selection = await window.pywebview.api.select_folder(
+            getLaunchContextProjectRoot(launchContext) || null
+          );
           if (selection?.status === "error") {
             throw new Error(selection.message || "Failed to choose a folder.");
           }
@@ -27546,16 +28932,26 @@ function initEventListeners() {
         let result = null;
         let selectedProjectPath = "";
 
-        if (launchSource === "workroom") {
-          window.updateToolStatus("toolBackupDrawings", "Resolving project folder...");
+        if (launchSource === "workroom" || hasContextProjectPath) {
+          updateActivity(activityId, {
+            message: "Resolving project folder...",
+            progress: 18,
+          });
           result = await window.pywebview.api.backup_project_drawings(null, launchContext);
 
+          const resultCode = String(result?.code || "").trim().toLowerCase();
+          const resultMessage = String(result?.message || "").trim().toLowerCase();
           const needsManualSelection =
             result?.status !== "success" &&
-            String(result?.code || "").trim().toLowerCase() === "manual_selection_required";
+            (resultCode === "manual_selection_required" ||
+              resultCode === "server_project_path_required" ||
+              resultMessage.includes("path does not exist"));
 
           if (needsManualSelection) {
-            toast("Could not auto-resolve project folder; please select it manually.", 6000);
+            updateActivity(activityId, {
+              message: "Could not auto-resolve project folder. Select it manually...",
+              progress: 10,
+            });
             selectedProjectPath = await selectProjectFolder();
             if (!selectedProjectPath) {
               result = null;
@@ -27566,7 +28962,10 @@ function initEventListeners() {
         }
 
         if (selectedProjectPath) {
-          window.updateToolStatus("toolBackupDrawings", "Creating archive backup...");
+          updateActivity(activityId, {
+            message: "Creating archive backup...",
+            progress: 42,
+          });
           result = await window.pywebview.api.backup_project_drawings(
             selectedProjectPath,
             launchContext
@@ -27574,9 +28973,7 @@ function initEventListeners() {
         }
 
         if (!result && !selectedProjectPath) {
-          const statusEl = backupDrawingsBtn.querySelector(".tool-card-status");
-          if (statusEl) statusEl.textContent = "";
-          backupDrawingsBtn.classList.remove("running");
+          acceptActivity(activityId);
           return;
         }
 
@@ -27605,40 +29002,18 @@ function initEventListeners() {
         }
         const hasWarnings = warningParts.length > 0;
 
-        window.updateToolStatus("toolBackupDrawings", "DONE");
-        toast(
-          hasWarnings
-            ? `Drawing backup created with warnings (${warningParts.join(", ")}).`
-            : "Drawing backup created."
-        );
-
-        if (missingFolders.length) {
-          toast(`Missing folders: ${missingFolders.join(", ")}`, 7000);
-        }
-
-        if (failedFiles.length) {
-          const failedPreview = failedFiles
-            .slice(0, 3)
-            .map((entry) => {
-              const sourcePath = String(entry?.source || "");
-              if (!sourcePath) return "";
-              const parts = sourcePath.split(/[\\/]/);
-              return parts[parts.length - 1] || sourcePath;
-            })
-            .filter(Boolean);
-          if (failedPreview.length) {
-            const remainingCount = Math.max(0, failedFileCount - failedPreview.length);
-            const suffix = remainingCount ? ` (+${remainingCount} more)` : "";
-            toast(`Failed files: ${failedPreview.join(", ")}${suffix}`, 9000);
-          }
-        }
-
-        if (result?.archivePath) {
-          await window.pywebview.api.open_path(result.archivePath);
-        }
+        completeActivity(activityId, {
+          status: hasWarnings ? ACTIVITY_STATUS.WARNING : ACTIVITY_STATUS.SUCCESS,
+          message: hasWarnings
+            ? `Drawing backup created with warnings: ${warningParts.join(", ")}.`
+            : "Drawing backup created.",
+          openFolderPath: String(result?.archivePath || "").trim(),
+        });
       } catch (e) {
         const message = e?.message || "Failed to create drawing backup.";
-        window.updateToolStatus("toolBackupDrawings", `ERROR: ${message}`);
+        failActivity(activityId, { message });
+      } finally {
+        backupDrawingsBtn.classList.remove("running");
       }
     };
 
@@ -27655,9 +29030,14 @@ function initEventListeners() {
   if (copyProjectLocallyBtn) {
     const handler = async () => {
       if (copyProjectLocallyBtn.classList.contains("running")) return;
-      copyProjectLocallyBtn.classList.add("running");
+      const activityId = beginActivity({
+        toolId: "toolCopyProjectLocally",
+        message: "Preparing Local Project Manager...",
+        progress: 8,
+      });
       const launchContext = resolveCadLaunchContextForTool();
       const launchSource = String(launchContext?.source || "").trim().toLowerCase();
+      const hasContextProjectPath = hasLaunchContextProjectPath(launchContext);
 
       try {
         const syncWorkroomLocalProject = async (localProjectPath) => {
@@ -27675,26 +29055,35 @@ function initEventListeners() {
         };
 
         let preview = null;
-        if (launchSource === "workroom") {
-          window.updateToolStatus("toolCopyProjectLocally", "Resolving project folder...");
+        if (launchSource === "workroom" || hasContextProjectPath) {
+          updateActivity(activityId, {
+            message: "Resolving project folder...",
+            progress: 18,
+          });
           preview = await window.pywebview.api.preview_copy_project_locally(
             null,
             launchContext
           );
         }
 
-        window.updateToolStatus("toolCopyProjectLocally", "");
+        updateActivity(activityId, {
+          message: "Waiting for selection...",
+          progress: 20,
+        });
         const managerResult = await openCopyProjectLocallyDialog(
           preview,
           launchContext
         );
         if (!managerResult) {
-          window.updateToolStatus("toolCopyProjectLocally", "");
+          acceptActivity(activityId);
           return;
         }
 
         if (managerResult.action === "sync") {
-          window.updateToolStatus("toolCopyProjectLocally", "Syncing selected files...");
+          updateActivity(activityId, {
+            message: "Syncing selected files...",
+            progress: 42,
+          });
           const syncResult = await window.pywebview.api.apply_local_project_manager_sync(
             managerResult.localProjectPath,
             managerResult.serverProjectPath,
@@ -27720,55 +29109,40 @@ function initEventListeners() {
             : failedFiles.length;
           const hasWarnings = failedFileCount > 0 || blockedEntries.length > 0;
 
-          window.updateToolStatus("toolCopyProjectLocally", "DONE");
-          toast(
-            hasWarnings
-              ? `Server sync completed with warnings (${copiedFileCount} copied, ${failedFileCount} failed, ${blockedEntries.length} blocked).`
-              : `Server sync completed (${copiedFileCount} file${copiedFileCount === 1 ? "" : "s"} copied).`
-          );
-
-          if (failedFiles.length) {
-            const failedPreview = failedFiles
-              .slice(0, 3)
-              .map((entry) => {
-                const sourcePath = String(entry?.source || "");
-                if (!sourcePath) return "";
-                const parts = sourcePath.split(/[\\/]/);
-                return parts[parts.length - 1] || sourcePath;
-              })
-              .filter(Boolean);
-            if (failedPreview.length) {
-              const remainingCount = Math.max(0, failedFileCount - failedPreview.length);
-              const suffix = remainingCount ? ` (+${remainingCount} more)` : "";
-              toast(`Failed files: ${failedPreview.join(", ")}${suffix}`, 9000);
-            }
+          const warningParts = [];
+          if (failedFileCount > 0) {
+            warningParts.push(
+              `${failedFileCount} failed file${failedFileCount === 1 ? "" : "s"}`
+            );
+          }
+          if (blockedEntries.length > 0) {
+            warningParts.push(
+              `${blockedEntries.length} blocked entr${blockedEntries.length === 1 ? "y" : "ies"}`
+            );
           }
 
-          if (blockedEntries.length) {
-            const blockedPreview = blockedEntries
-              .slice(0, 3)
-              .map((entry) => String(entry?.relativePath || "").trim())
-              .filter(Boolean);
-            if (blockedPreview.length) {
-              const remainingCount = Math.max(0, blockedEntries.length - blockedPreview.length);
-              const suffix = remainingCount ? ` (+${remainingCount} more)` : "";
-              toast(`Blocked entries: ${blockedPreview.join(", ")}${suffix}`, 9000);
-            }
-          }
-
-          if (syncResult?.serverProjectPath) {
-            await window.pywebview.api.open_path(syncResult.serverProjectPath);
-          }
+          completeActivity(activityId, {
+            status: hasWarnings ? ACTIVITY_STATUS.WARNING : ACTIVITY_STATUS.SUCCESS,
+            message: hasWarnings
+              ? `Server sync completed with warnings: ${warningParts.join(", ")}.`
+              : `Server sync completed (${copiedFileCount} file${
+                  copiedFileCount === 1 ? "" : "s"
+                } copied).`,
+            openFolderPath: String(syncResult?.serverProjectPath || "").trim(),
+          });
           return;
         }
 
         const selectionPayload = managerResult.selectionPayload;
         if (!selectionPayload?.hasSelection) {
-          window.updateToolStatus("toolCopyProjectLocally", "");
+          acceptActivity(activityId);
           return;
         }
 
-        window.updateToolStatus("toolCopyProjectLocally", "Copying selected folders...");
+        updateActivity(activityId, {
+          message: "Copying selected folders...",
+          progress: 42,
+        });
         const copyResult = await window.pywebview.api.copy_project_locally(
           managerResult.serverProjectPath || "",
           launchContext,
@@ -27780,9 +29154,10 @@ function initEventListeners() {
         if (copyResult?.status !== "success") {
           if (resultCode === "local_project_exists" && copyResult?.localProjectPath) {
             await syncWorkroomLocalProject(copyResult.localProjectPath);
-            window.updateToolStatus("toolCopyProjectLocally", "DONE");
-            toast("Local project already exists. Linked existing copy.");
-            await window.pywebview.api.open_path(copyResult.localProjectPath);
+            completeActivity(activityId, {
+              message: "Local project already exists. Linked existing copy.",
+              openFolderPath: String(copyResult.localProjectPath || "").trim(),
+            });
             return;
           }
           throw new Error(copyResult?.message || "Failed to copy project locally.");
@@ -27795,50 +29170,37 @@ function initEventListeners() {
             : failedFiles.length;
         const hasWarnings = failedFileCount > 0;
 
-        window.updateToolStatus("toolCopyProjectLocally", "DONE");
-        toast(
-          hasWarnings
-            ? `Project copied locally with warnings (${failedFileCount} file${
-                failedFileCount === 1 ? "" : "s"
-              } failed).`
-            : "Project copied locally."
-        );
-
         await syncWorkroomLocalProject(copyResult?.localProjectPath);
-
-        if (hasWarnings && failedFiles.length) {
-          const failedPreview = failedFiles
-            .slice(0, 3)
-            .map((entry) => {
-              const sourcePath = String(entry?.source || "");
-              if (!sourcePath) return "";
-              const parts = sourcePath.split(/[\\/]/);
-              return parts[parts.length - 1] || sourcePath;
-            })
-            .filter(Boolean);
-          if (failedPreview.length) {
-            const remainingCount = Math.max(0, failedFileCount - failedPreview.length);
-            const suffix = remainingCount ? ` (+${remainingCount} more)` : "";
-            toast(`Failed files: ${failedPreview.join(", ")}${suffix}`, 9000);
-          }
-        }
 
         const missingFolders = Array.isArray(copyResult?.missingServerFolders)
           ? copyResult.missingServerFolders
           : [];
+        const warningParts = [];
+        if (failedFileCount > 0) {
+          warningParts.push(
+            `${failedFileCount} failed file${failedFileCount === 1 ? "" : "s"}`
+          );
+        }
         if (missingFolders.length) {
-          toast(
-            `Missing on server (created empty locally): ${missingFolders.join(", ")}`,
-            7000
+          warningParts.push(
+            `${missingFolders.length} missing folder${missingFolders.length === 1 ? "" : "s"}`
           );
         }
 
-        if (copyResult?.localProjectPath) {
-          await window.pywebview.api.open_path(copyResult.localProjectPath);
-        }
+        completeActivity(activityId, {
+          status:
+            hasWarnings || missingFolders.length
+              ? ACTIVITY_STATUS.WARNING
+              : ACTIVITY_STATUS.SUCCESS,
+          message:
+            hasWarnings || missingFolders.length
+              ? `Project copied locally with warnings: ${warningParts.join(", ")}.`
+              : "Project copied locally.",
+          openFolderPath: String(copyResult?.localProjectPath || "").trim(),
+        });
       } catch (e) {
         const message = e?.message || "Failed to run Local Project Manager.";
-        window.updateToolStatus("toolCopyProjectLocally", `ERROR: ${message}`);
+        failActivity(activityId, { message });
       } finally {
         copyProjectLocallyBtn.classList.remove("running");
       }
@@ -27907,9 +29269,9 @@ function initEventListeners() {
 
   const cbBreakerDrop = document.getElementById("cbBreakerDrop");
   if (cbBreakerDrop) {
-    cbBreakerDrop.addEventListener("click", () =>
-      openCircuitBreakerFilePicker("breaker")
-    );
+    cbBreakerDrop.addEventListener("click", () => {
+      void selectCircuitBreakerImage("breaker");
+    });
     cbBreakerDrop.addEventListener("dragover", (e) =>
       handleCircuitBreakerDragOver(e, cbBreakerDrop)
     );
@@ -27922,16 +29284,16 @@ function initEventListeners() {
     cbBreakerDrop.addEventListener("keydown", (e) => {
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
-        openCircuitBreakerFilePicker("breaker");
+        void selectCircuitBreakerImage("breaker");
       }
     });
   }
 
   const cbDirectoryDrop = document.getElementById("cbDirectoryDrop");
   if (cbDirectoryDrop) {
-    cbDirectoryDrop.addEventListener("click", () =>
-      openCircuitBreakerFilePicker("directory")
-    );
+    cbDirectoryDrop.addEventListener("click", () => {
+      void selectCircuitBreakerImage("directory");
+    });
     cbDirectoryDrop.addEventListener("dragover", (e) =>
       handleCircuitBreakerDragOver(e, cbDirectoryDrop)
     );
@@ -27944,7 +29306,7 @@ function initEventListeners() {
     cbDirectoryDrop.addEventListener("keydown", (e) => {
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
-        openCircuitBreakerFilePicker("directory");
+        void selectCircuitBreakerImage("directory");
       }
     });
   }

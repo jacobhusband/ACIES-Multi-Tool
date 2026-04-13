@@ -502,7 +502,8 @@
                                 <div class="tool-card-header">Publish CAD DWGs in Headless Mode</div>
                                 <div class="tool-card-body">
                                     Plots the layouts of each of the selected DWG files and combines them. Outputs to
-                                    local path "user/document/AutoCAD Plots". Opens output folder with plotted PDFs.
+                                    local path "user/document/AutoCAD Plots". Progress and results appear in the
+                                    activity tray.
                                 </div>
                             </div>
                             <div class="tool-card-status"></div>
@@ -2385,7 +2386,7 @@
                 <div id="cbRunningOverlay" class="cb-running-overlay" hidden>
                         <div class="cb-running-card">
                             <div class="spinner">Analyzing photos</div>
-                            <p class="tiny muted">Completion appears on the Panel Schedule AI tool card. Successful runs will open the output folder.</p>
+                            <p class="tiny muted">Progress and results appear in the activity tray. Use the tray action to open the output folder after completion.</p>
                         </div>
                     </div>
                 </div>
@@ -2673,6 +2674,22 @@
                     class="btn tiny btn-remove text-danger">Remove</button></div>
         </div>
     </template>
+    <section id="activityTray" class="activity-tray" hidden aria-label="Activity">
+        <div class="activity-tray-shell">
+            <button id="activityTrayToggle" class="activity-tray-toggle" type="button" aria-expanded="true"
+                aria-controls="activityTrayBody">
+                <span class="activity-tray-copy">
+                    <span class="activity-tray-title">Activity</span>
+                    <span id="activityTrayCounts" class="activity-tray-counts">0 active, 0 completed</span>
+                </span>
+                <span id="activityTrayToggleIcon" class="activity-tray-toggle-icon" aria-hidden="true">⌄</span>
+            </button>
+            <div id="activityTrayBody" class="activity-tray-body">
+                <div id="activityTrayEmpty" class="activity-tray-empty" hidden>No activity yet.</div>
+                <div id="activityTrayList" class="activity-tray-list" aria-live="polite"></div>
+            </div>
+        </div>
+    </section>
     <div id="updateCheckIndicator" class="corner-status" hidden>Checking for updates...</div>
     <script src="script.js"></script>
 </body>

@@ -2193,7 +2193,12 @@ class Api:
 
             logging.info(
                 f"Successfully installed {bundle_name} version {release_tag}")
-            return {'status': 'success', 'bundle_name': bundle_name}
+            return {
+                'status': 'success',
+                'bundle_name': bundle_name,
+                'bundlePath': extract_path,
+                'pluginsFolderPath': self.app_plugins_folder,
+            }
         except Exception as e:
             logging.error(f"Failed to install {bundle_name}: {e}")
             return {'status': 'error', 'message': f"Failed to install {bundle_name}: {e}"}
@@ -2216,14 +2221,18 @@ class Api:
         try:
             if os.path.isdir(bundle_path):
                 shutil.rmtree(bundle_path)
-                return {'status': 'success', 'bundle_name': bundle_name}
+                return {
+                    'status': 'success',
+                    'bundle_name': bundle_name,
+                    'pluginsFolderPath': self.app_plugins_folder,
+                }
             else:
                 return {'status': 'error', 'message': 'Bundle not found.'}
         except Exception as e:
             logging.error(f"Failed to uninstall {bundle_name}: {e}")
             return {'status': 'error', 'message': f"Failed to uninstall {bundle_name}: {e}"}
 
-    def _run_script_with_progress(self, command, tool_id):
+    def _run_script_with_progress(self, command, tool_id, activity_id=None):
         """
         Runs a script in a separate thread, captures its stdout, and sends
         progress updates to the frontend.
@@ -2286,9 +2295,11 @@ class Api:
                                 message=message,
                             )
                             continue
-                        js_message = json.dumps(message)
-                        window.evaluate_js(
-                            f'window.updateToolStatus("{tool_id}", {js_message})')
+                        self._notify_tool_status(
+                            tool_id,
+                            message,
+                            activity_id=activity_id,
+                        )
 
                 process.stdout.close()
                 return_code = process.wait()
@@ -2300,22 +2311,29 @@ class Api:
                 )
 
                 if return_code == 0:
-                    window.evaluate_js(
-                        f'window.updateToolStatus("{tool_id}", "DONE")')
+                    self._notify_tool_status(
+                        tool_id,
+                        "DONE",
+                        activity_id=activity_id,
+                    )
                 else:
                     error_message = f"Script finished with error code {return_code}."
-                    js_error = json.dumps(error_message)
-                    window.evaluate_js(
-                        f'window.updateToolStatus("{tool_id}", "ERROR: " + {js_error})')
+                    self._notify_tool_status(
+                        tool_id,
+                        f"ERROR: {error_message}",
+                        activity_id=activity_id,
+                    )
 
             except Exception as e:
                 print(f"DEBUG THREAD ERROR: {e}")
                 import traceback
                 traceback.print_exc()
                 logging.error(f"Failed to execute script for {tool_id}: {e}")
-                js_error = json.dumps(str(e))
-                window.evaluate_js(
-                    f'window.updateToolStatus("{tool_id}", "ERROR: " + {js_error})')
+                self._notify_tool_status(
+                    tool_id,
+                    f"ERROR: {str(e)}",
+                    activity_id=activity_id,
+                )
 
         thread = threading.Thread(target=script_runner)
         thread.start()
@@ -5717,27 +5735,9 @@ Return ONLY the JSON object.
                 'status': 'success',
                 'path': dest_path,
                 'filename': filename,
+                'outputFilePath': dest_path,
+                'outputFolderPath': self._find_project_root_by_id(destination_folder) or destination_folder,
             }
-
-            if options_payload.get('openOutputs'):
-                opened_folder_path = self._find_project_root_by_id(destination_folder) or destination_folder
-                result['openedFolderPath'] = opened_folder_path
-                warnings = []
-
-                folder_result = self.open_directory_strict(opened_folder_path)
-                if folder_result.get('status') != 'success':
-                    folder_error = folder_result.get('message') or 'Failed to open folder.'
-                    result['openFolderError'] = folder_error
-                    warnings.append(f'Could not open folder: {folder_error}')
-
-                file_result = self.open_path(dest_path)
-                if file_result.get('status') != 'success':
-                    file_error = file_result.get('message') or 'Failed to open file.'
-                    result['openFileError'] = file_error
-                    warnings.append(f'Could not open file: {file_error}')
-
-                if warnings:
-                    result['warnings'] = warnings
 
             return result
         except Exception as e:
@@ -5780,7 +5780,12 @@ Return ONLY the JSON object.
             shutil.copy2(source, dest_path)
             if context or options:
                 _apply_template_context(dest_path, context=context, options=options)
-            return {'status': 'success', 'path': dest_path}
+            return {
+                'status': 'success',
+                'path': dest_path,
+                'outputFilePath': dest_path,
+                'outputFolderPath': dest_dir,
+            }
         except Exception as e:
             logging.error(f"Error copying template to path: {e}")
             return {'status': 'error', 'message': str(e)}
@@ -5901,6 +5906,8 @@ Return ONLY the JSON object.
                 'autoCreated': True,
                 'fallbackUsed': False,
                 'message': 'Template created.',
+                'outputFilePath': destination_path,
+                'outputFolderPath': project_path,
             }
         except Exception as e:
             logging.error(f"create_template_for_workroom failed: {e}")
@@ -5911,17 +5918,45 @@ Return ONLY the JSON object.
                 'message': str(e),
             }
 
-    def select_folder(self):
+    def _resolve_dialog_directory(self, default_dir=None):
+        directory = str(default_dir or '').strip()
+        if directory:
+            normalized = os.path.normpath(directory)
+            normalized_copy_path = self._to_windows_extended_path(normalized)
+            if os.path.isfile(normalized_copy_path):
+                normalized = os.path.dirname(normalized)
+            elif not os.path.isdir(normalized_copy_path):
+                parent_dir = os.path.dirname(normalized)
+                if parent_dir and os.path.isdir(self._to_windows_extended_path(parent_dir)):
+                    normalized = parent_dir
+                else:
+                    normalized = ''
+            directory = os.path.normpath(normalized) if normalized else ''
+        return directory or get_default_documents_dir()
+
+    def select_folder(self, default_dir=None):
         """Shows a folder selection dialog."""
         try:
             window = webview.windows[0]
+            directory = self._resolve_dialog_directory(default_dir)
             folder_path = window.create_file_dialog(
-                webview.FOLDER_DIALOG
+                webview.FOLDER_DIALOG,
+                directory=directory,
             )
             if not folder_path:
                 return {'status': 'cancelled', 'path': None}
             # folder_path is a tuple, get first element
             return {'status': 'success', 'path': folder_path[0] if folder_path else None}
+        except TypeError:
+            try:
+                window = webview.windows[0]
+                folder_path = window.create_file_dialog(webview.FOLDER_DIALOG)
+                if not folder_path:
+                    return {'status': 'cancelled', 'path': None}
+                return {'status': 'success', 'path': folder_path[0] if folder_path else None}
+            except Exception as e:
+                logging.error(f"Error in folder dialog fallback: {e}")
+                return {'status': 'error', 'message': str(e)}
         except Exception as e:
             logging.error(f"Error in folder dialog: {e}")
             return {'status': 'error', 'message': str(e)}
@@ -5946,7 +5981,7 @@ Return ONLY the JSON object.
                 folder_path = folder_path[0] if folder_path else ''
             return {'status': 'success', 'path': folder_path}
         except TypeError:
-            return self.select_folder()
+            return self.select_folder(default_dir)
         except Exception as e:
             logging.error(f"Error in template output folder dialog: {e}")
             return {'status': 'error', 'message': str(e)}
@@ -8478,9 +8513,17 @@ Return ONLY the JSON object.
 
         context = self._resolve_workroom_context(settings, launch_context)
         source = str(context.get('source') or '').strip().lower()
-        workroom_project_path = str(context.get('project_path') or '').strip()
+        context_project_path = str(context.get('project_path') or '').strip()
 
         if source != 'workroom':
+            if context_project_path:
+                return {
+                    'status': 'success',
+                    'path': os.path.normpath(context_project_path),
+                    'resolvedFromWorkroom': False,
+                    'resolutionMode': 'launch_context_project_path',
+                    'workroomProjectPath': '',
+                }
             return {
                 'status': 'error',
                 'code': 'server_project_path_required',
@@ -8490,7 +8533,7 @@ Return ONLY the JSON object.
                 'workroomProjectPath': '',
             }
 
-        if not workroom_project_path:
+        if not context_project_path:
             return {
                 'status': 'error',
                 'code': 'manual_selection_required',
@@ -8500,7 +8543,7 @@ Return ONLY the JSON object.
                 'workroomProjectPath': '',
             }
 
-        resolved_root = self._find_workroom_project_root_by_id(workroom_project_path)
+        resolved_root = self._find_workroom_project_root_by_id(context_project_path)
         if not resolved_root:
             return {
                 'status': 'error',
@@ -8508,7 +8551,7 @@ Return ONLY the JSON object.
                 'message': 'Could not auto-resolve project folder from Project Workroom. Please select it manually.',
                 'resolvedFromWorkroom': True,
                 'resolutionMode': 'project_id_ancestor_not_found',
-                'workroomProjectPath': workroom_project_path,
+                'workroomProjectPath': context_project_path,
             }
 
         return {
@@ -8516,7 +8559,7 @@ Return ONLY the JSON object.
             'path': os.path.normpath(resolved_root),
             'resolvedFromWorkroom': True,
             'resolutionMode': 'project_id_ancestor',
-            'workroomProjectPath': workroom_project_path,
+            'workroomProjectPath': context_project_path,
         }
 
     def _get_backup_drawings_folder_names(self, settings):
@@ -9177,11 +9220,17 @@ Return ONLY the JSON object.
 
     def _build_panel_schedule_job_record(self, job_id, payload, panel_count):
         output_path = self._extract_panel_schedule_output_path(payload)
+        activity_id = str(
+            (payload or {}).get('activityId') or (payload or {}).get('activity_id') or ''
+        ).strip()
         return {
             'jobId': str(job_id or '').strip(),
+            'toolId': 'toolCircuitBreaker',
+            'activityId': activity_id,
             'status': 'running',
             'message': f"Running {panel_count} panel{'s' if panel_count != 1 else ''} in background...",
             'panelCount': max(int(panel_count or 0), 1),
+            'completedCount': 0,
             'outputPath': output_path,
             'outputFolder': os.path.dirname(output_path) if output_path else '',
             'successCount': 0,
@@ -9229,9 +9278,20 @@ Return ONLY the JSON object.
         ) or 1
         return {
             'jobId': str(job_id or '').strip(),
+            'toolId': str(existing.get('toolId') or 'toolCircuitBreaker').strip() or 'toolCircuitBreaker',
+            'activityId': str(
+                payload.get('activityId') or existing.get('activityId') or ''
+            ).strip(),
             'status': status,
             'message': str(payload.get('message') or '').strip(),
             'panelCount': panel_count,
+            'completedCount': _coerce_non_negative_int(
+                payload.get('completedCount'),
+                _coerce_non_negative_int(
+                    payload.get('successCount'),
+                    0,
+                ) + _coerce_non_negative_int(payload.get('failureCount'), 0),
+            ),
             'outputPath': output_path,
             'outputFolder': str(
                 payload.get('outputFolder') or existing.get('outputFolder') or (
@@ -9259,16 +9319,17 @@ Return ONLY the JSON object.
         if getattr(self, "_panel_schedule_running", False):
             return {'status': 'error', 'message': 'Panel Schedule AI is already running.'}
 
+        normalized_payload = dict(payload or {}) if isinstance(payload, dict) else {}
         panel_count = self._count_panel_schedule_payload_panels(payload)
         job_id = uuid.uuid4().hex
         self._store_panel_schedule_job_record(
-            self._build_panel_schedule_job_record(job_id, payload, panel_count)
+            self._build_panel_schedule_job_record(job_id, normalized_payload, panel_count)
         )
         self._panel_schedule_running = True
         try:
             thread = threading.Thread(
                 target=self._panel_schedule_worker,
-                args=(job_id, payload),
+                args=(job_id, normalized_payload),
                 daemon=True
             )
             self._panel_schedule_thread = thread
@@ -9286,13 +9347,20 @@ Return ONLY the JSON object.
                 )
             )
             return {'status': 'error', 'message': str(e)}
-        return {'status': 'started', 'jobId': job_id, 'panelCount': panel_count}
+        return {
+            'status': 'started',
+            'jobId': job_id,
+            'panelCount': panel_count,
+            'activityId': str(
+                normalized_payload.get('activityId') or normalized_payload.get('activity_id') or ''
+            ).strip(),
+        }
 
     def _panel_schedule_worker(self, job_id, payload):
         window = webview.windows[0] if webview.windows else None
         result = {'status': 'error', 'message': 'Panel Schedule AI failed.'}
         try:
-            result = self._process_panel_schedule_payload(payload)
+            result = self._process_panel_schedule_payload(payload, job_id=job_id)
         except Exception as e:
             logging.error(f"Panel Schedule AI error: {e}")
             result = {'status': 'error', 'message': str(e)}
@@ -9603,8 +9671,11 @@ TASK 3: LOAD TYPES
         panel_data.panel_name = panel_name
         return panel_data
 
-    def _process_panel_schedule_payload(self, payload):
+    def _process_panel_schedule_payload(self, payload, job_id=None):
         data = self._normalize_panel_schedule_payload(payload)
+        activity_id = str(
+            data.get('activityId') or data.get('activity_id') or ''
+        ).strip()
 
         output_mode = str(
             data.get('outputMode') or data.get('output_mode') or 'new'
@@ -9718,6 +9789,28 @@ TASK 3: LOAD TYPES
         results = []
         success_count = 0
         failure_count = 0
+        panel_count = len(panel_requests)
+
+        def _store_running_record(message, completed_count):
+            if not job_id:
+                return
+            existing = self._get_panel_schedule_job_record(job_id) or {}
+            self._store_panel_schedule_job_record({
+                'jobId': str(job_id or '').strip(),
+                'toolId': 'toolCircuitBreaker',
+                'activityId': activity_id or str(existing.get('activityId') or '').strip(),
+                'status': 'running',
+                'message': str(message or '').strip(),
+                'panelCount': max(int(panel_count or 0), 1),
+                'completedCount': max(int(completed_count or 0), 0),
+                'outputPath': output_path,
+                'outputFolder': os.path.dirname(output_path) if output_path else '',
+                'successCount': success_count,
+                'failureCount': failure_count,
+                'results': deepcopy(results),
+                'startedAt': str(existing.get('startedAt') or utc_now_iso()).strip(),
+                'finishedAt': '',
+            })
 
         for index, panel_request in enumerate(panel_requests):
             panel_id = str(panel_request.get('panel_id') or f"panel_{index + 1}").strip() or f"panel_{index + 1}"
@@ -9727,6 +9820,10 @@ TASK 3: LOAD TYPES
             breaker_uploads = panel_request.get('breaker_uploads') or []
             directory_uploads = panel_request.get('directory_uploads') or []
             temp_paths = []
+            _store_running_record(
+                f"Processing panel {index + 1} of {panel_count}: {panel_name}",
+                success_count + failure_count,
+            )
 
             try:
                 if breaker_uploads:
@@ -9777,6 +9874,10 @@ TASK 3: LOAD TYPES
                         os.remove(temp_path)
                     except Exception:
                         pass
+            _store_running_record(
+                f"Processed {success_count + failure_count} of {panel_count} panels...",
+                success_count + failure_count,
+            )
 
         output_folder = os.path.dirname(output_path)
         first_success = next(
@@ -9797,8 +9898,12 @@ TASK 3: LOAD TYPES
             return {
                 'status': 'error',
                 'message': first_error_message,
+                'toolId': 'toolCircuitBreaker',
+                'activityId': activity_id,
                 'outputPath': output_path,
                 'outputFolder': output_folder,
+                'panelCount': panel_count,
+                'completedCount': success_count + failure_count,
                 'successCount': success_count,
                 'failureCount': failure_count,
                 'results': results
@@ -9817,9 +9922,13 @@ TASK 3: LOAD TYPES
         return {
             'status': 'success',
             'message': message,
+            'toolId': 'toolCircuitBreaker',
+            'activityId': activity_id,
             'outputPath': output_path,
             'outputFolder': output_folder,
             'sheetName': first_success.get('sheetName') if first_success else '',
+            'panelCount': panel_count,
+            'completedCount': success_count + failure_count,
             'successCount': success_count,
             'failureCount': failure_count,
             'results': results
@@ -9930,6 +10039,28 @@ TASK 3: LOAD TYPES
             'discipline': discipline,
             'discipline_source': discipline_source,
         }
+
+    def _resolve_launch_context_default_directory(self, launch_context, allow_workroom=False):
+        context = self._normalize_launch_context(launch_context)
+        source = str(context.get('source') or '').strip().lower()
+        if source == 'workroom' and not allow_workroom:
+            return ''
+
+        raw_path = str(
+            context.get('rootProjectPath') or context.get('projectPath') or ''
+        ).strip()
+        if not raw_path:
+            return ''
+
+        normalized_path = os.path.normpath(raw_path)
+        normalized_copy_path = self._to_windows_extended_path(normalized_path)
+        if os.path.isdir(normalized_copy_path):
+            return normalized_path
+
+        parent_dir = os.path.dirname(normalized_path)
+        if parent_dir and os.path.isdir(self._to_windows_extended_path(parent_dir)):
+            return os.path.normpath(parent_dir)
+        return ''
 
     def _is_workroom_auto_select_enabled(self, settings, launch_context):
         context = self._resolve_workroom_context(settings, launch_context)
@@ -10607,13 +10738,37 @@ TASK 3: LOAD TYPES
             )
             return {'status': 'error', 'message': str(e), 'files': []}
 
-    def _notify_tool_status(self, tool_id, message):
+    def _notify_activity_status(self, payload):
         try:
             if not webview.windows:
                 return
-            js_message = json.dumps(str(message or '').strip())
+            safe_payload = payload if isinstance(payload, dict) else {}
             webview.windows[0].evaluate_js(
-                f'window.updateToolStatus("{tool_id}", {js_message})')
+                f"window.updateActivityStatus({json.dumps(safe_payload)})"
+            )
+        except Exception as e:
+            logging.debug(f"_notify_activity_status failed: {e}")
+
+    def _notify_tool_status(self, tool_id, message, activity_id=None, **payload):
+        try:
+            if not webview.windows:
+                return
+            normalized_tool_id = str(tool_id or '').strip()
+            normalized_activity_id = str(activity_id or '').strip()
+            normalized_message = str(message or '').strip()
+            extra_payload = dict(payload or {})
+            if normalized_activity_id or extra_payload:
+                activity_payload = {
+                    'toolId': normalized_tool_id,
+                    'activityId': normalized_activity_id,
+                    'message': normalized_message,
+                }
+                activity_payload.update(extra_payload)
+                self._notify_activity_status(activity_payload)
+                return
+            js_message = json.dumps(normalized_message)
+            webview.windows[0].evaluate_js(
+                f'window.updateToolStatus("{normalized_tool_id}", {js_message})')
         except Exception as e:
             logging.debug(
                 f"_notify_tool_status failed for {tool_id}: {e}")
@@ -10632,7 +10787,7 @@ TASK 3: LOAD TYPES
             'records': list(self._test_mode_records),
         }
 
-    def _run_workroom_cad_tool_in_test_mode(self, settings, launch_context, tool_id, tool_name):
+    def _run_workroom_cad_tool_in_test_mode(self, settings, launch_context, tool_id, tool_name, activity_id=None):
         context = self._resolve_workroom_context(settings, launch_context)
         source = context.get('source') or 'none'
         project_path = context.get('project_path') or ''
@@ -10655,7 +10810,11 @@ TASK 3: LOAD TYPES
                 'discipline': discipline,
                 'discipline_source': discipline_source,
             })
-            self._notify_tool_status(tool_id, f"ERROR: {message}")
+            self._notify_tool_status(
+                tool_id,
+                f"ERROR: {message}",
+                activity_id=activity_id,
+            )
             return {'status': 'error', 'test_mode': True, 'message': message}
 
         auto_selection = self._resolve_workroom_auto_file_selection(
@@ -10677,7 +10836,11 @@ TASK 3: LOAD TYPES
                 'discipline': discipline,
                 'discipline_source': discipline_source,
             })
-            self._notify_tool_status(tool_id, f"ERROR: {message}")
+            self._notify_tool_status(
+                tool_id,
+                f"ERROR: {message}",
+                activity_id=activity_id,
+            )
             return {'status': 'error', 'test_mode': True, 'message': message}
 
         count = int(auto_selection.get('count') or 0)
@@ -10696,10 +10859,11 @@ TASK 3: LOAD TYPES
         })
         self._notify_tool_status(
             tool_id,
-            f"TEST MODE: Auto-selected {count} DWG(s) from {folder_path or 'unknown folder'}."
+            f"TEST MODE: Auto-selected {count} DWG(s) from {folder_path or 'unknown folder'}.",
+            activity_id=activity_id,
         )
         # Match normal tool completion signal so UI state is identical to production runs.
-        self._notify_tool_status(tool_id, "DONE")
+        self._notify_tool_status(tool_id, "DONE", activity_id=activity_id)
         return {
             'status': 'success',
             'test_mode': True,
@@ -10711,9 +10875,10 @@ TASK 3: LOAD TYPES
             'discipline_source': discipline_source,
             'folder_path': folder_path,
             'count': count,
+            'activityId': str(activity_id or '').strip(),
         }
 
-    def _run_workroom_clean_xrefs_tool_in_test_mode(self, settings, launch_context):
+    def _run_workroom_clean_xrefs_tool_in_test_mode(self, settings, launch_context, activity_id=None):
         context = self._resolve_workroom_context(settings, launch_context)
         source = context.get('source') or 'none'
         project_path = context.get('project_path') or ''
@@ -10739,8 +10904,16 @@ TASK 3: LOAD TYPES
                 'manual_selection_enforced': False,
                 'arch_folder': '',
             })
-            self._notify_tool_status('toolCleanXrefs', message)
-            self._notify_tool_status('toolCleanXrefs', "DONE")
+            self._notify_tool_status(
+                'toolCleanXrefs',
+                message,
+                activity_id=activity_id,
+            )
+            self._notify_tool_status(
+                'toolCleanXrefs',
+                "DONE",
+                activity_id=activity_id,
+            )
             return {
                 'status': 'success',
                 'test_mode': True,
@@ -10752,6 +10925,7 @@ TASK 3: LOAD TYPES
                 'discipline_source': discipline_source,
                 'manual_selection_enforced': False,
                 'arch_folder': '',
+                'activityId': str(activity_id or '').strip(),
             }
 
         arch_folder = self._resolve_workroom_arch_folder(settings, launch_context)
@@ -10777,9 +10951,17 @@ TASK 3: LOAD TYPES
             'manual_selection_enforced': True,
             'arch_folder': arch_folder,
         })
-        self._notify_tool_status('toolCleanXrefs', message)
+        self._notify_tool_status(
+            'toolCleanXrefs',
+            message,
+            activity_id=activity_id,
+        )
         # Match normal tool completion signal so UI state is identical to production runs.
-        self._notify_tool_status('toolCleanXrefs', "DONE")
+        self._notify_tool_status(
+            'toolCleanXrefs',
+            "DONE",
+            activity_id=activity_id,
+        )
         return {
             'status': 'success',
             'test_mode': True,
@@ -10791,9 +10973,10 @@ TASK 3: LOAD TYPES
             'discipline_source': discipline_source,
             'manual_selection_enforced': True,
             'arch_folder': arch_folder,
+            'activityId': str(activity_id or '').strip(),
         }
 
-    def run_publish_script(self, launch_context=None):
+    def run_publish_script(self, launch_context=None, activity_id=None):
         """Runs the PlotDWGs.ps1 PowerShell script with progress updates."""
         script_path = os.path.join(BASE_DIR, "scripts", "PlotDWGs.ps1")
         if not os.path.exists(script_path):
@@ -10805,6 +10988,7 @@ TASK 3: LOAD TYPES
                 launch_context,
                 'toolPublishDwgs',
                 'run_publish_script',
+                activity_id=activity_id,
             )
         acad_path = settings.get('autocadPath', '')
         if not acad_path:
@@ -10818,6 +11002,9 @@ TASK 3: LOAD TYPES
 
         auto_selection = self._resolve_workroom_auto_file_selection(
             settings, launch_context, 'run_publish_script')
+        default_directory = self._resolve_launch_context_default_directory(
+            launch_context
+        )
         if self._is_workroom_auto_select_enabled(settings, launch_context) and not auto_selection:
             fallback_context = self._resolve_workroom_context(
                 settings, launch_context)
@@ -10830,6 +11017,7 @@ TASK 3: LOAD TYPES
             self._notify_tool_status(
                 'toolPublishDwgs',
                 "Workroom auto-select unavailable. Opening file picker...",
+                activity_id=activity_id,
             )
             self._trace_cad_auto_select(
                 'tool_manual_fallback',
@@ -10859,7 +11047,13 @@ TASK 3: LOAD TYPES
                 self._notify_tool_status(
                     'toolPublishDwgs',
                     f"Using auto-selected DWGs ({selected_count}) via {auto_selection.get('resolution_mode') or 'workroom'}...",
+                    activity_id=activity_id,
                 )
+        elif default_directory:
+            command.extend([
+                '-DefaultDirectory',
+                default_directory,
+            ])
         self._trace_cad_auto_select(
             'tool_command_launch',
             tool_id='toolPublishDwgs',
@@ -10870,10 +11064,14 @@ TASK 3: LOAD TYPES
             files_list_path=auto_selection.get('files_list_path') if auto_selection else '',
             auto_selection=auto_selection,
         )
-        self._run_script_with_progress(command, 'toolPublishDwgs')
-        return {'status': 'success'}
+        self._run_script_with_progress(
+            command,
+            'toolPublishDwgs',
+            activity_id=activity_id,
+        )
+        return {'status': 'success', 'activityId': str(activity_id or '').strip()}
 
-    def run_freeze_layers_script(self, launch_context=None):
+    def run_freeze_layers_script(self, launch_context=None, activity_id=None):
         """Runs the FreezeLayersDWGs.ps1 PowerShell script with progress updates."""
         script_path = os.path.join(BASE_DIR, "scripts", "FreezeLayersDWGs.ps1")
         if not os.path.exists(script_path):
@@ -10886,6 +11084,7 @@ TASK 3: LOAD TYPES
                 launch_context,
                 'toolFreezeLayers',
                 'run_freeze_layers_script',
+                activity_id=activity_id,
             )
         acad_path = settings.get('autocadPath', '')
         if not acad_path:
@@ -10898,6 +11097,9 @@ TASK 3: LOAD TYPES
 
         auto_selection = self._resolve_workroom_auto_file_selection(
             settings, launch_context, 'run_freeze_layers_script')
+        default_directory = self._resolve_launch_context_default_directory(
+            launch_context
+        )
         if self._is_workroom_auto_select_enabled(settings, launch_context) and not auto_selection:
             fallback_context = self._resolve_workroom_context(
                 settings, launch_context)
@@ -10910,6 +11112,7 @@ TASK 3: LOAD TYPES
             self._notify_tool_status(
                 'toolFreezeLayers',
                 "Workroom auto-select unavailable. Opening file picker...",
+                activity_id=activity_id,
             )
             self._trace_cad_auto_select(
                 'tool_manual_fallback',
@@ -10937,7 +11140,13 @@ TASK 3: LOAD TYPES
                 self._notify_tool_status(
                     'toolFreezeLayers',
                     f"Using auto-selected DWGs ({selected_count}) via {auto_selection.get('resolution_mode') or 'workroom'}...",
+                    activity_id=activity_id,
                 )
+        elif default_directory:
+            command.extend([
+                '-DefaultDirectory',
+                default_directory,
+            ])
         self._trace_cad_auto_select(
             'tool_command_launch',
             tool_id='toolFreezeLayers',
@@ -10948,10 +11157,14 @@ TASK 3: LOAD TYPES
             files_list_path=auto_selection.get('files_list_path') if auto_selection else '',
             auto_selection=auto_selection,
         )
-        self._run_script_with_progress(command, 'toolFreezeLayers')
-        return {'status': 'success'}
+        self._run_script_with_progress(
+            command,
+            'toolFreezeLayers',
+            activity_id=activity_id,
+        )
+        return {'status': 'success', 'activityId': str(activity_id or '').strip()}
 
-    def run_thaw_layers_script(self, launch_context=None):
+    def run_thaw_layers_script(self, launch_context=None, activity_id=None):
         """Runs the ThawLayersDWGs.ps1 PowerShell script with progress updates."""
         script_path = os.path.join(BASE_DIR, "scripts", "ThawLayersDWGs.ps1")
         if not os.path.exists(script_path):
@@ -10964,6 +11177,7 @@ TASK 3: LOAD TYPES
                 launch_context,
                 'toolThawLayers',
                 'run_thaw_layers_script',
+                activity_id=activity_id,
             )
         acad_path = settings.get('autocadPath', '')
         if not acad_path:
@@ -10976,6 +11190,9 @@ TASK 3: LOAD TYPES
 
         auto_selection = self._resolve_workroom_auto_file_selection(
             settings, launch_context, 'run_thaw_layers_script')
+        default_directory = self._resolve_launch_context_default_directory(
+            launch_context
+        )
         if self._is_workroom_auto_select_enabled(settings, launch_context) and not auto_selection:
             fallback_context = self._resolve_workroom_context(
                 settings, launch_context)
@@ -10988,6 +11205,7 @@ TASK 3: LOAD TYPES
             self._notify_tool_status(
                 'toolThawLayers',
                 "Workroom auto-select unavailable. Opening file picker...",
+                activity_id=activity_id,
             )
             self._trace_cad_auto_select(
                 'tool_manual_fallback',
@@ -11015,7 +11233,13 @@ TASK 3: LOAD TYPES
                 self._notify_tool_status(
                     'toolThawLayers',
                     f"Using auto-selected DWGs ({selected_count}) via {auto_selection.get('resolution_mode') or 'workroom'}...",
+                    activity_id=activity_id,
                 )
+        elif default_directory:
+            command.extend([
+                '-DefaultDirectory',
+                default_directory,
+            ])
         self._trace_cad_auto_select(
             'tool_command_launch',
             tool_id='toolThawLayers',
@@ -11026,10 +11250,14 @@ TASK 3: LOAD TYPES
             files_list_path=auto_selection.get('files_list_path') if auto_selection else '',
             auto_selection=auto_selection,
         )
-        self._run_script_with_progress(command, 'toolThawLayers')
-        return {'status': 'success'}
+        self._run_script_with_progress(
+            command,
+            'toolThawLayers',
+            activity_id=activity_id,
+        )
+        return {'status': 'success', 'activityId': str(activity_id or '').strip()}
 
-    def run_clean_xrefs_script(self, launch_context=None):
+    def run_clean_xrefs_script(self, launch_context=None, activity_id=None):
         """Runs the removeXREFPaths.ps1 PowerShell script with progress updates."""
         try:
             script_path = os.path.join(BASE_DIR, "scripts", "removeXREFPaths.ps1")
@@ -11041,6 +11269,7 @@ TASK 3: LOAD TYPES
                 return self._run_workroom_clean_xrefs_tool_in_test_mode(
                     settings,
                     launch_context,
+                    activity_id=activity_id,
                 )
             acad_path = settings.get('autocadPath', '')
             if not acad_path:
@@ -11075,6 +11304,9 @@ TASK 3: LOAD TYPES
             discipline_source = context.get('discipline_source') or 'unknown'
             force_manual_selection = self._should_force_workroom_clean_xrefs_manual_selection(
                 context)
+            default_directory = self._resolve_launch_context_default_directory(
+                launch_context
+            )
 
             auto_selection = None
             arch_folder = self._resolve_workroom_arch_folder(
@@ -11084,6 +11316,7 @@ TASK 3: LOAD TYPES
                     self._notify_tool_status(
                         'toolCleanXrefs',
                         "Opening Arch folder for file selection...",
+                        activity_id=activity_id,
                     )
                     logging.info(
                         "run_clean_xrefs_script: Workroom manual selection enforced. "
@@ -11094,6 +11327,7 @@ TASK 3: LOAD TYPES
                     self._notify_tool_status(
                         'toolCleanXrefs',
                         "Arch folder not found. Opening file picker...",
+                        activity_id=activity_id,
                     )
                     logging.info(
                         "run_clean_xrefs_script: Workroom manual selection enforced, Arch folder not found. "
@@ -11114,6 +11348,7 @@ TASK 3: LOAD TYPES
                     self._notify_tool_status(
                         'toolCleanXrefs',
                         "Workroom auto-select unavailable. Opening file picker...",
+                        activity_id=activity_id,
                     )
 
             command = (
@@ -11129,27 +11364,58 @@ TASK 3: LOAD TYPES
                 command += f' -FilesListPath "{auto_selection["files_list_path"]}"'
             if arch_folder:
                 command += f' -DefaultDirectory "{arch_folder}"'
-            self._run_script_with_progress(command, 'toolCleanXrefs')
-            return {'status': 'success'}
+            elif default_directory:
+                command += f' -DefaultDirectory "{default_directory}"'
+            self._run_script_with_progress(
+                command,
+                'toolCleanXrefs',
+                activity_id=activity_id,
+            )
+            return {'status': 'success', 'activityId': str(activity_id or '').strip()}
         except Exception as e:
             logging.error(f"run_clean_xrefs_script failed: {e}")
-            if webview.windows:
-                window = webview.windows[0]
-                window.evaluate_js(f'window.updateToolStatus("toolCleanXrefs", "ERROR: {str(e)}")')
+            self._notify_tool_status(
+                'toolCleanXrefs',
+                f"ERROR: {str(e)}",
+                activity_id=activity_id,
+            )
             return {'status': 'error', 'message': str(e)}
 
     def select_files(self, options):
         """Shows a file dialog and returns selected paths."""
         try:
+            options = options or {}
             window = webview.windows[0]
+            default_directory = options.get('default_directory')
+            if default_directory in (None, ''):
+                default_directory = options.get('default_dir')
+            if default_directory in (None, ''):
+                default_directory = options.get('defaultDirectory')
+            directory = self._resolve_dialog_directory(default_directory)
             file_paths = window.create_file_dialog(
                 webview.FileDialog.OPEN,  # DEPRECATION FIX
                 allow_multiple=options.get('allow_multiple', False),
-                file_types=tuple(options.get('file_types', ()))
+                file_types=tuple(options.get('file_types', ())),
+                directory=directory,
             )
             if not file_paths:
                 return {'status': 'cancelled', 'paths': []}
             return {'status': 'success', 'paths': file_paths}
+        except TypeError:
+            try:
+                options = options or {}
+                window = webview.windows[0]
+                file_paths = window.create_file_dialog(
+                    webview.FileDialog.OPEN,  # DEPRECATION FIX
+                    allow_multiple=options.get('allow_multiple', False),
+                    file_types=tuple(options.get('file_types', ()))
+                )
+                if not file_paths:
+                    return {'status': 'cancelled', 'paths': []}
+                return {'status': 'success', 'paths': file_paths}
+            except Exception as e:
+                logging.error(f"Error in file dialog fallback: {e}")
+                return {'status': 'error', 'message': str(e)}
         except Exception as e:
             logging.error(f"Error in file dialog: {e}")
             return {'status': 'error', 'message': str(e)}

@@ -26,8 +26,8 @@ class PanelScheduleAiMultiPhotoUiTests(unittest.TestCase):
         self.assertIn("Drag &amp; drop photos or click to select", text)
         self.assertIn("No photos", text)
         self.assertIn("JPG, PNG, HEIC, HEIF supported.", text)
-        self.assertIn("Completion appears on the Panel Schedule AI tool card.", text)
-        self.assertIn("Successful runs will open the output folder.", text)
+        self.assertIn("Progress and results appear in the activity tray.", text)
+        self.assertIn("Use the tray action to open the output folder after completion.", text)
 
     def test_panel_schedule_script_uses_array_backed_photo_state_and_plural_payloads(self):
         text = SCRIPT_JS_PATH.read_text(encoding="utf-8")
@@ -36,13 +36,19 @@ class PanelScheduleAiMultiPhotoUiTests(unittest.TestCase):
         self.assertIn("directoryPaths: [],", text)
         self.assertIn("breakerFiles: [],", text)
         self.assertIn("directoryFiles: [],", text)
+        self.assertIn("launchContext: null,", text)
         self.assertIn("function setCircuitBreakerFiles(kind, files) {", text)
         self.assertIn("function setCircuitBreakerPaths(kind, paths) {", text)
+        self.assertIn("function getCircuitBreakerLaunchDefaultDirectory() {", text)
         self.assertIn("allow_multiple: true,", text)
         self.assertIn("Image Files (*.jpg;*.jpeg;*.png;*.bmp;*.gif;*.tif;*.tiff;*.heic;*.heif)", text)
+        self.assertIn("default_directory: defaultDirectory,", text)
         self.assertIn("input.multiple = true;", text)
         self.assertIn("const files = Array.from(e.dataTransfer?.files || []);", text)
         self.assertIn("if (files.length) setCircuitBreakerFiles(kind, files);", text)
+        self.assertIn('void selectCircuitBreakerImage("breaker");', text)
+        self.assertIn('void selectCircuitBreakerImage("directory");', text)
+        self.assertIn("defaultDirectory || null,", text)
         self.assertIn(
             "breakerPaths: [...normalizeCircuitBreakerPaths(panel.breakerPaths)],",
             text,
@@ -58,18 +64,19 @@ class PanelScheduleAiMultiPhotoUiTests(unittest.TestCase):
         self.assertIn("panelSchedulePollTimer: 0,", text)
         self.assertIn("lastHandledTerminalJobId: \"\",", text)
         self.assertIn("lastPanelScheduleStatus: null,", text)
+        self.assertIn("activeActivityId: \"\",", text)
         self.assertIn("function schedulePanelScheduleStatusPoll(jobId, delay = 1000) {", text)
         self.assertIn("window.pywebview?.api?.get_panel_schedule_background_status", text)
-        self.assertIn("window.updateToolStatus(", text)
+        self.assertIn("window.updateActivityStatus({", text)
         self.assertIn('"toolCircuitBreaker"', text)
         self.assertIn("function handlePanelScheduleBackgroundUpdate(payload, { source = \"push\" } = {}) {", text)
         self.assertIn("window.handlePanelScheduleResult = async function (payload) {", text)
         self.assertIn("await handlePanelScheduleBackgroundUpdate(payload, { source: \"push\" });", text)
-        self.assertIn("setPanelScheduleToolCardStatus(runningMessage, { running: true });", text)
-        self.assertIn("setPanelScheduleToolCardStatus(message);", text)
-        self.assertIn("setPanelScheduleToolCardStatus(statusMessage, { error: true });", text)
+        self.assertIn('payload.activityId = activityId;', text)
+        self.assertIn('label: "Panel Schedule AI"', text)
+        self.assertIn("completedCount,", text)
         self.assertIn("circuitBreakerState.lastHandledTerminalJobId === jobId", text)
-        self.assertIn("await window.pywebview.api.open_path(folder);", text)
+        self.assertNotIn("await window.pywebview.api.open_path(folder);", text)
 
 
 if __name__ == "__main__":

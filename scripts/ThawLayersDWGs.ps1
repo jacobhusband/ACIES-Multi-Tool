@@ -1,7 +1,8 @@
 param(
   [string]$AcadCore,
   [string]$ScanAllLayers = "true",
-  [string]$FilesListPath = ""
+  [string]$FilesListPath = "",
+  [string]$DefaultDirectory = ""
 )
 
 function Convert-ToBool {
@@ -20,6 +21,23 @@ function Convert-ToBool {
 }
 
 $ScanAllLayers = Convert-ToBool $ScanAllLayers $true
+
+function Resolve-DialogInitialDirectory {
+  param(
+    [string]$CandidatePath,
+    [string]$FallbackPath = ""
+  )
+
+  if ([string]::IsNullOrWhiteSpace($CandidatePath)) { return $FallbackPath }
+  $resolvedPath = $CandidatePath.Trim()
+  if (Test-Path -Path $resolvedPath -PathType Leaf) {
+    $resolvedPath = Split-Path -Path $resolvedPath -Parent
+  }
+  if (-not [string]::IsNullOrWhiteSpace($resolvedPath) -and (Test-Path -Path $resolvedPath -PathType Container)) {
+    return $resolvedPath
+  }
+  return $FallbackPath
+}
 
 # ---------------- CONFIGURATION ----------------
 $ProcessTimeoutSeconds = 180
@@ -59,6 +77,9 @@ if ([System.Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') {
   }
   if ($PSBoundParameters.ContainsKey('FilesListPath') -and -not [string]::IsNullOrWhiteSpace($FilesListPath)) {
     $argsList += @("-FilesListPath", $FilesListPath)
+  }
+  if ($PSBoundParameters.ContainsKey('DefaultDirectory') -and -not [string]::IsNullOrWhiteSpace($DefaultDirectory)) {
+    $argsList += @("-DefaultDirectory", $DefaultDirectory)
   }
   $child = Start-Process -FilePath $ps -ArgumentList $argsList -Wait -PassThru
   exit $child.ExitCode
@@ -117,6 +138,7 @@ function Show-DwgFileSelectionPrompt {
   $dlg.CheckFileExists = $true
   $dlg.CheckPathExists = $true
   $dlg.RestoreDirectory = $true
+  $dlg.InitialDirectory = Resolve-DialogInitialDirectory -CandidatePath $DefaultDirectory
 
   $btnSelectFiles.add_Click({
       $promptForm.TopMost = $true
@@ -873,9 +895,11 @@ Write-Host "PROGRESS: Updating $($files.Count) file(s)..."
 
 $outLog = Join-Path $ToolDir "update_batch.out.txt"
 $errLog = Join-Path $ToolDir "update_batch.err.txt"
+$fileIndex = 0
 
 foreach ($dwgFile in $files) {
-  Write-Host "  Processing: $dwgFile"
+  $fileIndex++
+  Write-Host "PROGRESS: Processing $fileIndex of $($files.Count): $([IO.Path]::GetFileName($dwgFile))"
   if (Test-Path $outLog) { Remove-Item $outLog -Force }
   if (Test-Path $errLog) { Remove-Item $errLog -Force }
 
@@ -892,6 +916,13 @@ foreach ($dwgFile in $files) {
   else {
     Write-Host "    -> ExitCode $($r.ExitCode)" -ForegroundColor Yellow
     "DONE ($($r.ExitCode)): $dwgFile" | Out-File $logFile -Append
+  }
+}
+
+if ($files.Count -gt 0) {
+  $outputFolder = Split-Path -Parent $files[0]
+  if (-not [string]::IsNullOrWhiteSpace($outputFolder)) {
+    Write-Host "PROGRESS: OUTPUT_FOLDER: $outputFolder"
   }
 }
 

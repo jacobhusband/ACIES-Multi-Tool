@@ -241,17 +241,12 @@ class TemplateToolFolderFlowTests(unittest.TestCase):
 
         self.assertEqual(os.path.normpath(str(root_path)), result)
 
-    def test_copy_template_to_folder_opens_project_root_and_file_for_nested_destination(self):
+    def test_copy_template_to_folder_returns_project_root_output_metadata_for_nested_destination(self):
         with tempfile.TemporaryDirectory(prefix="acies-template-copy-") as temp_dir:
             root_path = Path(temp_dir) / "260243 BofA - Eastport Plaza"
             destination_folder = root_path / "Survey" / "2026-03-10 E (JH)"
             destination_folder.mkdir(parents=True)
             template_record = self._make_template_record(temp_dir)
-            open_calls = []
-
-            def _capture_open(kind, target_path):
-                open_calls.append((kind, os.path.normpath(target_path)))
-                return {"status": "success"}
 
             with patch.object(self.api, "get_templates", return_value={"templates": [template_record]}), patch.object(
                 main_module,
@@ -259,18 +254,18 @@ class TemplateToolFolderFlowTests(unittest.TestCase):
             ) as apply_mock, patch.object(
                 self.api,
                 "open_directory_strict",
-                side_effect=lambda target: _capture_open("folder", target),
+                return_value={"status": "success"},
             ), patch.object(
                 self.api,
                 "open_path",
-                side_effect=lambda target: _capture_open("file", target),
+                return_value={"status": "success"},
             ):
                 result = self.api.copy_template_to_folder(
                     "tpl_plan_check",
                     str(destination_folder),
                     None,
                     {"projectName": "BAC Kent, WA"},
-                    {"templateKey": "planCheck", "openOutputs": True},
+                    {"templateKey": "planCheck"},
                 )
 
             expected_filename = "Plan Check Comments.doc"
@@ -281,14 +276,11 @@ class TemplateToolFolderFlowTests(unittest.TestCase):
             self.assertTrue(expected_path.exists())
             self.assertEqual(
                 os.path.normpath(str(root_path)),
-                os.path.normpath(result["openedFolderPath"]),
+                os.path.normpath(result["outputFolderPath"]),
             )
             self.assertEqual(
-                [
-                    ("folder", os.path.normpath(str(root_path))),
-                    ("file", os.path.normpath(str(expected_path))),
-                ],
-                open_calls,
+                os.path.normpath(str(expected_path)),
+                os.path.normpath(result["outputFilePath"]),
             )
             apply_mock.assert_called_once()
 
@@ -297,11 +289,6 @@ class TemplateToolFolderFlowTests(unittest.TestCase):
             destination_folder = Path(temp_dir) / "SurveyOutput"
             destination_folder.mkdir()
             template_record = self._make_template_record(temp_dir)
-            open_calls = []
-
-            def _capture_open(kind, target_path):
-                open_calls.append((kind, os.path.normpath(target_path)))
-                return {"status": "success"}
 
             with patch.object(self.api, "get_templates", return_value={"templates": [template_record]}), patch.object(
                 main_module,
@@ -309,18 +296,18 @@ class TemplateToolFolderFlowTests(unittest.TestCase):
             ), patch.object(
                 self.api,
                 "open_directory_strict",
-                side_effect=lambda target: _capture_open("folder", target),
+                return_value={"status": "success"},
             ), patch.object(
                 self.api,
                 "open_path",
-                side_effect=lambda target: _capture_open("file", target),
+                return_value={"status": "success"},
             ):
                 result = self.api.copy_template_to_folder(
                     "tpl_plan_check",
                     str(destination_folder),
                     None,
                     {},
-                    {"templateKey": "planCheck", "openOutputs": True},
+                    {"templateKey": "planCheck"},
                 )
 
             expected_path = destination_folder / "Plan Check Comments.doc"
@@ -330,14 +317,11 @@ class TemplateToolFolderFlowTests(unittest.TestCase):
             self.assertTrue(expected_path.exists())
             self.assertEqual(
                 os.path.normpath(str(destination_folder)),
-                os.path.normpath(result["openedFolderPath"]),
+                os.path.normpath(result["outputFolderPath"]),
             )
             self.assertEqual(
-                [
-                    ("folder", os.path.normpath(str(destination_folder))),
-                    ("file", os.path.normpath(str(expected_path))),
-                ],
-                open_calls,
+                os.path.normpath(str(expected_path)),
+                os.path.normpath(result["outputFilePath"]),
             )
 
     def test_copy_template_to_folder_timestamps_conflicts(self):
@@ -364,7 +348,7 @@ class TemplateToolFolderFlowTests(unittest.TestCase):
                     str(destination_folder),
                     None,
                     {},
-                    {"templateKey": "planCheck", "openOutputs": True},
+                    {"templateKey": "planCheck"},
                 )
 
             self.assertEqual("success", result["status"])
@@ -374,7 +358,7 @@ class TemplateToolFolderFlowTests(unittest.TestCase):
             )
             self.assertTrue((destination_folder / result["filename"]).exists())
 
-    def test_copy_template_to_folder_returns_warnings_when_opening_fails(self):
+    def test_copy_template_to_folder_does_not_attempt_to_open_outputs(self):
         with tempfile.TemporaryDirectory(prefix="acies-template-warning-") as temp_dir:
             destination_folder = Path(temp_dir) / "SurveyOutput"
             destination_folder.mkdir()
@@ -387,11 +371,11 @@ class TemplateToolFolderFlowTests(unittest.TestCase):
                 self.api,
                 "open_directory_strict",
                 return_value={"status": "error", "message": "folder open failed"},
-            ), patch.object(
+            ) as open_folder_mock, patch.object(
                 self.api,
                 "open_path",
                 return_value={"status": "error", "message": "file open failed"},
-            ):
+            ) as open_file_mock:
                 result = self.api.copy_template_to_folder(
                     "tpl_plan_check",
                     str(destination_folder),
@@ -401,15 +385,71 @@ class TemplateToolFolderFlowTests(unittest.TestCase):
                 )
 
             self.assertEqual("success", result["status"])
-            self.assertEqual("folder open failed", result["openFolderError"])
-            self.assertEqual("file open failed", result["openFileError"])
-            self.assertEqual(
-                [
-                    "Could not open folder: folder open failed",
-                    "Could not open file: file open failed",
-                ],
-                result["warnings"],
-            )
+            self.assertIn("outputFolderPath", result)
+            self.assertIn("outputFilePath", result)
+            self.assertNotIn("openFolderError", result)
+            self.assertNotIn("openFileError", result)
+            self.assertNotIn("warnings", result)
+            open_folder_mock.assert_not_called()
+            open_file_mock.assert_not_called()
+
+    def test_select_template_output_folder_uses_provided_default_directory(self):
+        with tempfile.TemporaryDirectory(prefix="acies-template-output-folder-") as temp_dir:
+            default_dir = Path(temp_dir) / "260243 BofA - Eastport Plaza"
+            default_dir.mkdir(parents=True)
+            captured = {}
+
+            class FakeWindow:
+                def create_file_dialog(self, dialog_type, **kwargs):
+                    captured["dialog_type"] = dialog_type
+                    captured["kwargs"] = kwargs
+                    return (str(default_dir),)
+
+            with patch.object(main_module.webview, "windows", [FakeWindow()]), patch.object(
+                main_module.webview,
+                "FOLDER_DIALOG",
+                "folder",
+            ):
+                result = self.api.select_template_output_folder(str(default_dir))
+
+            self.assertEqual("success", result["status"])
+            self.assertEqual(str(default_dir), result["path"])
+            self.assertEqual("folder", captured["dialog_type"])
+            self.assertEqual(os.path.normpath(str(default_dir)), os.path.normpath(captured["kwargs"]["directory"]))
+
+    def test_select_files_uses_provided_default_directory(self):
+        with tempfile.TemporaryDirectory(prefix="acies-select-files-") as temp_dir:
+            default_dir = Path(temp_dir) / "260243 BofA - Eastport Plaza"
+            default_dir.mkdir(parents=True)
+            selected_file = default_dir / "panel.xlsx"
+            selected_file.write_text("", encoding="utf-8")
+            captured = {}
+
+            class FakeWindow:
+                def create_file_dialog(self, dialog_type, **kwargs):
+                    captured["dialog_type"] = dialog_type
+                    captured["kwargs"] = kwargs
+                    return (str(selected_file),)
+
+            with patch.object(main_module.webview, "windows", [FakeWindow()]), patch.object(
+                main_module.webview,
+                "FileDialog",
+                types.SimpleNamespace(SAVE="save", OPEN="open"),
+            ):
+                result = self.api.select_files(
+                    {
+                        "allow_multiple": False,
+                        "file_types": ["Excel Files (*.xlsx;*.xls)"],
+                        "default_directory": str(default_dir),
+                    }
+                )
+
+            self.assertEqual("success", result["status"])
+            self.assertEqual([str(selected_file)], list(result["paths"]))
+            self.assertEqual("open", captured["dialog_type"])
+            self.assertEqual(os.path.normpath(str(default_dir)), os.path.normpath(captured["kwargs"]["directory"]))
+            self.assertEqual(False, captured["kwargs"]["allow_multiple"])
+            self.assertEqual(("Excel Files (*.xlsx;*.xls)",), captured["kwargs"]["file_types"])
 
 
 if __name__ == "__main__":

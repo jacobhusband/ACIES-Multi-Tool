@@ -205,6 +205,54 @@ class BackupDrawingsBackendTests(unittest.TestCase):
                 os.path.normpath(result["workroomProjectPath"]),
             )
 
+    def test_backup_project_drawings_accepts_projects_tab_launch_context_project_path(self):
+        with tempfile.TemporaryDirectory(prefix="acies-backup-drawings-") as temp_dir:
+            project_root = Path(temp_dir) / "260243 BofA - Eastport Plaza"
+            self._write_file(project_root / "Electrical" / "power.dwg", "power")
+            self._write_file(project_root / "Xrefs" / "arch.dwg", "arch")
+
+            with patch.object(self.api, "get_user_settings", return_value=self._settings()), patch.object(
+                self.api,
+                "_build_backup_drawings_timestamp",
+                return_value="20260319_150812",
+            ):
+                result = self.api.backup_project_drawings(
+                    None,
+                    {
+                        "source": "projects-tab",
+                        "projectPath": str(project_root),
+                        "projectName": "BofA - Eastport Plaza",
+                    },
+                )
+
+            self.assertEqual("success", result["status"])
+            self.assertFalse(result["resolvedFromWorkroom"])
+            self.assertEqual("launch_context_project_path", result["resolutionMode"])
+            self.assertEqual(
+                os.path.normpath(str(project_root)),
+                os.path.normpath(result["resolvedProjectRootPath"]),
+            )
+
+    def test_resolve_copy_project_source_path_accepts_projects_tab_launch_context(self):
+        with tempfile.TemporaryDirectory(prefix="acies-copy-project-source-") as temp_dir:
+            project_root = Path(temp_dir) / "260243 BofA - Eastport Plaza"
+            project_root.mkdir(parents=True)
+
+            result = self.api._resolve_copy_project_source_path(
+                None,
+                {
+                    "source": "projects-tab",
+                    "projectPath": str(project_root),
+                    "projectName": "BofA - Eastport Plaza",
+                },
+                self._settings(),
+            )
+
+        self.assertEqual("success", result["status"])
+        self.assertFalse(result["resolvedFromWorkroom"])
+        self.assertEqual("launch_context_project_path", result["resolutionMode"])
+        self.assertEqual(os.path.normpath(str(project_root)), os.path.normpath(result["path"]))
+
     def test_backup_project_drawings_surfaces_manual_selection_required_for_workroom_resolution(self):
         with patch.object(self.api, "get_user_settings", return_value=self._settings()), patch.object(
             self.api,
@@ -779,15 +827,25 @@ class BackupDrawingsUiTests(unittest.TestCase):
         text = SCRIPT_JS_PATH.read_text(encoding="utf-8")
 
         self.assertIn('"toolBackupDrawings"', text)
-        self.assertIn('window.updateToolStatus("toolBackupDrawings", "Select project folder...");', text)
-        self.assertIn('window.updateToolStatus("toolBackupDrawings", "Resolving project folder...");', text)
-        self.assertIn('window.updateToolStatus("toolBackupDrawings", "Creating archive backup...");', text)
+        self.assertIn("const generalToolOrder = [", text)
+        self.assertIn('"toolPublishDwgs",', text)
+        self.assertIn('"toolFreezeLayers",', text)
+        self.assertIn('"toolThawLayers",', text)
+        self.assertIn('"toolCleanXrefs",', text)
+        self.assertIn('"toolCopyProjectLocally",', text)
+        self.assertIn('"toolBackupDrawings",', text)
+        self.assertIn("const hasContextProjectPath = hasLaunchContextProjectPath(launchContext);", text)
+        self.assertIn('toolId: "toolBackupDrawings"', text)
+        self.assertIn('message: "Select project folder..."', text)
+        self.assertIn('message: "Resolving project folder..."', text)
+        self.assertIn('message: "Creating archive backup..."', text)
+        self.assertIn("completeActivity(activityId, {", text)
+        self.assertIn('openFolderPath: String(result?.archivePath || "").trim(),', text)
+        self.assertIn("getLaunchContextProjectRoot(launchContext) || null", text)
         self.assertIn("window.pywebview.api.backup_project_drawings(", text)
         self.assertIn("result?.missingSourceFolders", text)
-        self.assertIn('toast(`Missing folders: ${missingFolders.join(", ")}`', text)
-        self.assertIn('toast(`Failed files: ${failedPreview.join(", ")}${suffix}`, 9000);', text)
-        self.assertIn("await window.pywebview.api.open_path(result.archivePath);", text)
-        self.assertIn('window.updateToolStatus("toolBackupDrawings", "DONE");', text)
+        self.assertNotIn('window.updateToolStatus("toolBackupDrawings", "DONE");', text)
+        self.assertNotIn("await window.pywebview.api.open_path(result.archivePath);", text)
 
 
 class LocalProjectManagerUiTests(unittest.TestCase):
@@ -811,6 +869,7 @@ class LocalProjectManagerUiTests(unittest.TestCase):
         self.assertIn("Copy Selected Folders", normalized_html)
         self.assertIn("Sync Selected Files", normalized_html)
         self.assertEqual(1, html.count('id="toolCopyProjectLocally"'))
+        self.assertEqual(1, html.count('id="toolBackupDrawings"'))
         self.assertLess(html.index(general_title), html.index('id="toolCopyProjectLocally"'))
         self.assertLess(html.index('id="toolCopyProjectLocally"'), html.index(templates_title))
 
@@ -833,21 +892,21 @@ class LocalProjectManagerUiTests(unittest.TestCase):
         self.assertIn("window.pywebview.api.list_local_project_manager_projects()", text)
         self.assertIn("window.pywebview.api.preview_local_project_manager_sync(", text)
         self.assertIn("window.pywebview.api.apply_local_project_manager_sync(", text)
-        self.assertIn(
-            'window.updateToolStatus("toolCopyProjectLocally", "Copying selected folders...");',
-            text,
-        )
-        self.assertIn(
-            'window.updateToolStatus("toolCopyProjectLocally", "Syncing selected files...");',
-            text,
-        )
+        self.assertIn('toolId: "toolCopyProjectLocally"', text)
+        self.assertIn('message: "Copying selected folders..."', text)
+        self.assertIn('message: "Syncing selected files..."', text)
+        self.assertIn("completeActivity(activityId, {", text)
         self.assertIn(
             "const managerResult = await openCopyProjectLocallyDialog(",
             text,
         )
+        self.assertIn("const hasContextProjectPath = hasLaunchContextProjectPath(launchContext);", text)
+        self.assertIn("getLaunchContextProjectRoot(copyProjectLocallyDialogState.launchContext) || null", text)
+        self.assertIn("const launchProjectPath = getLaunchContextProjectRoot(launchContext);", text)
         self.assertIn("selectionPayload.selectedFolderRequests", text)
         self.assertIn("buildLocalProjectManagerSyncConfirmPayload()", text)
         self.assertIn("window.pywebview.api.copy_project_locally(", text)
+        self.assertNotIn('window.updateToolStatus("toolCopyProjectLocally"', text)
 
     def test_local_project_manager_styles_exist(self):
         styles = STYLES_CSS_PATH.read_text(encoding="utf-8")

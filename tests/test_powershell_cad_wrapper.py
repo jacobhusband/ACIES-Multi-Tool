@@ -15,6 +15,7 @@ CAD_SCRIPT_PATHS = (
     REPO_ROOT / "scripts" / "FreezeLayersDWGs.ps1",
     REPO_ROOT / "scripts" / "ThawLayersDWGs.ps1",
 )
+CLEAN_XREF_SCRIPT_PATH = REPO_ROOT / "scripts" / "removeXREFPaths.ps1"
 
 
 class PowerShellCadWrapperTests(unittest.TestCase):
@@ -23,6 +24,9 @@ class PowerShellCadWrapperTests(unittest.TestCase):
         self.assertIn('if message.startswith("TRACE"):', text)
         self.assertIn("'script_trace'", text)
         self.assertIn("continue", text)
+        self.assertIn("def _notify_activity_status(self, payload):", text)
+        self.assertIn("window.updateActivityStatus(", text)
+        self.assertIn("activity_id=activity_id", text)
 
     def test_frontend_automation_keeps_cad_trace_helpers_without_workroom_modal(self):
         text = SCRIPT_JS_PATH.read_text(encoding="utf-8")
@@ -63,11 +67,14 @@ class PowerShellCadWrapperTests(unittest.TestCase):
                 self.assertNotIn('`"$PSCommandPath`"', text)
                 self.assertNotIn('`"$FilesListPath`"', text)
                 self.assertNotIn('`"$AcadCore`"', text)
+                self.assertIn('[string]$DefaultDirectory = ""', text)
                 self.assertIn(
                     '@("-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-File", $PSCommandPath)',
                     text,
                 )
                 self.assertIn('@("-FilesListPath", $FilesListPath)', text)
+                self.assertIn('@("-DefaultDirectory", $DefaultDirectory)', text)
+                self.assertIn("Resolve-DialogInitialDirectory", text)
                 self.assertIn(
                     'Write-Host "PROGRESS: Received auto-selected files list: $FilesListPath"',
                     text,
@@ -106,6 +113,8 @@ class PowerShellCadWrapperTests(unittest.TestCase):
                         'Write-Host "PROGRESS: TRACE branch=paper_size_dialog"',
                         text,
                     )
+                    self.assertIn('Write-Host "PROGRESS: OUTPUT_FOLDER: $batchOutputDir"', text)
+                    self.assertNotIn("Invoke-Item $batchOutputDir", text)
                 else:
                     self.assertIn('$form.StartPosition = "Manual"', text)
                     self.assertIn("Move-FormToPrimaryScreen $form", text)
@@ -129,6 +138,16 @@ class PowerShellCadWrapperTests(unittest.TestCase):
                         'Write-Host "PROGRESS: TRACE branch=layer_selection_dialog"',
                         text,
                     )
+                    self.assertIn(
+                        'Write-Host "PROGRESS: Processing $fileIndex of $($files.Count): $([IO.Path]::GetFileName($dwgFile))"',
+                        text,
+                    )
+                    self.assertIn('Write-Host "PROGRESS: OUTPUT_FOLDER: $outputFolder"', text)
+
+    def test_clean_xrefs_script_reports_output_folder_marker(self):
+        text = CLEAN_XREF_SCRIPT_PATH.read_text(encoding="utf-8")
+        self.assertIn('Write-Host "PROGRESS: Processing $i of $($files.Count):', text)
+        self.assertIn('Write-Host "PROGRESS: OUTPUT_FOLDER: $outputFolder"', text)
 
     @unittest.skipUnless(sys.platform == "win32", "PowerShell STA relaunch is Windows-only")
     def test_sta_relaunch_preserves_files_list_path(self):

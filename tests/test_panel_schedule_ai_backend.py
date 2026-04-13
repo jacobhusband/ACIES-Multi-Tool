@@ -349,6 +349,7 @@ class PanelScheduleAiBackendTests(unittest.TestCase):
         payload = {
             "outputMode": "new",
             "outputPath": r"C:\temp\panel_schedule.xlsx",
+            "activityId": "activity_panel_schedule_1",
             "panels": [
                 {"panelId": "panel_1", "panelName": "MDP"},
                 {"panelId": "panel_2", "panelName": "L1"},
@@ -361,6 +362,7 @@ class PanelScheduleAiBackendTests(unittest.TestCase):
         self.assertEqual("started", result["status"])
         self.assertTrue(result["jobId"])
         self.assertEqual(2, result["panelCount"])
+        self.assertEqual("activity_panel_schedule_1", result["activityId"])
         self.assertTrue(started.get("called"))
         self.assertEqual(self.api._panel_schedule_worker, started["target"])
         self.assertEqual((result["jobId"], payload), started["args"])
@@ -370,6 +372,8 @@ class PanelScheduleAiBackendTests(unittest.TestCase):
         self.assertEqual("running", status["status"])
         self.assertEqual(result["jobId"], status["jobId"])
         self.assertEqual(2, status["panelCount"])
+        self.assertEqual(0, status["completedCount"])
+        self.assertEqual("activity_panel_schedule_1", status["activityId"])
         self.assertEqual(os.path.normpath(payload["outputPath"]), status["outputPath"])
         self.assertEqual("", status["finishedAt"])
         self.assertTrue(status["startedAt"])
@@ -416,6 +420,7 @@ class PanelScheduleAiBackendTests(unittest.TestCase):
         self.assertEqual("success", status["status"])
         self.assertEqual(job_id, status["jobId"])
         self.assertEqual(1, status["panelCount"])
+        self.assertEqual(1, status["completedCount"])
         self.assertEqual(1, status["successCount"])
         self.assertEqual(0, status["failureCount"])
         self.assertEqual("Added 1 panel sheet to schedule.", status["message"])

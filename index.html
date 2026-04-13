@@ -476,10 +476,10 @@
                                         <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
                                     </svg>
                                 </div>
-                                <div class="tool-card-header">Copy Project Locally</div>
+                                <div class="tool-card-header">Local Project Manager</div>
                                 <div class="tool-card-body">
-                                    Select a server project folder, review subfolders and sizes, then choose what to
-                                    copy into Documents\Local Projects.
+                                    Copy a server project into Documents\Local Projects, then review newer local files
+                                    before syncing them back to the server.
                                 </div>
                             </div>
                             <div class="tool-card-status"></div>
@@ -985,42 +985,137 @@
             </div>
         </div>
     </dialog>
-    <dialog id="copyProjectLocallyDlg" class="deliverable-notepad-dialog copy-project-locally-dialog">
+    <dialog id="copyProjectLocallyDlg" class="deliverable-notepad-dialog copy-project-locally-dialog local-project-manager-dialog">
         <div class="modal-header">
             <div>
-                <div class="title">Copy Project Locally</div>
-                <div class="muted tiny">Review the subfolders and total size before copying into
-                    Documents\Local Projects.</div>
+                <div class="title">Local Project Manager</div>
+                <div class="muted tiny">Copy projects to local storage and review newer local files before syncing
+                    them back to the server.</div>
             </div>
             <button class="btn ghost" type="button" onclick="closeDlg('copyProjectLocallyDlg')">Cancel</button>
         </div>
         <div class="modal-body stack tool-settings-body">
-            <div class="tool-settings-intro copy-project-locally-intro">
-                <div id="copyProjectLocallyProjectName" class="tool-settings-title">Copy Project Locally</div>
-                <div class="copy-project-locally-path-row">
-                    <div class="copy-project-locally-path-label">Server project</div>
-                    <div id="copyProjectLocallyServerPath" class="copy-project-locally-path-value">--</div>
-                </div>
-                <div class="copy-project-locally-path-row">
-                    <div class="copy-project-locally-path-label">Local destination</div>
-                    <div id="copyProjectLocallyLocalPath" class="copy-project-locally-path-value">--</div>
-                </div>
+            <div class="local-project-manager-tabs" role="tablist" aria-label="Local Project Manager sections">
+                <button id="localProjectManagerCopyTabBtn" class="local-project-manager-tab is-active" type="button"
+                    role="tab" aria-selected="true" aria-controls="copyProjectLocallyCopyPanel"
+                    data-local-project-manager-tab="copy">Copy to Local</button>
+                <button id="localProjectManagerSyncTabBtn" class="local-project-manager-tab" type="button" role="tab"
+                    aria-selected="false" aria-controls="copyProjectLocallySyncPanel"
+                    data-local-project-manager-tab="sync">Sync to Server</button>
             </div>
-            <div class="copy-project-locally-toolbar">
-                <div id="copyProjectLocallySummary" class="muted tiny">No folders selected.</div>
-                <div class="copy-project-locally-actions">
-                    <button class="btn ghost tiny" id="copyProjectLocallySelectDefaultsBtn" type="button">Select
-                        defaults</button>
-                    <button class="btn ghost tiny" id="copyProjectLocallySelectAllBtn" type="button">Select all</button>
-                    <button class="btn ghost tiny" id="copyProjectLocallyClearAllBtn" type="button">Clear all</button>
+
+            <section id="copyProjectLocallyCopyPanel" class="local-project-manager-panel" role="tabpanel"
+                aria-labelledby="localProjectManagerCopyTabBtn">
+                <div class="local-project-manager-actions">
+                    <button class="btn btn-accent tiny" id="copyProjectLocallyChooseFolderBtn" type="button">Choose
+                        Server Project Folder</button>
+                    <button class="btn ghost tiny" id="copyProjectLocallyOpenExistingBtn" type="button"
+                        hidden>Open Existing Local Copy</button>
                 </div>
-            </div>
-            <div id="copyProjectLocallyFolderList" class="deliverable-notepad-list copy-project-locally-list" role="list"></div>
-            <div class="modal-footer">
-                <button class="btn ghost" type="button" onclick="closeDlg('copyProjectLocallyDlg')">Cancel</button>
-                <button class="btn-primary" id="copyProjectLocallyConfirmBtn" type="button" disabled>Copy Selected
-                    Folders</button>
-            </div>
+                <div id="copyProjectLocallyCopyNotice" class="muted tiny local-project-manager-note"></div>
+                <div class="tool-settings-intro copy-project-locally-intro">
+                    <div id="copyProjectLocallyProjectName" class="tool-settings-title">Copy to Local</div>
+                    <div class="copy-project-locally-path-row">
+                        <div class="copy-project-locally-path-label">Server project</div>
+                        <div id="copyProjectLocallyServerPath" class="copy-project-locally-path-value">--</div>
+                    </div>
+                    <div class="copy-project-locally-path-row">
+                        <div class="copy-project-locally-path-label">Local destination</div>
+                        <div id="copyProjectLocallyLocalPath" class="copy-project-locally-path-value">--</div>
+                    </div>
+                </div>
+                <div class="copy-project-locally-toolbar">
+                    <div id="copyProjectLocallySummary" class="muted tiny">No folders selected.</div>
+                    <div class="copy-project-locally-actions">
+                        <button class="btn ghost tiny" id="copyProjectLocallySelectDefaultsBtn" type="button">Select
+                            defaults</button>
+                        <button class="btn ghost tiny" id="copyProjectLocallySelectAllBtn" type="button">Select
+                            all</button>
+                        <button class="btn ghost tiny" id="copyProjectLocallyClearAllBtn" type="button">Clear
+                            all</button>
+                    </div>
+                </div>
+                <div id="copyProjectLocallyFolderList" class="deliverable-notepad-list copy-project-locally-list"
+                    role="list"></div>
+                <div class="modal-footer">
+                    <button class="btn ghost" type="button" onclick="closeDlg('copyProjectLocallyDlg')">Cancel</button>
+                    <button class="btn-primary" id="copyProjectLocallyConfirmBtn" type="button" disabled>Copy
+                        Selected Folders</button>
+                </div>
+            </section>
+
+            <section id="copyProjectLocallySyncPanel" class="local-project-manager-panel" role="tabpanel"
+                aria-labelledby="localProjectManagerSyncTabBtn" hidden>
+                <div class="local-project-manager-sync-layout">
+                    <section class="local-project-manager-sync-projects">
+                        <div class="nav-search expanded-search local-project-manager-search">
+                            <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                                stroke="currentColor" stroke-width="2">
+                                <circle cx="11" cy="11" r="8"></circle>
+                                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                            </svg>
+                            <input id="localProjectManagerSyncSearch" type="search"
+                                placeholder="Search local projects..." />
+                        </div>
+                        <div class="local-project-manager-path-actions">
+                            <input id="localProjectManagerManualLocalPath" type="text"
+                                placeholder="Manual local project folder path" />
+                            <button class="btn ghost tiny" id="localProjectManagerBrowseLocalPathBtn"
+                                type="button">Browse</button>
+                            <button class="btn ghost tiny" id="localProjectManagerUseManualLocalPathBtn"
+                                type="button">Load</button>
+                        </div>
+                        <div id="localProjectManagerSyncProjectList"
+                            class="deliverable-notepad-list local-project-manager-project-list" role="list"></div>
+                    </section>
+                    <section class="local-project-manager-sync-review">
+                        <div class="tool-settings-intro local-project-manager-sync-intro">
+                            <div id="localProjectManagerSyncProjectName" class="tool-settings-title">Sync to
+                                Server</div>
+                            <div class="copy-project-locally-path-row">
+                                <div class="copy-project-locally-path-label">Local project</div>
+                                <div id="localProjectManagerSyncLocalPath" class="copy-project-locally-path-value">--</div>
+                            </div>
+                            <div class="copy-project-locally-path-row">
+                                <div class="copy-project-locally-path-label">Server project</div>
+                                <div id="localProjectManagerSyncServerPath" class="copy-project-locally-path-value">--</div>
+                            </div>
+                        </div>
+                        <div class="local-project-manager-path-actions">
+                            <input id="localProjectManagerManualServerPath" type="text"
+                                placeholder="Optional server project folder override" />
+                            <button class="btn ghost tiny" id="localProjectManagerBrowseServerPathBtn"
+                                type="button">Browse</button>
+                            <button class="btn btn-accent tiny" id="localProjectManagerPreviewSyncBtn"
+                                type="button">Load Recommendations</button>
+                        </div>
+                        <div class="copy-project-locally-toolbar">
+                            <div id="localProjectManagerSyncSummary" class="muted tiny">Select a local project to
+                                review newer files.</div>
+                            <div class="copy-project-locally-actions">
+                                <button class="btn ghost tiny" id="localProjectManagerSyncSelectAllBtn"
+                                    type="button">Select all</button>
+                                <button class="btn ghost tiny" id="localProjectManagerSyncClearAllBtn"
+                                    type="button">Clear all</button>
+                            </div>
+                        </div>
+                        <div id="localProjectManagerSyncRecommendationList"
+                            class="deliverable-notepad-list local-project-manager-sync-list" role="list"></div>
+                        <div id="localProjectManagerSyncBlockedSection" class="local-project-manager-blocked-section"
+                            hidden>
+                            <div class="local-project-manager-blocked-title">Blocked Entries</div>
+                            <div id="localProjectManagerSyncBlockedList" class="local-project-manager-blocked-list">
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn ghost" type="button"
+                                onclick="closeDlg('copyProjectLocallyDlg')">Cancel</button>
+                            <button class="btn-primary" id="localProjectManagerSyncConfirmBtn" type="button"
+                                disabled>Sync Selected Files</button>
+                        </div>
+                    </section>
+                </div>
+            </section>
         </div>
     </dialog>
     <!-- Add Expense Entry Dialog -->

@@ -7590,6 +7590,32 @@ let modalEmailSession = {
   created: new Map(),
   deleteOnSave: new Map(),
 };
+function createDefaultLocalProjectManagerSyncState() {
+  return {
+    loadingProjects: false,
+    projectsLoaded: false,
+    projectsError: "",
+    localRootPath: "",
+    projectEntries: [],
+    searchQuery: "",
+    selectedLocalProjectPath: "",
+    localProjectPath: "",
+    localProjectName: "",
+    manualLocalProjectPath: "",
+    matchedProjectIndex: -1,
+    matchedProjectId: "",
+    matchedProjectName: "",
+    matchedProjectNick: "",
+    manualServerProjectPath: "",
+    resolvedServerProjectPath: "",
+    serverPathSource: "",
+    previewLoading: false,
+    previewLoaded: false,
+    previewError: "",
+    candidateFiles: [],
+    blockedEntries: [],
+  };
+}
 const DEFAULT_COPY_PROJECT_LOCALLY_DIALOG_STATE = {
   serverProjectPath: "",
   localProjectPath: "",
@@ -7597,10 +7623,17 @@ const DEFAULT_COPY_PROJECT_LOCALLY_DIALOG_STATE = {
   resolvedFromWorkroom: false,
   resolutionMode: "",
   workroomProjectPath: "",
+  launchContext: null,
+  activeTab: "copy",
+  copyPreviewLoaded: false,
+  copyLoadErrorMessage: "",
+  localProjectExists: false,
   folderOptions: [],
+  sync: createDefaultLocalProjectManagerSyncState(),
 };
 let copyProjectLocallyDialogState = {
   ...DEFAULT_COPY_PROJECT_LOCALLY_DIALOG_STATE,
+  sync: createDefaultLocalProjectManagerSyncState(),
 };
 
 const DEFAULT_CLEAN_DWG_OPTIONS = {
@@ -13172,6 +13205,7 @@ async function pinUrgentDeliverables() {
 function resetCopyProjectLocallyDialogState() {
   copyProjectLocallyDialogState = {
     ...DEFAULT_COPY_PROJECT_LOCALLY_DIALOG_STATE,
+    sync: createDefaultLocalProjectManagerSyncState(),
     folderOptions: [],
   };
 }
@@ -13196,68 +13230,362 @@ function normalizeCopyProjectLocallyFolderOption(option, index = 0) {
       .toLowerCase() === "available"
       ? "available"
       : "unavailable";
+  const fullSizeBytes =
+    Number.isFinite(sizeBytesValue) && sizeStatus === "available"
+      ? sizeBytesValue
+      : null;
+  const fullSizeLabel =
+    String(option?.sizeLabel || "").trim() ||
+    (sizeStatus === "available"
+      ? formatCopyProjectLocallySizeLabel(sizeBytesValue)
+      : "Size unavailable");
+  const selectedByDefault = option?.selectedByDefault === true;
   return {
     id: `${name || "folder"}::${index}`,
     name,
     path,
-    sizeBytes: Number.isFinite(sizeBytesValue) && sizeStatus === "available"
-      ? sizeBytesValue
-      : null,
+    fullSizeBytes,
+    fullSizeLabel,
+    fullSizeStatus: sizeStatus,
+    selectedByDefault,
+    selectionMode: selectedByDefault ? "all" : "none",
+    hasChildFolders: option?.hasChildFolders === true,
+    childrenLoaded: option?.childrenLoaded === true,
+    childrenExpanded: false,
+    childrenLoading: false,
+    childFolderOptions: [],
+    parentDirectFilesSizeBytes: null,
+    parentDirectFilesSizeLabel: "Size unavailable",
+    parentDirectFilesSizeStatus: "unavailable",
+  };
+}
+
+function normalizeCopyProjectLocallyChildFolderOption(
+  parentOption,
+  option,
+  index = 0
+) {
+  const name = String(option?.name || "").trim();
+  const path = String(option?.path || "").trim();
+  const relativePath = String(option?.relativePath || "").trim();
+  const sizeBytesValue = Number(option?.sizeBytes);
+  const sizeStatus =
+    String(option?.sizeStatus || "")
+      .trim()
+      .toLowerCase() === "available"
+      ? "available"
+      : "unavailable";
+  return {
+    id: `${parentOption?.id || "folder"}::child::${name || index}`,
+    name,
+    path,
+    relativePath,
+    sizeBytes:
+      Number.isFinite(sizeBytesValue) && sizeStatus === "available"
+        ? sizeBytesValue
+        : null,
     sizeLabel:
       String(option?.sizeLabel || "").trim() ||
       (sizeStatus === "available"
         ? formatCopyProjectLocallySizeLabel(sizeBytesValue)
         : "Size unavailable"),
     sizeStatus,
-    selectedByDefault: option?.selectedByDefault === true,
+    selected: parentOption?.selectionMode === "all",
   };
 }
 
-function syncCopyProjectLocallyRowSelectionState(row, isSelected) {
+function getCopyProjectLocallyFolderOption(folderId) {
+  return copyProjectLocallyDialogState.folderOptions.find(
+    (option) => option.id === folderId
+  );
+}
+
+function getCopyProjectLocallyChildFolderOption(folderId, childId) {
+  const parentOption = getCopyProjectLocallyFolderOption(folderId);
+  if (!parentOption) return { parentOption: null, childOption: null };
+  const childOption = parentOption.childFolderOptions.find(
+    (option) => option.id === childId
+  );
+  return { parentOption, childOption };
+}
+
+function getCopyProjectLocallyFolderDisplaySize(option) {
+  if (!option || option.selectionMode !== "subset" || !option.childrenLoaded) {
+    return {
+      sizeBytes: option?.fullSizeBytes ?? null,
+      sizeLabel: option?.fullSizeLabel || "Size unavailable",
+      sizeStatus: option?.fullSizeStatus || "unavailable",
+    };
+  }
+
+  let totalBytes = 0;
+  let hasKnownSize = false;
+  let hasUnavailableSize = false;
+
+  if (option.parentDirectFilesSizeStatus === "available") {
+    totalBytes += Number(option.parentDirectFilesSizeBytes) || 0;
+    hasKnownSize = true;
+  } else {
+    hasUnavailableSize = true;
+  }
+
+  option.childFolderOptions.forEach((childOption) => {
+    if (!childOption.selected) return;
+    if (childOption.sizeStatus === "available") {
+      totalBytes += Number(childOption.sizeBytes) || 0;
+      hasKnownSize = true;
+      return;
+    }
+    hasUnavailableSize = true;
+  });
+
+  if (!hasKnownSize && hasUnavailableSize) {
+    return {
+      sizeBytes: null,
+      sizeLabel: "Size unavailable",
+      sizeStatus: "unavailable",
+    };
+  }
+
+  const formattedLabel = formatCopyProjectLocallySizeLabel(totalBytes);
+  return {
+    sizeBytes: totalBytes,
+    sizeLabel: hasUnavailableSize ? `${formattedLabel} (partial)` : formattedLabel,
+    sizeStatus: hasUnavailableSize ? "partial" : "available",
+  };
+}
+
+function buildCopyProjectLocallySelectionPayload() {
+  const selectedOptions = copyProjectLocallyDialogState.folderOptions.filter(
+    (option) => option.selectionMode !== "none"
+  );
+
+  if (!selectedOptions.length) {
+    return {
+      hasSelection: false,
+      selectedFolderNames: [],
+      selectedFolderRequests: null,
+    };
+  }
+
+  const hasSubsetSelections = selectedOptions.some(
+    (option) => option.selectionMode === "subset"
+  );
+  if (!hasSubsetSelections) {
+    return {
+      hasSelection: true,
+      selectedFolderNames: selectedOptions.map((option) => option.name).filter(Boolean),
+      selectedFolderRequests: null,
+    };
+  }
+
+  return {
+    hasSelection: true,
+    selectedFolderNames: null,
+    selectedFolderRequests: selectedOptions
+      .map((option) => {
+        if (!option?.name) return null;
+        if (option.selectionMode === "subset") {
+          return {
+            name: option.name,
+            mode: "subset",
+            selectedChildNames: option.childFolderOptions
+              .filter((childOption) => childOption.selected)
+              .map((childOption) => childOption.name)
+              .filter(Boolean),
+            includeParentRootFiles: true,
+          };
+        }
+        return {
+          name: option.name,
+          mode: "all",
+        };
+      })
+      .filter(Boolean),
+  };
+}
+
+function syncCopyProjectLocallyRowSelectionState(row, isSelected, selectionMode = "") {
   if (!row) return;
   const selected = isSelected === true;
   row.dataset.selected = selected ? "true" : "false";
+  row.dataset.selectionMode = String(selectionMode || "").trim().toLowerCase();
   row.classList.toggle("is-selected", selected);
+  row.classList.toggle("is-partial", selectionMode === "subset");
 }
 
-function createCopyProjectLocallyFolderListItem(option) {
-  const contentChildren = [
-    el("div", {
-      className: "copy-project-locally-row-title",
-      textContent: option.name || "Untitled Folder",
-    }),
-  ];
+function syncCopyProjectLocallyParentCheckboxState(input, option) {
+  if (!input || !option) return;
+  input.checked = option.selectionMode === "all";
+  input.indeterminate = option.selectionMode === "subset";
+  input.setAttribute(
+    "aria-checked",
+    option.selectionMode === "subset"
+      ? "mixed"
+      : option.selectionMode === "all"
+        ? "true"
+        : "false"
+  );
+}
+
+function createCopyProjectLocallyFolderExpandButton(option) {
+  if (option.hasChildFolders !== true) {
+    return el("span", {
+      className: "copy-project-locally-expand-spacer",
+      "aria-hidden": "true",
+    });
+  }
+
+  const isLoading = option.childrenLoading === true;
+  const isExpanded = option.childrenExpanded === true;
+  const label = isLoading
+    ? `Loading subfolders in ${option.name || "folder"}`
+    : isExpanded
+      ? `Hide subfolders in ${option.name || "folder"}`
+      : `Show subfolders in ${option.name || "folder"}`;
+  return el("button", {
+    type: "button",
+    className: "copy-project-locally-expand-btn",
+    disabled: isLoading,
+    textContent: isLoading ? "..." : isExpanded ? "-" : "+",
+    title: label,
+    "aria-label": label,
+    "aria-expanded": String(isExpanded),
+    "aria-controls": `copyProjectLocallyChildren-${option.id}`,
+    "data-copy-project-expand-btn": "true",
+    "data-folder-id": option.id,
+  });
+}
+
+function createCopyProjectLocallyParentRow(option) {
+  const sizeInfo = getCopyProjectLocallyFolderDisplaySize(option);
+  const checkboxInput = el("input", {
+    className: "copy-project-locally-checkbox-input",
+    type: "checkbox",
+    checked: option.selectionMode === "all",
+    "data-copy-project-parent-checkbox": "true",
+    "data-folder-id": option.id,
+    "aria-label": `Copy ${option.name || "folder"}`,
+  });
+  syncCopyProjectLocallyParentCheckboxState(checkboxInput, option);
 
   const row = el(
+    "div",
+    {
+      className: "copy-project-locally-row copy-project-locally-parent-row",
+      role: "listitem",
+    },
+    [
+      createCopyProjectLocallyFolderExpandButton(option),
+      el("label", { className: "copy-project-locally-row-main" }, [
+        el("span", { className: "custom-check copy-project-locally-checkbox" }, [
+          checkboxInput,
+          el("span", {
+            className: "checkmark",
+            "aria-hidden": "true",
+          }),
+        ]),
+        el("div", { className: "copy-project-locally-row-content" }, [
+          el("div", {
+            className: "copy-project-locally-row-title",
+            textContent: option.name || "Untitled Folder",
+          }),
+        ]),
+        el("div", {
+          className: "copy-project-locally-row-size",
+          textContent: sizeInfo.sizeLabel || "Size unavailable",
+        }),
+      ]),
+    ]
+  );
+
+  syncCopyProjectLocallyRowSelectionState(
+    row,
+    option.selectionMode !== "none",
+    option.selectionMode
+  );
+  return row;
+}
+
+function createCopyProjectLocallyChildRow(parentOption, childOption) {
+  const row = el(
     "label",
-    { className: "copy-project-locally-row", role: "listitem" },
+    {
+      className: "copy-project-locally-row copy-project-locally-child-row",
+      role: "listitem",
+    },
     [
       el("span", { className: "custom-check copy-project-locally-checkbox" }, [
         el("input", {
           className: "copy-project-locally-checkbox-input",
           type: "checkbox",
-          checked: option.selectedByDefault,
-          "data-folder-name": option.name,
-          "data-default-selected": String(option.selectedByDefault),
-          "data-size-status": option.sizeStatus,
-          "data-size-bytes":
-            option.sizeBytes == null ? "" : String(Math.max(0, option.sizeBytes)),
-          "aria-label": `Copy ${option.name || "folder"}`,
+          checked: childOption.selected === true,
+          "data-copy-project-child-checkbox": "true",
+          "data-folder-id": parentOption.id,
+          "data-child-id": childOption.id,
+          "aria-label": `Copy ${childOption.relativePath || childOption.name || "subfolder"}`,
         }),
         el("span", {
           className: "checkmark",
           "aria-hidden": "true",
         }),
       ]),
-      el("div", { className: "copy-project-locally-row-content" }, contentChildren),
+      el("div", { className: "copy-project-locally-row-content" }, [
+        el("div", {
+          className: "copy-project-locally-row-title",
+          textContent: childOption.name || "Untitled Folder",
+        }),
+      ]),
       el("div", {
         className: "copy-project-locally-row-size",
-        textContent: option.sizeLabel || "Size unavailable",
+        textContent: childOption.sizeLabel || "Size unavailable",
       }),
     ]
   );
-  syncCopyProjectLocallyRowSelectionState(row, option.selectedByDefault);
+
+  syncCopyProjectLocallyRowSelectionState(row, childOption.selected === true, "child");
   return row;
+}
+
+function createCopyProjectLocallyFolderListItem(option) {
+  const group = el("div", {
+    className: "copy-project-locally-group",
+    "data-folder-id": option.id,
+  });
+  group.appendChild(createCopyProjectLocallyParentRow(option));
+
+  if (option.hasChildFolders !== true) {
+    return group;
+  }
+
+  const childList = el("div", {
+    id: `copyProjectLocallyChildren-${option.id}`,
+    className: "copy-project-locally-child-list",
+    hidden: option.childrenExpanded !== true,
+  });
+
+  if (option.childrenLoading === true) {
+    childList.appendChild(
+      el("div", {
+        className: "copy-project-locally-child-status muted tiny",
+        textContent: "Loading subfolders...",
+      })
+    );
+  } else if (option.childrenLoaded === true && option.childFolderOptions.length) {
+    option.childFolderOptions.forEach((childOption) =>
+      childList.appendChild(createCopyProjectLocallyChildRow(option, childOption))
+    );
+  } else if (option.childrenLoaded === true) {
+    childList.appendChild(
+      el("div", {
+        className: "copy-project-locally-child-status muted tiny",
+        textContent: "No subfolders found.",
+      })
+    );
+  }
+
+  group.appendChild(childList);
+  return group;
 }
 
 function renderCopyProjectLocallyFolderList(container, items) {
@@ -13275,94 +13603,220 @@ function renderCopyProjectLocallyFolderList(container, items) {
   items.forEach((item) => container.appendChild(createCopyProjectLocallyFolderListItem(item)));
 }
 
-function getSelectedCopyProjectLocallyFolderNames() {
-  const list = document.getElementById("copyProjectLocallyFolderList");
-  if (!list) return [];
-  return [...list.querySelectorAll('input[type="checkbox"]:checked[data-folder-name]')]
-    .map((input) => String(input.dataset.folderName || "").trim())
-    .filter(Boolean);
-}
-
 function updateCopyProjectLocallyDialogSummary() {
   const summaryEl = document.getElementById("copyProjectLocallySummary");
   const confirmBtn = document.getElementById("copyProjectLocallyConfirmBtn");
-  const list = document.getElementById("copyProjectLocallyFolderList");
-  const inputs = list
-    ? [...list.querySelectorAll('input[type="checkbox"][data-folder-name]')]
-    : [];
-  inputs.forEach((input) =>
-    syncCopyProjectLocallyRowSelectionState(
-      input.closest(".copy-project-locally-row"),
-      input.checked
-    )
-  );
-  const selectedInputs = inputs.filter((input) => input.checked);
-  if (confirmBtn) confirmBtn.disabled = selectedInputs.length === 0;
+  const selectionPayload = buildCopyProjectLocallySelectionPayload();
+  const copyReady =
+    copyProjectLocallyDialogState.copyPreviewLoaded === true &&
+    copyProjectLocallyDialogState.localProjectExists !== true &&
+    copyProjectLocallyDialogState.folderOptions.length > 0;
+  if (confirmBtn) confirmBtn.disabled = !copyReady || !selectionPayload.hasSelection;
 
   if (!summaryEl) return;
-  if (!inputs.length) {
+  if (copyProjectLocallyDialogState.copyPreviewLoaded !== true) {
+    summaryEl.textContent = "Choose a server project folder to start.";
+    return;
+  }
+  if (copyProjectLocallyDialogState.localProjectExists === true) {
+    summaryEl.textContent = "Local copy already exists.";
+    return;
+  }
+  if (!copyProjectLocallyDialogState.folderOptions.length) {
     summaryEl.textContent = "No subfolders available to copy.";
     return;
   }
-  if (!selectedInputs.length) {
+  if (!selectionPayload.hasSelection) {
     summaryEl.textContent = "No folders selected.";
     return;
   }
 
+  const selectedOptions = copyProjectLocallyDialogState.folderOptions.filter(
+    (option) => option.selectionMode !== "none"
+  );
   let totalBytes = 0;
   let partialCount = 0;
-  selectedInputs.forEach((input) => {
-    if (String(input.dataset.sizeStatus || "").trim().toLowerCase() !== "available") {
+  selectedOptions.forEach((option) => {
+    const sizeInfo = getCopyProjectLocallyFolderDisplaySize(option);
+    if (sizeInfo.sizeStatus === "partial" || sizeInfo.sizeStatus === "unavailable") {
       partialCount += 1;
-      return;
     }
-    const sizeBytes = Number(input.dataset.sizeBytes);
-    if (Number.isFinite(sizeBytes) && sizeBytes >= 0) {
-      totalBytes += sizeBytes;
+    if (Number.isFinite(sizeInfo.sizeBytes) && Number(sizeInfo.sizeBytes) >= 0) {
+      totalBytes += Number(sizeInfo.sizeBytes);
     }
   });
 
-  const folderLabel = selectedInputs.length === 1 ? "folder" : "folders";
-  const partialLabel = partialCount
-    ? ` (partial: ${partialCount} size unavailable)`
-    : "";
-  summaryEl.textContent = `${selectedInputs.length} ${folderLabel} selected - ${formatCopyProjectLocallySizeLabel(
+  const folderLabel = selectedOptions.length === 1 ? "folder" : "folders";
+  summaryEl.textContent = `${selectedOptions.length} ${folderLabel} selected - ${formatCopyProjectLocallySizeLabel(
     totalBytes
-  )}${partialLabel}`;
+  )}${partialCount ? " (partial)" : ""}`;
+}
+
+function setCopyProjectLocallyFolderSelectionMode(option, mode) {
+  if (!option) return;
+  option.selectionMode = mode === "all" ? "all" : mode === "subset" ? "subset" : "none";
+  if (!option.childrenLoaded) return;
+  if (option.selectionMode === "all") {
+    option.childFolderOptions.forEach((childOption) => {
+      childOption.selected = true;
+    });
+    return;
+  }
+  if (option.selectionMode === "none") {
+    option.childFolderOptions.forEach((childOption) => {
+      childOption.selected = false;
+    });
+  }
+}
+
+function syncCopyProjectLocallyParentModeFromChildren(option) {
+  if (!option || !option.childrenLoaded) return;
+  const selectedCount = option.childFolderOptions.filter(
+    (childOption) => childOption.selected
+  ).length;
+  if (selectedCount === option.childFolderOptions.length && option.childFolderOptions.length) {
+    option.selectionMode = "all";
+    return;
+  }
+  option.selectionMode = "subset";
+}
+
+function handleCopyProjectLocallyParentCheckboxChange(folderId, isChecked) {
+  const option = getCopyProjectLocallyFolderOption(folderId);
+  if (!option) return;
+  setCopyProjectLocallyFolderSelectionMode(option, isChecked ? "all" : "none");
+  renderCopyProjectLocallyDialog();
+}
+
+function handleCopyProjectLocallyChildCheckboxChange(folderId, childId, isChecked) {
+  const { parentOption, childOption } = getCopyProjectLocallyChildFolderOption(
+    folderId,
+    childId
+  );
+  if (!parentOption || !childOption) return;
+  childOption.selected = isChecked === true;
+  syncCopyProjectLocallyParentModeFromChildren(parentOption);
+  renderCopyProjectLocallyDialog();
+}
+
+function getCopyProjectLocallySourceArgs() {
+  return {
+    serverProjectPath: copyProjectLocallyDialogState.resolvedFromWorkroom
+      ? null
+      : copyProjectLocallyDialogState.serverProjectPath || "",
+    launchContext: copyProjectLocallyDialogState.launchContext || null,
+  };
+}
+
+async function toggleCopyProjectLocallyFolderChildren(folderId) {
+  const option = getCopyProjectLocallyFolderOption(folderId);
+  if (!option || option.hasChildFolders !== true || option.childrenLoading === true) {
+    return;
+  }
+
+  if (option.childrenLoaded) {
+    option.childrenExpanded = option.childrenExpanded !== true;
+    renderCopyProjectLocallyDialog();
+    return;
+  }
+
+  option.childrenLoading = true;
+  option.childrenExpanded = true;
+  renderCopyProjectLocallyDialog();
+
+  try {
+    const sourceArgs = getCopyProjectLocallySourceArgs();
+    const result = await window.pywebview.api.preview_copy_project_locally_child_folders(
+      sourceArgs.serverProjectPath,
+      option.name,
+      sourceArgs.launchContext
+    );
+
+    if (result?.status !== "success") {
+      throw new Error(result?.message || "Failed to load project subfolders.");
+    }
+
+    option.parentDirectFilesSizeBytes =
+      Number.isFinite(Number(result?.parentDirectFilesSizeBytes))
+        ? Number(result.parentDirectFilesSizeBytes)
+        : null;
+    option.parentDirectFilesSizeLabel =
+      String(result?.parentDirectFilesSizeLabel || "").trim() || "Size unavailable";
+    option.parentDirectFilesSizeStatus =
+      String(result?.parentDirectFilesSizeStatus || "").trim().toLowerCase() === "available"
+        ? "available"
+        : "unavailable";
+    option.childFolderOptions = Array.isArray(result?.childFolderOptions)
+      ? result.childFolderOptions.map((childOption, index) =>
+          normalizeCopyProjectLocallyChildFolderOption(option, childOption, index)
+        )
+      : [];
+    option.childrenLoaded = true;
+  } catch (error) {
+    option.childrenExpanded = false;
+    toast(error?.message || "Failed to load project subfolders.", 7000);
+  } finally {
+    option.childrenLoading = false;
+    renderCopyProjectLocallyDialog();
+  }
 }
 
 function applyCopyProjectLocallySelectionMode(mode) {
-  const list = document.getElementById("copyProjectLocallyFolderList");
-  if (!list) return;
-  const inputs = [...list.querySelectorAll('input[type="checkbox"][data-folder-name]')];
-  inputs.forEach((input) => {
+  copyProjectLocallyDialogState.folderOptions.forEach((option) => {
     if (mode === "all") {
-      input.checked = true;
+      setCopyProjectLocallyFolderSelectionMode(option, "all");
       return;
     }
     if (mode === "none") {
-      input.checked = false;
+      setCopyProjectLocallyFolderSelectionMode(option, "none");
       return;
     }
-    input.checked = String(input.dataset.defaultSelected || "").trim().toLowerCase() === "true";
+    setCopyProjectLocallyFolderSelectionMode(
+      option,
+      option.selectedByDefault ? "all" : "none"
+    );
   });
-  updateCopyProjectLocallyDialogSummary();
+  renderCopyProjectLocallyDialog();
 }
 
 function renderCopyProjectLocallyDialog() {
+  const activeTab =
+    copyProjectLocallyDialogState.activeTab === "sync" ? "sync" : "copy";
+  const copyTabBtn = document.getElementById("localProjectManagerCopyTabBtn");
+  const syncTabBtn = document.getElementById("localProjectManagerSyncTabBtn");
+  const copyPanel = document.getElementById("copyProjectLocallyCopyPanel");
+  const syncPanel = document.getElementById("copyProjectLocallySyncPanel");
   const projectNameEl = document.getElementById("copyProjectLocallyProjectName");
   const serverPathEl = document.getElementById("copyProjectLocallyServerPath");
   const localPathEl = document.getElementById("copyProjectLocallyLocalPath");
   const listEl = document.getElementById("copyProjectLocallyFolderList");
+  const chooseFolderBtn = document.getElementById("copyProjectLocallyChooseFolderBtn");
+  const openExistingBtn = document.getElementById("copyProjectLocallyOpenExistingBtn");
+  const copyNoticeEl = document.getElementById("copyProjectLocallyCopyNotice");
   const selectDefaultsBtn = document.getElementById(
     "copyProjectLocallySelectDefaultsBtn"
   );
   const selectAllBtn = document.getElementById("copyProjectLocallySelectAllBtn");
   const clearAllBtn = document.getElementById("copyProjectLocallyClearAllBtn");
 
+  if (copyTabBtn) {
+    const isActive = activeTab === "copy";
+    copyTabBtn.classList.toggle("is-active", isActive);
+    copyTabBtn.setAttribute("aria-selected", isActive ? "true" : "false");
+    copyTabBtn.tabIndex = isActive ? 0 : -1;
+  }
+  if (syncTabBtn) {
+    const isActive = activeTab === "sync";
+    syncTabBtn.classList.toggle("is-active", isActive);
+    syncTabBtn.setAttribute("aria-selected", isActive ? "true" : "false");
+    syncTabBtn.tabIndex = isActive ? 0 : -1;
+  }
+  if (copyPanel) copyPanel.hidden = activeTab !== "copy";
+  if (syncPanel) syncPanel.hidden = activeTab !== "sync";
+
   if (projectNameEl) {
     projectNameEl.textContent =
-      copyProjectLocallyDialogState.projectName || "Copy Project Locally";
+      copyProjectLocallyDialogState.projectName || "Copy to Local";
   }
   if (serverPathEl) {
     serverPathEl.textContent = copyProjectLocallyDialogState.serverProjectPath || "--";
@@ -13372,27 +13826,59 @@ function renderCopyProjectLocallyDialog() {
     localPathEl.textContent = copyProjectLocallyDialogState.localProjectPath || "--";
     localPathEl.title = copyProjectLocallyDialogState.localProjectPath || "";
   }
-  renderCopyProjectLocallyFolderList(
-    listEl,
-    copyProjectLocallyDialogState.folderOptions
-  );
-
+  const copyPreviewLoaded = copyProjectLocallyDialogState.copyPreviewLoaded === true;
+  const localProjectExists = copyProjectLocallyDialogState.localProjectExists === true;
   const hasOptions = copyProjectLocallyDialogState.folderOptions.length > 0;
-  if (selectDefaultsBtn) selectDefaultsBtn.disabled = !hasOptions;
-  if (selectAllBtn) selectAllBtn.disabled = !hasOptions;
-  if (clearAllBtn) clearAllBtn.disabled = !hasOptions;
+  const copyReady = copyPreviewLoaded && !localProjectExists && hasOptions;
 
-  updateCopyProjectLocallyDialogSummary();
-}
-
-async function openCopyProjectLocallyDialog(preview) {
-  const dialog = document.getElementById("copyProjectLocallyDlg");
-  if (!dialog) {
-    throw new Error("Copy Project Locally dialog is unavailable.");
+  if (chooseFolderBtn) {
+    chooseFolderBtn.textContent = copyPreviewLoaded
+      ? "Change Server Project Folder"
+      : "Choose Server Project Folder";
+  }
+  if (openExistingBtn) {
+    const canOpenExisting =
+      localProjectExists && !!copyProjectLocallyDialogState.localProjectPath;
+    openExistingBtn.hidden = !canOpenExisting;
+    openExistingBtn.disabled = !canOpenExisting;
+  }
+  if (copyNoticeEl) {
+    if (copyProjectLocallyDialogState.copyLoadErrorMessage) {
+      copyNoticeEl.textContent = copyProjectLocallyDialogState.copyLoadErrorMessage;
+    } else if (!copyPreviewLoaded) {
+      copyNoticeEl.textContent =
+        "Choose a server project folder to review subfolders before copying.";
+    } else if (localProjectExists) {
+      copyNoticeEl.textContent =
+        "A local project copy already exists. Open it here or switch to Sync to Server to review local updates.";
+    } else if (!hasOptions) {
+      copyNoticeEl.textContent =
+        "No subfolders were found in the selected server project folder.";
+    } else {
+      copyNoticeEl.textContent = "";
+    }
   }
 
+  renderCopyProjectLocallyFolderList(listEl, copyReady ? copyProjectLocallyDialogState.folderOptions : []);
+
+  if (selectDefaultsBtn) selectDefaultsBtn.disabled = !copyReady;
+  if (selectAllBtn) selectAllBtn.disabled = !copyReady;
+  if (clearAllBtn) clearAllBtn.disabled = !copyReady;
+
+  updateCopyProjectLocallyDialogSummary();
+  renderLocalProjectManagerSyncSection();
+}
+
+async function openCopyProjectLocallyDialog(preview, launchContext = null) {
+  const dialog = document.getElementById("copyProjectLocallyDlg");
+  if (!dialog) {
+    throw new Error("Local Project Manager dialog is unavailable.");
+  }
+
+  const previewStatus = String(preview?.status || "").trim().toLowerCase();
   copyProjectLocallyDialogState = {
     ...DEFAULT_COPY_PROJECT_LOCALLY_DIALOG_STATE,
+    activeTab: "copy",
     serverProjectPath: String(
       preview?.serverProjectPath || preview?.resolvedServerProjectPath || ""
     ).trim(),
@@ -13401,34 +13887,885 @@ async function openCopyProjectLocallyDialog(preview) {
     resolvedFromWorkroom: preview?.resolvedFromWorkroom === true,
     resolutionMode: String(preview?.resolutionMode || "").trim(),
     workroomProjectPath: String(preview?.workroomProjectPath || "").trim(),
+    copyPreviewLoaded: previewStatus === "success",
+    copyLoadErrorMessage:
+      preview && previewStatus !== "success"
+        ? String(preview?.message || "").trim()
+        : "",
+    localProjectExists: preview?.localProjectExists === true,
+    launchContext: deepCloneJson(launchContext, null),
     folderOptions: Array.isArray(preview?.folderOptions)
       ? preview.folderOptions.map((option, index) =>
           normalizeCopyProjectLocallyFolderOption(option, index)
         )
       : [],
+    sync: createDefaultLocalProjectManagerSyncState(),
   };
 
   renderCopyProjectLocallyDialog();
+  queueMicrotask(() => {
+    void loadLocalProjectManagerProjects();
+  });
 
   return new Promise((resolve) => {
     const handleClose = () => {
-      const selectedFolderNames =
-        dialog.returnValue === "confirm"
-          ? getSelectedCopyProjectLocallyFolderNames()
-          : null;
+      const action = String(dialog.dataset.localProjectManagerAction || "").trim();
+      let result = null;
+      if (dialog.returnValue === "confirm") {
+        if (action === "sync") {
+          result = buildLocalProjectManagerSyncConfirmPayload();
+        } else if (action === "copy") {
+          result = {
+            action: "copy",
+            selectionPayload: buildCopyProjectLocallySelectionPayload(),
+            serverProjectPath: copyProjectLocallyDialogState.serverProjectPath || "",
+            launchContext: deepCloneJson(copyProjectLocallyDialogState.launchContext, null),
+          };
+        }
+      }
       dialog.returnValue = "";
+      dialog.dataset.localProjectManagerAction = "";
       resetCopyProjectLocallyDialogState();
       dialog.removeEventListener("close", handleClose);
-      resolve(selectedFolderNames);
+      resolve(result);
     };
 
+    dialog.dataset.localProjectManagerAction = "";
     dialog.addEventListener("close", handleClose);
     if (!showDialog(dialog)) {
       dialog.removeEventListener("close", handleClose);
+      dialog.dataset.localProjectManagerAction = "";
       resetCopyProjectLocallyDialogState();
       resolve(null);
     }
   });
+}
+
+function switchLocalProjectManagerTab(nextTab) {
+  copyProjectLocallyDialogState.activeTab = nextTab === "sync" ? "sync" : "copy";
+  renderCopyProjectLocallyDialog();
+}
+
+function normalizeLocalProjectManagerText(value = "") {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function formatLocalProjectManagerTimestampLabel(value = "") {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const parsed = new Date(raw);
+  if (!(parsed instanceof Date) || Number.isNaN(parsed.getTime())) return raw;
+  return parsed.toLocaleString([], {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function extractLocalProjectManagerProjectId(rawPath = "") {
+  const normalizedPath = normalizeWindowsPath(rawPath);
+  const parsed = parseProjectFromPath(normalizedPath || rawPath);
+  if (parsed?.id) return String(parsed.id || "").trim();
+  const leaf = getWindowsPathLeaf(normalizedPath || String(rawPath || "").trim());
+  const match = String(leaf || "").match(/(?:^|[^0-9])(\d{6})(?!\d)/);
+  return match ? String(match[1] || "").trim() : "";
+}
+
+function compareLocalProjectManagerProjectIdentity(projectA, projectB) {
+  const idDiff = String(projectA?.id || "").localeCompare(
+    String(projectB?.id || ""),
+    undefined,
+    { numeric: true, sensitivity: "base" }
+  );
+  if (idDiff) return idDiff;
+  const nameDiff = String(projectA?.name || "").localeCompare(
+    String(projectB?.name || ""),
+    undefined,
+    { numeric: true, sensitivity: "base" }
+  );
+  if (nameDiff) return nameDiff;
+  return String(projectA?.nick || "").localeCompare(
+    String(projectB?.nick || ""),
+    undefined,
+    { numeric: true, sensitivity: "base" }
+  );
+}
+
+function getLocalProjectManagerProjectSortMeta(project) {
+  const priority = getProjectListPriorityMeta(project);
+  return {
+    bucket: Number.isFinite(priority?.sortBucket) ? priority.sortBucket : 2,
+    activeDue: priority?.sortDueDate || null,
+    fallbackDue: priority?.fallbackDueDate || null,
+  };
+}
+
+function compareLocalProjectManagerProjects(projectA, projectB) {
+  const metaA = getLocalProjectManagerProjectSortMeta(projectA);
+  const metaB = getLocalProjectManagerProjectSortMeta(projectB);
+  if (metaA.bucket !== metaB.bucket) return metaA.bucket - metaB.bucket;
+
+  if (metaA.bucket === 0) {
+    const dueDiff = compareDueDateValues(metaA.activeDue, metaB.activeDue, "asc");
+    if (dueDiff) return dueDiff;
+  }
+
+  if (metaA.bucket === 2) {
+    const completedDiff = compareDueDateValues(
+      metaA.fallbackDue,
+      metaB.fallbackDue,
+      "asc"
+    );
+    if (completedDiff) return completedDiff;
+  }
+
+  return compareLocalProjectManagerProjectIdentity(projectA, projectB);
+}
+
+function getLocalProjectManagerSortedProjects() {
+  return (Array.isArray(db) ? db.slice() : []).filter(Boolean).sort(compareLocalProjectManagerProjects);
+}
+
+function findLocalProjectManagerMatchedProject(localProjectPath, folderName, sortedProjects) {
+  const normalizedLocalProjectPath = normalizeWindowsPath(localProjectPath).toLowerCase();
+  if (normalizedLocalProjectPath) {
+    const exactMatch = sortedProjects.find(
+      (project) =>
+        normalizeWindowsPath(project?.localProjectPath || "").toLowerCase() ===
+        normalizedLocalProjectPath
+    );
+    if (exactMatch) return exactMatch;
+  }
+
+  const extractedProjectId = extractLocalProjectManagerProjectId(
+    localProjectPath || folderName
+  );
+  if (extractedProjectId) {
+    const idMatch = sortedProjects.find(
+      (project) => String(project?.id || "").trim() === extractedProjectId
+    );
+    if (idMatch) return idMatch;
+  }
+
+  const folderKey = normalizeLocalProjectManagerText(
+    folderName || getWindowsPathLeaf(localProjectPath)
+  );
+  if (!folderKey) return null;
+
+  return (
+    sortedProjects.find((project) => {
+      const projectName = normalizeLocalProjectManagerText(project?.name || "");
+      const projectNick = normalizeLocalProjectManagerText(project?.nick || "");
+      const projectPathLeaf = normalizeLocalProjectManagerText(
+        getWindowsPathLeaf(normalizeProjectPath(project?.path || ""))
+      );
+      const localPathLeaf = normalizeLocalProjectManagerText(
+        getWindowsPathLeaf(normalizeWindowsPath(project?.localProjectPath || ""))
+      );
+      return [projectName, projectNick, projectPathLeaf, localPathLeaf].includes(
+        folderKey
+      );
+    }) || null
+  );
+}
+
+function buildLocalProjectManagerProjectEntry(rawEntry, sortedProjects, index = 0) {
+  const localProjectPath = normalizeWindowsPath(rawEntry?.localProjectPath || "");
+  const name =
+    String(rawEntry?.name || "").trim() ||
+    getWindowsPathLeaf(localProjectPath) ||
+    `Local Project ${index + 1}`;
+  const matchedProject = findLocalProjectManagerMatchedProject(
+    localProjectPath,
+    name,
+    sortedProjects
+  );
+  const matchedProjectIndex = matchedProject ? db.indexOf(matchedProject) : -1;
+  const matchedProjectId = String(
+    matchedProject?.id || extractLocalProjectManagerProjectId(localProjectPath || name) || ""
+  ).trim();
+  const matchedProjectName = String(matchedProject?.name || "").trim();
+  const matchedProjectNick = String(matchedProject?.nick || "").trim();
+  return {
+    id: `local-project-manager::${localProjectPath.toLowerCase() || index}`,
+    name,
+    displayName: matchedProjectName || name,
+    localProjectPath,
+    lastModifiedAt: String(rawEntry?.lastModifiedAt || "").trim(),
+    lastModifiedLabel:
+      String(rawEntry?.lastModifiedLabel || "").trim() ||
+      formatLocalProjectManagerTimestampLabel(rawEntry?.lastModifiedAt || ""),
+    matchedProject,
+    matchedProjectIndex,
+    matchedProjectId,
+    matchedProjectName,
+    matchedProjectNick,
+    matchedServerProjectPath: matchedProject
+      ? getWorkroomServerProjectPath(matchedProject) ||
+        normalizeProjectPath(matchedProject?.path || "")
+      : "",
+    searchText: normalizeLocalProjectManagerText(
+      [
+        name,
+        localProjectPath,
+        matchedProjectId,
+        matchedProjectName,
+        matchedProjectNick,
+      ].join(" ")
+    ),
+  };
+}
+
+function compareLocalProjectManagerProjectEntries(a, b) {
+  const aMatched = Number.isInteger(a?.matchedProjectIndex) && a.matchedProjectIndex >= 0;
+  const bMatched = Number.isInteger(b?.matchedProjectIndex) && b.matchedProjectIndex >= 0;
+  if (aMatched !== bMatched) return aMatched ? -1 : 1;
+  if (aMatched && bMatched) {
+    const matchedDiff = compareLocalProjectManagerProjects(
+      a.matchedProject,
+      b.matchedProject
+    );
+    if (matchedDiff) return matchedDiff;
+  }
+  return String(a?.name || a?.localProjectPath || "").localeCompare(
+    String(b?.name || b?.localProjectPath || ""),
+    undefined,
+    { numeric: true, sensitivity: "base" }
+  );
+}
+
+function normalizeLocalProjectManagerSyncCandidateFile(candidate, index = 0) {
+  const sizeBytesValue = Number(candidate?.sizeBytes);
+  return {
+    id: `local-project-manager-sync::${candidate?.relativePath || index}`,
+    relativePath: String(candidate?.relativePath || "").trim(),
+    localPath: normalizeWindowsPath(candidate?.localPath || ""),
+    serverPath: normalizeWindowsPath(candidate?.serverPath || ""),
+    reason:
+      String(candidate?.reason || "").trim().toLowerCase() === "server_missing"
+        ? "server_missing"
+        : "local_newer",
+    localModifiedAt: String(candidate?.localModifiedAt || "").trim(),
+    serverModifiedAt: String(candidate?.serverModifiedAt || "").trim(),
+    sizeBytes: Number.isFinite(sizeBytesValue) ? sizeBytesValue : null,
+    sizeLabel:
+      String(candidate?.sizeLabel || "").trim() ||
+      (Number.isFinite(sizeBytesValue)
+        ? formatCopyProjectLocallySizeLabel(sizeBytesValue)
+        : "Size unavailable"),
+    selected: candidate?.selectedByDefault === true,
+  };
+}
+
+function normalizeLocalProjectManagerBlockedEntry(entry, index = 0) {
+  return {
+    id: `local-project-manager-blocked::${entry?.relativePath || index}`,
+    relativePath: String(entry?.relativePath || "").trim(),
+    localPath: normalizeWindowsPath(entry?.localPath || ""),
+    serverPath: normalizeWindowsPath(entry?.serverPath || ""),
+    reason: String(entry?.reason || "").trim() || "blocked",
+    error: String(entry?.error || "").trim(),
+  };
+}
+
+function resetLocalProjectManagerSyncPreview({ keepManualServerPath = true } = {}) {
+  const syncState = copyProjectLocallyDialogState.sync;
+  syncState.previewLoading = false;
+  syncState.previewLoaded = false;
+  syncState.previewError = "";
+  syncState.candidateFiles = [];
+  syncState.blockedEntries = [];
+  syncState.resolvedServerProjectPath = "";
+  syncState.serverPathSource = "";
+  if (!keepManualServerPath) {
+    syncState.manualServerProjectPath = "";
+  }
+}
+
+function getFilteredLocalProjectManagerProjectEntries() {
+  const syncState = copyProjectLocallyDialogState.sync;
+  const query = normalizeLocalProjectManagerText(syncState.searchQuery || "");
+  const items = Array.isArray(syncState.projectEntries) ? syncState.projectEntries : [];
+  if (!query) return items;
+  const queryTokens = query.split(/\s+/).filter(Boolean);
+  return items.filter((entry) =>
+    queryTokens.every((token) => String(entry?.searchText || "").includes(token))
+  );
+}
+
+function selectLocalProjectManagerProjectEntry(entry) {
+  if (!entry) return;
+  const syncState = copyProjectLocallyDialogState.sync;
+  syncState.selectedLocalProjectPath = entry.localProjectPath || "";
+  syncState.localProjectPath = entry.localProjectPath || "";
+  syncState.localProjectName = entry.displayName || entry.name || "Local Project";
+  syncState.manualLocalProjectPath = entry.localProjectPath || "";
+  syncState.matchedProjectIndex = Number.isInteger(entry.matchedProjectIndex)
+    ? entry.matchedProjectIndex
+    : -1;
+  syncState.matchedProjectId = entry.matchedProjectId || "";
+  syncState.matchedProjectName = entry.matchedProjectName || "";
+  syncState.matchedProjectNick = entry.matchedProjectNick || "";
+  resetLocalProjectManagerSyncPreview({ keepManualServerPath: false });
+  renderCopyProjectLocallyDialog();
+}
+
+function createManualLocalProjectManagerProjectEntry(pathValue = "") {
+  const normalizedPath = normalizeWindowsPath(pathValue);
+  const sortedProjects = getLocalProjectManagerSortedProjects();
+  return buildLocalProjectManagerProjectEntry(
+    {
+      name: getWindowsPathLeaf(normalizedPath) || normalizedPath,
+      localProjectPath: normalizedPath,
+      lastModifiedAt: "",
+      lastModifiedLabel: "",
+    },
+    sortedProjects,
+    Date.now()
+  );
+}
+
+function getLocalProjectManagerSyncServerPathInfo() {
+  const syncState = copyProjectLocallyDialogState.sync;
+  const manualServerPath = normalizeWindowsPath(syncState.manualServerProjectPath || "");
+  if (manualServerPath) {
+    return { path: manualServerPath, source: "manual" };
+  }
+
+  const launchSource = String(copyProjectLocallyDialogState.launchContext?.source || "")
+    .trim()
+    .toLowerCase();
+  if (launchSource === "workroom") {
+    const activeProject = db[activeChecklistProject] || null;
+    const workroomPath =
+      getWorkroomServerProjectPath(activeProject) ||
+      normalizeProjectPath(
+        copyProjectLocallyDialogState.launchContext?.rootProjectPath ||
+          copyProjectLocallyDialogState.launchContext?.projectPath ||
+          ""
+      );
+    if (workroomPath) return { path: workroomPath, source: "workroom" };
+  }
+
+  const matchedProject =
+    Number.isInteger(syncState.matchedProjectIndex) &&
+    syncState.matchedProjectIndex >= 0
+      ? db[syncState.matchedProjectIndex] || null
+      : null;
+  if (matchedProject) {
+    const matchedPath =
+      getWorkroomServerProjectPath(matchedProject) ||
+      normalizeProjectPath(matchedProject?.path || "");
+    if (matchedPath) return { path: matchedPath, source: "matched_project" };
+  }
+
+  return { path: "", source: "" };
+}
+
+function createLocalProjectManagerProjectRow(entry) {
+  const syncState = copyProjectLocallyDialogState.sync;
+  const isSelected =
+    normalizeWindowsPath(syncState.localProjectPath || "").toLowerCase() ===
+    normalizeWindowsPath(entry?.localProjectPath || "").toLowerCase();
+  const matchedMeta = entry?.matchedProjectId
+    ? `${entry.matchedProjectId}${entry.matchedProjectName ? ` • ${entry.matchedProjectName}` : ""}${
+        entry.matchedProjectNick ? ` (${entry.matchedProjectNick})` : ""
+      }`
+    : "Unmatched local project";
+  const row = el(
+    "button",
+    {
+      type: "button",
+      className: "local-project-manager-project-row",
+      "data-local-project-path": entry?.localProjectPath || "",
+    },
+    [
+      el("div", { className: "local-project-manager-project-title", textContent: entry?.displayName || entry?.name || "Local Project" }),
+      el("div", { className: "local-project-manager-project-meta", textContent: matchedMeta }),
+      el("div", { className: "local-project-manager-project-path", textContent: entry?.localProjectPath || "--" }),
+      el("div", { className: "local-project-manager-project-modified", textContent: entry?.lastModifiedLabel ? `Updated ${entry.lastModifiedLabel}` : "" }),
+    ]
+  );
+  row.classList.toggle("is-selected", isSelected);
+  row.setAttribute("aria-pressed", isSelected ? "true" : "false");
+  return row;
+}
+
+function renderLocalProjectManagerSyncProjectList(container, items) {
+  if (!container) return;
+  container.replaceChildren();
+
+  const syncState = copyProjectLocallyDialogState.sync;
+  if (syncState.loadingProjects) {
+    container.appendChild(
+      el("div", {
+        className: "deliverable-notepad-empty",
+        textContent: "Loading local projects...",
+      })
+    );
+    return;
+  }
+
+  if (syncState.projectsError) {
+    container.appendChild(
+      el("div", {
+        className: "deliverable-notepad-empty",
+        textContent: syncState.projectsError,
+      })
+    );
+    return;
+  }
+
+  if (!items.length) {
+    container.appendChild(
+      el("div", {
+        className: "deliverable-notepad-empty",
+        textContent: "No local projects matched the current search.",
+      })
+    );
+    return;
+  }
+
+  items.forEach((entry) => container.appendChild(createLocalProjectManagerProjectRow(entry)));
+}
+
+function createLocalProjectManagerSyncCandidateRow(candidate) {
+  const reasonLabel =
+    candidate.reason === "server_missing" ? "Missing on server" : "Local file is newer";
+  const localModifiedLabel = formatLocalProjectManagerTimestampLabel(
+    candidate.localModifiedAt || ""
+  );
+  const serverModifiedLabel = formatLocalProjectManagerTimestampLabel(
+    candidate.serverModifiedAt || ""
+  );
+  const metaParts = [reasonLabel];
+  if (localModifiedLabel) metaParts.push(`Local ${localModifiedLabel}`);
+  if (serverModifiedLabel) metaParts.push(`Server ${serverModifiedLabel}`);
+
+  const row = el(
+    "label",
+    {
+      className: "copy-project-locally-row local-project-manager-sync-row",
+      role: "listitem",
+    },
+    [
+      el("span", { className: "custom-check copy-project-locally-checkbox" }, [
+        el("input", {
+          className: "copy-project-locally-checkbox-input",
+          type: "checkbox",
+          checked: candidate.selected === true,
+          "data-local-project-manager-sync-checkbox": "true",
+          "data-relative-path": candidate.relativePath || "",
+          "aria-label": `Sync ${candidate.relativePath || "file"} to server`,
+        }),
+        el("span", {
+          className: "checkmark",
+          "aria-hidden": "true",
+        }),
+      ]),
+      el("div", { className: "local-project-manager-sync-row-content" }, [
+        el("div", {
+          className: "copy-project-locally-row-title",
+          textContent: candidate.relativePath || "Untitled file",
+        }),
+        el("div", {
+          className: "local-project-manager-sync-row-meta",
+          textContent: metaParts.join(" • "),
+        }),
+      ]),
+      el("div", {
+        className: "copy-project-locally-row-size",
+        textContent: candidate.sizeLabel || "Size unavailable",
+      }),
+    ]
+  );
+
+  syncCopyProjectLocallyRowSelectionState(row, candidate.selected === true, "sync");
+  return row;
+}
+
+function renderLocalProjectManagerSyncRecommendations(container, items) {
+  if (!container) return;
+  container.replaceChildren();
+
+  const syncState = copyProjectLocallyDialogState.sync;
+  if (syncState.previewLoading) {
+    container.appendChild(
+      el("div", {
+        className: "deliverable-notepad-empty",
+        textContent: "Loading sync recommendations...",
+      })
+    );
+    return;
+  }
+
+  if (syncState.previewError) {
+    container.appendChild(
+      el("div", {
+        className: "deliverable-notepad-empty",
+        textContent: syncState.previewError,
+      })
+    );
+    return;
+  }
+
+  if (!syncState.previewLoaded) {
+    container.appendChild(
+      el("div", {
+        className: "deliverable-notepad-empty",
+        textContent: "Load recommendations to review newer local files.",
+      })
+    );
+    return;
+  }
+
+  if (!items.length) {
+    container.appendChild(
+      el("div", {
+        className: "deliverable-notepad-empty",
+        textContent: "No newer local files were found.",
+      })
+    );
+    return;
+  }
+
+  items.forEach((item) => container.appendChild(createLocalProjectManagerSyncCandidateRow(item)));
+}
+
+function renderLocalProjectManagerSyncBlockedEntries(container, items) {
+  const blockedSection = document.getElementById("localProjectManagerSyncBlockedSection");
+  if (blockedSection) blockedSection.hidden = !items.length;
+  if (!container) return;
+  container.replaceChildren();
+  items.forEach((entry) => {
+    const labelParts = [];
+    if (entry.relativePath) labelParts.push(entry.relativePath);
+    if (entry.reason) labelParts.push(entry.reason.replace(/_/g, " "));
+    if (entry.error) labelParts.push(entry.error);
+    container.appendChild(
+      el("div", {
+        className: "local-project-manager-blocked-entry",
+        textContent: labelParts.join(" • "),
+      })
+    );
+  });
+}
+
+function buildLocalProjectManagerSyncSelectionPayload() {
+  const syncState = copyProjectLocallyDialogState.sync;
+  const selectedFiles = syncState.candidateFiles.filter((entry) => entry.selected === true);
+  return {
+    hasSelection: selectedFiles.length > 0,
+    selectedRelativePaths: selectedFiles
+      .map((entry) => entry.relativePath)
+      .filter(Boolean),
+  };
+}
+
+function buildLocalProjectManagerSyncConfirmPayload() {
+  const syncState = copyProjectLocallyDialogState.sync;
+  const selectionPayload = buildLocalProjectManagerSyncSelectionPayload();
+  const serverPathInfo = getLocalProjectManagerSyncServerPathInfo();
+  if (
+    syncState.previewLoaded !== true ||
+    !selectionPayload.hasSelection ||
+    !syncState.localProjectPath
+  ) {
+    return null;
+  }
+  return {
+    action: "sync",
+    localProjectPath: syncState.localProjectPath || "",
+    serverProjectPath:
+      syncState.resolvedServerProjectPath || serverPathInfo.path || "",
+    selectedRelativePaths: selectionPayload.selectedRelativePaths,
+    launchContext: deepCloneJson(copyProjectLocallyDialogState.launchContext, null),
+  };
+}
+
+function updateLocalProjectManagerSyncSummary() {
+  const summaryEl = document.getElementById("localProjectManagerSyncSummary");
+  const confirmBtn = document.getElementById("localProjectManagerSyncConfirmBtn");
+  const selectAllBtn = document.getElementById("localProjectManagerSyncSelectAllBtn");
+  const clearAllBtn = document.getElementById("localProjectManagerSyncClearAllBtn");
+  const previewBtn = document.getElementById("localProjectManagerPreviewSyncBtn");
+  const syncState = copyProjectLocallyDialogState.sync;
+  const selectionPayload = buildLocalProjectManagerSyncSelectionPayload();
+  const hasCandidates = syncState.candidateFiles.length > 0;
+
+  if (confirmBtn) {
+    confirmBtn.disabled =
+      syncState.previewLoaded !== true || selectionPayload.hasSelection !== true;
+  }
+  if (selectAllBtn) selectAllBtn.disabled = syncState.previewLoaded !== true || !hasCandidates;
+  if (clearAllBtn) clearAllBtn.disabled = syncState.previewLoaded !== true || !hasCandidates;
+  if (previewBtn) previewBtn.disabled = syncState.previewLoading === true || !syncState.localProjectPath;
+
+  if (!summaryEl) return;
+  if (!syncState.localProjectPath) {
+    summaryEl.textContent = "Select a local project to review newer files.";
+    return;
+  }
+  if (syncState.previewLoading) {
+    summaryEl.textContent = "Loading recommendations...";
+    return;
+  }
+  if (syncState.previewError) {
+    summaryEl.textContent = syncState.previewError;
+    return;
+  }
+  if (syncState.previewLoaded !== true) {
+    summaryEl.textContent = "Load recommendations to review local updates.";
+    return;
+  }
+  if (!hasCandidates) {
+    summaryEl.textContent = syncState.blockedEntries.length
+      ? "No sync recommendations. Review blocked entries below."
+      : "No newer local files were found.";
+    return;
+  }
+
+  const selectedFiles = syncState.candidateFiles.filter((entry) => entry.selected === true);
+  const totalBytes = selectedFiles.reduce((sum, entry) => {
+    return sum + (Number.isFinite(entry?.sizeBytes) ? Number(entry.sizeBytes) : 0);
+  }, 0);
+  summaryEl.textContent = `${selectedFiles.length} file${
+    selectedFiles.length === 1 ? "" : "s"
+  } selected - ${formatCopyProjectLocallySizeLabel(totalBytes)}`;
+}
+
+function renderLocalProjectManagerSyncSection() {
+  const syncState = copyProjectLocallyDialogState.sync;
+  const searchInput = document.getElementById("localProjectManagerSyncSearch");
+  const manualLocalPathInput = document.getElementById("localProjectManagerManualLocalPath");
+  const manualServerPathInput = document.getElementById("localProjectManagerManualServerPath");
+  const projectListEl = document.getElementById("localProjectManagerSyncProjectList");
+  const projectNameEl = document.getElementById("localProjectManagerSyncProjectName");
+  const localPathEl = document.getElementById("localProjectManagerSyncLocalPath");
+  const serverPathEl = document.getElementById("localProjectManagerSyncServerPath");
+  const recommendationListEl = document.getElementById(
+    "localProjectManagerSyncRecommendationList"
+  );
+  const blockedListEl = document.getElementById("localProjectManagerSyncBlockedList");
+
+  if (searchInput) searchInput.value = syncState.searchQuery || "";
+  if (manualLocalPathInput) {
+    manualLocalPathInput.value = syncState.manualLocalProjectPath || "";
+    manualLocalPathInput.title = syncState.manualLocalProjectPath || "";
+  }
+  if (manualServerPathInput) {
+    manualServerPathInput.value = syncState.manualServerProjectPath || "";
+    manualServerPathInput.title = syncState.manualServerProjectPath || "";
+  }
+
+  const serverPathInfo = getLocalProjectManagerSyncServerPathInfo();
+  const displayedServerPath =
+    syncState.resolvedServerProjectPath || serverPathInfo.path || "--";
+  if (projectNameEl) {
+    projectNameEl.textContent = syncState.localProjectName || "Sync to Server";
+  }
+  if (localPathEl) {
+    localPathEl.textContent = syncState.localProjectPath || "--";
+    localPathEl.title = syncState.localProjectPath || "";
+  }
+  if (serverPathEl) {
+    serverPathEl.textContent = displayedServerPath;
+    serverPathEl.title = displayedServerPath === "--" ? "" : displayedServerPath;
+  }
+
+  renderLocalProjectManagerSyncProjectList(
+    projectListEl,
+    getFilteredLocalProjectManagerProjectEntries()
+  );
+  renderLocalProjectManagerSyncRecommendations(
+    recommendationListEl,
+    syncState.candidateFiles
+  );
+  renderLocalProjectManagerSyncBlockedEntries(blockedListEl, syncState.blockedEntries);
+  updateLocalProjectManagerSyncSummary();
+}
+
+async function loadLocalProjectManagerProjects() {
+  const syncState = copyProjectLocallyDialogState.sync;
+  syncState.loadingProjects = true;
+  syncState.projectsLoaded = false;
+  syncState.projectsError = "";
+  renderCopyProjectLocallyDialog();
+
+  try {
+    const result = await window.pywebview.api.list_local_project_manager_projects();
+    if (result?.status !== "success") {
+      throw new Error(result?.message || "Failed to load local projects.");
+    }
+
+    const sortedProjects = getLocalProjectManagerSortedProjects();
+    const entries = Array.isArray(result?.projects)
+      ? result.projects.map((entry, index) =>
+          buildLocalProjectManagerProjectEntry(entry, sortedProjects, index)
+        )
+      : [];
+    entries.sort(compareLocalProjectManagerProjectEntries);
+
+    syncState.localRootPath = String(result?.localRootPath || "").trim();
+    syncState.projectEntries = entries;
+    syncState.projectsLoaded = true;
+  } catch (error) {
+    syncState.projectsError = error?.message || "Failed to load local projects.";
+  } finally {
+    syncState.loadingProjects = false;
+    renderCopyProjectLocallyDialog();
+  }
+}
+
+function applyLocalProjectManagerManualLocalPath() {
+  const manualLocalPathInput = document.getElementById("localProjectManagerManualLocalPath");
+  const normalizedPath = normalizeWindowsPath(manualLocalPathInput?.value || "");
+  if (!normalizedPath) {
+    toast("Choose a local project folder first.");
+    return;
+  }
+
+  const existingEntry = copyProjectLocallyDialogState.sync.projectEntries.find(
+    (entry) =>
+      normalizeWindowsPath(entry?.localProjectPath || "").toLowerCase() ===
+      normalizedPath.toLowerCase()
+  );
+  selectLocalProjectManagerProjectEntry(
+    existingEntry || createManualLocalProjectManagerProjectEntry(normalizedPath)
+  );
+}
+
+async function browseLocalProjectManagerLocalPath() {
+  const selection = await window.pywebview.api.select_folder();
+  if (selection?.status === "error") {
+    throw new Error(selection.message || "Failed to choose a local project folder.");
+  }
+  if (!selection || selection.status === "cancelled" || !selection.path) {
+    return;
+  }
+  const syncState = copyProjectLocallyDialogState.sync;
+  syncState.manualLocalProjectPath = normalizeWindowsPath(selection.path || "");
+  renderCopyProjectLocallyDialog();
+}
+
+async function browseLocalProjectManagerServerPath() {
+  const selection = await window.pywebview.api.select_folder();
+  if (selection?.status === "error") {
+    throw new Error(selection.message || "Failed to choose a server project folder.");
+  }
+  if (!selection || selection.status === "cancelled" || !selection.path) {
+    return;
+  }
+  const syncState = copyProjectLocallyDialogState.sync;
+  syncState.manualServerProjectPath = normalizeWindowsPath(selection.path || "");
+  resetLocalProjectManagerSyncPreview();
+  renderCopyProjectLocallyDialog();
+}
+
+function applyCopyProjectLocallyPreviewResult(preview, launchContext = null) {
+  const previewStatus = String(preview?.status || "").trim().toLowerCase();
+  copyProjectLocallyDialogState.serverProjectPath = String(
+    preview?.serverProjectPath || preview?.resolvedServerProjectPath || ""
+  ).trim();
+  copyProjectLocallyDialogState.localProjectPath = String(preview?.localProjectPath || "").trim();
+  copyProjectLocallyDialogState.projectName = String(preview?.projectName || "").trim();
+  copyProjectLocallyDialogState.resolvedFromWorkroom = preview?.resolvedFromWorkroom === true;
+  copyProjectLocallyDialogState.resolutionMode = String(preview?.resolutionMode || "").trim();
+  copyProjectLocallyDialogState.workroomProjectPath = String(preview?.workroomProjectPath || "").trim();
+  copyProjectLocallyDialogState.launchContext = deepCloneJson(
+    launchContext ?? copyProjectLocallyDialogState.launchContext,
+    null
+  );
+  copyProjectLocallyDialogState.copyPreviewLoaded = previewStatus === "success";
+  copyProjectLocallyDialogState.copyLoadErrorMessage =
+    previewStatus === "success" ? "" : String(preview?.message || "").trim();
+  copyProjectLocallyDialogState.localProjectExists = preview?.localProjectExists === true;
+  copyProjectLocallyDialogState.folderOptions =
+    previewStatus === "success" && Array.isArray(preview?.folderOptions)
+      ? preview.folderOptions.map((option, index) =>
+          normalizeCopyProjectLocallyFolderOption(option, index)
+        )
+      : [];
+}
+
+async function chooseAndPreviewCopyProjectLocallyServerFolder() {
+  const selection = await window.pywebview.api.select_folder();
+  if (selection?.status === "error") {
+    throw new Error(selection.message || "Failed to choose a folder.");
+  }
+  if (!selection || selection.status === "cancelled" || !selection.path) {
+    return;
+  }
+
+  const launchContext = copyProjectLocallyDialogState.launchContext || null;
+  const preview = await window.pywebview.api.preview_copy_project_locally(
+    String(selection.path || "").trim(),
+    launchContext
+  );
+  if (preview?.status !== "success") {
+    throw new Error(preview?.message || "Failed to load project folders.");
+  }
+  applyCopyProjectLocallyPreviewResult(preview, launchContext);
+  renderCopyProjectLocallyDialog();
+}
+
+async function previewLocalProjectManagerSync() {
+  const syncState = copyProjectLocallyDialogState.sync;
+  if (!syncState.localProjectPath) {
+    toast("Select a local project first.");
+    return;
+  }
+
+  const serverPathInfo = getLocalProjectManagerSyncServerPathInfo();
+  if (!serverPathInfo.path) {
+    toast("Choose a server project folder before loading recommendations.", 7000);
+    return;
+  }
+
+  syncState.previewLoading = true;
+  syncState.previewLoaded = false;
+  syncState.previewError = "";
+  syncState.candidateFiles = [];
+  syncState.blockedEntries = [];
+  renderCopyProjectLocallyDialog();
+
+  try {
+    const result = await window.pywebview.api.preview_local_project_manager_sync(
+      syncState.localProjectPath,
+      serverPathInfo.path,
+      copyProjectLocallyDialogState.launchContext || null
+    );
+    if (result?.status !== "success") {
+      throw new Error(result?.message || "Failed to load sync recommendations.");
+    }
+
+    syncState.resolvedServerProjectPath = String(
+      result?.serverProjectPath || result?.resolvedServerProjectPath || serverPathInfo.path || ""
+    ).trim();
+    syncState.serverPathSource = serverPathInfo.source || "";
+    syncState.candidateFiles = Array.isArray(result?.candidateFiles)
+      ? result.candidateFiles.map((candidate, index) =>
+          normalizeLocalProjectManagerSyncCandidateFile(candidate, index)
+        )
+      : [];
+    syncState.blockedEntries = Array.isArray(result?.blockedEntries)
+      ? result.blockedEntries.map((entry, index) =>
+          normalizeLocalProjectManagerBlockedEntry(entry, index)
+        )
+      : [];
+    syncState.previewLoaded = true;
+  } catch (error) {
+    syncState.previewError =
+      error?.message || "Failed to load sync recommendations.";
+  } finally {
+    syncState.previewLoading = false;
+    renderCopyProjectLocallyDialog();
+  }
 }
 
 let deliverableNotepadEntries = [];
@@ -25398,10 +26735,99 @@ function initEventListeners() {
   );
   if (copyProjectLocallyFolderList) {
     copyProjectLocallyFolderList.addEventListener("change", (event) => {
-      if (event.target?.matches?.('input[type="checkbox"][data-folder-name]')) {
-        updateCopyProjectLocallyDialogSummary();
+      if (
+        event.target?.matches?.(
+          'input[type="checkbox"][data-copy-project-parent-checkbox][data-folder-id]'
+        )
+      ) {
+        handleCopyProjectLocallyParentCheckboxChange(
+          String(event.target.dataset.folderId || "").trim(),
+          event.target.checked === true
+        );
+        return;
+      }
+      if (
+        event.target?.matches?.(
+          'input[type="checkbox"][data-copy-project-child-checkbox][data-folder-id][data-child-id]'
+        )
+      ) {
+        handleCopyProjectLocallyChildCheckboxChange(
+          String(event.target.dataset.folderId || "").trim(),
+          String(event.target.dataset.childId || "").trim(),
+          event.target.checked === true
+        );
       }
     });
+    copyProjectLocallyFolderList.addEventListener("click", async (event) => {
+      const expandBtn = event.target?.closest?.(
+        'button[data-copy-project-expand-btn][data-folder-id]'
+      );
+      if (!expandBtn) return;
+      event.preventDefault();
+      await toggleCopyProjectLocallyFolderChildren(
+        String(expandBtn.dataset.folderId || "").trim()
+      );
+    });
+    copyProjectLocallyFolderList.addEventListener("keydown", async (event) => {
+      const expandBtn = event.target?.closest?.(
+        'button[data-copy-project-expand-btn][data-folder-id]'
+      );
+      if (!expandBtn) return;
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      await toggleCopyProjectLocallyFolderChildren(
+        String(expandBtn.dataset.folderId || "").trim()
+      );
+    });
+    copyProjectLocallyFolderList.addEventListener("keydown", (event) => {
+      if (
+        event.target?.matches?.(
+          'input[type="checkbox"][data-copy-project-parent-checkbox][data-folder-id]'
+        ) ||
+        event.target?.matches?.(
+          'input[type="checkbox"][data-copy-project-child-checkbox][data-folder-id][data-child-id]'
+        )
+      ) {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          event.target.click();
+        }
+      }
+    });
+  }
+  const localProjectManagerCopyTabBtn = document.getElementById(
+    "localProjectManagerCopyTabBtn"
+  );
+  if (localProjectManagerCopyTabBtn) {
+    localProjectManagerCopyTabBtn.onclick = () => switchLocalProjectManagerTab("copy");
+  }
+  const localProjectManagerSyncTabBtn = document.getElementById(
+    "localProjectManagerSyncTabBtn"
+  );
+  if (localProjectManagerSyncTabBtn) {
+    localProjectManagerSyncTabBtn.onclick = () => switchLocalProjectManagerTab("sync");
+  }
+  const copyProjectLocallyChooseFolderBtn = document.getElementById(
+    "copyProjectLocallyChooseFolderBtn"
+  );
+  if (copyProjectLocallyChooseFolderBtn) {
+    copyProjectLocallyChooseFolderBtn.onclick = async () => {
+      try {
+        await chooseAndPreviewCopyProjectLocallyServerFolder();
+      } catch (error) {
+        toast(error?.message || "Failed to load project folders.", 7000);
+      }
+    };
+  }
+  const copyProjectLocallyOpenExistingBtn = document.getElementById(
+    "copyProjectLocallyOpenExistingBtn"
+  );
+  if (copyProjectLocallyOpenExistingBtn) {
+    copyProjectLocallyOpenExistingBtn.onclick = async () => {
+      const localProjectPath = copyProjectLocallyDialogState.localProjectPath || "";
+      if (!localProjectPath) return;
+      await window.pywebview.api.open_path(localProjectPath);
+    };
   }
   const copyProjectLocallySelectDefaultsBtn = document.getElementById(
     "copyProjectLocallySelectDefaultsBtn"
@@ -25429,14 +26855,175 @@ function initEventListeners() {
   );
   if (copyProjectLocallyConfirmBtn) {
     copyProjectLocallyConfirmBtn.onclick = () => {
-      const selectedFolderNames = getSelectedCopyProjectLocallyFolderNames();
-      if (!selectedFolderNames.length) {
+      const selectionPayload = buildCopyProjectLocallySelectionPayload();
+      if (!selectionPayload.hasSelection) {
         toast("Select at least one folder to copy locally.");
         updateCopyProjectLocallyDialogSummary();
         return;
       }
       const dialog = document.getElementById("copyProjectLocallyDlg");
-      if (dialog) dialog.close("confirm");
+      if (dialog) {
+        dialog.dataset.localProjectManagerAction = "copy";
+        dialog.close("confirm");
+      }
+    };
+  }
+  const localProjectManagerSyncSearch = document.getElementById(
+    "localProjectManagerSyncSearch"
+  );
+  if (localProjectManagerSyncSearch) {
+    localProjectManagerSyncSearch.addEventListener("input", (event) => {
+      copyProjectLocallyDialogState.sync.searchQuery = String(
+        event.target?.value || ""
+      ).trim();
+      renderCopyProjectLocallyDialog();
+    });
+  }
+  const localProjectManagerManualLocalPath = document.getElementById(
+    "localProjectManagerManualLocalPath"
+  );
+  if (localProjectManagerManualLocalPath) {
+    localProjectManagerManualLocalPath.addEventListener("input", (event) => {
+      copyProjectLocallyDialogState.sync.manualLocalProjectPath = normalizeWindowsPath(
+        event.target?.value || ""
+      );
+    });
+    localProjectManagerManualLocalPath.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      applyLocalProjectManagerManualLocalPath();
+    });
+  }
+  const localProjectManagerBrowseLocalPathBtn = document.getElementById(
+    "localProjectManagerBrowseLocalPathBtn"
+  );
+  if (localProjectManagerBrowseLocalPathBtn) {
+    localProjectManagerBrowseLocalPathBtn.onclick = async () => {
+      try {
+        await browseLocalProjectManagerLocalPath();
+      } catch (error) {
+        toast(error?.message || "Failed to choose a local project folder.", 7000);
+      }
+    };
+  }
+  const localProjectManagerUseManualLocalPathBtn = document.getElementById(
+    "localProjectManagerUseManualLocalPathBtn"
+  );
+  if (localProjectManagerUseManualLocalPathBtn) {
+    localProjectManagerUseManualLocalPathBtn.onclick = () =>
+      applyLocalProjectManagerManualLocalPath();
+  }
+  const localProjectManagerManualServerPath = document.getElementById(
+    "localProjectManagerManualServerPath"
+  );
+  if (localProjectManagerManualServerPath) {
+    localProjectManagerManualServerPath.addEventListener("input", (event) => {
+      copyProjectLocallyDialogState.sync.manualServerProjectPath = normalizeWindowsPath(
+        event.target?.value || ""
+      );
+      resetLocalProjectManagerSyncPreview();
+      renderCopyProjectLocallyDialog();
+    });
+  }
+  const localProjectManagerBrowseServerPathBtn = document.getElementById(
+    "localProjectManagerBrowseServerPathBtn"
+  );
+  if (localProjectManagerBrowseServerPathBtn) {
+    localProjectManagerBrowseServerPathBtn.onclick = async () => {
+      try {
+        await browseLocalProjectManagerServerPath();
+      } catch (error) {
+        toast(error?.message || "Failed to choose a server project folder.", 7000);
+      }
+    };
+  }
+  const localProjectManagerPreviewSyncBtn = document.getElementById(
+    "localProjectManagerPreviewSyncBtn"
+  );
+  if (localProjectManagerPreviewSyncBtn) {
+    localProjectManagerPreviewSyncBtn.onclick = async () => {
+      await previewLocalProjectManagerSync();
+    };
+  }
+  const localProjectManagerSyncProjectList = document.getElementById(
+    "localProjectManagerSyncProjectList"
+  );
+  if (localProjectManagerSyncProjectList) {
+    localProjectManagerSyncProjectList.addEventListener("click", (event) => {
+      const row = event.target?.closest?.(
+        "button[data-local-project-path]"
+      );
+      if (!row) return;
+      const targetPath = normalizeWindowsPath(row.dataset.localProjectPath || "");
+      const entry = copyProjectLocallyDialogState.sync.projectEntries.find(
+        (item) =>
+          normalizeWindowsPath(item?.localProjectPath || "").toLowerCase() ===
+          targetPath.toLowerCase()
+      );
+      if (entry) {
+        selectLocalProjectManagerProjectEntry(entry);
+      }
+    });
+  }
+  const localProjectManagerSyncRecommendationList = document.getElementById(
+    "localProjectManagerSyncRecommendationList"
+  );
+  if (localProjectManagerSyncRecommendationList) {
+    localProjectManagerSyncRecommendationList.addEventListener("change", (event) => {
+      if (
+        !event.target?.matches?.(
+          'input[type="checkbox"][data-local-project-manager-sync-checkbox][data-relative-path]'
+        )
+      ) {
+        return;
+      }
+      const relativePath = String(event.target.dataset.relativePath || "").trim();
+      const candidate = copyProjectLocallyDialogState.sync.candidateFiles.find(
+        (entry) => entry.relativePath === relativePath
+      );
+      if (!candidate) return;
+      candidate.selected = event.target.checked === true;
+      renderCopyProjectLocallyDialog();
+    });
+  }
+  const localProjectManagerSyncSelectAllBtn = document.getElementById(
+    "localProjectManagerSyncSelectAllBtn"
+  );
+  if (localProjectManagerSyncSelectAllBtn) {
+    localProjectManagerSyncSelectAllBtn.onclick = () => {
+      copyProjectLocallyDialogState.sync.candidateFiles.forEach((entry) => {
+        entry.selected = true;
+      });
+      renderCopyProjectLocallyDialog();
+    };
+  }
+  const localProjectManagerSyncClearAllBtn = document.getElementById(
+    "localProjectManagerSyncClearAllBtn"
+  );
+  if (localProjectManagerSyncClearAllBtn) {
+    localProjectManagerSyncClearAllBtn.onclick = () => {
+      copyProjectLocallyDialogState.sync.candidateFiles.forEach((entry) => {
+        entry.selected = false;
+      });
+      renderCopyProjectLocallyDialog();
+    };
+  }
+  const localProjectManagerSyncConfirmBtn = document.getElementById(
+    "localProjectManagerSyncConfirmBtn"
+  );
+  if (localProjectManagerSyncConfirmBtn) {
+    localProjectManagerSyncConfirmBtn.onclick = () => {
+      const payload = buildLocalProjectManagerSyncConfirmPayload();
+      if (!payload?.selectedRelativePaths?.length) {
+        toast("Select at least one file to sync to the server.");
+        updateLocalProjectManagerSyncSummary();
+        return;
+      }
+      const dialog = document.getElementById("copyProjectLocallyDlg");
+      if (dialog) {
+        dialog.dataset.localProjectManagerAction = "sync";
+        dialog.close("confirm");
+      }
     };
   }
 
@@ -26073,18 +27660,6 @@ function initEventListeners() {
       const launchSource = String(launchContext?.source || "").trim().toLowerCase();
 
       try {
-        const selectServerProjectFolder = async () => {
-          window.updateToolStatus("toolCopyProjectLocally", "Select server project folder...");
-          const selection = await window.pywebview.api.select_folder();
-          if (selection?.status === "error") {
-            throw new Error(selection.message || "Failed to choose a folder.");
-          }
-          if (!selection || selection.status === "cancelled" || !selection.path) {
-            return "";
-          }
-          return String(selection.path || "").trim();
-        };
-
         const syncWorkroomLocalProject = async (localProjectPath) => {
           if (launchSource !== "workroom" || !localProjectPath) return;
           const activeProject = db[activeChecklistProject];
@@ -26100,99 +27675,123 @@ function initEventListeners() {
         };
 
         let preview = null;
-        let selectedServerPath = "";
-
         if (launchSource === "workroom") {
           window.updateToolStatus("toolCopyProjectLocally", "Resolving project folder...");
           preview = await window.pywebview.api.preview_copy_project_locally(
             null,
             launchContext
           );
-
-          const needsManualSelection =
-            preview?.status !== "success" &&
-            String(preview?.code || "").trim().toLowerCase() ===
-              "manual_selection_required";
-
-          if (needsManualSelection) {
-            toast("Could not auto-resolve project folder; please select it manually.", 6000);
-            selectedServerPath = await selectServerProjectFolder();
-            if (!selectedServerPath) {
-              preview = null;
-            }
-          }
-        } else {
-          selectedServerPath = await selectServerProjectFolder();
         }
 
-        if (!preview && !selectedServerPath) {
+        window.updateToolStatus("toolCopyProjectLocally", "");
+        const managerResult = await openCopyProjectLocallyDialog(
+          preview,
+          launchContext
+        );
+        if (!managerResult) {
           window.updateToolStatus("toolCopyProjectLocally", "");
           return;
         }
 
-        if (selectedServerPath) {
-          window.updateToolStatus("toolCopyProjectLocally", "Loading folder list...");
-          preview = await window.pywebview.api.preview_copy_project_locally(
-            selectedServerPath,
+        if (managerResult.action === "sync") {
+          window.updateToolStatus("toolCopyProjectLocally", "Syncing selected files...");
+          const syncResult = await window.pywebview.api.apply_local_project_manager_sync(
+            managerResult.localProjectPath,
+            managerResult.serverProjectPath,
+            managerResult.selectedRelativePaths,
             launchContext
           );
-        } else {
-          window.updateToolStatus("toolCopyProjectLocally", "Loading folder list...");
-        }
 
-        if (!preview) {
-          window.updateToolStatus("toolCopyProjectLocally", "");
-          return;
-        }
+          if (syncResult?.status !== "success") {
+            throw new Error(syncResult?.message || "Failed to sync local files to the server.");
+          }
 
-        if (preview?.status !== "success") {
-          throw new Error(preview?.message || "Failed to load project folders.");
-        }
+          const failedFiles = Array.isArray(syncResult?.failedFiles)
+            ? syncResult.failedFiles
+            : [];
+          const blockedEntries = Array.isArray(syncResult?.blockedEntries)
+            ? syncResult.blockedEntries
+            : [];
+          const copiedFileCount = Number.isFinite(Number(syncResult?.copiedFileCount))
+            ? Number(syncResult.copiedFileCount)
+            : 0;
+          const failedFileCount = Number.isFinite(Number(syncResult?.failedFileCount))
+            ? Number(syncResult.failedFileCount)
+            : failedFiles.length;
+          const hasWarnings = failedFileCount > 0 || blockedEntries.length > 0;
 
-        if (preview?.localProjectExists && preview?.localProjectPath) {
-          await syncWorkroomLocalProject(preview.localProjectPath);
           window.updateToolStatus("toolCopyProjectLocally", "DONE");
-          toast("Local project already exists. Linked existing copy.");
-          await window.pywebview.api.open_path(preview.localProjectPath);
+          toast(
+            hasWarnings
+              ? `Server sync completed with warnings (${copiedFileCount} copied, ${failedFileCount} failed, ${blockedEntries.length} blocked).`
+              : `Server sync completed (${copiedFileCount} file${copiedFileCount === 1 ? "" : "s"} copied).`
+          );
+
+          if (failedFiles.length) {
+            const failedPreview = failedFiles
+              .slice(0, 3)
+              .map((entry) => {
+                const sourcePath = String(entry?.source || "");
+                if (!sourcePath) return "";
+                const parts = sourcePath.split(/[\\/]/);
+                return parts[parts.length - 1] || sourcePath;
+              })
+              .filter(Boolean);
+            if (failedPreview.length) {
+              const remainingCount = Math.max(0, failedFileCount - failedPreview.length);
+              const suffix = remainingCount ? ` (+${remainingCount} more)` : "";
+              toast(`Failed files: ${failedPreview.join(", ")}${suffix}`, 9000);
+            }
+          }
+
+          if (blockedEntries.length) {
+            const blockedPreview = blockedEntries
+              .slice(0, 3)
+              .map((entry) => String(entry?.relativePath || "").trim())
+              .filter(Boolean);
+            if (blockedPreview.length) {
+              const remainingCount = Math.max(0, blockedEntries.length - blockedPreview.length);
+              const suffix = remainingCount ? ` (+${remainingCount} more)` : "";
+              toast(`Blocked entries: ${blockedPreview.join(", ")}${suffix}`, 9000);
+            }
+          }
+
+          if (syncResult?.serverProjectPath) {
+            await window.pywebview.api.open_path(syncResult.serverProjectPath);
+          }
           return;
         }
 
-        const previewFolderOptions = Array.isArray(preview?.folderOptions)
-          ? preview.folderOptions
-          : [];
-        if (!previewFolderOptions.length) {
-          throw new Error("No subfolders were found in the selected project folder.");
-        }
-
-        const selectedFolderNames = await openCopyProjectLocallyDialog(preview);
-        if (!selectedFolderNames?.length) {
+        const selectionPayload = managerResult.selectionPayload;
+        if (!selectionPayload?.hasSelection) {
           window.updateToolStatus("toolCopyProjectLocally", "");
           return;
         }
 
         window.updateToolStatus("toolCopyProjectLocally", "Copying selected folders...");
-        const result = await window.pywebview.api.copy_project_locally(
-          preview?.serverProjectPath || selectedServerPath,
+        const copyResult = await window.pywebview.api.copy_project_locally(
+          managerResult.serverProjectPath || "",
           launchContext,
-          selectedFolderNames
+          selectionPayload.selectedFolderNames,
+          selectionPayload.selectedFolderRequests
         );
 
-        const resultCode = String(result?.code || "").trim().toLowerCase();
-        if (result?.status !== "success") {
-          if (resultCode === "local_project_exists" && result?.localProjectPath) {
-            await syncWorkroomLocalProject(result.localProjectPath);
+        const resultCode = String(copyResult?.code || "").trim().toLowerCase();
+        if (copyResult?.status !== "success") {
+          if (resultCode === "local_project_exists" && copyResult?.localProjectPath) {
+            await syncWorkroomLocalProject(copyResult.localProjectPath);
             window.updateToolStatus("toolCopyProjectLocally", "DONE");
             toast("Local project already exists. Linked existing copy.");
-            await window.pywebview.api.open_path(result.localProjectPath);
+            await window.pywebview.api.open_path(copyResult.localProjectPath);
             return;
           }
-          throw new Error(result?.message || "Failed to copy project locally.");
+          throw new Error(copyResult?.message || "Failed to copy project locally.");
         }
 
-        const failedFiles = Array.isArray(result?.failedFiles) ? result.failedFiles : [];
+        const failedFiles = Array.isArray(copyResult?.failedFiles) ? copyResult.failedFiles : [];
         const failedFileCount =
-          Number.isFinite(Number(result?.failedFileCount))
-            ? Number(result.failedFileCount)
+          Number.isFinite(Number(copyResult?.failedFileCount))
+            ? Number(copyResult.failedFileCount)
             : failedFiles.length;
         const hasWarnings = failedFileCount > 0;
 
@@ -26205,7 +27804,7 @@ function initEventListeners() {
             : "Project copied locally."
         );
 
-        await syncWorkroomLocalProject(result?.localProjectPath);
+        await syncWorkroomLocalProject(copyResult?.localProjectPath);
 
         if (hasWarnings && failedFiles.length) {
           const failedPreview = failedFiles
@@ -26224,8 +27823,8 @@ function initEventListeners() {
           }
         }
 
-        const missingFolders = Array.isArray(result?.missingServerFolders)
-          ? result.missingServerFolders
+        const missingFolders = Array.isArray(copyResult?.missingServerFolders)
+          ? copyResult.missingServerFolders
           : [];
         if (missingFolders.length) {
           toast(
@@ -26234,11 +27833,11 @@ function initEventListeners() {
           );
         }
 
-        if (result?.localProjectPath) {
-          await window.pywebview.api.open_path(result.localProjectPath);
+        if (copyResult?.localProjectPath) {
+          await window.pywebview.api.open_path(copyResult.localProjectPath);
         }
       } catch (e) {
-        const message = e?.message || "Failed to copy project locally.";
+        const message = e?.message || "Failed to run Local Project Manager.";
         window.updateToolStatus("toolCopyProjectLocally", `ERROR: ${message}`);
       } finally {
         copyProjectLocallyBtn.classList.remove("running");

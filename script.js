@@ -14917,10 +14917,13 @@ async function openCopyProjectLocallyDialog(preview, launchContext = null) {
       resetCopyProjectLocallyDialogState();
       dialog.removeEventListener("close", handleClose);
       resolve(result);
-    };
+};
 
     dialog.dataset.localProjectManagerAction = "";
     dialog.addEventListener("close", handleClose);
+    dialog.addEventListener("cancel", (e) => {
+      e.preventDefault();
+    });
     if (!showDialog(dialog)) {
       dialog.removeEventListener("close", handleClose);
       dialog.dataset.localProjectManagerAction = "";

@@ -7842,10 +7842,15 @@ Return ONLY the JSON object.
 
         return normalized_paths
 
-    def _scan_copy_project_files(self, root_path):
+    def _scan_copy_project_files(self, root_path, excluded_root_names=None):
         normalized_root_path = os.path.normpath(str(root_path or '').strip())
         results = []
         scan_errors = []
+        excluded_root_name_keys = {
+            str(name or '').strip().lower()
+            for name in (excluded_root_names or [])
+            if str(name or '').strip()
+        }
 
         if not normalized_root_path:
             return {
@@ -7893,6 +7898,11 @@ Return ONLY the JSON object.
 
                         try:
                             if entry.is_dir(follow_symlinks=False):
+                                if (
+                                    not relative_root
+                                    and entry_name.lower() in excluded_root_name_keys
+                                ):
+                                    continue
                                 pending_paths.append(
                                     (relative_path, os.path.join(current_path, entry_name))
                                 )
@@ -7994,6 +8004,569 @@ Return ONLY the JSON object.
             self._to_windows_extended_path(server_display_path),
         )
 
+    def _get_local_project_manager_excluded_root_names(self):
+        return {'archive', '0 archive'}
+
+    def _get_local_project_manager_managed_root_names(self, settings):
+        return self._normalize_copy_project_folder_names(
+            [*self._get_copy_project_disciplines(settings), 'Xrefs']
+        )
+
+    def _split_local_project_manager_relative_path(self, relative_path):
+        normalized_relative_path = os.path.normpath(str(relative_path or '').strip())
+        if not normalized_relative_path or normalized_relative_path in {'.', os.curdir}:
+            return []
+        return [
+            part
+            for part in re.split(r'[\\/]+', normalized_relative_path)
+            if part and part not in {'.', os.curdir}
+        ]
+
+    def _describe_local_project_manager_relative_path(self, relative_path, managed_root_names=None):
+        normalized_relative_path = os.path.normpath(str(relative_path or '').strip())
+        path_parts = self._split_local_project_manager_relative_path(normalized_relative_path)
+        root_folder = path_parts[0] if path_parts else ''
+        managed_root_name_keys = {
+            str(name or '').strip().lower()
+            for name in (managed_root_names or [])
+            if str(name or '').strip()
+        }
+        scope_type = (
+            'managed'
+            if root_folder and root_folder.lower() in managed_root_name_keys
+            else 'additive_only'
+        )
+        return {
+            'relativePath': normalized_relative_path,
+            'parts': path_parts,
+            'rootFolder': root_folder,
+            'scopeType': scope_type,
+        }
+
+    def _get_local_project_manager_target_conflict(self, root_path, relative_path):
+        normalized_root_path = os.path.normpath(str(root_path or '').strip())
+        normalized_relative_path = os.path.normpath(str(relative_path or '').strip())
+        if not normalized_root_path or not normalized_relative_path:
+            return ''
+
+        parent_collision_path = self._get_local_project_manager_path_collision(
+            normalized_root_path,
+            normalized_relative_path,
+        )
+        if parent_collision_path:
+            return os.path.normpath(parent_collision_path)
+
+        target_path = os.path.normpath(
+            os.path.join(normalized_root_path, normalized_relative_path)
+        )
+        target_copy_path = self._to_windows_extended_path(target_path)
+        if not os.path.exists(target_copy_path):
+            return ''
+        if self._is_copy_project_path_directory(target_path):
+            return target_path
+        if not self._is_copy_project_path_file(target_path):
+            return target_path
+        return ''
+
+    def _build_local_project_manager_candidate_entry(
+        self,
+        local_project_path,
+        server_project_path,
+        relative_path,
+        reason,
+        local_file=None,
+        server_file=None,
+        direction='to_server',
+        root_folder='',
+        scope_type='',
+        change_type='',
+        direction_label='',
+    ):
+        normalized_relative_path = os.path.normpath(str(relative_path or '').strip())
+        local_file = local_file or {}
+        server_file = server_file or {}
+        direction_key = str(direction or '').strip().lower()
+        path_details = self._describe_local_project_manager_relative_path(
+            normalized_relative_path
+        )
+        resolved_root_folder = str(root_folder or path_details.get('rootFolder') or '').strip()
+        resolved_scope_type = str(scope_type or path_details.get('scopeType') or '').strip().lower()
+        if resolved_scope_type not in {'managed', 'additive_only'}:
+            resolved_scope_type = 'additive_only'
+        source_file = local_file if direction_key == 'to_server' else server_file
+        source_size_bytes = source_file.get('sizeBytes')
+        source_size_label = str(source_file.get('sizeLabel') or '').strip()
+        if not source_size_label:
+            source_size_label = (
+                self._format_copy_project_size_label(source_size_bytes)
+                if source_size_bytes is not None
+                else 'Size unavailable'
+            )
+
+        resolved_change_type = str(change_type or '').strip().lower()
+        if resolved_change_type not in {'newer', 'missing'}:
+            resolved_change_type = (
+                'missing'
+                if str(reason or '').strip().lower() in {'server_missing', 'local_missing'}
+                else 'newer'
+            )
+
+        resolved_direction_label = str(direction_label or '').strip()
+        if not resolved_direction_label:
+            if direction_key == 'to_local':
+                resolved_direction_label = (
+                    'Missing locally'
+                    if str(reason or '').strip().lower() == 'local_missing'
+                    else 'Newer than local'
+                )
+            else:
+                resolved_direction_label = (
+                    'Missing on server'
+                    if str(reason or '').strip().lower() == 'server_missing'
+                    else 'Newer than server'
+                )
+
+        return {
+            'relativePath': normalized_relative_path,
+            'path': normalized_relative_path,
+            'rootFolder': resolved_root_folder,
+            'scopeType': resolved_scope_type,
+            'changeType': resolved_change_type,
+            'directionLabel': resolved_direction_label,
+            'localPath': os.path.normpath(
+                str(local_file.get('path') or os.path.join(local_project_path, normalized_relative_path))
+            ) if normalized_relative_path else '',
+            'serverPath': os.path.normpath(
+                str(server_file.get('path') or os.path.join(server_project_path, normalized_relative_path))
+            ) if normalized_relative_path else '',
+            'reason': str(reason or '').strip(),
+            'localModifiedAt': str(local_file.get('modifiedAt') or '').strip(),
+            'serverModifiedAt': str(server_file.get('modifiedAt') or '').strip(),
+            'sizeBytes': source_size_bytes,
+            'sizeLabel': source_size_label,
+            'selectedByDefault': True,
+        }
+
+    def _resolve_local_project_manager_pair(
+        self,
+        local_project_path,
+        server_project_path=None,
+        launch_context=None,
+    ):
+        normalized_local_project_path = os.path.normpath(str(local_project_path or '').strip())
+        if not normalized_local_project_path:
+            return {
+                'status': 'error',
+                'code': 'local_project_path_required',
+                'message': 'Local project path is required.',
+            }
+        if not os.path.isdir(self._to_windows_extended_path(normalized_local_project_path)):
+            return {
+                'status': 'error',
+                'message': 'Local project path does not exist.',
+            }
+
+        settings = self.get_user_settings()
+        source_resolution = self._resolve_copy_project_source_path(
+            server_project_path,
+            launch_context,
+            settings,
+        )
+        if source_resolution.get('status') != 'success':
+            return source_resolution
+
+        normalized_server_path = source_resolution.get('path') or ''
+        resolved_from_workroom = bool(source_resolution.get('resolvedFromWorkroom'))
+        resolution_mode = str(source_resolution.get('resolutionMode') or '').strip()
+        workroom_project_path = str(source_resolution.get('workroomProjectPath') or '').strip()
+
+        if not os.path.isdir(self._to_windows_extended_path(normalized_server_path)):
+            if resolved_from_workroom:
+                return {
+                    'status': 'error',
+                    'code': 'manual_selection_required',
+                    'message': 'Could not auto-resolve project folder from Project Workroom. Please select it manually.',
+                    'resolvedFromWorkroom': True,
+                    'resolvedServerProjectPath': normalized_server_path,
+                    'resolutionMode': 'project_id_ancestor_not_accessible',
+                    'workroomProjectPath': workroom_project_path,
+                }
+            return {'status': 'error', 'message': 'Server project path does not exist.'}
+
+        return {
+            'status': 'success',
+            'localProjectPath': normalized_local_project_path,
+            'serverProjectPath': normalized_server_path,
+            'resolvedServerProjectPath': normalized_server_path,
+            'resolvedFromWorkroom': resolved_from_workroom,
+            'resolutionMode': resolution_mode or 'manual_selection',
+            'workroomProjectPath': workroom_project_path,
+        }
+
+    def _compare_local_project_manager_files(self, local_project_path, server_project_path):
+        normalized_local_project_path = os.path.normpath(str(local_project_path or '').strip())
+        normalized_server_project_path = os.path.normpath(str(server_project_path or '').strip())
+        if not normalized_local_project_path or not normalized_server_project_path:
+            return {
+                'status': 'error',
+                'message': 'Local and server project paths are required.',
+            }
+
+        try:
+            settings = self.get_user_settings()
+        except Exception:
+            settings = {}
+        managed_root_names = self._get_local_project_manager_managed_root_names(settings)
+        excluded_root_names = self._get_local_project_manager_excluded_root_names()
+        local_scan = self._scan_copy_project_files(
+            normalized_local_project_path,
+            excluded_root_names=excluded_root_names,
+        )
+        server_scan = self._scan_copy_project_files(
+            normalized_server_project_path,
+            excluded_root_names=excluded_root_names,
+        )
+
+        local_files_by_relative_path = {
+            str(entry.get('relativePath') or '').strip().lower(): entry
+            for entry in local_scan.get('files', [])
+            if str(entry.get('relativePath') or '').strip()
+        }
+        server_files_by_relative_path = {
+            str(entry.get('relativePath') or '').strip().lower(): entry
+            for entry in server_scan.get('files', [])
+            if str(entry.get('relativePath') or '').strip()
+        }
+
+        local_to_server_candidates = []
+        server_to_local_candidates = []
+        local_to_server_blocked_entries = []
+        server_to_local_blocked_entries = []
+        equal_files = []
+        comparison_tolerance_seconds = 60.0
+        seen_local_blocked = set()
+        seen_server_blocked = set()
+
+        def add_local_blocked_entry(entry):
+            dedupe_key = (
+                f"{str(entry.get('relativePath') or '').strip().lower()}|"
+                f"{str(entry.get('serverPath') or '').strip().lower()}|"
+                f"{str(entry.get('reason') or '').strip().lower()}|"
+                f"{str(entry.get('error') or '').strip().lower()}"
+            )
+            if dedupe_key in seen_local_blocked:
+                return
+            seen_local_blocked.add(dedupe_key)
+            local_to_server_blocked_entries.append(entry)
+
+        def add_server_blocked_entry(entry):
+            dedupe_key = (
+                f"{str(entry.get('relativePath') or '').strip().lower()}|"
+                f"{str(entry.get('localPath') or '').strip().lower()}|"
+                f"{str(entry.get('reason') or '').strip().lower()}|"
+                f"{str(entry.get('error') or '').strip().lower()}"
+            )
+            if dedupe_key in seen_server_blocked:
+                return
+            seen_server_blocked.add(dedupe_key)
+            server_to_local_blocked_entries.append(entry)
+
+        for scan_error in local_scan.get('scanErrors', []):
+            add_local_blocked_entry(
+                self._build_local_project_manager_blocked_entry(
+                    normalized_local_project_path,
+                    normalized_server_project_path,
+                    scan_error.get('relativePath') or '',
+                    'scan_error',
+                    local_path=scan_error.get('path') or '',
+                    error=scan_error.get('error') or '',
+                )
+            )
+
+        for scan_error in server_scan.get('scanErrors', []):
+            add_server_blocked_entry(
+                self._build_local_project_manager_blocked_entry(
+                    normalized_local_project_path,
+                    normalized_server_project_path,
+                    scan_error.get('relativePath') or '',
+                    'scan_error',
+                    server_path=scan_error.get('path') or '',
+                    error=scan_error.get('error') or '',
+                )
+            )
+
+        all_relative_path_keys = sorted(
+            set(local_files_by_relative_path.keys()) | set(server_files_by_relative_path.keys())
+        )
+        for relative_path_key in all_relative_path_keys:
+            local_file = local_files_by_relative_path.get(relative_path_key)
+            server_file = server_files_by_relative_path.get(relative_path_key)
+            relative_path = str(
+                (local_file or server_file or {}).get('relativePath') or ''
+            ).strip()
+            if not relative_path:
+                continue
+            path_details = self._describe_local_project_manager_relative_path(
+                relative_path,
+                managed_root_names=managed_root_names,
+            )
+            root_folder = str(path_details.get('rootFolder') or '').strip()
+            scope_type = str(path_details.get('scopeType') or 'additive_only').strip().lower()
+
+            if local_file and server_file:
+                if scope_type == 'managed':
+                    local_modified_timestamp = float(local_file.get('modifiedTimestamp') or 0.0)
+                    server_modified_timestamp = float(server_file.get('modifiedTimestamp') or 0.0)
+                    time_difference = local_modified_timestamp - server_modified_timestamp
+                    if time_difference > comparison_tolerance_seconds:
+                        conflict_path = self._get_local_project_manager_target_conflict(
+                            normalized_server_project_path,
+                            relative_path,
+                        )
+                        if conflict_path:
+                            add_local_blocked_entry(
+                                self._build_local_project_manager_blocked_entry(
+                                    normalized_local_project_path,
+                                    normalized_server_project_path,
+                                    relative_path,
+                                    'file_directory_conflict',
+                                    local_path=local_file.get('path') or '',
+                                    server_path=conflict_path,
+                                )
+                            )
+                            continue
+                        local_to_server_candidates.append(
+                            self._build_local_project_manager_candidate_entry(
+                                normalized_local_project_path,
+                                normalized_server_project_path,
+                                relative_path,
+                                'local_newer',
+                                local_file=local_file,
+                                server_file=server_file,
+                                direction='to_server',
+                                root_folder=root_folder,
+                                scope_type=scope_type,
+                                change_type='newer',
+                                direction_label='Newer than server',
+                            )
+                        )
+                        continue
+
+                    if time_difference < -comparison_tolerance_seconds:
+                        conflict_path = self._get_local_project_manager_target_conflict(
+                            normalized_local_project_path,
+                            relative_path,
+                        )
+                        if conflict_path:
+                            add_server_blocked_entry(
+                                self._build_local_project_manager_blocked_entry(
+                                    normalized_local_project_path,
+                                    normalized_server_project_path,
+                                    relative_path,
+                                    'file_directory_conflict',
+                                    local_path=conflict_path,
+                                    server_path=server_file.get('path') or '',
+                                )
+                            )
+                            continue
+                        server_to_local_candidates.append(
+                            self._build_local_project_manager_candidate_entry(
+                                normalized_local_project_path,
+                                normalized_server_project_path,
+                                relative_path,
+                                'server_newer',
+                                local_file=local_file,
+                                server_file=server_file,
+                                direction='to_local',
+                                root_folder=root_folder,
+                                scope_type=scope_type,
+                                change_type='newer',
+                                direction_label='Newer than local',
+                            )
+                        )
+                        continue
+
+                    equal_files.append({
+                        'relativePath': relative_path,
+                        'path': relative_path,
+                        'rootFolder': root_folder,
+                        'scopeType': scope_type,
+                    })
+                continue
+
+            if local_file:
+                conflict_path = self._get_local_project_manager_target_conflict(
+                    normalized_server_project_path,
+                    relative_path,
+                )
+                if conflict_path:
+                    add_local_blocked_entry(
+                        self._build_local_project_manager_blocked_entry(
+                            normalized_local_project_path,
+                            normalized_server_project_path,
+                            relative_path,
+                            'file_directory_conflict',
+                            local_path=local_file.get('path') or '',
+                            server_path=conflict_path,
+                        )
+                    )
+                    continue
+                local_to_server_candidates.append(
+                    self._build_local_project_manager_candidate_entry(
+                        normalized_local_project_path,
+                        normalized_server_project_path,
+                        relative_path,
+                        'server_missing',
+                        local_file=local_file,
+                        direction='to_server',
+                        root_folder=root_folder,
+                        scope_type=scope_type,
+                        change_type='missing',
+                        direction_label='Missing on server',
+                    )
+                )
+                continue
+
+            if server_file:
+                conflict_path = self._get_local_project_manager_target_conflict(
+                    normalized_local_project_path,
+                    relative_path,
+                )
+                if conflict_path:
+                    add_server_blocked_entry(
+                        self._build_local_project_manager_blocked_entry(
+                            normalized_local_project_path,
+                            normalized_server_project_path,
+                            relative_path,
+                            'file_directory_conflict',
+                            local_path=conflict_path,
+                            server_path=server_file.get('path') or '',
+                        )
+                    )
+                    continue
+                server_to_local_candidates.append(
+                    self._build_local_project_manager_candidate_entry(
+                        normalized_local_project_path,
+                        normalized_server_project_path,
+                        relative_path,
+                        'local_missing',
+                        server_file=server_file,
+                        direction='to_local',
+                        root_folder=root_folder,
+                        scope_type=scope_type,
+                        change_type='missing',
+                        direction_label='Missing locally',
+                    )
+                )
+
+        local_to_server_candidates.sort(
+            key=lambda item: str(item.get('relativePath') or '').lower()
+        )
+        server_to_local_candidates.sort(
+            key=lambda item: str(item.get('relativePath') or '').lower()
+        )
+        local_to_server_blocked_entries.sort(
+            key=lambda item: str(item.get('relativePath') or '').lower()
+        )
+        server_to_local_blocked_entries.sort(
+            key=lambda item: str(item.get('relativePath') or '').lower()
+        )
+        equal_files.sort(key=lambda item: str(item.get('relativePath') or '').lower())
+
+        return {
+            'status': 'success',
+            'managedRootNames': managed_root_names,
+            'localToServerCandidates': local_to_server_candidates,
+            'serverToLocalCandidates': server_to_local_candidates,
+            'localToServerBlockedEntries': local_to_server_blocked_entries,
+            'serverToLocalBlockedEntries': server_to_local_blocked_entries,
+            'equalFiles': equal_files,
+        }
+
+    def _create_local_project_manager_backup(
+        self,
+        project_root_path,
+        relative_paths,
+        direction='to_server',
+    ):
+        normalized_project_root_path = os.path.normpath(str(project_root_path or '').strip())
+        normalized_relative_paths = self._normalize_local_project_manager_relative_paths(
+            relative_paths
+        )
+        if not normalized_project_root_path or not normalized_relative_paths:
+            return {
+                'status': 'success',
+                'backupCreated': False,
+                'backupPath': '',
+                'copiedFileCount': 0,
+                'failedFiles': [],
+            }
+
+        existing_file_entries = []
+        for relative_path in normalized_relative_paths:
+            source_path = os.path.normpath(
+                os.path.join(normalized_project_root_path, relative_path)
+            )
+            if not self._is_copy_project_path_file(source_path):
+                continue
+            existing_file_entries.append((relative_path, source_path))
+
+        if not existing_file_entries:
+            return {
+                'status': 'success',
+                'backupCreated': False,
+                'backupPath': '',
+                'copiedFileCount': 0,
+                'failedFiles': [],
+            }
+
+        direction_key = str(direction or '').strip().lower()
+        if direction_key == 'to_server':
+            archive_root = os.path.join(
+                normalized_project_root_path,
+                'Archive',
+                'Local Project Manager',
+            )
+        else:
+            project_name = os.path.basename(normalized_project_root_path.rstrip('\\/'))
+            archive_root = os.path.join(
+                _get_windows_documents_dir(),
+                'Local Projects',
+                '0 Archive',
+                project_name,
+            )
+
+        backup_path = self._reserve_unique_archive_folder(archive_root)
+        copied_file_count = 0
+        failed_files = []
+        for relative_path, source_path in existing_file_entries:
+            backup_target_path = os.path.normpath(os.path.join(backup_path, relative_path))
+            backup_target_parent = os.path.dirname(backup_target_path)
+            if backup_target_parent:
+                os.makedirs(self._to_windows_extended_path(backup_target_parent), exist_ok=True)
+            try:
+                shutil.copy2(
+                    self._to_windows_extended_path(source_path),
+                    self._to_windows_extended_path(backup_target_path),
+                )
+                copied_file_count += 1
+            except Exception as e:
+                failed_files.append({
+                    'relativePath': relative_path,
+                    'source': source_path,
+                    'destination': backup_target_path,
+                    'error': str(e),
+                })
+
+        self._cleanup_old_backups(archive_root, max_backups=5)
+        return {
+            'status': 'success',
+            'backupCreated': copied_file_count > 0 or bool(failed_files),
+            'backupPath': backup_path,
+            'copiedFileCount': copied_file_count,
+            'failedFiles': failed_files,
+        }
+
     def list_local_project_manager_projects(self, local_root=None):
         """List local project folders available under Documents\\Local Projects."""
         try:
@@ -8005,6 +8578,8 @@ Return ONLY the JSON object.
                 with os.scandir(self._to_windows_extended_path(resolved_local_root)) as entries:
                     for entry in entries:
                         if not self._is_copy_project_entry_directory(entry):
+                            continue
+                        if str(entry.name or '').strip().lower() == '0 archive':
                             continue
 
                         local_project_path = os.path.normpath(
@@ -8028,319 +8603,407 @@ Return ONLY the JSON object.
             logging.error(f"Error listing local project manager projects: {e}")
             return {'status': 'error', 'message': str(e)}
 
+    def _summarize_local_project_manager_comparison(self, comparison_result):
+        local_to_server_candidates = list(
+            comparison_result.get('localToServerCandidates', []) or []
+        )
+        server_to_local_candidates = list(
+            comparison_result.get('serverToLocalCandidates', []) or []
+        )
+        equal_files = list(comparison_result.get('equalFiles', []) or [])
+
+        local_to_server_count = len(local_to_server_candidates)
+        server_to_local_count = len(server_to_local_candidates)
+        managed_local_newer_count = sum(
+            1
+            for item in local_to_server_candidates
+            if str(item.get('scopeType') or '').strip().lower() == 'managed'
+            and str(item.get('changeType') or '').strip().lower() == 'newer'
+        )
+        managed_server_newer_count = sum(
+            1
+            for item in server_to_local_candidates
+            if str(item.get('scopeType') or '').strip().lower() == 'managed'
+            and str(item.get('changeType') or '').strip().lower() == 'newer'
+        )
+
+        summary = 'equal'
+        recommendation = 'none'
+        if managed_local_newer_count and managed_server_newer_count:
+            summary = 'mixed'
+            recommendation = 'sync-to-server'
+        elif managed_local_newer_count:
+            summary = 'local-newer'
+            recommendation = 'sync-to-server'
+        elif managed_server_newer_count:
+            summary = 'server-newer'
+            recommendation = 'copy-to-local'
+        elif local_to_server_count and server_to_local_count:
+            summary = 'additions-both'
+            recommendation = 'sync-to-server'
+        elif local_to_server_count:
+            summary = 'local-additions'
+            recommendation = 'sync-to-server'
+        elif server_to_local_count:
+            summary = 'server-additions'
+            recommendation = 'copy-to-local'
+
+        return {
+            'summary': summary,
+            'recommendation': recommendation,
+            'localToServerCandidateCount': local_to_server_count,
+            'serverToLocalCandidateCount': server_to_local_count,
+            'managedLocalToServerNewerCount': managed_local_newer_count,
+            'managedServerToLocalNewerCount': managed_server_newer_count,
+            'equalFileCount': len(equal_files),
+        }
+
+    def _preview_local_project_manager_direction(
+        self,
+        local_project_path,
+        server_project_path=None,
+        launch_context=None,
+        direction='to_server',
+    ):
+        pair_resolution = self._resolve_local_project_manager_pair(
+            local_project_path,
+            server_project_path,
+            launch_context,
+        )
+        if pair_resolution.get('status') != 'success':
+            return pair_resolution
+
+        comparison_result = self._compare_local_project_manager_files(
+            pair_resolution.get('localProjectPath') or '',
+            pair_resolution.get('serverProjectPath') or '',
+        )
+        if comparison_result.get('status') != 'success':
+            return comparison_result
+
+        direction_key = str(direction or '').strip().lower()
+        if direction_key == 'to_local':
+            candidate_key = 'serverToLocalCandidates'
+            blocked_key = 'serverToLocalBlockedEntries'
+        else:
+            candidate_key = 'localToServerCandidates'
+            blocked_key = 'localToServerBlockedEntries'
+
+        candidate_files = list(comparison_result.get(candidate_key, []) or [])
+        blocked_entries = list(comparison_result.get(blocked_key, []) or [])
+        comparison_summary = self._summarize_local_project_manager_comparison(
+            comparison_result
+        )
+
+        return {
+            'status': 'success',
+            'localProjectPath': pair_resolution.get('localProjectPath') or '',
+            'serverProjectPath': pair_resolution.get('serverProjectPath') or '',
+            'resolvedServerProjectPath': pair_resolution.get('resolvedServerProjectPath') or '',
+            'resolvedFromWorkroom': bool(pair_resolution.get('resolvedFromWorkroom')),
+            'resolutionMode': str(pair_resolution.get('resolutionMode') or '').strip() or 'manual_selection',
+            'workroomProjectPath': str(pair_resolution.get('workroomProjectPath') or '').strip(),
+            'candidateFiles': candidate_files,
+            'blockedEntries': blocked_entries,
+            'candidateFileCount': len(candidate_files),
+            'blockedEntryCount': len(blocked_entries),
+            'selectedCandidateCount': sum(
+                1 for item in candidate_files if item.get('selectedByDefault') is True
+            ),
+            'managedRootNames': list(comparison_result.get('managedRootNames', []) or []),
+            'summary': comparison_summary.get('summary') or 'equal',
+            'recommendation': comparison_summary.get('recommendation') or 'none',
+            'localToServerCandidateCount': comparison_summary.get('localToServerCandidateCount', 0),
+            'serverToLocalCandidateCount': comparison_summary.get('serverToLocalCandidateCount', 0),
+            'managedLocalToServerNewerCount': comparison_summary.get('managedLocalToServerNewerCount', 0),
+            'managedServerToLocalNewerCount': comparison_summary.get('managedServerToLocalNewerCount', 0),
+            'equalFileCount': comparison_summary.get('equalFileCount', 0),
+            'hasMixedUpdates': comparison_summary.get('summary') == 'mixed',
+        }
+
+    def _apply_local_project_manager_direction(
+        self,
+        local_project_path,
+        server_project_path=None,
+        selected_relative_paths=None,
+        launch_context=None,
+        direction='to_server',
+    ):
+        pair_resolution = self._resolve_local_project_manager_pair(
+            local_project_path,
+            server_project_path,
+            launch_context,
+        )
+        if pair_resolution.get('status') != 'success':
+            return pair_resolution
+
+        normalized_relative_paths = self._normalize_local_project_manager_relative_paths(
+            selected_relative_paths
+        )
+        direction_key = str(direction or '').strip().lower()
+        if not normalized_relative_paths:
+            return {
+                'status': 'error',
+                'code': 'no_files_selected',
+                'message': (
+                    'Select at least one file to copy to local.'
+                    if direction_key == 'to_local'
+                    else 'Select at least one file to sync to the server.'
+                ),
+            }
+
+        normalized_local_project_path = pair_resolution.get('localProjectPath') or ''
+        normalized_server_project_path = pair_resolution.get('serverProjectPath') or ''
+        comparison_result = self._compare_local_project_manager_files(
+            normalized_local_project_path,
+            normalized_server_project_path,
+        )
+        if comparison_result.get('status') != 'success':
+            return comparison_result
+
+        if direction_key == 'to_local':
+            candidate_key = 'serverToLocalCandidates'
+            blocked_key = 'serverToLocalBlockedEntries'
+            source_path_key = 'serverPath'
+            destination_path_key = 'localPath'
+            backup_project_root = normalized_local_project_path
+            message_success = 'Selected files copied to local project.'
+            message_empty = 'No files were copied to local project.'
+        else:
+            candidate_key = 'localToServerCandidates'
+            blocked_key = 'localToServerBlockedEntries'
+            source_path_key = 'localPath'
+            destination_path_key = 'serverPath'
+            backup_project_root = normalized_server_project_path
+            message_success = 'Selected files synced to server.'
+            message_empty = 'No files were synced.'
+
+        candidate_lookup = {}
+        for entry in comparison_result.get(candidate_key, []) or []:
+            relative_path = str(entry.get('relativePath') or '').strip()
+            if relative_path:
+                candidate_lookup[relative_path.lower()] = entry
+
+        blocked_lookup = {}
+        for entry in comparison_result.get(blocked_key, []) or []:
+            relative_path = str(entry.get('relativePath') or '').strip()
+            if not relative_path:
+                continue
+            blocked_lookup.setdefault(relative_path.lower(), []).append(entry)
+
+        pending_candidates = []
+        failed_files = []
+        blocked_entries = []
+        seen_blocked_keys = set()
+        for relative_path in normalized_relative_paths:
+            candidate_entry = candidate_lookup.get(relative_path.lower())
+            if candidate_entry:
+                pending_candidates.append(candidate_entry)
+                continue
+
+            matching_blocked_entries = blocked_lookup.get(relative_path.lower(), [])
+            if matching_blocked_entries:
+                for blocked_entry in matching_blocked_entries:
+                    blocked_key_value = (
+                        f"{str(blocked_entry.get('relativePath') or '').strip().lower()}|"
+                        f"{str(blocked_entry.get('localPath') or '').strip().lower()}|"
+                        f"{str(blocked_entry.get('serverPath') or '').strip().lower()}|"
+                        f"{str(blocked_entry.get('reason') or '').strip().lower()}|"
+                        f"{str(blocked_entry.get('error') or '').strip().lower()}"
+                    )
+                    if blocked_key_value in seen_blocked_keys:
+                        continue
+                    seen_blocked_keys.add(blocked_key_value)
+                    blocked_entries.append(blocked_entry)
+                continue
+
+            source_fallback_path = os.path.normpath(
+                os.path.join(
+                    normalized_server_project_path if direction_key == 'to_local' else normalized_local_project_path,
+                    relative_path,
+                )
+            )
+            destination_fallback_path = os.path.normpath(
+                os.path.join(
+                    normalized_local_project_path if direction_key == 'to_local' else normalized_server_project_path,
+                    relative_path,
+                )
+            )
+            failed_files.append({
+                'relativePath': relative_path,
+                'source': source_fallback_path,
+                'destination': destination_fallback_path,
+                'error': 'Selected file is no longer available for copying.',
+            })
+
+        backup_result = {
+            'status': 'success',
+            'backupCreated': False,
+            'backupPath': '',
+            'copiedFileCount': 0,
+            'failedFiles': [],
+        }
+        if pending_candidates:
+            backup_result = self._create_local_project_manager_backup(
+                backup_project_root,
+                [entry.get('relativePath') for entry in pending_candidates],
+                direction=direction_key,
+            )
+            if backup_result.get('status') != 'success':
+                return backup_result
+            if backup_result.get('failedFiles'):
+                return {
+                    'status': 'error',
+                    'code': 'backup_failed',
+                    'message': 'Failed to create a backup before copying files.',
+                    'localProjectPath': normalized_local_project_path,
+                    'serverProjectPath': normalized_server_project_path,
+                    'backupPath': backup_result.get('backupPath') or '',
+                    'backupResult': backup_result,
+                }
+
+        copied_files = []
+        for candidate_entry in pending_candidates:
+            relative_path = str(candidate_entry.get('relativePath') or '').strip()
+            if not relative_path:
+                continue
+
+            source_path = os.path.normpath(
+                str(candidate_entry.get(source_path_key) or '').strip()
+            )
+            destination_path = os.path.normpath(
+                str(candidate_entry.get(destination_path_key) or '').strip()
+            )
+
+            if not self._is_copy_project_path_file(source_path):
+                failed_files.append({
+                    'relativePath': relative_path,
+                    'source': source_path,
+                    'destination': destination_path,
+                    'error': 'Source file was not found.',
+                })
+                continue
+
+            conflict_path = self._get_local_project_manager_target_conflict(
+                backup_project_root,
+                relative_path,
+            )
+            if conflict_path:
+                blocked_entry = self._build_local_project_manager_blocked_entry(
+                    normalized_local_project_path,
+                    normalized_server_project_path,
+                    relative_path,
+                    'file_directory_conflict',
+                    local_path=destination_path if direction_key == 'to_local' else source_path,
+                    server_path=destination_path if direction_key != 'to_local' else source_path,
+                )
+                blocked_key_value = (
+                    f"{str(blocked_entry.get('relativePath') or '').strip().lower()}|"
+                    f"{str(blocked_entry.get('localPath') or '').strip().lower()}|"
+                    f"{str(blocked_entry.get('serverPath') or '').strip().lower()}|"
+                    f"{str(blocked_entry.get('reason') or '').strip().lower()}|"
+                    f"{str(blocked_entry.get('error') or '').strip().lower()}"
+                )
+                if blocked_key_value not in seen_blocked_keys:
+                    seen_blocked_keys.add(blocked_key_value)
+                    blocked_entries.append(blocked_entry)
+                continue
+
+            try:
+                self._copy_local_project_manager_file(source_path, destination_path)
+                copied_files.append({
+                    'relativePath': relative_path,
+                    'source': source_path,
+                    'destination': destination_path,
+                })
+            except Exception as e:
+                failed_files.append({
+                    'relativePath': relative_path,
+                    'source': source_path,
+                    'destination': destination_path,
+                    'error': str(e),
+                })
+
+        return {
+            'status': 'success',
+            'message': message_success if copied_files else message_empty,
+            'localProjectPath': normalized_local_project_path,
+            'serverProjectPath': normalized_server_project_path,
+            'resolvedServerProjectPath': pair_resolution.get('resolvedServerProjectPath') or '',
+            'resolvedFromWorkroom': bool(pair_resolution.get('resolvedFromWorkroom')),
+            'resolutionMode': str(pair_resolution.get('resolutionMode') or '').strip() or 'manual_selection',
+            'workroomProjectPath': str(pair_resolution.get('workroomProjectPath') or '').strip(),
+            'copiedFiles': copied_files,
+            'copiedFileCount': len(copied_files),
+            'failedFiles': failed_files,
+            'failedFileCount': len(failed_files),
+            'blockedEntries': blocked_entries,
+            'blockedEntryCount': len(blocked_entries),
+            'backupCreated': bool(backup_result.get('backupCreated')),
+            'backupPath': str(backup_result.get('backupPath') or '').strip(),
+            'backupResult': backup_result,
+        }
+
+    def preview_local_project_manager_copy_to_local(
+        self,
+        local_project_path,
+        server_project_path=None,
+        launch_context=None,
+    ):
+        """Compare a server project against an existing local copy and recommend overwrite-to-local files."""
+        try:
+            return self._preview_local_project_manager_direction(
+                local_project_path,
+                server_project_path,
+                launch_context,
+                direction='to_local',
+            )
+        except Exception as e:
+            logging.error(f"Error previewing Local Project Manager copy-to-local: {e}")
+            return {'status': 'error', 'message': str(e)}
+
     def preview_local_project_manager_sync(self, local_project_path, server_project_path=None, launch_context=None):
         """Compare a local project copy against the server project and recommend sync-up files."""
         try:
-            normalized_local_project_path = os.path.normpath(str(local_project_path or '').strip())
-            if not normalized_local_project_path:
-                return {
-                    'status': 'error',
-                    'code': 'local_project_path_required',
-                    'message': 'Local project path is required.',
-                }
-            if not os.path.isdir(self._to_windows_extended_path(normalized_local_project_path)):
-                return {
-                    'status': 'error',
-                    'message': 'Local project path does not exist.',
-                }
-
-            settings = self.get_user_settings()
-            source_resolution = self._resolve_copy_project_source_path(
-                server_project_path, launch_context, settings
+            return self._preview_local_project_manager_direction(
+                local_project_path,
+                server_project_path,
+                launch_context,
+                direction='to_server',
             )
-            if source_resolution.get('status') != 'success':
-                return source_resolution
-
-            normalized_server_path = source_resolution.get('path') or ''
-            resolved_from_workroom = bool(source_resolution.get('resolvedFromWorkroom'))
-            resolution_mode = str(source_resolution.get('resolutionMode') or '').strip()
-            workroom_project_path = str(source_resolution.get('workroomProjectPath') or '').strip()
-
-            if not os.path.isdir(self._to_windows_extended_path(normalized_server_path)):
-                if resolved_from_workroom:
-                    return {
-                        'status': 'error',
-                        'code': 'manual_selection_required',
-                        'message': 'Could not auto-resolve project folder from Project Workroom. Please select it manually.',
-                        'resolvedFromWorkroom': True,
-                        'resolvedServerProjectPath': normalized_server_path,
-                        'resolutionMode': 'project_id_ancestor_not_accessible',
-                        'workroomProjectPath': workroom_project_path,
-                    }
-                return {'status': 'error', 'message': 'Server project path does not exist.'}
-
-            local_scan = self._scan_copy_project_files(normalized_local_project_path)
-            candidate_files = []
-            blocked_entries = []
-            seen_blocked_paths = set()
-
-            def add_blocked_entry(entry):
-                relative_key = str(entry.get('relativePath') or '').strip().lower()
-                server_key = str(entry.get('serverPath') or '').strip().lower()
-                dedupe_key = f"{relative_key}|{server_key}|{entry.get('reason')}"
-                if dedupe_key in seen_blocked_paths:
-                    return
-                seen_blocked_paths.add(dedupe_key)
-                blocked_entries.append(entry)
-
-            for scan_error in local_scan.get('scanErrors', []):
-                add_blocked_entry(
-                    self._build_local_project_manager_blocked_entry(
-                        normalized_local_project_path,
-                        normalized_server_path,
-                        scan_error.get('relativePath') or '',
-                        'scan_error',
-                        local_path=scan_error.get('path') or '',
-                        error=scan_error.get('error') or '',
-                    )
-                )
-
-            for local_file in local_scan.get('files', []):
-                relative_path = local_file.get('relativePath') or ''
-                if not relative_path:
-                    continue
-
-                local_file_path = local_file.get('path') or os.path.join(
-                    normalized_local_project_path, relative_path
-                )
-                server_file_path = os.path.normpath(
-                    os.path.join(normalized_server_path, relative_path)
-                )
-                parent_collision_path = self._get_local_project_manager_path_collision(
-                    normalized_server_path, relative_path
-                )
-                if parent_collision_path:
-                    add_blocked_entry(
-                        self._build_local_project_manager_blocked_entry(
-                            normalized_local_project_path,
-                            normalized_server_path,
-                            relative_path,
-                            'file_directory_conflict',
-                            local_path=local_file_path,
-                            server_path=parent_collision_path,
-                        )
-                    )
-                    continue
-
-                if os.path.exists(self._to_windows_extended_path(server_file_path)):
-                    if self._is_copy_project_path_directory(server_file_path):
-                        add_blocked_entry(
-                            self._build_local_project_manager_blocked_entry(
-                                normalized_local_project_path,
-                                normalized_server_path,
-                                relative_path,
-                                'file_directory_conflict',
-                                local_path=local_file_path,
-                                server_path=server_file_path,
-                            )
-                        )
-                        continue
-
-                    if not self._is_copy_project_path_file(server_file_path):
-                        add_blocked_entry(
-                            self._build_local_project_manager_blocked_entry(
-                                normalized_local_project_path,
-                                normalized_server_path,
-                                relative_path,
-                                'blocked_server_path',
-                                local_path=local_file_path,
-                                server_path=server_file_path,
-                            )
-                        )
-                        continue
-
-                    server_modified_timestamp = os.path.getmtime(
-                        self._to_windows_extended_path(server_file_path)
-                    )
-                    if float(local_file.get('modifiedTimestamp') or 0.0) <= float(
-                        server_modified_timestamp or 0.0
-                    ):
-                        continue
-
-                    candidate_files.append({
-                        'relativePath': relative_path,
-                        'localPath': os.path.normpath(local_file_path),
-                        'serverPath': server_file_path,
-                        'reason': 'local_newer',
-                        'localModifiedAt': local_file.get('modifiedAt') or '',
-                        'serverModifiedAt': _get_file_modified_iso(server_file_path),
-                        'sizeBytes': local_file.get('sizeBytes'),
-                        'sizeLabel': local_file.get('sizeLabel') or 'Size unavailable',
-                        'selectedByDefault': True,
-                    })
-                    continue
-
-                candidate_files.append({
-                    'relativePath': relative_path,
-                    'localPath': os.path.normpath(local_file_path),
-                    'serverPath': server_file_path,
-                    'reason': 'server_missing',
-                    'localModifiedAt': local_file.get('modifiedAt') or '',
-                    'serverModifiedAt': '',
-                    'sizeBytes': local_file.get('sizeBytes'),
-                    'sizeLabel': local_file.get('sizeLabel') or 'Size unavailable',
-                    'selectedByDefault': True,
-                })
-
-            candidate_files.sort(key=lambda item: str(item.get('relativePath') or '').lower())
-            blocked_entries.sort(key=lambda item: str(item.get('relativePath') or '').lower())
-
-            return {
-                'status': 'success',
-                'localProjectPath': normalized_local_project_path,
-                'serverProjectPath': normalized_server_path,
-                'resolvedServerProjectPath': normalized_server_path,
-                'resolvedFromWorkroom': resolved_from_workroom,
-                'resolutionMode': resolution_mode or 'manual_selection',
-                'workroomProjectPath': workroom_project_path,
-                'candidateFiles': candidate_files,
-                'blockedEntries': blocked_entries,
-                'candidateFileCount': len(candidate_files),
-                'blockedEntryCount': len(blocked_entries),
-                'selectedCandidateCount': sum(
-                    1 for item in candidate_files if item.get('selectedByDefault') is True
-                ),
-            }
         except Exception as e:
             logging.error(f"Error previewing Local Project Manager sync: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def apply_local_project_manager_copy_to_local(
+        self,
+        local_project_path,
+        server_project_path,
+        selected_relative_paths,
+        launch_context=None,
+    ):
+        """Copy selected server files into the existing local project using relative paths."""
+        try:
+            return self._apply_local_project_manager_direction(
+                local_project_path,
+                server_project_path,
+                selected_relative_paths,
+                launch_context,
+                direction='to_local',
+            )
+        except Exception as e:
+            logging.error(f"Error applying Local Project Manager copy-to-local: {e}")
             return {'status': 'error', 'message': str(e)}
 
     def apply_local_project_manager_sync(self, local_project_path, server_project_path, selected_relative_paths, launch_context=None):
         """Copy selected local files back to the server project using relative paths."""
         try:
-            normalized_local_project_path = os.path.normpath(str(local_project_path or '').strip())
-            if not normalized_local_project_path:
-                return {
-                    'status': 'error',
-                    'code': 'local_project_path_required',
-                    'message': 'Local project path is required.',
-                }
-            if not os.path.isdir(self._to_windows_extended_path(normalized_local_project_path)):
-                return {
-                    'status': 'error',
-                    'message': 'Local project path does not exist.',
-                }
-
-            settings = self.get_user_settings()
-            source_resolution = self._resolve_copy_project_source_path(
-                server_project_path, launch_context, settings
+            return self._apply_local_project_manager_direction(
+                local_project_path,
+                server_project_path,
+                selected_relative_paths,
+                launch_context,
+                direction='to_server',
             )
-            if source_resolution.get('status') != 'success':
-                return source_resolution
-
-            normalized_server_path = source_resolution.get('path') or ''
-            resolved_from_workroom = bool(source_resolution.get('resolvedFromWorkroom'))
-            resolution_mode = str(source_resolution.get('resolutionMode') or '').strip()
-            workroom_project_path = str(source_resolution.get('workroomProjectPath') or '').strip()
-
-            if not os.path.isdir(self._to_windows_extended_path(normalized_server_path)):
-                if resolved_from_workroom:
-                    return {
-                        'status': 'error',
-                        'code': 'manual_selection_required',
-                        'message': 'Could not auto-resolve project folder from Project Workroom. Please select it manually.',
-                        'resolvedFromWorkroom': True,
-                        'resolvedServerProjectPath': normalized_server_path,
-                        'resolutionMode': 'project_id_ancestor_not_accessible',
-                        'workroomProjectPath': workroom_project_path,
-                    }
-                return {'status': 'error', 'message': 'Server project path does not exist.'}
-
-            normalized_relative_paths = self._normalize_local_project_manager_relative_paths(
-                selected_relative_paths
-            )
-            if not normalized_relative_paths:
-                return {
-                    'status': 'error',
-                    'code': 'no_files_selected',
-                    'message': 'Select at least one file to sync to the server.',
-                }
-
-            copied_files = []
-            failed_files = []
-            blocked_entries = []
-            seen_blocked_paths = set()
-
-            for relative_path in normalized_relative_paths:
-                local_file_path = os.path.normpath(
-                    os.path.join(normalized_local_project_path, relative_path)
-                )
-                server_file_path = os.path.normpath(
-                    os.path.join(normalized_server_path, relative_path)
-                )
-
-                if not self._is_copy_project_path_file(local_file_path):
-                    failed_files.append({
-                        'relativePath': relative_path,
-                        'source': local_file_path,
-                        'destination': server_file_path,
-                        'error': 'Local file was not found.',
-                    })
-                    continue
-
-                blocked_server_path = self._get_local_project_manager_path_collision(
-                    normalized_server_path, relative_path
-                )
-                if blocked_server_path:
-                    blocked_entry = self._build_local_project_manager_blocked_entry(
-                        normalized_local_project_path,
-                        normalized_server_path,
-                        relative_path,
-                        'file_directory_conflict',
-                        local_path=local_file_path,
-                        server_path=blocked_server_path,
-                    )
-                    dedupe_key = f"{relative_path.lower()}|{blocked_server_path.lower()}"
-                    if dedupe_key not in seen_blocked_paths:
-                        seen_blocked_paths.add(dedupe_key)
-                        blocked_entries.append(blocked_entry)
-                    continue
-
-                if os.path.exists(self._to_windows_extended_path(server_file_path)) and self._is_copy_project_path_directory(server_file_path):
-                    blocked_entry = self._build_local_project_manager_blocked_entry(
-                        normalized_local_project_path,
-                        normalized_server_path,
-                        relative_path,
-                        'file_directory_conflict',
-                        local_path=local_file_path,
-                        server_path=server_file_path,
-                    )
-                    dedupe_key = f"{relative_path.lower()}|{server_file_path.lower()}"
-                    if dedupe_key not in seen_blocked_paths:
-                        seen_blocked_paths.add(dedupe_key)
-                        blocked_entries.append(blocked_entry)
-                    continue
-
-                try:
-                    self._copy_local_project_manager_file(local_file_path, server_file_path)
-                    copied_files.append({
-                        'relativePath': relative_path,
-                        'source': local_file_path,
-                        'destination': server_file_path,
-                    })
-                except Exception as e:
-                    failed_files.append({
-                        'relativePath': relative_path,
-                        'source': local_file_path,
-                        'destination': server_file_path,
-                        'error': str(e),
-                    })
-
-            return {
-                'status': 'success',
-                'message': 'Selected files synced to server.' if copied_files else 'No files were synced.',
-                'localProjectPath': normalized_local_project_path,
-                'serverProjectPath': normalized_server_path,
-                'resolvedServerProjectPath': normalized_server_path,
-                'resolvedFromWorkroom': resolved_from_workroom,
-                'resolutionMode': resolution_mode or 'manual_selection',
-                'workroomProjectPath': workroom_project_path,
-                'copiedFiles': copied_files,
-                'copiedFileCount': len(copied_files),
-                'failedFiles': failed_files,
-                'failedFileCount': len(failed_files),
-                'blockedEntries': blocked_entries,
-            }
         except Exception as e:
             logging.error(f"Error applying Local Project Manager sync: {e}")
             return {'status': 'error', 'message': str(e)}
@@ -8731,6 +9394,7 @@ Return ONLY the JSON object.
 
             default_folder_names = self._get_copy_project_default_folder_names(settings)
             default_folder_keys = {folder_name.lower() for folder_name in default_folder_names}
+            excluded_root_name_keys = self._get_local_project_manager_excluded_root_names()
             folder_options = []
 
             with os.scandir(self._to_windows_extended_path(normalized_server_path)) as entries:
@@ -8740,6 +9404,8 @@ Return ONLY the JSON object.
 
                     folder_name = str(entry.name or '').strip()
                     if not folder_name:
+                        continue
+                    if folder_name.lower() in excluded_root_name_keys:
                         continue
 
                     folder_path = os.path.normpath(os.path.join(normalized_server_path, folder_name))
@@ -9032,6 +9698,273 @@ Return ONLY the JSON object.
             }
         except Exception as e:
             logging.error(f"Error copying project locally: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def compare_project_timestamps(self, local_project_path, server_project_path):
+        """Compare file timestamps between local and server project folders."""
+        try:
+            normalized_local = os.path.normpath(str(local_project_path or '').strip())
+            normalized_server = os.path.normpath(str(server_project_path or '').strip())
+
+            if not normalized_local:
+                return {'status': 'error', 'message': 'Local project path is required.'}
+            if not normalized_server:
+                return {'status': 'error', 'message': 'Server project path is required.'}
+
+            local_ext = self._to_windows_extended_path(normalized_local)
+            server_ext = self._to_windows_extended_path(normalized_server)
+
+            if not os.path.isdir(local_ext):
+                return {'status': 'error', 'message': 'Local project path does not exist.'}
+            if not os.path.isdir(server_ext):
+                return {'status': 'error', 'message': 'Server project path does not exist.'}
+
+            comparison_result = self._compare_local_project_manager_files(
+                normalized_local,
+                normalized_server,
+            )
+            if comparison_result.get('status') != 'success':
+                return comparison_result
+
+            comparison_summary = self._summarize_local_project_manager_comparison(
+                comparison_result
+            )
+            newer_local_files = list(
+                entry
+                for entry in (comparison_result.get('localToServerCandidates', []) or [])
+                if str(entry.get('changeType') or '').strip().lower() == 'newer'
+            )
+            newer_server_files = list(
+                entry
+                for entry in (comparison_result.get('serverToLocalCandidates', []) or [])
+                if str(entry.get('changeType') or '').strip().lower() == 'newer'
+            )
+            equal_files = list(comparison_result.get('equalFiles', []) or [])
+
+            return {
+                'status': 'success',
+                'summary': comparison_summary.get('summary') or 'equal',
+                'recommendation': comparison_summary.get('recommendation') or 'none',
+                'newerLocalFiles': newer_local_files,
+                'newerServerFiles': newer_server_files,
+                'equalFiles': equal_files,
+                'localToServerCandidateCount': comparison_summary.get('localToServerCandidateCount', 0),
+                'serverToLocalCandidateCount': comparison_summary.get('serverToLocalCandidateCount', 0),
+                'managedLocalToServerNewerCount': comparison_summary.get('managedLocalToServerNewerCount', 0),
+                'managedServerToLocalNewerCount': comparison_summary.get('managedServerToLocalNewerCount', 0),
+                'localToServerBlockedEntries': list(
+                    comparison_result.get('localToServerBlockedEntries', []) or []
+                ),
+                'serverToLocalBlockedEntries': list(
+                    comparison_result.get('serverToLocalBlockedEntries', []) or []
+                ),
+                'localProjectPath': normalized_local,
+                'serverProjectPath': normalized_server,
+            }
+        except Exception as e:
+            logging.error(f"Error comparing project timestamps: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def _create_local_project_backup(self, source_path, backup_type='server'):
+        """Create a timestamped backup before overwriting files."""
+        try:
+            source_ext = self._to_windows_extended_path(os.path.normpath(source_path))
+            if not os.path.exists(source_ext):
+                return {'status': 'error', 'message': 'Source path does not exist.'}
+
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+
+            if backup_type == 'server':
+                backup_root = os.path.join(os.path.dirname(source_path), 'Archive')
+            else:
+                local_root = os.path.join(_get_windows_documents_dir(), 'Local Projects')
+                backup_root = os.path.join(local_root, '0 Archive')
+
+            os.makedirs(self._to_windows_extended_path(backup_root), exist_ok=True)
+
+            folder_name = os.path.basename(source_path.rstrip('\\/'))
+            backup_path = os.path.join(backup_root, f'{folder_name}_{timestamp}')
+
+            copy_result = self._copy_folder_contents(source_path, backup_path)
+
+            return {
+                'status': 'success',
+                'backupPath': backup_path,
+                'backupType': backup_type,
+                'copiedFileCount': copy_result.get('copiedFileCount', 0),
+                'failedFiles': copy_result.get('failedFiles', []),
+            }
+        except Exception as e:
+            logging.error(f"Error creating backup: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def _cleanup_old_backups(self, backup_root, max_backups=5):
+        """Keep only the most recent backups, delete oldest ones."""
+        try:
+            backup_ext = self._to_windows_extended_path(os.path.normpath(backup_root))
+            if not os.path.isdir(backup_ext):
+                return
+
+            existing_backups = []
+            for entry in os.scandir(backup_ext):
+                if entry.is_dir():
+                    existing_backups.append({
+                        'name': entry.name,
+                        'path': entry.path,
+                        'created': entry.stat().st_ctime,
+                    })
+
+            if len(existing_backups) <= max_backups:
+                return
+
+            existing_backups.sort(key=lambda x: x['created'])
+            backups_to_delete = existing_backups[:-max_backups]
+
+            for backup in backups_to_delete:
+                try:
+                    shutil.rmtree(backup['path'], ignore_errors=True)
+                except Exception:
+                    pass
+        except Exception as e:
+            logging.warning(f"Error cleaning up old backups: {e}")
+
+    def copy_project_to_server(self, local_project_path=None, launch_context=None, selected_folder_names=None, selected_folder_requests=None):
+        """Copy key project folders from local Documents\\Local Projects to server."""
+        try:
+            normalized_local_path = os.path.normpath(str(local_project_path or '').strip())
+            if not normalized_local_path:
+                return {'status': 'error', 'message': 'Local project path is required.'}
+
+            local_ext = self._to_windows_extended_path(normalized_local_path)
+            if not os.path.isdir(local_ext):
+                return {'status': 'error', 'message': 'Local project path does not exist.'}
+
+            project_name = os.path.basename(normalized_local_path.rstrip('\\/'))
+            if not project_name:
+                return {'status': 'error', 'message': 'Invalid local project path.'}
+
+            source = str(launch_context.get('source') or '').strip().lower() if launch_context else ''
+            server_path = ''
+            if source == 'workroom':
+                server_path = str(launch_context.get('rootProjectPath') or launch_context.get('projectPath') or '').strip()
+            elif launch_context and launch_context.get('projectPath'):
+                server_path = str(launch_context.get('projectPath')).strip()
+
+            if not server_path:
+                return {'status': 'error', 'message': 'Server project path not provided. Open from a deliverable to specify the server location.'}
+
+            normalized_server_path = os.path.normpath(server_path)
+            server_ext = self._to_windows_extended_path(normalized_server_path)
+            if not os.path.isdir(server_ext):
+                return {'status': 'error', 'message': 'Server project path does not exist.'}
+
+            settings = self.get_user_settings()
+            disciplines = self._get_copy_project_disciplines(settings)
+
+            if selected_folder_requests is not None:
+                folder_requests = self._normalize_copy_project_folder_requests(selected_folder_requests)
+            elif selected_folder_names is None:
+                folder_requests = [
+                    {
+                        'name': folder_name,
+                        'mode': 'all',
+                        'selectedChildNames': [],
+                        'includeParentRootFiles': False,
+                    }
+                    for folder_name in self._get_copy_project_default_folder_names(settings)
+                ]
+            else:
+                folder_requests = [
+                    {
+                        'name': folder_name,
+                        'mode': 'all',
+                        'selectedChildNames': [],
+                        'includeParentRootFiles': False,
+                    }
+                    for folder_name in self._normalize_copy_project_folder_names(selected_folder_names)
+                ]
+
+            if not folder_requests:
+                return {
+                    'status': 'error',
+                    'code': 'no_folders_selected',
+                    'message': 'Select at least one folder to copy to server.',
+                }
+
+            backup_results = []
+            for folder_request in folder_requests:
+                folder_name = folder_request.get('name') or ''
+                if not folder_name:
+                    continue
+
+                server_folder = os.path.join(normalized_server_path, folder_name)
+                if os.path.isdir(self._to_windows_extended_path(server_folder)):
+                    backup_result = self._create_local_project_backup(server_folder, backup_type='server')
+                    backup_results.append(backup_result)
+
+                    backup_root = os.path.join(normalized_server_path, 'Archive')
+                    self._cleanup_old_backups(backup_root, max_backups=5)
+
+            local_backup_root = os.path.join(_get_windows_documents_dir(), 'Local Projects', '0 Archive')
+            self._cleanup_old_backups(local_backup_root, max_backups=5)
+
+            copied_folders = []
+            missing_local_folders = []
+            copied_file_count = 0
+            failed_files = []
+
+            for folder_request in folder_requests:
+                folder_name = folder_request.get('name') or ''
+                if not folder_name:
+                    continue
+
+                source_folder = os.path.join(normalized_local_path, folder_name)
+                destination_folder = os.path.join(normalized_server_path, folder_name)
+
+                if os.path.isdir(self._to_windows_extended_path(source_folder)):
+                    local_backup = self._create_local_project_backup(destination_folder, backup_type='local')
+                    backup_results.append(local_backup)
+
+                    if str(folder_request.get('mode') or '').strip().lower() == 'subset':
+                        copy_result = self._copy_folder_selected_children(
+                            source_folder,
+                            destination_folder,
+                            folder_request.get('selectedChildNames'),
+                            bool(folder_request.get('includeParentRootFiles')),
+                        )
+                        if copy_result.get('copiedAnySourceContent'):
+                            copied_folders.append(folder_name)
+                        copied_file_count += int(copy_result.get('copiedFileCount', 0) or 0)
+                        failed_files.extend(copy_result.get('failedFiles', []))
+                    else:
+                        copy_result = self._copy_folder_contents(source_folder, destination_folder)
+                        copied_folders.append(folder_name)
+                        copied_file_count += int(copy_result.get('copiedFileCount', 0) or 0)
+                        failed_files.extend(copy_result.get('failedFiles', []))
+                else:
+                    missing_local_folders.append(folder_name)
+
+            failed_file_count = len(failed_files)
+            message = 'Project copied to server.'
+            if failed_file_count:
+                message = f'Project copied to server with warnings: {failed_file_count} file(s) failed.'
+
+            return {
+                'status': 'success',
+                'message': message,
+                'localProjectPath': normalized_local_path,
+                'serverProjectPath': normalized_server_path,
+                'projectName': project_name,
+                'disciplines': disciplines,
+                'copiedFolders': copied_folders,
+                'missingLocalFolders': missing_local_folders,
+                'copiedFileCount': copied_file_count,
+                'failedFileCount': failed_file_count,
+                'failedFiles': failed_files,
+                'backupResults': [r for r in backup_results if r.get('status') == 'success'],
+            }
+        except Exception as e:
+            logging.error(f"Error copying project to server: {e}")
             return {'status': 'error', 'message': str(e)}
 
     def get_wire_sizer_url(self):

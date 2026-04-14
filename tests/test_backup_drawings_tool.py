@@ -749,6 +749,28 @@ class LocalProjectManagerBackendTests(unittest.TestCase):
             )
             self.assertTrue(all(entry["lastModifiedAt"] for entry in result["projects"]))
 
+    def test_list_local_project_manager_projects_excludes_local_archive_folder(self):
+        with tempfile.TemporaryDirectory(prefix="acies-local-project-manager-list-") as temp_dir:
+            docs_root = Path(temp_dir) / "DocumentsRoot"
+            local_root = docs_root / "Local Projects"
+            self._write_file(
+                local_root / "260243 BofA - Eastport Plaza" / "Electrical" / "power.dwg",
+                "power",
+            )
+            self._write_file(
+                local_root / "0 Archive" / "260243 BofA - Eastport Plaza" / "backup.dwg",
+                "backup",
+            )
+
+            with patch.object(main_module, "_get_windows_documents_dir", return_value=str(docs_root)):
+                result = self.api.list_local_project_manager_projects()
+
+            self.assertEqual("success", result["status"])
+            self.assertEqual(
+                ["260243 BofA - Eastport Plaza"],
+                [entry["name"] for entry in result["projects"]],
+            )
+
     def test_preview_local_project_manager_sync_returns_newer_and_missing_candidates_and_blocked_entries(self):
         with tempfile.TemporaryDirectory(prefix="acies-local-project-manager-preview-") as temp_dir:
             local_project = Path(temp_dir) / "DocumentsRoot" / "Local Projects" / "260243 BofA - Eastport Plaza"
@@ -785,11 +807,211 @@ class LocalProjectManagerBackendTests(unittest.TestCase):
             }
             self.assertEqual("local_newer", candidate_lookup[os.path.join("Electrical", "newer.dwg")]["reason"])
             self.assertEqual("server_missing", candidate_lookup[os.path.join("Electrical", "missing.txt")]["reason"])
+            self.assertEqual(
+                "Electrical",
+                candidate_lookup[os.path.join("Electrical", "newer.dwg")]["rootFolder"],
+            )
+            self.assertEqual(
+                "managed",
+                candidate_lookup[os.path.join("Electrical", "newer.dwg")]["scopeType"],
+            )
+            self.assertEqual(
+                "newer",
+                candidate_lookup[os.path.join("Electrical", "newer.dwg")]["changeType"],
+            )
+            self.assertEqual(
+                "Newer than server",
+                candidate_lookup[os.path.join("Electrical", "newer.dwg")]["directionLabel"],
+            )
+            self.assertEqual(
+                "missing",
+                candidate_lookup[os.path.join("Electrical", "missing.txt")]["changeType"],
+            )
+            self.assertEqual(
+                "Missing on server",
+                candidate_lookup[os.path.join("Electrical", "missing.txt")]["directionLabel"],
+            )
             self.assertNotIn(os.path.join("Electrical", "older.txt"), candidate_lookup)
             blocked_lookup = {
                 entry["relativePath"]: entry for entry in result["blockedEntries"]
             }
             self.assertEqual("file_directory_conflict", blocked_lookup["Collision.txt"]["reason"])
+
+    def test_local_project_manager_non_managed_roots_are_additive_only(self):
+        with tempfile.TemporaryDirectory(prefix="acies-local-project-manager-additive-only-") as temp_dir:
+            local_project = Path(temp_dir) / "DocumentsRoot" / "Local Projects" / "260243 BofA - Eastport Plaza"
+            server_project = Path(temp_dir) / "ServerRoot" / "260243 BofA - Eastport Plaza"
+            arch_local = local_project / "Arch" / "plans.dwg"
+            arch_server = server_project / "Arch" / "plans.dwg"
+            local_only = local_project / "Documents" / "local-only.txt"
+            server_only = server_project / "RFI" / "server-only.txt"
+
+            self._write_file(arch_local, "local-arch")
+            self._write_file(arch_server, "server-arch")
+            self._write_file(local_only, "local-only")
+            self._write_file(server_only, "server-only")
+
+            os.utime(arch_local, (2000, 2000))
+            os.utime(arch_server, (1000, 1000))
+
+            with patch.object(self.api, "get_user_settings", return_value=self._settings()):
+                sync_preview = self.api.preview_local_project_manager_sync(
+                    str(local_project),
+                    str(server_project),
+                )
+                copy_preview = self.api.preview_local_project_manager_copy_to_local(
+                    str(local_project),
+                    str(server_project),
+                )
+
+            self.assertEqual("success", sync_preview["status"])
+            self.assertEqual("success", copy_preview["status"])
+
+            sync_lookup = {
+                entry["relativePath"]: entry for entry in sync_preview["candidateFiles"]
+            }
+            copy_lookup = {
+                entry["relativePath"]: entry for entry in copy_preview["candidateFiles"]
+            }
+
+            self.assertNotIn(os.path.join("Arch", "plans.dwg"), sync_lookup)
+            self.assertNotIn(os.path.join("Arch", "plans.dwg"), copy_lookup)
+            self.assertEqual(
+                "additive_only",
+                sync_lookup[os.path.join("Documents", "local-only.txt")]["scopeType"],
+            )
+            self.assertEqual(
+                "missing",
+                sync_lookup[os.path.join("Documents", "local-only.txt")]["changeType"],
+            )
+            self.assertEqual(
+                "server_missing",
+                sync_lookup[os.path.join("Documents", "local-only.txt")]["reason"],
+            )
+            self.assertEqual(
+                "additive_only",
+                copy_lookup[os.path.join("RFI", "server-only.txt")]["scopeType"],
+            )
+            self.assertEqual(
+                "missing",
+                copy_lookup[os.path.join("RFI", "server-only.txt")]["changeType"],
+            )
+            self.assertEqual(
+                "local_missing",
+                copy_lookup[os.path.join("RFI", "server-only.txt")]["reason"],
+            )
+
+    def test_local_project_manager_uses_all_configured_disciplines_as_managed_roots(self):
+        with tempfile.TemporaryDirectory(prefix="acies-local-project-manager-managed-roots-") as temp_dir:
+            local_project = Path(temp_dir) / "DocumentsRoot" / "Local Projects" / "260243 BofA - Eastport Plaza"
+            server_project = Path(temp_dir) / "ServerRoot" / "260243 BofA - Eastport Plaza"
+            mechanical_local = local_project / "Mechanical" / "hvac.dwg"
+            mechanical_server = server_project / "Mechanical" / "hvac.dwg"
+
+            self._write_file(mechanical_local, "local-mech")
+            self._write_file(mechanical_server, "server-mech")
+            os.utime(mechanical_local, (2000, 2000))
+            os.utime(mechanical_server, (1000, 1000))
+
+            with patch.object(
+                self.api,
+                "get_user_settings",
+                return_value=self._settings(["Electrical", "Mechanical"]),
+            ):
+                result = self.api.preview_local_project_manager_sync(
+                    str(local_project),
+                    str(server_project),
+                )
+
+            self.assertEqual("success", result["status"])
+            self.assertIn("Mechanical", result["managedRootNames"])
+            candidate_lookup = {
+                entry["relativePath"]: entry for entry in result["candidateFiles"]
+            }
+            self.assertEqual(
+                "managed",
+                candidate_lookup[os.path.join("Mechanical", "hvac.dwg")]["scopeType"],
+            )
+            self.assertEqual(
+                "Mechanical",
+                candidate_lookup[os.path.join("Mechanical", "hvac.dwg")]["rootFolder"],
+            )
+
+    def test_preview_local_project_manager_copy_to_local_returns_server_newer_candidates(self):
+        with tempfile.TemporaryDirectory(prefix="acies-local-project-manager-copy-to-local-") as temp_dir:
+            local_project = Path(temp_dir) / "DocumentsRoot" / "Local Projects" / "260243 BofA - Eastport Plaza"
+            server_project = Path(temp_dir) / "ServerRoot" / "260243 BofA - Eastport Plaza"
+            newer_local = local_project / "Electrical" / "older-local.dwg"
+            newer_server = server_project / "Electrical" / "older-local.dwg"
+            missing_local = server_project / "Electrical" / "missing-local.txt"
+
+            self._write_file(newer_local, "local-older")
+            self._write_file(newer_server, "server-newer")
+            self._write_file(missing_local, "server-only")
+
+            os.utime(newer_local, (1000, 1000))
+            os.utime(newer_server, (2000, 2000))
+
+            with patch.object(self.api, "get_user_settings", return_value=self._settings()):
+                result = self.api.preview_local_project_manager_copy_to_local(
+                    str(local_project),
+                    str(server_project),
+                )
+
+            self.assertEqual("success", result["status"])
+            candidate_lookup = {
+                entry["relativePath"]: entry for entry in result["candidateFiles"]
+            }
+            self.assertEqual(
+                "server_newer",
+                candidate_lookup[os.path.join("Electrical", "older-local.dwg")]["reason"],
+            )
+            self.assertEqual(
+                "local_missing",
+                candidate_lookup[os.path.join("Electrical", "missing-local.txt")]["reason"],
+            )
+
+    def test_apply_local_project_manager_copy_to_local_copies_selected_paths_and_creates_local_backup(self):
+        with tempfile.TemporaryDirectory(prefix="acies-local-project-manager-copy-to-local-") as temp_dir:
+            docs_root = Path(temp_dir) / "DocumentsRoot"
+            local_project = docs_root / "Local Projects" / "260243 BofA - Eastport Plaza"
+            server_project = Path(temp_dir) / "ServerRoot" / "260243 BofA - Eastport Plaza"
+            selected_relative_path = os.path.join("Electrical", "Sheets", "power.dwg")
+            self._write_file(local_project / selected_relative_path, "local-old")
+            self._write_file(server_project / selected_relative_path, "server-new")
+
+            os.utime(local_project / selected_relative_path, (1000, 1000))
+            os.utime(server_project / selected_relative_path, (2000, 2000))
+
+            with patch.object(self.api, "get_user_settings", return_value=self._settings()), patch.object(
+                main_module,
+                "_get_windows_documents_dir",
+                return_value=str(docs_root),
+            ), patch.object(
+                self.api,
+                "_build_backup_drawings_timestamp",
+                return_value="20260414_101500",
+            ):
+                result = self.api.apply_local_project_manager_copy_to_local(
+                    str(local_project),
+                    str(server_project),
+                    [selected_relative_path],
+                )
+
+            backup_path = (
+                docs_root
+                / "Local Projects"
+                / "0 Archive"
+                / "260243 BofA - Eastport Plaza"
+                / "20260414_101500"
+                / selected_relative_path
+            )
+            self.assertEqual("success", result["status"])
+            self.assertEqual(1, result["copiedFileCount"])
+            self.assertTrue(result["backupCreated"])
+            self.assertEqual("server-new", (local_project / selected_relative_path).read_text(encoding="utf-8"))
+            self.assertTrue(backup_path.exists())
+            self.assertEqual("local-old", backup_path.read_text(encoding="utf-8"))
 
     def test_apply_local_project_manager_sync_copies_selected_paths_and_reports_blocked_entries(self):
         with tempfile.TemporaryDirectory(prefix="acies-local-project-manager-apply-") as temp_dir:
@@ -813,6 +1035,48 @@ class LocalProjectManagerBackendTests(unittest.TestCase):
             self.assertTrue((server_project / selected_relative_path).exists())
             self.assertEqual(1, len(result["blockedEntries"]))
             self.assertEqual(blocked_relative_path, result["blockedEntries"][0]["relativePath"])
+
+    def test_compare_project_timestamps_uses_shared_engine_and_ignores_archive_folders(self):
+        with tempfile.TemporaryDirectory(prefix="acies-local-project-manager-compare-") as temp_dir:
+            docs_root = Path(temp_dir) / "DocumentsRoot"
+            local_project = docs_root / "Local Projects" / "260243 BofA - Eastport Plaza"
+            server_project = Path(temp_dir) / "ServerRoot" / "260243 BofA - Eastport Plaza"
+            local_newer = local_project / "Electrical" / "local-newer.dwg"
+            server_newer_local = local_project / "Electrical" / "server-newer.dwg"
+            server_newer_server = server_project / "Electrical" / "server-newer.dwg"
+            local_newer_server = server_project / "Electrical" / "local-newer.dwg"
+
+            self._write_file(local_newer, "local-newer")
+            self._write_file(local_newer_server, "server-older")
+            self._write_file(server_newer_local, "local-older")
+            self._write_file(server_newer_server, "server-newer")
+            self._write_file(local_project / "0 Archive" / "ignore-me.dwg", "local-archive")
+            self._write_file(server_project / "Archive" / "ignore-me.dwg", "server-archive")
+
+            os.utime(local_newer, (2000, 2000))
+            os.utime(local_newer_server, (1000, 1000))
+            os.utime(server_newer_local, (1000, 1000))
+            os.utime(server_newer_server, (2000, 2000))
+
+            with patch.object(main_module, "_get_windows_documents_dir", return_value=str(docs_root)):
+                result = self.api.compare_project_timestamps(
+                    str(local_project),
+                    str(server_project),
+                )
+
+            self.assertEqual("success", result["status"])
+            self.assertEqual("mixed", result["summary"])
+            self.assertEqual("sync-to-server", result["recommendation"])
+            self.assertEqual(1, result["managedLocalToServerNewerCount"])
+            self.assertEqual(1, result["managedServerToLocalNewerCount"])
+            self.assertEqual(
+                [os.path.join("Electrical", "local-newer.dwg")],
+                [entry["relativePath"] for entry in result["newerLocalFiles"]],
+            )
+            self.assertEqual(
+                [os.path.join("Electrical", "server-newer.dwg")],
+                [entry["relativePath"] for entry in result["newerServerFiles"]],
+            )
 
 
 class BackupDrawingsUiTests(unittest.TestCase):
@@ -852,26 +1116,33 @@ class LocalProjectManagerUiTests(unittest.TestCase):
     def test_local_project_manager_dialog_markup_exists(self):
         html = INDEX_HTML_PATH.read_text(encoding="utf-8")
         normalized_html = " ".join(html.split())
-        general_title = '<h4 class="tools-section-title">General</h4>'
-        templates_title = '<h4 class="tools-section-title">Templates</h4>'
 
         self.assertIn('id="copyProjectLocallyDlg"', html)
         self.assertIn('id="copyProjectLocallyFolderList"', html)
-        self.assertIn('id="copyProjectLocallyConfirmBtn"', html)
-        self.assertIn('id="copyProjectLocallySyncPanel"', html)
-        self.assertIn('id="localProjectManagerSyncProjectList"', html)
-        self.assertIn('id="localProjectManagerSyncRecommendationList"', html)
-        self.assertIn('id="localProjectManagerSyncConfirmBtn"', html)
+        self.assertIn('id="localProjectManagerActivePanel"', html)
+        self.assertIn('id="localProjectManagerComparisonBanner"', html)
+        self.assertIn('id="localProjectManagerServerPathFallback"', html)
+        self.assertIn('id="localProjectManagerBlockedSection"', html)
+        self.assertIn('id="localProjectManagerBlockedList"', html)
+        self.assertIn('id="localProjectManagerSyncBtn"', html)
         self.assertIn("Local Project Manager", normalized_html)
-        self.assertIn("Copy to Local", normalized_html)
-        self.assertIn("Sync to Server", normalized_html)
-        self.assertIn("Select defaults", normalized_html)
-        self.assertIn("Copy Selected Folders", normalized_html)
-        self.assertIn("Sync Selected Files", normalized_html)
-        self.assertEqual(1, html.count('id="toolCopyProjectLocally"'))
+        self.assertIn(">Server<", html)
+        self.assertIn(">Local<", html)
+        self.assertIn("Select Project Folder", normalized_html)
+        self.assertIn(">Sync<", html)
+        self.assertEqual(1, html.count('role="tabpanel"'))
+        self.assertNotIn('id="copyProjectLocallyConfirmBtn"', html)
+        self.assertNotIn('id="localProjectManagerSyncConfirmBtn"', html)
+        self.assertNotIn('id="localProjectManagerManualServerPath"', html)
+        self.assertNotIn('id="copyProjectLocallyChooseFolderBtn"', html)
+        self.assertNotIn('id="copyProjectLocallyOpenExistingBtn"', html)
+        self.assertNotIn('id="copyProjectLocallySelectDefaultsBtn"', html)
+        self.assertNotIn('id="copyProjectLocallyCopyPanel"', html)
+        self.assertNotIn('id="copyProjectLocallySyncPanel"', html)
+        self.assertNotIn('id="localProjectManagerCopyToLocalRecommendationList"', html)
+        self.assertNotIn('id="localProjectManagerSyncRecommendationList"', html)
+        self.assertEqual(0, html.count('id="toolCopyProjectLocally"'))
         self.assertEqual(1, html.count('id="toolBackupDrawings"'))
-        self.assertLess(html.index(general_title), html.index('id="toolCopyProjectLocally"'))
-        self.assertLess(html.index('id="toolCopyProjectLocally"'), html.index(templates_title))
 
     def test_local_project_manager_script_uses_copy_and_sync_flows(self):
         text = SCRIPT_JS_PATH.read_text(encoding="utf-8")
@@ -883,18 +1154,25 @@ class LocalProjectManagerUiTests(unittest.TestCase):
         self.assertIn('className: "custom-check copy-project-locally-checkbox"', text)
         self.assertIn('"data-copy-project-expand-btn": "true"', text)
         self.assertIn('"data-copy-project-child-checkbox": "true"', text)
-        self.assertIn('"data-local-project-manager-sync-checkbox": "true"', text)
+        self.assertIn('"data-local-project-manager-direction-checkbox": directionKey', text)
+        self.assertIn('"data-local-project-manager-folder-checkbox": direction,', text)
+        self.assertIn('"data-local-project-manager-expand": direction,', text)
         self.assertIn('dialog.dataset.localProjectManagerAction = "copy";', text)
         self.assertIn('dialog.dataset.localProjectManagerAction = "sync";', text)
+        self.assertNotIn('dialog.dataset.localProjectManagerAction = "copy-to-local";', text)
         self.assertNotIn('textContent: "Default"', text)
         self.assertIn("window.pywebview.api.preview_copy_project_locally(", text)
         self.assertIn("window.pywebview.api.preview_copy_project_locally_child_folders(", text)
-        self.assertIn("window.pywebview.api.list_local_project_manager_projects()", text)
-        self.assertIn("window.pywebview.api.preview_local_project_manager_sync(", text)
+        self.assertIn("preview_local_project_manager_copy_to_local", text)
+        self.assertIn("preview_local_project_manager_sync", text)
+        self.assertIn("window.pywebview.api.apply_local_project_manager_copy_to_local(", text)
         self.assertIn("window.pywebview.api.apply_local_project_manager_sync(", text)
+        self.assertIn("if (entry.id === \"toolCopyProjectLocally\") {", text)
+        self.assertIn("void runLocalProjectManager(launchContext);", text)
         self.assertIn('toolId: "toolCopyProjectLocally"', text)
         self.assertIn('message: "Copying selected folders..."', text)
-        self.assertIn('message: "Syncing selected files..."', text)
+        self.assertIn('message: "Syncing server items to local..."', text)
+        self.assertIn('message: "Syncing local items to server..."', text)
         self.assertIn("completeActivity(activityId, {", text)
         self.assertIn(
             "const managerResult = await openCopyProjectLocallyDialog(",
@@ -904,7 +1182,16 @@ class LocalProjectManagerUiTests(unittest.TestCase):
         self.assertIn("getLaunchContextProjectRoot(copyProjectLocallyDialogState.launchContext) || null", text)
         self.assertIn("const launchProjectPath = getLaunchContextProjectRoot(launchContext);", text)
         self.assertIn("selectionPayload.selectedFolderRequests", text)
-        self.assertIn("buildLocalProjectManagerSyncConfirmPayload()", text)
+        self.assertIn("buildLocalProjectManagerCombinedConfirmPayload()", text)
+        self.assertIn("serverSelectedRelativePaths", text)
+        self.assertIn("localSelectedRelativePaths", text)
+        self.assertIn('label: "Open Local Folder"', text)
+        self.assertIn('label: "Open Server Folder"', text)
+        self.assertIn('const localProjectManagerSyncBtn = document.getElementById(', text)
+        self.assertIn("renderLocalProjectManagerActivePane();", text)
+        self.assertIn("function renderLocalProjectManagerActivePane() {", text)
+        self.assertEqual(1, text.count("function createLocalProjectManagerDirectionCandidateRow("))
+        self.assertEqual(1, text.count("function updateLocalProjectManagerFooter("))
         self.assertIn("window.pywebview.api.copy_project_locally(", text)
         self.assertNotIn('window.updateToolStatus("toolCopyProjectLocally"', text)
 
@@ -914,9 +1201,11 @@ class LocalProjectManagerUiTests(unittest.TestCase):
         self.assertIn(".copy-project-locally-dialog", styles)
         self.assertIn(".local-project-manager-dialog", styles)
         self.assertIn(".local-project-manager-tabs", styles)
-        self.assertIn(".local-project-manager-sync-layout", styles)
-        self.assertIn(".local-project-manager-project-row", styles)
+        self.assertIn(".local-project-manager-banner", styles)
+        self.assertIn(".local-project-manager-server-fallback", styles)
         self.assertIn(".local-project-manager-sync-row", styles)
+        self.assertIn(".local-project-manager-folder-row", styles)
+        self.assertIn(".local-project-manager-footer", styles)
         self.assertIn(".local-project-manager-blocked-entry", styles)
         self.assertIn(".copy-project-locally-toolbar", styles)
         self.assertIn(".copy-project-locally-row", styles)

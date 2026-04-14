@@ -40,9 +40,19 @@ class ActivityTrayUiTests(unittest.TestCase):
         self.assertIn("function completeActivity(activityId, patch = {}) {", text)
         self.assertIn("function failActivity(activityId, patch = {}) {", text)
         self.assertIn("function acceptActivity(activityId) {", text)
+        self.assertIn("async function handleActivityTrayOpenFolder(activityId) {", text)
+        self.assertIn("function handleActivityTrayAccept(activityId) {", text)
         self.assertIn("function renderActivityTray() {", text)
         self.assertIn('textContent: "Accept"', text)
         self.assertIn('"data-activity-action": "open"', text)
+        self.assertIn(
+            'const result = await window.pywebview.api.open_path(activity.openFolderPath);',
+            text,
+        )
+        self.assertIn(
+            'if (result && String(result.status || "").trim().toLowerCase() !== "success") {',
+            text,
+        )
 
 
 if __name__ == "__main__":

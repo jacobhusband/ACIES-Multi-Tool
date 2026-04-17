@@ -86,6 +86,16 @@
                     <circle cx="12" cy="12" r="3" />
                 </svg>
             </button>
+            <button class="icon-btn" id="scratchpadBtn" aria-label="Scratchpad" title="Scratchpad — unsorted notes">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                    <line x1="8" y1="13" x2="16" y2="13"></line>
+                    <line x1="8" y1="17" x2="16" y2="17"></line>
+                    <line x1="8" y1="9" x2="10" y2="9"></line>
+                </svg>
+            </button>
             <button class="icon-btn" id="mainHelpBtn" aria-label="Help" title="Help">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                     stroke-linecap="round" stroke-linejoin="round">
@@ -897,6 +907,28 @@
             </section>
         </div>
     </main>
+    <aside id="scratchpadPanel" class="scratchpad-panel" hidden aria-label="Scratchpad" data-viewport-docked="true">
+        <div class="scratchpad-panel-header">
+            <div class="scratchpad-panel-title">Scratchpad</div>
+            <div class="scratchpad-status" id="scratchpadStatus" aria-live="polite"></div>
+            <button type="button" class="icon-btn mini" id="scratchpadCloseBtn" aria-label="Close scratchpad" title="Close">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+            </button>
+        </div>
+        <div class="scratchpad-toolbar" role="toolbar" aria-label="Formatting">
+            <button type="button" class="scratchpad-fmt-btn" data-cmd="bold" aria-label="Bold" title="Bold (Ctrl+B)"><strong>B</strong></button>
+            <button type="button" class="scratchpad-fmt-btn" data-cmd="italic" aria-label="Italic" title="Italic (Ctrl+I)"><em>I</em></button>
+            <button type="button" class="scratchpad-fmt-btn" data-cmd="underline" aria-label="Underline" title="Underline (Ctrl+U)"><u>U</u></button>
+            <button type="button" class="scratchpad-fmt-btn" data-cmd="strikeThrough" aria-label="Strikethrough" title="Strikethrough"><s>S</s></button>
+        </div>
+        <div id="scratchpadEditor" class="scratchpad-editor" contenteditable="true" spellcheck="true"
+            role="textbox" aria-multiline="true" aria-label="Scratchpad notes"
+            data-placeholder="Start typing your unsorted notes…"></div>
+    </aside>
     <button id="projectsBackToTopBtn" class="projects-back-to-top" type="button" aria-label="Back to top"
         title="Back to top">Top</button>
     <!-- Timesheet Project Selection Dialog -->

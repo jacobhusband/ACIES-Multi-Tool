@@ -1172,6 +1172,15 @@ main {
   margin: 0 auto;
   padding: 1.5rem;
 }
+:root {
+  --scratchpad-width: min(450px, 35vw);
+}
+body.scratchpad-open {
+  padding-right: var(--scratchpad-width);
+}
+body.scratchpad-open .app-header {
+  margin-right: calc(-1 * var(--scratchpad-width));
+}
 
 /* Panel Toolbar (Integrated) */
 .panel-toolbar {
@@ -4707,6 +4716,91 @@ dialog::backdrop {
 
 .deliverable-notepad-dialog {
   width: min(1100px, 96vw);
+}
+
+.scratchpad-panel {
+  position: fixed;
+  top: var(--header-height);
+  right: 0;
+  bottom: 0;
+  width: var(--scratchpad-width);
+  min-width: 320px;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-left: 1px solid var(--glass-border);
+  box-shadow: -8px 0 24px -12px rgba(0, 0, 0, 0.35);
+  z-index: 49;
+}
+.scratchpad-panel[hidden] {
+  display: none;
+}
+.scratchpad-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--glass-border);
+  background: var(--bg-tertiary);
+}
+.scratchpad-panel-title {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--text-primary);
+}
+.scratchpad-toolbar {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--glass-border);
+  background: var(--bg-tertiary);
+}
+.scratchpad-fmt-btn {
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--glass-border);
+  background: var(--surface);
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  font-size: 0.95rem;
+  line-height: 1;
+  transition: var(--transition-fast);
+}
+.scratchpad-fmt-btn:hover {
+  background: var(--bg-hover);
+}
+.scratchpad-fmt-btn:active {
+  transform: translateY(1px);
+}
+.scratchpad-editor {
+  flex: 1;
+  padding: 1rem 1.25rem;
+  outline: none;
+  overflow-y: auto;
+  font-family: inherit;
+  line-height: 1.5;
+  color: var(--text-primary);
+  cursor: text;
+  min-height: 0;
+}
+.scratchpad-editor:empty::before {
+  content: attr(data-placeholder);
+  color: var(--text-secondary);
+  opacity: 0.6;
+  pointer-events: none;
+}
+.scratchpad-status {
+  font-size: 0.8em;
+  color: var(--text-secondary);
+  margin-left: auto;
+}
+#scratchpadBtn.is-active {
+  background: var(--accent-bg, var(--bg-hover));
+  color: var(--accent, var(--text-primary));
+  border-color: var(--accent, var(--glass-border));
 }
 
 .modal-header {

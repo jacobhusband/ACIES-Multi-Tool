@@ -8999,6 +8999,7 @@ function syncProjectViewPreferencesFromSettings() {
 let activeNoteTab = null;
 let activeNotebookType = "note";
 let notesSearchQuery = "";
+let scratchpadHtml = "";
 let checklistSearchQuery = "";
 let latestAppUpdate = null;
 let currentStatsTimespan = "1Y";
@@ -12948,11 +12949,13 @@ async function loadNotes() {
       }
     });
     activeNoteTab = noteTabs[0];
+    scratchpadHtml = typeof data.scratchpad === "string" ? data.scratchpad : "";
     return notesDb;
   } catch (e) {
     noteTabs = ["General"];
     notesDb = {};
     activeNoteTab = noteTabs[0];
+    scratchpadHtml = "";
     return {};
   }
 }
@@ -12972,7 +12975,7 @@ async function saveNotes({
     touchLocalSyncTimestamp("notes", resolvedTimestamp);
   }
   try {
-    const dataToSave = { tabs: noteTabs, keyed: {}, general: notesDb };
+    const dataToSave = { tabs: noteTabs, keyed: {}, general: notesDb, scratchpad: scratchpadHtml };
     const response = await window.pywebview.api.save_notes(dataToSave);
     if (response?.status && response.status !== "success") {
       throw new Error(response.message || "Failed to save notes.");
@@ -28937,6 +28940,73 @@ function showStatsModal() {
   renderStats();
 }
 
+let scratchpadSaveTimer = null;
+let scratchpadBindingsInitialized = false;
+function setScratchpadStatus(text) {
+  const el = document.getElementById("scratchpadStatus");
+  if (el) el.textContent = text || "";
+}
+function initScratchpadBindings() {
+  if (scratchpadBindingsInitialized) return;
+  const panel = document.getElementById("scratchpadPanel");
+  const editor = document.getElementById("scratchpadEditor");
+  if (!panel || !editor) return;
+  editor.addEventListener("input", () => {
+    scratchpadHtml = editor.innerHTML;
+    setScratchpadStatus("Saving…");
+    if (scratchpadSaveTimer) clearTimeout(scratchpadSaveTimer);
+    scratchpadSaveTimer = setTimeout(async () => {
+      const ok = await saveNotes();
+      setScratchpadStatus(ok ? "Saved ✓" : "Save failed");
+    }, 800);
+  });
+  editor.addEventListener("keydown", (e) => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    const key = e.key.toLowerCase();
+    const map = { b: "bold", i: "italic", u: "underline" };
+    if (map[key]) {
+      e.preventDefault();
+      document.execCommand(map[key], false);
+    }
+  });
+  panel.querySelectorAll(".scratchpad-fmt-btn").forEach((btn) => {
+    btn.addEventListener("mousedown", (e) => e.preventDefault());
+    btn.addEventListener("click", () => {
+      document.execCommand(btn.dataset.cmd, false);
+      editor.focus();
+    });
+  });
+  const closeBtn = document.getElementById("scratchpadCloseBtn");
+  if (closeBtn) closeBtn.addEventListener("click", () => setScratchpadOpen(false));
+  scratchpadBindingsInitialized = true;
+}
+function setScratchpadOpen(open) {
+  const panel = document.getElementById("scratchpadPanel");
+  const editor = document.getElementById("scratchpadEditor");
+  const btn = document.getElementById("scratchpadBtn");
+  if (!panel || !editor) return;
+  initScratchpadBindings();
+  if (open) {
+    if (editor.innerHTML !== (scratchpadHtml || "")) {
+      editor.innerHTML = scratchpadHtml || "";
+    }
+    panel.hidden = false;
+    document.body.classList.add("scratchpad-open");
+    if (btn) btn.classList.add("is-active");
+    setScratchpadStatus("");
+    setTimeout(() => editor.focus(), 0);
+  } else {
+    panel.hidden = true;
+    document.body.classList.remove("scratchpad-open");
+    if (btn) btn.classList.remove("is-active");
+  }
+}
+function toggleScratchpad() {
+  const panel = document.getElementById("scratchpadPanel");
+  if (!panel) return;
+  setScratchpadOpen(panel.hidden);
+}
+
 function getTimespanDateRange(timespan) {
   const now = new Date();
   const start = new Date(now);
@@ -29789,6 +29859,8 @@ function initEventListeners() {
     document.getElementById("settingsDlg").showModal();
   };
   document.getElementById("statsBtn").onclick = () => showStatsModal();
+  const scratchpadBtn = document.getElementById("scratchpadBtn");
+  if (scratchpadBtn) scratchpadBtn.onclick = () => toggleScratchpad();
   document.getElementById("settings_howToSetupBtn").onclick = () =>
     document.getElementById("apiKeyHelpDlg").showModal();
   const settingsGoogleAuthActionBtn = document.getElementById(

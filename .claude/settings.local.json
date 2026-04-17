@@ -21,7 +21,8 @@
       "Bash(npx tsc:*)",
       "Bash(npx vite build)",
       "Bash(where:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(node --check script.js)"
     ]
   }
 }

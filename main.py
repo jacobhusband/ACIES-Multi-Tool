@@ -7842,7 +7842,7 @@ Return ONLY the JSON object.
 
         return normalized_paths
 
-    def _scan_copy_project_files(self, root_path, excluded_root_names=None):
+    def _scan_copy_project_files(self, root_path, excluded_root_names=None, excluded_file_extensions=None):
         normalized_root_path = os.path.normpath(str(root_path or '').strip())
         results = []
         scan_errors = []
@@ -7850,6 +7850,11 @@ Return ONLY the JSON object.
             str(name or '').strip().lower()
             for name in (excluded_root_names or [])
             if str(name or '').strip()
+        }
+        excluded_ext_keys = {
+            str(ext or '').strip().lower()
+            for ext in (excluded_file_extensions or [])
+            if str(ext or '').strip()
         }
 
         if not normalized_root_path:
@@ -7908,6 +7913,9 @@ Return ONLY the JSON object.
                                 )
                                 continue
                             if entry.is_file(follow_symlinks=False):
+                                file_ext = os.path.splitext(entry_name)[1].lower()
+                                if file_ext in excluded_ext_keys:
+                                    continue
                                 file_size = max(0, int(getattr(entry_stat, 'st_size', 0) or 0))
                                 results.append({
                                     'relativePath': relative_path,
@@ -8006,6 +8014,9 @@ Return ONLY the JSON object.
 
     def _get_local_project_manager_excluded_root_names(self):
         return {'archive', '0 archive'}
+
+    def _get_local_project_manager_excluded_file_extensions(self):
+        return {'.dwl', '.dwl2'}
 
     def _get_local_project_manager_managed_root_names(self, settings):
         return self._normalize_copy_project_folder_names(
@@ -8126,6 +8137,13 @@ Return ONLY the JSON object.
                     else 'Newer than server'
                 )
 
+        settings = self.get_user_settings()
+        managed_names = {n.lower() for n in self._get_local_project_manager_managed_root_names(settings)}
+        should_auto_select = (
+            resolved_root_folder.lower() in managed_names
+            and resolved_change_type in {'newer', 'missing'}
+        )
+
         return {
             'relativePath': normalized_relative_path,
             'path': normalized_relative_path,
@@ -8144,7 +8162,7 @@ Return ONLY the JSON object.
             'serverModifiedAt': str(server_file.get('modifiedAt') or '').strip(),
             'sizeBytes': source_size_bytes,
             'sizeLabel': source_size_label,
-            'selectedByDefault': True,
+            'selectedByDefault': should_auto_select,
         }
 
     def _resolve_local_project_manager_pair(
@@ -8218,13 +8236,16 @@ Return ONLY the JSON object.
             settings = {}
         managed_root_names = self._get_local_project_manager_managed_root_names(settings)
         excluded_root_names = self._get_local_project_manager_excluded_root_names()
+        excluded_file_exts = self._get_local_project_manager_excluded_file_extensions()
         local_scan = self._scan_copy_project_files(
             normalized_local_project_path,
             excluded_root_names=excluded_root_names,
+            excluded_file_extensions=excluded_file_exts,
         )
         server_scan = self._scan_copy_project_files(
             normalized_server_project_path,
             excluded_root_names=excluded_root_names,
+            excluded_file_extensions=excluded_file_exts,
         )
 
         local_files_by_relative_path = {

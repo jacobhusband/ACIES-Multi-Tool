@@ -22756,8 +22756,9 @@ function updateSortHeaders() {
 }
 
 // ===================== CRUD OPERATIONS =====================
-function createBlankProject() {
-  const deliverable = createDeliverable();
+function createBlankProject(options = {}) {
+  const { withInitialDeliverable = true } = options;
+  const deliverable = withInitialDeliverable ? createDeliverable() : null;
   return {
     id: "",
     name: "",
@@ -22769,8 +22770,8 @@ function createBlankProject() {
     refs: [],
     attachments: [],
     links: [],
-    deliverables: [deliverable],
-    overviewDeliverableId: deliverable.id,
+    deliverables: deliverable ? [deliverable] : [],
+    overviewDeliverableId: deliverable ? deliverable.id : "",
     pinned: false,
     pinnedOrder: null,
     lightingSchedule: createDefaultLightingSchedule(),
@@ -22782,19 +22783,48 @@ function openEdit(i) {
   editIndex = i;
   beginModalEmailSession();
   const p = db[i];
+  const dlg = document.getElementById("editDlg");
+  dlg.dataset.mode = "full";
+  clearModalFieldErrors();
   document.getElementById("dlgTitle").textContent = `Edit Project — ${p.id || "Untitled"
     }`;
   document.getElementById("btnSaveProject").textContent = "Save Changes";
   fillForm(p);
-  document.getElementById("editDlg").showModal();
+  dlg.showModal();
 }
 function openNew() {
   editIndex = -1;
   beginModalEmailSession();
-  document.getElementById("dlgTitle").textContent = "New Project";
-  document.getElementById("btnSaveProject").textContent = "Create Project";
+  const dlg = document.getElementById("editDlg");
+  dlg.dataset.mode = "create-basics";
+  clearModalFieldErrors();
+  document.getElementById("dlgTitle").textContent = "New Project — Basics";
+  document.getElementById("btnSaveProject").textContent = "Create & Continue";
   fillForm(createBlankProject());
-  document.getElementById("editDlg").showModal();
+  dlg.showModal();
+  setTimeout(() => document.getElementById("f_id")?.focus(), 0);
+}
+
+function clearModalFieldErrors() {
+  document.querySelectorAll("#editDlg .field-error").forEach((node) => {
+    node.textContent = "";
+    node.classList.remove("is-visible");
+  });
+  document
+    .querySelectorAll("#editDlg input.has-field-error")
+    .forEach((node) => node.classList.remove("has-field-error"));
+}
+
+function showModalFieldError(inputId, message) {
+  const input = document.getElementById(inputId);
+  const err = document.querySelector(
+    `#editDlg .field-error[data-field-error-for="${inputId}"]`
+  );
+  if (input) input.classList.add("has-field-error");
+  if (err) {
+    err.textContent = message;
+    err.classList.add("is-visible");
+  }
 }
 function removeProject(i) {
   if (!confirm("Delete this project?")) return;
@@ -22803,6 +22833,51 @@ function removeProject(i) {
   render();
 }
 function onSaveProject() {
+  const dlg = document.getElementById("editDlg");
+  const mode = dlg?.dataset.mode || "full";
+
+  if (mode === "create-basics") {
+    clearModalFieldErrors();
+    const idVal = document.getElementById("f_id").value.trim();
+    const nameVal = document.getElementById("f_name").value.trim();
+    let hasError = false;
+    if (!idVal) {
+      showModalFieldError("f_id", "Project ID is required.");
+      hasError = true;
+    }
+    if (!nameVal) {
+      showModalFieldError("f_name", "Project Name is required.");
+      hasError = true;
+    }
+    if (hasError) {
+      const firstErr = document.querySelector("#editDlg input.has-field-error");
+      firstErr?.focus();
+      toast("Fill required fields to continue.", "error");
+      return;
+    }
+    const data = readForm();
+    autoSetPrimary(data);
+    _aiMatchSnapshot = null;
+    db.push(data);
+    editIndex = db.length - 1;
+    save();
+    render();
+    // Transition to full edit mode on the newly-created project
+    dlg.dataset.mode = "full";
+    document.getElementById("dlgTitle").textContent = `Edit Project — ${data.id || "Untitled"}`;
+    document.getElementById("btnSaveProject").textContent = "Save Changes";
+    fillForm(db[editIndex]);
+    toast("Project created. Add deliverables to continue.");
+    const deliverablesSection = document.getElementById("deliverablesSection");
+    if (deliverablesSection) {
+      setTimeout(
+        () => deliverablesSection.scrollIntoView({ behavior: "smooth", block: "start" }),
+        50
+      );
+    }
+    return;
+  }
+
   // Validate all due dates first
   if (!validateAllDueDates()) {
     // Focus first invalid input
@@ -22872,11 +22947,14 @@ function fillForm(project) {
   sortedDeliverables.forEach((deliverable) =>
     addDeliverableCard(deliverable, activeAnchorDeliverable?.id, {
       projectDraft: p,
+      startExpanded:
+        !!activeAnchorDeliverable && deliverable.id === activeAnchorDeliverable.id,
     })
   );
   if (!deliverableList.children.length) {
     addDeliverableCard(createDeliverable(), activeAnchorDeliverable?.id, {
       projectDraft: p,
+      startExpanded: true,
     });
   }
   ensureModalProjectHasActiveDeliverable();
@@ -22989,6 +23067,9 @@ function setDeliverableCardAttachments(card, attachments) {
     delete card.dataset.emailRefs;
     delete card.dataset.emailRef;
   }
+  if (typeof refreshModalDeliverableSummary === "function") {
+    refreshModalDeliverableSummary(card);
+  }
   return normalized;
 }
 
@@ -23087,7 +23168,11 @@ function addDeliverableCard(deliverable, activeAnchorId, options = {}) {
   const list = document.getElementById("deliverableList");
   const template = document.getElementById("deliverable-card-template");
   if (!list || !template) return;
-  const { insertAtTop = false, projectDraft = getModalProjectDraft() } = options;
+  const {
+    insertAtTop = false,
+    projectDraft = getModalProjectDraft(),
+    startExpanded = insertAtTop,
+  } = options;
 
   const card = template.content
     .cloneNode(true)
@@ -23097,7 +23182,10 @@ function addDeliverableCard(deliverable, activeAnchorId, options = {}) {
   syncDeliverableAttachmentFields(deliverable);
   setDeliverableCardAttachments(card, deliverable.attachments);
 
-  card.querySelector(".d-name").value = deliverable.name || "";
+  const nameInput = card.querySelector(".d-name");
+  nameInput.value = deliverable.name || "";
+  nameInput.addEventListener("input", () => refreshModalDeliverableSummary(card));
+
   card.querySelector(".d-due").value = deliverable.due || "";
 
   const activeInput = card.querySelector(".d-active");
@@ -23105,11 +23193,15 @@ function addDeliverableCard(deliverable, activeAnchorId, options = {}) {
     activeInput.checked = true;
   }
   activeInput.addEventListener("change", () => {
-    if (activeInput.checked) return;
-    const fallbackInput = getModalFallbackActiveDeliverableInput(list, card);
-    if (!list.querySelector(".d-active:checked") && fallbackInput) {
-      fallbackInput.checked = true;
+    if (!activeInput.checked) {
+      const fallbackInput = getModalFallbackActiveDeliverableInput(list, card);
+      if (!list.querySelector(".d-active:checked") && fallbackInput) {
+        fallbackInput.checked = true;
+        const fallbackCard = fallbackInput.closest(".deliverable-card");
+        if (fallbackCard) refreshModalDeliverableSummary(fallbackCard);
+      }
     }
+    refreshModalDeliverableSummary(card);
   });
 
   const attachmentControlHost = card.querySelector(".deliverable-attachment-control");
@@ -23169,6 +23261,7 @@ function addDeliverableCard(deliverable, activeAnchorId, options = {}) {
     if (pressed && (label === "Complete" || label === "Delivered")) {
       markTasksDone();
     }
+    refreshModalDeliverableSummary(card);
   });
   statusContainer.appendChild(picker);
 
@@ -23187,12 +23280,30 @@ function addDeliverableCard(deliverable, activeAnchorId, options = {}) {
     dueInput.addEventListener('blur', () => {
       autoFormatDateInput(dueInput);
       validateDueDateInput(dueInput);
+      refreshModalDeliverableSummary(card);
     });
 
     // Add validation on change
     dueInput.addEventListener('change', () => {
       autoFormatDateInput(dueInput);
       validateDueDateInput(dueInput);
+      refreshModalDeliverableSummary(card);
+    });
+  }
+
+  // Wire summary row toggle (chevron / row click, ignoring the remove button)
+  const summary = card.querySelector(".deliverable-card-summary");
+  if (summary) {
+    summary.addEventListener("click", (e) => {
+      if (e.target.closest(".deliverable-summary-remove")) return;
+      toggleModalDeliverableCard(card);
+    });
+    summary.addEventListener("keydown", (e) => {
+      if (e.target.closest(".deliverable-summary-remove")) return;
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        toggleModalDeliverableCard(card);
+      }
     });
   }
 
@@ -23203,8 +23314,90 @@ function addDeliverableCard(deliverable, activeAnchorId, options = {}) {
   }
 
   ensureModalProjectHasActiveDeliverable({ preferredCard: card });
+  refreshModalDeliverableSummary(card);
+  toggleModalDeliverableCard(card, !!startExpanded);
+  if (startExpanded && insertAtTop) {
+    card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    setTimeout(() => nameInput.focus(), 0);
+  }
 
   return card;
+}
+
+function refreshModalDeliverableSummary(card) {
+  if (!card) return;
+  const summary = card.querySelector(".deliverable-card-summary");
+  if (!summary) return;
+
+  const nameInput = card.querySelector(".d-name");
+  const nameEl = summary.querySelector(".deliverable-summary-name");
+  if (nameEl) {
+    const val = (nameInput?.value || "").trim();
+    nameEl.textContent = val || "Untitled deliverable";
+    nameEl.classList.toggle("is-placeholder", !val);
+  }
+
+  const statusContainer = card.querySelector(".deliverable-status");
+  const badgeHost = summary.querySelector(".deliverable-summary-badges");
+  if (badgeHost && statusContainer) {
+    badgeHost.replaceChildren();
+    const activeStatuses = Array.from(
+      statusContainer.querySelectorAll('.st[aria-pressed="true"]')
+    )
+      .map((b) => b.dataset.status)
+      .filter(Boolean);
+    activeStatuses.forEach((status) => {
+      const cls = status.toLowerCase().replace(/\s+/g, "");
+      const badge = el("span", {
+        className: `deliverable-status-badge ${cls}`,
+        textContent: status,
+      });
+      badgeHost.appendChild(badge);
+    });
+  }
+
+  const dueInput = card.querySelector(".d-due");
+  const dueHost = summary.querySelector(".deliverable-summary-due");
+  if (dueHost) {
+    dueHost.replaceChildren();
+    const dueStr = (dueInput?.value || "").trim();
+    if (dueStr && parseDueStr(dueStr)) {
+      const ds = dueState(dueStr);
+      const cls = ds === "overdue" ? "overdue" : ds === "dueSoon" ? "due-soon" : "ok";
+      const badge = el("span", {
+        className: `deliverable-due-badge ${cls}`,
+        textContent: humanDate(dueStr),
+      });
+      dueHost.appendChild(badge);
+    }
+  }
+
+  const attachHost = summary.querySelector(".deliverable-summary-attachments");
+  if (attachHost) {
+    attachHost.replaceChildren();
+    const count = Array.isArray(card._attachmentItems) ? card._attachmentItems.length : 0;
+    if (count > 0) {
+      const chip = el("span", {
+        className: "deliverable-summary-attachment-chip",
+        textContent: `📎 ${count}`,
+      });
+      attachHost.appendChild(chip);
+    }
+  }
+
+  const activeInput = card.querySelector(".d-active");
+  card.classList.toggle("is-primary", !!activeInput?.checked);
+}
+
+function toggleModalDeliverableCard(card, expanded) {
+  if (!card) return;
+  const summary = card.querySelector(".deliverable-card-summary");
+  const chevron = summary?.querySelector(".deliverable-card-chevron");
+  const next =
+    expanded === undefined ? !card.classList.contains("is-expanded") : !!expanded;
+  card.classList.toggle("is-expanded", next);
+  if (summary) summary.setAttribute("aria-expanded", String(next));
+  if (chevron) chevron.textContent = next ? "▾" : "▸";
 }
 
 function buildStatusPicker(selected = [], onToggle) {

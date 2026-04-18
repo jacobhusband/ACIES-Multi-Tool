@@ -2052,13 +2052,183 @@ mark.search-highlight {
 }
 
 .deliverable-card {
-  padding: 0.9rem;
+  padding: 0;
   border-radius: var(--radius-sm);
   border: 1px solid var(--glass-border);
   background: var(--surface);
   display: flex;
   flex-direction: column;
+  gap: 0;
+  overflow: hidden;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.deliverable-card.is-expanded {
+  border-color: rgba(16, 185, 129, 0.35);
+  box-shadow: var(--shadow-sm);
+}
+
+.deliverable-card.is-primary {
+  border-left: 3px solid #fbbf24;
+}
+
+.deliverable-card-summary {
+  display: flex;
+  align-items: center;
   gap: 0.75rem;
+  padding: 0.6rem 0.85rem;
+  cursor: pointer;
+  user-select: none;
+  outline-offset: -2px;
+  min-height: 44px;
+}
+
+.deliverable-card-summary:hover {
+  background: var(--surface-hover, rgba(255, 255, 255, 0.03));
+}
+
+.deliverable-card-summary:focus-visible {
+  outline: 2px solid var(--accent);
+}
+
+.deliverable-card-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  transition: transform 0.15s ease, color 0.15s ease;
+  flex-shrink: 0;
+}
+
+.deliverable-card.is-expanded .deliverable-card-chevron {
+  color: var(--accent);
+}
+
+.deliverable-card-summary-main {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.deliverable-summary-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 320px;
+}
+
+.deliverable-summary-name.is-placeholder {
+  color: var(--muted);
+  font-style: italic;
+  font-weight: 500;
+}
+
+.deliverable-summary-badges {
+  display: inline-flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.deliverable-summary-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.deliverable-summary-attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--glass-border);
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.deliverable-summary-remove {
+  flex-shrink: 0;
+  opacity: 0.6;
+  transition: opacity 0.15s ease;
+}
+
+.deliverable-card-summary:hover .deliverable-summary-remove,
+.deliverable-summary-remove:hover,
+.deliverable-summary-remove:focus-visible {
+  opacity: 1;
+}
+
+.deliverable-card-body {
+  display: none;
+  padding: 0.3rem 0.9rem 0.9rem;
+  flex-direction: column;
+  gap: 0.75rem;
+  border-top: 1px solid var(--glass-border);
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.deliverable-card.is-expanded .deliverable-card-body {
+  display: flex;
+}
+
+/* Basics-mode hides full-editor sections */
+#editDlg[data-mode="create-basics"] .modal-full-only {
+  display: none !important;
+}
+
+#editDlg[data-mode="create-basics"] .modal-body {
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+/* Field-level validation */
+.required-marker {
+  color: var(--danger);
+  margin-left: 2px;
+}
+
+.field-error {
+  display: none;
+  margin-top: 0.25rem;
+  font-size: 11px;
+  color: var(--danger);
+  line-height: 1.3;
+}
+
+.field-error.is-visible {
+  display: block;
+}
+
+input.has-field-error {
+  border-color: var(--danger) !important;
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.15);
+}
+
+/* Sticky modal header so Save/Cancel are always reachable */
+#editDlg .modal-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+/* Tighten vertical rhythm inside the edit dialog only */
+#editDlg .modal-body.stack {
+  gap: 0.85rem;
+}
+
+#editDlg .section-divider {
+  margin: 0.35rem 0;
 }
 
 .deliverable-task-list {

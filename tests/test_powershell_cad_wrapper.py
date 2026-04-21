@@ -113,6 +113,10 @@ class PowerShellCadWrapperTests(unittest.TestCase):
                         'Write-Host "PROGRESS: TRACE branch=paper_size_dialog"',
                         text,
                     )
+                    self.assertIn(
+                        'Write-Host "PROGRESS: COMBINED_PDF: $finalCombinedPdfPath"',
+                        text,
+                    )
                     self.assertIn('Write-Host "PROGRESS: OUTPUT_FOLDER: $batchOutputDir"', text)
                     self.assertNotIn("Invoke-Item $batchOutputDir", text)
                 else:

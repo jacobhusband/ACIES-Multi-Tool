@@ -7993,6 +7993,7 @@ function getActivityTrayElements() {
     body: document.getElementById("activityTrayBody"),
     empty: document.getElementById("activityTrayEmpty"),
     list: document.getElementById("activityTrayList"),
+    clearAll: document.getElementById("activityTrayClearAll"),
   };
 }
 
@@ -8064,7 +8065,7 @@ function maybeExpandActivityTray(reason = "update") {
 }
 
 function renderActivityTray() {
-  const { tray, counts, empty, list } = getActivityTrayElements();
+  const { tray, counts, empty, list, clearAll } = getActivityTrayElements();
   if (!tray || !counts || !empty || !list) return;
 
   const items = sortActivityItems(activityTrayState.items);
@@ -8076,6 +8077,7 @@ function renderActivityTray() {
     tray.hidden = true;
     empty.hidden = false;
     list.replaceChildren();
+    if (clearAll) clearAll.hidden = true;
     toggleActivityTrayCollapsed(false, { force: true });
     activityTrayState.hasAutoExpanded = false;
     return;
@@ -8083,6 +8085,7 @@ function renderActivityTray() {
 
   tray.hidden = false;
   empty.hidden = true;
+  if (clearAll) clearAll.hidden = false;
   list.replaceChildren();
 
   items.forEach((item) => {
@@ -8128,7 +8131,38 @@ function renderActivityTray() {
       }),
     ]);
     const actions = el("div", { className: "activity-card-actions" });
-    if (isTerminalActivityStatus(status) && item.openFolderPath) {
+    const isTerminal = isTerminalActivityStatus(status);
+    if (isTerminal && item.combinedPdfPath) {
+      actions.appendChild(
+        el("button", {
+          className: "activity-card-action",
+          type: "button",
+          textContent: "Copy Combined PDF",
+          "data-activity-action": "copy-combined-pdf",
+          "data-activity-id": item.id,
+          onclick: (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            void handleActivityTrayCopyCombinedPdf(item.id);
+          },
+        })
+      );
+      actions.appendChild(
+        el("button", {
+          className: "activity-card-action",
+          type: "button",
+          textContent: "Open Combined PDF",
+          "data-activity-action": "open-combined-pdf",
+          "data-activity-id": item.id,
+          onclick: (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            void handleActivityTrayOpenCombinedPdf(item.id);
+          },
+        })
+      );
+    }
+    if (isTerminal && item.openFolderPath) {
       actions.appendChild(
         el("button", {
           className: "activity-card-action",
@@ -8144,7 +8178,7 @@ function renderActivityTray() {
         })
       );
     }
-    if (isTerminalActivityStatus(status)) {
+    if (isTerminal) {
       actions.appendChild(
         el("button", {
           className: "activity-card-action accept",
@@ -8194,16 +8228,83 @@ async function handleActivityTrayOpenFolder(activityId) {
   }
 }
 
+async function handleActivityTrayCopyCombinedPdf(activityId) {
+  const activity = getActivityById(activityId);
+  if (!activity?.combinedPdfPath) {
+    toast("Unable to copy combined PDF.");
+    return false;
+  }
+  if (!window.pywebview?.api?.copy_file_to_clipboard) {
+    toast("Copy file is unavailable.");
+    return false;
+  }
+  try {
+    const result = await window.pywebview.api.copy_file_to_clipboard(
+      activity.combinedPdfPath
+    );
+    if (result && String(result.status || "").trim().toLowerCase() !== "success") {
+      throw new Error(result.message || "Unable to copy combined PDF.");
+    }
+    toast("Combined PDF copied.");
+    return true;
+  } catch (error) {
+    toast(error?.message || "Unable to copy combined PDF.");
+    return false;
+  }
+}
+
+async function handleActivityTrayOpenCombinedPdf(activityId) {
+  const activity = getActivityById(activityId);
+  if (!activity?.combinedPdfPath) {
+    toast("Unable to open combined PDF.");
+    return false;
+  }
+  if (!window.pywebview?.api?.open_path) {
+    toast("Open path is unavailable.");
+    return false;
+  }
+  try {
+    const result = await window.pywebview.api.open_path(activity.combinedPdfPath);
+    if (result && String(result.status || "").trim().toLowerCase() !== "success") {
+      throw new Error(result.message || "Unable to open combined PDF.");
+    }
+    return true;
+  } catch (error) {
+    toast(error?.message || "Unable to open combined PDF.");
+    return false;
+  }
+}
+
 function handleActivityTrayAccept(activityId) {
   acceptActivity(activityId);
+}
+
+function clearAllActivityNotifications() {
+  activityTrayState.items.forEach((item) => {
+    if (item?.toolId) {
+      releaseToolActivity(item.toolId, item.id);
+      setToolCardRunning(item.toolId, false);
+    }
+  });
+  activityTrayState.items = [];
+  renderActivityTray();
+}
+
+function handleActivityTrayClearAll() {
+  clearAllActivityNotifications();
 }
 
 function initActivityTray() {
   if (activityTrayState.initialized) return;
   activityTrayState.initialized = true;
-  const { toggle, list } = getActivityTrayElements();
+  const { toggle, list, clearAll } = getActivityTrayElements();
   toggle?.addEventListener("click", () => {
     toggleActivityTrayCollapsed(!activityTrayState.collapsed, { force: true });
+  });
+  clearAll?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    handleActivityTrayClearAll();
   });
   list?.addEventListener("click", async (event) => {
     const button = event.target.closest("[data-activity-action]");
@@ -8218,6 +8319,14 @@ function initActivityTray() {
     }
     if (action === "open") {
       await handleActivityTrayOpenFolder(activityId);
+      return;
+    }
+    if (action === "copy-combined-pdf") {
+      await handleActivityTrayCopyCombinedPdf(activityId);
+      return;
+    }
+    if (action === "open-combined-pdf") {
+      await handleActivityTrayOpenCombinedPdf(activityId);
     }
   });
   renderActivityTray();
@@ -8249,6 +8358,9 @@ function upsertActivity(nextItem, { autoExpandReason = "update" } = {}) {
     ).trim(),
     openFolderLabel: String(
       incoming.openFolderLabel || existing?.openFolderLabel || "Open Folder"
+    ).trim(),
+    combinedPdfPath: String(
+      incoming.combinedPdfPath || existing?.combinedPdfPath || ""
     ).trim(),
     panelCount: Math.max(
       Number(incoming.panelCount ?? existing?.panelCount ?? 0) || 0,
@@ -8293,6 +8405,7 @@ function beginActivity({
   kind = "tool",
   openFolderPath = "",
   openFolderLabel = "Open Folder",
+  combinedPdfPath = "",
 } = {}) {
   const resolvedId = String(activityId || createActivityId(toolId || kind)).trim();
   return upsertActivity(
@@ -8306,6 +8419,7 @@ function beginActivity({
       progress,
       openFolderPath,
       openFolderLabel,
+      combinedPdfPath,
     },
     { autoExpandReason: activityTrayState.items.length ? "update" : "first" }
   )?.id || resolvedId;
@@ -8466,9 +8580,15 @@ function updateActivityStatusFromPayload(payload = {}) {
       existing?.openFolderPath ||
       ""
   ).trim();
+  let combinedPdfPath = String(
+    payload?.combinedPdfPath || existing?.combinedPdfPath || ""
+  ).trim();
 
   if (rawMessage.startsWith("OUTPUT_FOLDER:")) {
     openFolderPath = rawMessage.substring("OUTPUT_FOLDER:".length).trim();
+    nextMessage = existing?.message || "Working...";
+  } else if (rawMessage.startsWith("COMBINED_PDF:")) {
+    combinedPdfPath = rawMessage.substring("COMBINED_PDF:".length).trim();
     nextMessage = existing?.message || "Working...";
   } else if (rawMessage.startsWith("WARN:")) {
     nextMessage = rawMessage.substring(5).trim() || "Completed with warnings.";
@@ -8508,6 +8628,7 @@ function updateActivityStatusFromPayload(payload = {}) {
       progress: nextProgress,
       openFolderPath,
       openFolderLabel: payload?.openFolderLabel || "Open Folder",
+      combinedPdfPath,
       kind: payload?.kind || "tool",
     });
   }
@@ -8523,6 +8644,7 @@ function updateActivityStatusFromPayload(payload = {}) {
     openFolderLabel: String(
       payload?.openFolderLabel || existing?.openFolderLabel || "Open Folder"
     ).trim(),
+    combinedPdfPath,
     panelCount: payload?.panelCount,
     completedCount: payload?.completedCount,
   };

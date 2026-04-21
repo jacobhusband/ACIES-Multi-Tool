@@ -720,6 +720,7 @@ PlotAllLayouts
 }
 
 # --- FINAL MERGE (After the loop) ---
+$finalCombinedPdfPath = ""
 if ($allGeneratedPdfs.Count -gt 0) {
   Write-Host "PROGRESS: Combining $($allGeneratedPdfs.Count) generated PDFs..."
   $combinedPdfPath = Join-Path $batchOutputDir $combinedPdfName
@@ -733,6 +734,7 @@ if ($allGeneratedPdfs.Count -gt 0) {
   if ($LASTEXITCODE -eq 0) {
     "Python script executed successfully." | Out-File $logFile -Append
     "$mergeOutput" | Out-File $logFile -Append
+    $finalCombinedPdfPath = $combinedPdfPath
 
     $shrinkPercentInt = [int]$ShrinkPercent
     if ($shrinkPercentInt -lt 5) { $shrinkPercentInt = 5 }
@@ -746,6 +748,7 @@ if ($allGeneratedPdfs.Count -gt 0) {
         if ($LASTEXITCODE -eq 0) {
           "Shrunk PDF created: $shrunkName" | Out-File $logFile -Append
           "$shrinkOutput" | Out-File $logFile -Append
+          $finalCombinedPdfPath = $shrunkPath
         } else {
           Write-Host "PROGRESS: ERROR: PDF shrinking failed."
           "PDF shrinking failed. Output from Python script:" | Out-File $logFile -Append
@@ -791,6 +794,9 @@ if ($failed.Count) {
   $failMsg | Out-File $logFile -Append
 }
 
+if (-not [string]::IsNullOrWhiteSpace($finalCombinedPdfPath) -and (Test-Path -Path $finalCombinedPdfPath -PathType Leaf)) {
+  Write-Host "PROGRESS: COMBINED_PDF: $finalCombinedPdfPath"
+}
 Write-Host "PROGRESS: OUTPUT_FOLDER: $batchOutputDir"
 
 if ($failed.Count) {

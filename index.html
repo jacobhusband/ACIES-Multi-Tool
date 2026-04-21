@@ -2619,14 +2619,19 @@
     </template>
     <section id="activityTray" class="activity-tray" hidden aria-label="Activity">
         <div class="activity-tray-shell">
-            <button id="activityTrayToggle" class="activity-tray-toggle" type="button" aria-expanded="true"
-                aria-controls="activityTrayBody">
-                <span class="activity-tray-copy">
-                    <span class="activity-tray-title">Activity</span>
-                    <span id="activityTrayCounts" class="activity-tray-counts">0 active, 0 completed</span>
-                </span>
-                <span id="activityTrayToggleIcon" class="activity-tray-toggle-icon" aria-hidden="true">⌄</span>
-            </button>
+            <div class="activity-tray-header">
+                <button id="activityTrayToggle" class="activity-tray-toggle" type="button" aria-expanded="true"
+                    aria-controls="activityTrayBody">
+                    <span class="activity-tray-copy">
+                        <span class="activity-tray-title">Activity</span>
+                        <span id="activityTrayCounts" class="activity-tray-counts">0 active, 0 completed</span>
+                    </span>
+                    <span id="activityTrayToggleIcon" class="activity-tray-toggle-icon" aria-hidden="true">⌄</span>
+                </button>
+                <button id="activityTrayClearAll" class="activity-tray-clear" type="button">
+                    (Clear All)
+                </button>
+            </div>
             <div id="activityTrayBody" class="activity-tray-body">
                 <div id="activityTrayEmpty" class="activity-tray-empty" hidden>No activity yet.</div>
                 <div id="activityTrayList" class="activity-tray-list" aria-live="polite"></div>

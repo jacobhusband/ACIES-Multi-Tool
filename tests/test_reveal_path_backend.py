@@ -1,4 +1,5 @@
 import sys
+import struct
 import types
 import unittest
 from unittest.mock import patch
@@ -210,6 +211,59 @@ class RevealPathBackendTests(unittest.TestCase):
         self.assertIn("Path and parent do not exist", response["message"])
         mock_startfile.assert_not_called()
         mock_run.assert_not_called()
+
+    def test_copy_file_to_clipboard_requires_file_path(self):
+        response = self.api.copy_file_to_clipboard("")
+
+        self.assertEqual("error", response["status"])
+        self.assertIn("File path is required", response["message"])
+
+    def test_copy_file_to_clipboard_requires_windows(self):
+        target_path = "/tmp/combined.pdf"
+
+        with patch.object(main_module.sys, "platform", "linux"), \
+             patch.object(main_module.os.path, "normpath", side_effect=lambda value: value), \
+             patch.object(main_module.os.path, "exists", return_value=True), \
+             patch.object(main_module.os.path, "isfile", return_value=True):
+            response = self.api.copy_file_to_clipboard(target_path)
+
+        self.assertEqual("error", response["status"])
+        self.assertIn("only available on Windows", response["message"])
+
+    def test_copy_file_to_clipboard_copies_existing_file_as_hdrop(self):
+        target_path = r"C:\Projects\250940 Loro Piana\combined.pdf"
+        calls = []
+
+        fake_clipboard = types.SimpleNamespace(
+            OpenClipboard=lambda: calls.append(("open",)),
+            EmptyClipboard=lambda: calls.append(("empty",)),
+            SetClipboardData=lambda fmt, data: calls.append(("set", fmt, data)),
+            CloseClipboard=lambda: calls.append(("close",)),
+        )
+        fake_con = types.SimpleNamespace(CF_HDROP=15)
+
+        with patch.object(main_module.sys, "platform", "win32"), \
+             patch.object(main_module.os.path, "normpath", side_effect=lambda value: value), \
+             patch.object(main_module.os.path, "exists", side_effect=lambda value: value == target_path), \
+             patch.object(main_module.os.path, "isfile", side_effect=lambda value: value == target_path), \
+             patch.dict(sys.modules, {"win32clipboard": fake_clipboard, "win32con": fake_con}):
+            response = self.api.copy_file_to_clipboard(target_path)
+
+        self.assertEqual("success", response["status"])
+        self.assertEqual(target_path, response["path"])
+        expected_clipboard_data = (
+            struct.pack("<IiiII", 20, 0, 0, 0, 1) +
+            f"{target_path}\0\0".encode("utf-16le")
+        )
+        self.assertEqual(
+            [
+                ("open",),
+                ("empty",),
+                ("set", fake_con.CF_HDROP, expected_clipboard_data),
+                ("close",),
+            ],
+            calls,
+        )
 
 
 if __name__ == "__main__":

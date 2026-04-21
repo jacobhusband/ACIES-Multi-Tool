@@ -6474,8 +6474,16 @@ dialog::backdrop {
   overflow: hidden;
 }
 
+.activity-tray-header {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding-right: 0.75rem;
+}
+
 .activity-tray-toggle {
-  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
   border: 0;
   background: transparent;
   color: inherit;
@@ -6701,6 +6709,30 @@ dialog::backdrop {
 .activity-card-action.accept:focus-visible {
   border-color: var(--text-secondary);
   color: var(--text);
+}
+
+.activity-tray-clear {
+  flex: 0 0 auto;
+  min-height: 30px;
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+  font-weight: 700;
+  line-height: 1.2;
+  padding: 0.34rem 0.65rem;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.activity-tray-clear:hover,
+.activity-tray-clear:focus-visible {
+  border-color: var(--accent);
+  background: var(--hover-overlay);
+  color: var(--accent);
+  outline: none;
 }
 
 @keyframes spin {

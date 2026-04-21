@@ -7273,6 +7273,49 @@ Return ONLY the JSON object.
             logging.error(f"Error opening path: {e}")
             return {'status': 'error', 'message': str(e)}
 
+    def copy_file_to_clipboard(self, path):
+        """Copies a file object to the Windows clipboard for pasting elsewhere."""
+        try:
+            raw_path = str(path or '').strip()
+            if not raw_path:
+                return {'status': 'error', 'message': 'File path is required.'}
+
+            normalized_path = os.path.normpath(raw_path)
+            if not os.path.exists(normalized_path):
+                return {'status': 'error', 'message': 'File does not exist.'}
+            if not os.path.isfile(normalized_path):
+                return {'status': 'error', 'message': 'Expected a file path.'}
+            if sys.platform != "win32":
+                return {'status': 'error', 'message': 'File clipboard copy is only available on Windows.'}
+
+            try:
+                import win32clipboard
+                import win32con
+                import struct
+            except Exception:
+                return {'status': 'error', 'message': 'Windows clipboard support is unavailable.'}
+
+            hdrop_header = struct.pack("<IiiII", 20, 0, 0, 0, 1)
+            hdrop_file_list = f"{normalized_path}\0\0".encode("utf-16le")
+            hdrop_data = hdrop_header + hdrop_file_list
+            clipboard_open = False
+            try:
+                win32clipboard.OpenClipboard()
+                clipboard_open = True
+                win32clipboard.EmptyClipboard()
+                win32clipboard.SetClipboardData(
+                    win32con.CF_HDROP,
+                    hdrop_data,
+                )
+            finally:
+                if clipboard_open:
+                    win32clipboard.CloseClipboard()
+
+            return {'status': 'success', 'path': normalized_path}
+        except Exception as e:
+            logging.error(f"Error copying file to clipboard: {e}")
+            return {'status': 'error', 'message': str(e)}
+
     def reveal_path(self, path):
         """Reveals a file or folder in the system file explorer."""
         try:

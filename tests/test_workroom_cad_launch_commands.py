@@ -153,29 +153,12 @@ TOOL_CASES = (
         ),
     },
     {
-        "method_name": "run_freeze_layers_script",
-        "tool_id": "toolFreezeLayers",
-        "script_name": "FreezeLayersDWGs.ps1",
+        "method_name": "run_manage_layers_script",
+        "tool_id": "toolManageLayers",
+        "script_name": "ManageLayersDWGs.ps1",
         "settings": {
             "autocadPath": AUTOCAD_CORE_PATH,
-            "freezeLayerOptions": {
-                "scanAllLayers": False,
-            },
-        },
-        "expected_args": (
-            "-AcadCore",
-            AUTOCAD_CORE_PATH,
-            "-ScanAllLayers",
-            "0",
-        ),
-    },
-    {
-        "method_name": "run_thaw_layers_script",
-        "tool_id": "toolThawLayers",
-        "script_name": "ThawLayersDWGs.ps1",
-        "settings": {
-            "autocadPath": AUTOCAD_CORE_PATH,
-            "thawLayerOptions": {
+            "manageLayersOptions": {
                 "scanAllLayers": False,
             },
         },

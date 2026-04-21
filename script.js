@@ -2569,8 +2569,7 @@ const WORKROOM_PRE_DESIGN_PAGES = [
 const WORKROOM_CAD_DISCIPLINES = ["Electrical", "Mechanical", "Plumbing"];
 const WORKROOM_AUTO_SELECT_CAD_TOOL_IDS = new Set([
   "toolPublishDwgs",
-  "toolFreezeLayers",
-  "toolThawLayers",
+  "toolManageLayers",
 ]);
 const WORKROOM_CAD_TOOL_IDS = new Set([
   ...WORKROOM_AUTO_SELECT_CAD_TOOL_IDS,
@@ -2605,7 +2604,7 @@ const WORKROOM_PHASE_CHECKLIST_MAP = {
 const WORKROOM_PHASE_TOOL_MAP = {
   pre_design: ["toolCleanXrefs"],
   design: ["toolLightingSchedule", "toolCircuitBreaker"],
-  preflight: ["toolFreezeLayers", "toolPublishDwgs", "toolThawLayers"],
+  preflight: ["toolManageLayers", "toolPublishDwgs"],
   post_permit: ["toolCreateNarrativeTemplate", "toolCreatePlanCheckTemplate"],
 };
 const WORKROOM_ALWAYS_AVAILABLE_TOOLS = [
@@ -3750,16 +3749,9 @@ const SHARED_TOOL_LAUNCH_REGISTRY = Object.freeze([
     isReady: true,
   },
   {
-    id: "toolFreezeLayers",
-    label: "Freeze Layers in CAD DWGs Headless Mode",
-    menuLabel: "Freeze",
-    launchType: "user-selects-files",
-    isReady: true,
-  },
-  {
-    id: "toolThawLayers",
-    label: "Thaw Layers in CAD DWGs Headless Mode",
-    menuLabel: "Thaw",
+    id: "toolManageLayers",
+    label: "Freeze/Thaw Layers in CAD DWGs Headless Mode",
+    menuLabel: "Freeze/Thaw",
     launchType: "user-selects-files",
     isReady: true,
   },
@@ -3836,8 +3828,7 @@ function getReadySharedToolLaunchEntries() {
 function getDeliverableToolMenuEntries() {
   const deliverableMenuOrder = [
     "toolPublishDwgs",
-    "toolFreezeLayers",
-    "toolThawLayers",
+    "toolManageLayers",
     "toolCleanXrefs",
     "toolCreateNarrativeTemplate",
     "toolCreatePlanCheckTemplate",
@@ -8539,7 +8530,7 @@ function deriveToolActivityProgress(toolId, message, currentProgress = 5) {
   }
 
   if (
-    ["toolFreezeLayers", "toolThawLayers", "toolCleanXrefs"].includes(normalizedToolId)
+    ["toolManageLayers", "toolCleanXrefs"].includes(normalizedToolId)
   ) {
     if (/Waiting for layer selection|Waiting for user input/i.test(text)) return 15;
     if (/Reading extracted data|Using \d+ DWG|ZIP source selected|Found \d+ DWG/i.test(text)) {
@@ -8849,10 +8840,7 @@ const DEFAULT_PUBLISH_DWG_OPTIONS = {
   autoDetectPaperSize: true,
   shrinkPercent: 100,
 };
-const DEFAULT_FREEZE_LAYER_OPTIONS = {
-  scanAllLayers: true,
-};
-const DEFAULT_THAW_LAYER_OPTIONS = {
+const DEFAULT_MANAGE_LAYERS_OPTIONS = {
   scanAllLayers: true,
 };
 const DEFAULT_CLOUD_SYNC_SETTINGS = {
@@ -8889,8 +8877,7 @@ let userSettings = {
   defaultPmInitials: "",
   cleanDwgOptions: { ...DEFAULT_CLEAN_DWG_OPTIONS },
   publishDwgOptions: { ...DEFAULT_PUBLISH_DWG_OPTIONS },
-  freezeLayerOptions: { ...DEFAULT_FREEZE_LAYER_OPTIONS },
-  thawLayerOptions: { ...DEFAULT_THAW_LAYER_OPTIONS },
+  manageLayersOptions: { ...DEFAULT_MANAGE_LAYERS_OPTIONS },
   workroomAutoSelectCadFiles: true,
   enableUnderConstructionTools: false,
   googleAuth: null,
@@ -11489,8 +11476,7 @@ function getDefaultSyncableSettings() {
     defaultPmInitials: "",
     cleanDwgOptions: { ...DEFAULT_CLEAN_DWG_OPTIONS },
     publishDwgOptions: { ...DEFAULT_PUBLISH_DWG_OPTIONS },
-    freezeLayerOptions: { ...DEFAULT_FREEZE_LAYER_OPTIONS },
-    thawLayerOptions: { ...DEFAULT_THAW_LAYER_OPTIONS },
+    manageLayersOptions: { ...DEFAULT_MANAGE_LAYERS_OPTIONS },
     workroomAutoSelectCadFiles: true,
     enableUnderConstructionTools: false,
   };
@@ -11524,13 +11510,9 @@ function sanitizeSettingsForCloud(settings = userSettings) {
       ...DEFAULT_PUBLISH_DWG_OPTIONS,
       ...(source.publishDwgOptions || {}),
     },
-    freezeLayerOptions: {
-      ...DEFAULT_FREEZE_LAYER_OPTIONS,
-      ...(source.freezeLayerOptions || {}),
-    },
-    thawLayerOptions: {
-      ...DEFAULT_THAW_LAYER_OPTIONS,
-      ...(source.thawLayerOptions || {}),
+    manageLayersOptions: {
+      ...DEFAULT_MANAGE_LAYERS_OPTIONS,
+      ...(source.manageLayersOptions || {}),
     },
     workroomAutoSelectCadFiles: source.workroomAutoSelectCadFiles !== false,
     enableUnderConstructionTools: source.enableUnderConstructionTools === true,
@@ -11565,13 +11547,9 @@ function normalizeCloudSettingsDoc(raw = {}) {
       ...DEFAULT_PUBLISH_DWG_OPTIONS,
       ...(source.publishDwgOptions || {}),
     },
-    freezeLayerOptions: {
-      ...DEFAULT_FREEZE_LAYER_OPTIONS,
-      ...(source.freezeLayerOptions || {}),
-    },
-    thawLayerOptions: {
-      ...DEFAULT_THAW_LAYER_OPTIONS,
-      ...(source.thawLayerOptions || {}),
+    manageLayersOptions: {
+      ...DEFAULT_MANAGE_LAYERS_OPTIONS,
+      ...(source.manageLayersOptions || {}),
     },
     workroomAutoSelectCadFiles: source.workroomAutoSelectCadFiles !== false,
     enableUnderConstructionTools: source.enableUnderConstructionTools === true,
@@ -13139,14 +13117,33 @@ async function loadUserSettings() {
       ...DEFAULT_PUBLISH_DWG_OPTIONS,
       ...(userSettings.publishDwgOptions || {}),
     };
-    userSettings.freezeLayerOptions = {
-      ...DEFAULT_FREEZE_LAYER_OPTIONS,
-      ...(userSettings.freezeLayerOptions || {}),
+    const legacyFreezeOpts =
+      userSettings.freezeLayerOptions && typeof userSettings.freezeLayerOptions === "object"
+        ? userSettings.freezeLayerOptions
+        : null;
+    const legacyThawOpts =
+      userSettings.thawLayerOptions && typeof userSettings.thawLayerOptions === "object"
+        ? userSettings.thawLayerOptions
+        : null;
+    const legacyManageOpts =
+      userSettings.manageLayersOptions && typeof userSettings.manageLayersOptions === "object"
+        ? userSettings.manageLayersOptions
+        : null;
+    let migratedScanAll;
+    if (legacyManageOpts && "scanAllLayers" in legacyManageOpts) {
+      migratedScanAll = legacyManageOpts.scanAllLayers;
+    } else if (legacyFreezeOpts && "scanAllLayers" in legacyFreezeOpts) {
+      migratedScanAll = legacyFreezeOpts.scanAllLayers;
+    } else if (legacyThawOpts && "scanAllLayers" in legacyThawOpts) {
+      migratedScanAll = legacyThawOpts.scanAllLayers;
+    }
+    userSettings.manageLayersOptions = {
+      ...DEFAULT_MANAGE_LAYERS_OPTIONS,
+      ...(legacyManageOpts || {}),
+      ...(migratedScanAll !== undefined ? { scanAllLayers: !!migratedScanAll } : {}),
     };
-    userSettings.thawLayerOptions = {
-      ...DEFAULT_THAW_LAYER_OPTIONS,
-      ...(userSettings.thawLayerOptions || {}),
-    };
+    delete userSettings.freezeLayerOptions;
+    delete userSettings.thawLayerOptions;
     userSettings.workroomAutoSelectCadFiles =
       userSettings.workroomAutoSelectCadFiles !== false;
     userSettings.enableUnderConstructionTools =
@@ -13219,19 +13216,16 @@ function syncPublishOptionsInputs() {
   setTextValue("publish_modal_shrinkValue", `${normalized}%`);
 }
 
-function syncFreezeOptionsInputs() {
-  const freezeOptions = userSettings.freezeLayerOptions || {};
+function syncManageLayersOptionsInputs() {
+  const manageOptions = userSettings.manageLayersOptions || {};
   setCheckboxValue(
-    "settings_freeze_scanAllLayers",
-    freezeOptions.scanAllLayers
+    "settings_manageLayers_scanAllLayers",
+    manageOptions.scanAllLayers
   );
-  setCheckboxValue("freeze_modal_scanAllLayers", freezeOptions.scanAllLayers);
-}
-
-function syncThawOptionsInputs() {
-  const thawOptions = userSettings.thawLayerOptions || {};
-  setCheckboxValue("settings_thaw_scanAllLayers", thawOptions.scanAllLayers);
-  setCheckboxValue("thaw_modal_scanAllLayers", thawOptions.scanAllLayers);
+  setCheckboxValue(
+    "manageLayers_modal_scanAllLayers",
+    manageOptions.scanAllLayers
+  );
 }
 
 function syncWorkroomCadRoutingInputs() {
@@ -13301,8 +13295,7 @@ async function populateSettingsModal() {
 
   syncCleanOptionsInputs();
   syncPublishOptionsInputs();
-  syncFreezeOptionsInputs();
-  syncThawOptionsInputs();
+  syncManageLayersOptionsInputs();
   syncWorkroomCadRoutingInputs();
   syncUnderConstructionToolsInputs();
   syncUnderConstructionToolsAvailability();
@@ -30080,8 +30073,7 @@ function initEventListeners() {
       const targetId = btn.dataset.settingsTarget;
       if (!targetId) return;
       if (targetId === "publishSettingsDlg") syncPublishOptionsInputs();
-      if (targetId === "freezeSettingsDlg") syncFreezeOptionsInputs();
-      if (targetId === "thawSettingsDlg") syncThawOptionsInputs();
+      if (targetId === "manageLayersSettingsDlg") syncManageLayersOptionsInputs();
       if (targetId === "cleanSettingsDlg") syncCleanOptionsInputs();
       const dlg = document.getElementById(targetId);
       if (dlg) dlg.showModal();
@@ -30485,66 +30477,35 @@ function initEventListeners() {
     });
 
   document
-    .getElementById("toolFreezeLayers")
+    .getElementById("toolManageLayers")
     .addEventListener("click", async (e) => {
       const launchContext = resolveCadLaunchContextForTool();
-      console.debug("Workroom CAD launch context (freeze):", launchContext);
+      console.debug("Workroom CAD launch context (manage layers):", launchContext);
       if (e.currentTarget.classList.contains("running")) return;
       if (!userSettings.autocadPath) {
         await showAutocadSelectModal();
         return;
       }
       const activityId = beginActivity({
-        toolId: "toolFreezeLayers",
+        toolId: "toolManageLayers",
         message: "Initializing...",
         progress: 5,
       });
       try {
         const result = launchContext
-          ? await window.pywebview.api.run_freeze_layers_script(
+          ? await window.pywebview.api.run_manage_layers_script(
               launchContext,
               activityId
             )
-          : await window.pywebview.api.run_freeze_layers_script(null, activityId);
+          : await window.pywebview.api.run_manage_layers_script(null, activityId);
         if (result?.status === "error") {
           failActivity(activityId, {
-            message: result.message || "Failed to start Freeze Layers.",
+            message: result.message || "Failed to start Freeze/Thaw Layers.",
           });
         }
       } catch (error) {
         failActivity(activityId, {
-          message: error?.message || "Failed to start Freeze Layers.",
-        });
-      }
-    });
-
-  document
-    .getElementById("toolThawLayers")
-    .addEventListener("click", async (e) => {
-      const launchContext = resolveCadLaunchContextForTool();
-      console.debug("Workroom CAD launch context (thaw):", launchContext);
-      if (e.currentTarget.classList.contains("running")) return;
-      if (!userSettings.autocadPath) {
-        await showAutocadSelectModal();
-        return;
-      }
-      const activityId = beginActivity({
-        toolId: "toolThawLayers",
-        message: "Initializing...",
-        progress: 5,
-      });
-      try {
-        const result = launchContext
-          ? await window.pywebview.api.run_thaw_layers_script(launchContext, activityId)
-          : await window.pywebview.api.run_thaw_layers_script(null, activityId);
-        if (result?.status === "error") {
-          failActivity(activityId, {
-            message: result.message || "Failed to start Thaw Layers.",
-          });
-        }
-      } catch (error) {
-        failActivity(activityId, {
-          message: error?.message || "Failed to start Thaw Layers.",
+          message: error?.message || "Failed to start Freeze/Thaw Layers.",
         });
       }
     });
@@ -30618,8 +30579,7 @@ function initEventListeners() {
   if (generalToolsGrid) {
     const generalToolOrder = [
       "toolPublishDwgs",
-      "toolFreezeLayers",
-      "toolThawLayers",
+      "toolManageLayers",
       "toolCleanXrefs",
       "toolBackupDrawings",
     ];
@@ -31444,30 +31404,16 @@ function initEventListeners() {
     updateLabel();
   });
 
-  ["settings_freeze_scanAllLayers", "freeze_modal_scanAllLayers"]
+  ["settings_manageLayers_scanAllLayers", "manageLayers_modal_scanAllLayers"]
     .map((id) => document.getElementById(id))
     .filter(Boolean)
     .forEach((checkbox) => {
       checkbox.onchange = (e) => {
-        if (!userSettings.freezeLayerOptions) {
-          userSettings.freezeLayerOptions = { ...DEFAULT_FREEZE_LAYER_OPTIONS };
+        if (!userSettings.manageLayersOptions) {
+          userSettings.manageLayersOptions = { ...DEFAULT_MANAGE_LAYERS_OPTIONS };
         }
-        userSettings.freezeLayerOptions.scanAllLayers = e.target.checked;
-        syncFreezeOptionsInputs();
-        debouncedSaveUserSettings();
-      };
-    });
-
-  ["settings_thaw_scanAllLayers", "thaw_modal_scanAllLayers"]
-    .map((id) => document.getElementById(id))
-    .filter(Boolean)
-    .forEach((checkbox) => {
-      checkbox.onchange = (e) => {
-        if (!userSettings.thawLayerOptions) {
-          userSettings.thawLayerOptions = { ...DEFAULT_THAW_LAYER_OPTIONS };
-        }
-        userSettings.thawLayerOptions.scanAllLayers = e.target.checked;
-        syncThawOptionsInputs();
+        userSettings.manageLayersOptions.scanAllLayers = e.target.checked;
+        syncManageLayersOptionsInputs();
         debouncedSaveUserSettings();
       };
     });

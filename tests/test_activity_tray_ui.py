@@ -22,7 +22,7 @@ class ActivityTrayUiTests(unittest.TestCase):
         self.assertIn('class="activity-tray-header"', text)
         self.assertIn("Activity", text)
         self.assertIn("No activity yet.", text)
-        self.assertIn("(Clear All)", text)
+        self.assertIn("Clear All", text)
 
     def test_activity_tray_styles_exist(self):
         text = STYLES_CSS_PATH.read_text(encoding="utf-8")

@@ -12,8 +12,7 @@ MAIN_PY_PATH = REPO_ROOT / "main.py"
 SCRIPT_JS_PATH = REPO_ROOT / "script.js"
 CAD_SCRIPT_PATHS = (
     REPO_ROOT / "scripts" / "PlotDWGs.ps1",
-    REPO_ROOT / "scripts" / "FreezeLayersDWGs.ps1",
-    REPO_ROOT / "scripts" / "ThawLayersDWGs.ps1",
+    REPO_ROOT / "scripts" / "ManageLayersDWGs.ps1",
 )
 CLEAN_XREF_SCRIPT_PATH = REPO_ROOT / "scripts" / "removeXREFPaths.ps1"
 

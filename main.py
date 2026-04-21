@@ -261,10 +261,7 @@ def build_default_user_settings():
             'autoDetectPaperSize': True,
             'shrinkPercent': 100
         },
-        'freezeLayerOptions': {
-            'scanAllLayers': True
-        },
-        'thawLayerOptions': {
+        'manageLayersOptions': {
             'scanAllLayers': True
         },
         'workroomAutoSelectCadFiles': True,
@@ -361,6 +358,27 @@ def _sanitize_user_settings_payload(settings):
 
     if "microsoftAuth" in normalized:
         normalized.pop("microsoftAuth", None)
+        changed = True
+
+    if (
+        ("freezeLayerOptions" in normalized or "thawLayerOptions" in normalized)
+        and "manageLayersOptions" not in normalized
+    ):
+        legacy_freeze = normalized.get("freezeLayerOptions") or {}
+        legacy_thaw = normalized.get("thawLayerOptions") or {}
+        if isinstance(legacy_freeze, dict) and "scanAllLayers" in legacy_freeze:
+            scan_all = bool(legacy_freeze.get("scanAllLayers", True))
+        elif isinstance(legacy_thaw, dict) and "scanAllLayers" in legacy_thaw:
+            scan_all = bool(legacy_thaw.get("scanAllLayers", True))
+        else:
+            scan_all = True
+        normalized["manageLayersOptions"] = {"scanAllLayers": scan_all}
+        changed = True
+    if "freezeLayerOptions" in normalized:
+        normalized.pop("freezeLayerOptions", None)
+        changed = True
+    if "thawLayerOptions" in normalized:
+        normalized.pop("thawLayerOptions", None)
         changed = True
 
     defaults = build_default_user_settings()
@@ -11394,8 +11412,7 @@ TASK 3: LOAD TYPES
             normalized_name = normalized_name[:-10]
         return normalized_name in {
             'run_publish_script',
-            'run_freeze_layers_script',
-            'run_thaw_layers_script',
+            'run_manage_layers_script',
         }
 
     def _resolve_workroom_auto_file_selection(self, settings, launch_context, tool_name):
@@ -12068,32 +12085,32 @@ TASK 3: LOAD TYPES
         )
         return {'status': 'success', 'activityId': str(activity_id or '').strip()}
 
-    def run_freeze_layers_script(self, launch_context=None, activity_id=None):
-        """Runs the FreezeLayersDWGs.ps1 PowerShell script with progress updates."""
-        script_path = os.path.join(BASE_DIR, "scripts", "FreezeLayersDWGs.ps1")
+    def run_manage_layers_script(self, launch_context=None, activity_id=None):
+        """Runs the ManageLayersDWGs.ps1 PowerShell script with progress updates."""
+        script_path = os.path.join(BASE_DIR, "scripts", "ManageLayersDWGs.ps1")
         if not os.path.exists(script_path):
             raise Exception(
-                "FreezeLayersDWGs.ps1 not found in scripts directory.")
+                "ManageLayersDWGs.ps1 not found in scripts directory.")
         settings = self.get_user_settings()
         if self.test_mode:
             return self._run_workroom_cad_tool_in_test_mode(
                 settings,
                 launch_context,
-                'toolFreezeLayers',
-                'run_freeze_layers_script',
+                'toolManageLayers',
+                'run_manage_layers_script',
                 activity_id=activity_id,
             )
         acad_path = settings.get('autocadPath', '')
         if not acad_path:
             raise Exception("No AutoCAD version selected in settings.")
-        freeze_options = settings.get('freezeLayerOptions') or {}
-        scan_all = freeze_options.get('scanAllLayers', True)
+        manage_options = settings.get('manageLayersOptions') or {}
+        scan_all = manage_options.get('scanAllLayers', True)
 
         def _ps_bool(value):
             return "1" if value else "0"
 
         auto_selection = self._resolve_workroom_auto_file_selection(
-            settings, launch_context, 'run_freeze_layers_script')
+            settings, launch_context, 'run_manage_layers_script')
         default_directory = self._resolve_launch_context_default_directory(
             launch_context
         )
@@ -12101,20 +12118,20 @@ TASK 3: LOAD TYPES
             fallback_context = self._resolve_workroom_context(
                 settings, launch_context)
             logging.info(
-                "run_freeze_layers_script: Workroom auto-select unavailable; opening file picker "
+                "run_manage_layers_script: Workroom auto-select unavailable; opening file picker "
                 f"(source={fallback_context.get('source') or 'none'}, "
                 f"project_path={fallback_context.get('project_path') or '<empty>'}, "
                 f"discipline={fallback_context.get('discipline')}, "
                 f"discipline_source={fallback_context.get('discipline_source')}).")
             self._notify_tool_status(
-                'toolFreezeLayers',
+                'toolManageLayers',
                 "Workroom auto-select unavailable. Opening file picker...",
                 activity_id=activity_id,
             )
             self._trace_cad_auto_select(
                 'tool_manual_fallback',
-                tool_id='toolFreezeLayers',
-                tool_name='run_freeze_layers_script',
+                tool_id='toolManageLayers',
+                tool_name='run_manage_layers_script',
                 reason='auto_selection_unavailable',
                 source=fallback_context.get('source') or 'none',
                 project_path=fallback_context.get('project_path') or '',
@@ -12135,7 +12152,7 @@ TASK 3: LOAD TYPES
             selected_count = auto_selection.get('count')
             if isinstance(selected_count, int) and selected_count > 0:
                 self._notify_tool_status(
-                    'toolFreezeLayers',
+                    'toolManageLayers',
                     f"Using auto-selected DWGs ({selected_count}) via {auto_selection.get('resolution_mode') or 'workroom'}...",
                     activity_id=activity_id,
                 )
@@ -12146,8 +12163,8 @@ TASK 3: LOAD TYPES
             ])
         self._trace_cad_auto_select(
             'tool_command_launch',
-            tool_id='toolFreezeLayers',
-            tool_name='run_freeze_layers_script',
+            tool_id='toolManageLayers',
+            tool_name='run_manage_layers_script',
             command=command,
             command_type='argv',
             has_files_list_path='-FilesListPath' in command,
@@ -12156,100 +12173,7 @@ TASK 3: LOAD TYPES
         )
         self._run_script_with_progress(
             command,
-            'toolFreezeLayers',
-            activity_id=activity_id,
-        )
-        return {'status': 'success', 'activityId': str(activity_id or '').strip()}
-
-    def run_thaw_layers_script(self, launch_context=None, activity_id=None):
-        """Runs the ThawLayersDWGs.ps1 PowerShell script with progress updates."""
-        script_path = os.path.join(BASE_DIR, "scripts", "ThawLayersDWGs.ps1")
-        if not os.path.exists(script_path):
-            raise Exception(
-                "ThawLayersDWGs.ps1 not found in scripts directory.")
-        settings = self.get_user_settings()
-        if self.test_mode:
-            return self._run_workroom_cad_tool_in_test_mode(
-                settings,
-                launch_context,
-                'toolThawLayers',
-                'run_thaw_layers_script',
-                activity_id=activity_id,
-            )
-        acad_path = settings.get('autocadPath', '')
-        if not acad_path:
-            raise Exception("No AutoCAD version selected in settings.")
-        thaw_options = settings.get('thawLayerOptions') or {}
-        scan_all = thaw_options.get('scanAllLayers', True)
-
-        def _ps_bool(value):
-            return "1" if value else "0"
-
-        auto_selection = self._resolve_workroom_auto_file_selection(
-            settings, launch_context, 'run_thaw_layers_script')
-        default_directory = self._resolve_launch_context_default_directory(
-            launch_context
-        )
-        if self._is_workroom_auto_select_enabled(settings, launch_context) and not auto_selection:
-            fallback_context = self._resolve_workroom_context(
-                settings, launch_context)
-            logging.info(
-                "run_thaw_layers_script: Workroom auto-select unavailable; opening file picker "
-                f"(source={fallback_context.get('source') or 'none'}, "
-                f"project_path={fallback_context.get('project_path') or '<empty>'}, "
-                f"discipline={fallback_context.get('discipline')}, "
-                f"discipline_source={fallback_context.get('discipline_source')}).")
-            self._notify_tool_status(
-                'toolThawLayers',
-                "Workroom auto-select unavailable. Opening file picker...",
-                activity_id=activity_id,
-            )
-            self._trace_cad_auto_select(
-                'tool_manual_fallback',
-                tool_id='toolThawLayers',
-                tool_name='run_thaw_layers_script',
-                reason='auto_selection_unavailable',
-                source=fallback_context.get('source') or 'none',
-                project_path=fallback_context.get('project_path') or '',
-                discipline=fallback_context.get('discipline') or '',
-            )
-        command = self._build_powershell_script_command(
-            script_path,
-            '-AcadCore',
-            acad_path,
-            '-ScanAllLayers',
-            _ps_bool(scan_all),
-        )
-        if auto_selection:
-            command.extend([
-                '-FilesListPath',
-                auto_selection['files_list_path'],
-            ])
-            selected_count = auto_selection.get('count')
-            if isinstance(selected_count, int) and selected_count > 0:
-                self._notify_tool_status(
-                    'toolThawLayers',
-                    f"Using auto-selected DWGs ({selected_count}) via {auto_selection.get('resolution_mode') or 'workroom'}...",
-                    activity_id=activity_id,
-                )
-        elif default_directory:
-            command.extend([
-                '-DefaultDirectory',
-                default_directory,
-            ])
-        self._trace_cad_auto_select(
-            'tool_command_launch',
-            tool_id='toolThawLayers',
-            tool_name='run_thaw_layers_script',
-            command=command,
-            command_type='argv',
-            has_files_list_path='-FilesListPath' in command,
-            files_list_path=auto_selection.get('files_list_path') if auto_selection else '',
-            auto_selection=auto_selection,
-        )
-        self._run_script_with_progress(
-            command,
-            'toolThawLayers',
+            'toolManageLayers',
             activity_id=activity_id,
         )
         return {'status': 'success', 'activityId': str(activity_id or '').strip()}

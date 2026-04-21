@@ -501,10 +501,10 @@
                             </div>
                             <div class="tool-card-status"></div>
                         </div>
-                        <!-- Card 2: Freeze Layers -->
-                        <div id="toolFreezeLayers" class="tool-card" role="button" tabindex="0">
-                            <button type="button" class="tool-card-settings" data-settings-target="freezeSettingsDlg"
-                                aria-label="Freeze layers settings" title="Settings">⚙️</button>
+                        <!-- Card 2: Freeze/Thaw Layers -->
+                        <div id="toolManageLayers" class="tool-card" role="button" tabindex="0">
+                            <button type="button" class="tool-card-settings" data-settings-target="manageLayersSettingsDlg"
+                                aria-label="Freeze/Thaw layers settings" title="Settings">⚙️</button>
                             <div class="tool-card-content">
                                 <div class="tool-icon">
                                     <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -517,36 +517,9 @@
                                         <path d="m8 20 4-4 4 4"></path>
                                     </svg>
                                 </div>
-                                <div class="tool-card-header">Freeze Layers in CAD DWGs Headless Mode</div>
+                                <div class="tool-card-header">Freeze/Thaw Layers in CAD DWGs Headless Mode</div>
                                 <div class="tool-card-body">
-                                    Scans selected DWGs for layers, lets you freeze them, then saves updates in headless
-                                    mode.
-                                </div>
-                            </div>
-                            <div class="tool-card-status"></div>
-                        </div>
-                        <!-- Card 3: Thaw Layers -->
-                        <div id="toolThawLayers" class="tool-card" role="button" tabindex="0">
-                            <button type="button" class="tool-card-settings" data-settings-target="thawSettingsDlg"
-                                aria-label="Thaw layers settings" title="Settings">⚙️</button>
-                            <div class="tool-card-content">
-                                <div class="tool-icon">
-                                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                        stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <circle cx="12" cy="12" r="5"></circle>
-                                        <line x1="12" y1="1" x2="12" y2="3"></line>
-                                        <line x1="12" y1="21" x2="12" y2="23"></line>
-                                        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
-                                        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
-                                        <line x1="1" y1="12" x2="3" y2="12"></line>
-                                        <line x1="21" y1="12" x2="23" y2="12"></line>
-                                        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
-                                        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
-                                    </svg>
-                                </div>
-                                <div class="tool-card-header">Thaw Layers in CAD DWGs Headless Mode</div>
-                                <div class="tool-card-body">
-                                    Scans selected DWGs for layers, lets you thaw them, then saves updates in headless
+                                    Scans selected DWGs for layers, lets you freeze and/or thaw them, then saves updates in headless
                                     mode.
                                 </div>
                             </div>
@@ -1491,18 +1464,9 @@
                         size.</div>
                 </div>
                 <div class="col-12" style="margin-top: 0.6rem;">
-                    <label class="label">Freeze Layers in CAD DWGs Headless Mode</label>
+                    <label class="label">Freeze/Thaw Layers in CAD DWGs Headless Mode</label>
                     <div class="stack" style="gap: 0.35rem;">
-                        <label class="radio-label"><input type="checkbox" id="settings_freeze_scanAllLayers"> Scan all
-                            selected DWG layers</label>
-                    </div>
-                    <div class="tiny muted" style="margin-top: 0.35rem;">If unchecked, only the first selected DWG is
-                        scanned for layers.</div>
-                </div>
-                <div class="col-12" style="margin-top: 0.6rem;">
-                    <label class="label">Thaw Layers in CAD DWGs Headless Mode</label>
-                    <div class="stack" style="gap: 0.35rem;">
-                        <label class="radio-label"><input type="checkbox" id="settings_thaw_scanAllLayers"> Scan all
+                        <label class="radio-label"><input type="checkbox" id="settings_manageLayers_scanAllLayers"> Scan all
                             selected DWG layers</label>
                     </div>
                     <div class="tiny muted" style="margin-top: 0.35rem;">If unchecked, only the first selected DWG is
@@ -1514,7 +1478,7 @@
                         <label class="radio-label"><input type="checkbox" id="settings_workroomAutoSelectCadFiles">
                             Auto-select DWGs from project discipline folders when compatible tools are launched</label>
                     </div>
-                    <div class="tiny muted" style="margin-top: 0.35rem;">On: Publish/Freeze/Thaw auto-select base-level
+                    <div class="tiny muted" style="margin-top: 0.35rem;">On: Publish and Freeze/Thaw auto-select base-level
                         DWGs from the active discipline folder. Prepare CAD DWG for Reference always opens the Arch
                         folder for manual file selection.
                     </div>
@@ -1681,11 +1645,11 @@
             </div>
         </div>
     </dialog>
-    <!-- Tool Settings: Freeze -->
-    <dialog id="freezeSettingsDlg">
+    <!-- Tool Settings: Freeze/Thaw -->
+    <dialog id="manageLayersSettingsDlg">
         <div class="modal-header">
-            <div class="title">Freeze Layers Settings</div>
-            <button class="btn ghost" onclick="closeDlg('freezeSettingsDlg')">Close</button>
+            <div class="title">Freeze/Thaw Layers Settings</div>
+            <button class="btn ghost" onclick="closeDlg('manageLayersSettingsDlg')">Close</button>
         </div>
         <div class="modal-body stack tool-settings-body">
             <div class="tool-settings-intro">
@@ -1704,39 +1668,7 @@
                     <div class="tool-setting-control">
                         <span class="toggle-label">Off</span>
                         <label class="switch" aria-label="Scan all selected DWGs for layers">
-                            <input type="checkbox" id="freeze_modal_scanAllLayers">
-                            <span class="slider"></span>
-                        </label>
-                        <span class="toggle-label">On</span>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </dialog>
-    <!-- Tool Settings: Thaw -->
-    <dialog id="thawSettingsDlg">
-        <div class="modal-header">
-            <div class="title">Thaw Layers Settings</div>
-            <button class="btn ghost" onclick="closeDlg('thawSettingsDlg')">Close</button>
-        </div>
-        <div class="modal-body stack tool-settings-body">
-            <div class="tool-settings-intro">
-                <div class="tool-settings-title">How these toggles work</div>
-                <p class="tiny muted">On means the tool performs the action when you run it. Off skips that step.
-                    Changes
-                    save automatically and apply next time the tool runs.</p>
-            </div>
-            <div class="tool-settings-list">
-                <div class="tool-setting">
-                    <div class="tool-setting-text">
-                        <div class="tool-setting-title">Scan all selected DWGs for layers</div>
-                        <div class="tool-setting-desc">On: scans every selected DWG to build a complete layer list.
-                            Off: scans only the first DWG (faster, but may miss layers).</div>
-                    </div>
-                    <div class="tool-setting-control">
-                        <span class="toggle-label">Off</span>
-                        <label class="switch" aria-label="Scan all selected DWGs for layers">
-                            <input type="checkbox" id="thaw_modal_scanAllLayers">
+                            <input type="checkbox" id="manageLayers_modal_scanAllLayers">
                             <span class="slider"></span>
                         </label>
                         <span class="toggle-label">On</span>
@@ -2629,7 +2561,7 @@
                     <span id="activityTrayToggleIcon" class="activity-tray-toggle-icon" aria-hidden="true">⌄</span>
                 </button>
                 <button id="activityTrayClearAll" class="activity-tray-clear" type="button">
-                    (Clear All)
+                    Clear All
                 </button>
             </div>
             <div id="activityTrayBody" class="activity-tray-body">

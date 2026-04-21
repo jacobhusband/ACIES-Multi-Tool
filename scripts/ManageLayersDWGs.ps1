@@ -484,15 +484,16 @@ if ($allLayers.Count -eq 0) {
   exit 1
 }
 
-# ---------------- 5) USER SELECTION (GUI with DUAL LISTS) ----------------
+# ---------------- 5) USER SELECTION (GUI with THREE LISTS) ----------------
 $allSorted = @($allLayers | Sort-Object)
+$layersToFreezeSet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
 $layersToThawSet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
 
 $form = New-Object System.Windows.Forms.Form
-$form.Text = "Select Layers to THAW"
+$form.Text = "Select Layers to Freeze or Thaw"
 $form.StartPosition = "Manual"
-$form.Size = New-Object System.Drawing.Size(940, 680)
-$form.MinimumSize = New-Object System.Drawing.Size(940, 680)
+$form.Size = New-Object System.Drawing.Size(1120, 740)
+$form.MinimumSize = New-Object System.Drawing.Size(1120, 740)
 $form.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::Font
 $form.TopMost = $true
 $form.ShowInTaskbar = $true
@@ -503,7 +504,7 @@ Move-FormToPrimaryScreen $form
 
 $lbl = New-Object System.Windows.Forms.Label
 $lbl.Location = New-Object System.Drawing.Point(12, 12)
-$lbl.Size = New-Object System.Drawing.Size(910, 20)
+$lbl.Size = New-Object System.Drawing.Size(1090, 20)
 $lbl.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
 $form.Controls.Add($lbl)
 
@@ -529,71 +530,121 @@ $form.Controls.Add($btnClear)
 
 $lblAvailable = New-Object System.Windows.Forms.Label
 $lblAvailable.Location = New-Object System.Drawing.Point(12, 74)
-$lblAvailable.Size = New-Object System.Drawing.Size(410, 18)
+$lblAvailable.Size = New-Object System.Drawing.Size(400, 18)
 $lblAvailable.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left
 $form.Controls.Add($lblAvailable)
 
+$lblFreeze = New-Object System.Windows.Forms.Label
+$lblFreeze.Location = New-Object System.Drawing.Point(538, 74)
+$lblFreeze.Size = New-Object System.Drawing.Size(540, 18)
+$lblFreeze.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+$form.Controls.Add($lblFreeze)
+
 $lblThaw = New-Object System.Windows.Forms.Label
-$lblThaw.Location = New-Object System.Drawing.Point(548, 74)
-$lblThaw.Size = New-Object System.Drawing.Size(370, 18)
+$lblThaw.Location = New-Object System.Drawing.Point(538, 338)
+$lblThaw.Size = New-Object System.Drawing.Size(540, 18)
 $lblThaw.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
 $form.Controls.Add($lblThaw)
 
 $listAvailable = New-Object System.Windows.Forms.ListBox
 $listAvailable.Location = New-Object System.Drawing.Point(12, 96)
-$listAvailable.Size = New-Object System.Drawing.Size(410, 470)
+$listAvailable.Size = New-Object System.Drawing.Size(400, 504)
 $listAvailable.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left
 $listAvailable.SelectionMode = "MultiExtended"
 $listAvailable.IntegralHeight = $false
 $form.Controls.Add($listAvailable)
 
-$movePanel = New-Object System.Windows.Forms.Panel
-$movePanel.Location = New-Object System.Drawing.Point(434, 170)
-$movePanel.Size = New-Object System.Drawing.Size(100, 260)
-$movePanel.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left
-$form.Controls.Add($movePanel)
+# --- Freeze button panel (middle-upper) ---
+$movePanelFreeze = New-Object System.Windows.Forms.Panel
+$movePanelFreeze.Location = New-Object System.Drawing.Point(418, 120)
+$movePanelFreeze.Size = New-Object System.Drawing.Size(114, 196)
+$movePanelFreeze.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left
+$form.Controls.Add($movePanelFreeze)
 
-$btnAddSelected = New-Object System.Windows.Forms.Button
-$btnAddSelected.Text = ">"
-$btnAddSelected.Size = New-Object System.Drawing.Size(64, 38)
-$btnAddSelected.Location = New-Object System.Drawing.Point(18, 16)
-$btnAddSelected.FlatStyle = [System.Windows.Forms.FlatStyle]::System
-$movePanel.Controls.Add($btnAddSelected)
+$btnAddFreeze = New-Object System.Windows.Forms.Button
+$btnAddFreeze.Text = ">"
+$btnAddFreeze.Size = New-Object System.Drawing.Size(80, 38)
+$btnAddFreeze.Location = New-Object System.Drawing.Point(16, 14)
+$btnAddFreeze.FlatStyle = [System.Windows.Forms.FlatStyle]::System
+$movePanelFreeze.Controls.Add($btnAddFreeze)
 
-$btnAddAll = New-Object System.Windows.Forms.Button
-$btnAddAll.Text = ">>"
-$btnAddAll.Size = New-Object System.Drawing.Size(64, 38)
-$btnAddAll.Location = New-Object System.Drawing.Point(18, 62)
-$btnAddAll.FlatStyle = [System.Windows.Forms.FlatStyle]::System
-$movePanel.Controls.Add($btnAddAll)
+$btnAddAllFreeze = New-Object System.Windows.Forms.Button
+$btnAddAllFreeze.Text = ">>"
+$btnAddAllFreeze.Size = New-Object System.Drawing.Size(80, 38)
+$btnAddAllFreeze.Location = New-Object System.Drawing.Point(16, 58)
+$btnAddAllFreeze.FlatStyle = [System.Windows.Forms.FlatStyle]::System
+$movePanelFreeze.Controls.Add($btnAddAllFreeze)
 
-$btnRemoveSelected = New-Object System.Windows.Forms.Button
-$btnRemoveSelected.Text = "<"
-$btnRemoveSelected.Size = New-Object System.Drawing.Size(64, 38)
-$btnRemoveSelected.Location = New-Object System.Drawing.Point(18, 128)
-$btnRemoveSelected.FlatStyle = [System.Windows.Forms.FlatStyle]::System
-$movePanel.Controls.Add($btnRemoveSelected)
+$btnRemoveFreeze = New-Object System.Windows.Forms.Button
+$btnRemoveFreeze.Text = "<"
+$btnRemoveFreeze.Size = New-Object System.Drawing.Size(80, 38)
+$btnRemoveFreeze.Location = New-Object System.Drawing.Point(16, 108)
+$btnRemoveFreeze.FlatStyle = [System.Windows.Forms.FlatStyle]::System
+$movePanelFreeze.Controls.Add($btnRemoveFreeze)
 
-$btnRemoveAll = New-Object System.Windows.Forms.Button
-$btnRemoveAll.Text = "<<"
-$btnRemoveAll.Size = New-Object System.Drawing.Size(64, 38)
-$btnRemoveAll.Location = New-Object System.Drawing.Point(18, 174)
-$btnRemoveAll.FlatStyle = [System.Windows.Forms.FlatStyle]::System
-$movePanel.Controls.Add($btnRemoveAll)
+$btnRemoveAllFreeze = New-Object System.Windows.Forms.Button
+$btnRemoveAllFreeze.Text = "<<"
+$btnRemoveAllFreeze.Size = New-Object System.Drawing.Size(80, 38)
+$btnRemoveAllFreeze.Location = New-Object System.Drawing.Point(16, 152)
+$btnRemoveAllFreeze.FlatStyle = [System.Windows.Forms.FlatStyle]::System
+$movePanelFreeze.Controls.Add($btnRemoveAllFreeze)
+
+# --- Thaw button panel (middle-lower) ---
+$movePanelThaw = New-Object System.Windows.Forms.Panel
+$movePanelThaw.Location = New-Object System.Drawing.Point(418, 384)
+$movePanelThaw.Size = New-Object System.Drawing.Size(114, 196)
+$movePanelThaw.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left
+$form.Controls.Add($movePanelThaw)
+
+$btnAddThaw = New-Object System.Windows.Forms.Button
+$btnAddThaw.Text = ">"
+$btnAddThaw.Size = New-Object System.Drawing.Size(80, 38)
+$btnAddThaw.Location = New-Object System.Drawing.Point(16, 14)
+$btnAddThaw.FlatStyle = [System.Windows.Forms.FlatStyle]::System
+$movePanelThaw.Controls.Add($btnAddThaw)
+
+$btnAddAllThaw = New-Object System.Windows.Forms.Button
+$btnAddAllThaw.Text = ">>"
+$btnAddAllThaw.Size = New-Object System.Drawing.Size(80, 38)
+$btnAddAllThaw.Location = New-Object System.Drawing.Point(16, 58)
+$btnAddAllThaw.FlatStyle = [System.Windows.Forms.FlatStyle]::System
+$movePanelThaw.Controls.Add($btnAddAllThaw)
+
+$btnRemoveThaw = New-Object System.Windows.Forms.Button
+$btnRemoveThaw.Text = "<"
+$btnRemoveThaw.Size = New-Object System.Drawing.Size(80, 38)
+$btnRemoveThaw.Location = New-Object System.Drawing.Point(16, 108)
+$btnRemoveThaw.FlatStyle = [System.Windows.Forms.FlatStyle]::System
+$movePanelThaw.Controls.Add($btnRemoveThaw)
+
+$btnRemoveAllThaw = New-Object System.Windows.Forms.Button
+$btnRemoveAllThaw.Text = "<<"
+$btnRemoveAllThaw.Size = New-Object System.Drawing.Size(80, 38)
+$btnRemoveAllThaw.Location = New-Object System.Drawing.Point(16, 152)
+$btnRemoveAllThaw.FlatStyle = [System.Windows.Forms.FlatStyle]::System
+$movePanelThaw.Controls.Add($btnRemoveAllThaw)
+
+$listToFreeze = New-Object System.Windows.Forms.ListBox
+$listToFreeze.Location = New-Object System.Drawing.Point(538, 96)
+$listToFreeze.Size = New-Object System.Drawing.Size(540, 236)
+$listToFreeze.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+$listToFreeze.SelectionMode = "MultiExtended"
+$listToFreeze.IntegralHeight = $false
+$form.Controls.Add($listToFreeze)
 
 $listToThaw = New-Object System.Windows.Forms.ListBox
-$listToThaw.Location = New-Object System.Drawing.Point(548, 96)
-$listToThaw.Size = New-Object System.Drawing.Size(370, 470)
+$listToThaw.Location = New-Object System.Drawing.Point(538, 360)
+$listToThaw.Size = New-Object System.Drawing.Size(540, 240)
 $listToThaw.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
 $listToThaw.SelectionMode = "MultiExtended"
 $listToThaw.IntegralHeight = $false
 $form.Controls.Add($listToThaw)
 
 $btnOk = New-Object System.Windows.Forms.Button
-$btnOk.Text = "Thaw Layers on Right"
+$btnOk.Text = "Apply Freeze + Thaw"
 $btnOk.DialogResult = [System.Windows.Forms.DialogResult]::OK
-$btnOk.Size = New-Object System.Drawing.Size(220, 48)
-$btnOk.Location = New-Object System.Drawing.Point(698, 580)
+$btnOk.Size = New-Object System.Drawing.Size(240, 48)
+$btnOk.Location = New-Object System.Drawing.Point(838, 620)
 $btnOk.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Right
 $btnOk.Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
 $btnOk.FlatStyle = [System.Windows.Forms.FlatStyle]::System
@@ -604,7 +655,7 @@ $btnCancel = New-Object System.Windows.Forms.Button
 $btnCancel.Text = "Cancel"
 $btnCancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
 $btnCancel.Size = New-Object System.Drawing.Size(110, 48)
-$btnCancel.Location = New-Object System.Drawing.Point(580, 580)
+$btnCancel.Location = New-Object System.Drawing.Point(720, 620)
 $btnCancel.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Right
 $btnCancel.Font = New-Object System.Drawing.Font("Segoe UI", 10)
 $btnCancel.FlatStyle = [System.Windows.Forms.FlatStyle]::System
@@ -629,10 +680,15 @@ $form.add_Resize({
   })
 
 function Update-MoveButtons {
-  $btnAddSelected.Enabled = $listAvailable.SelectedItems.Count -gt 0
-  $btnAddAll.Enabled = $listAvailable.Items.Count -gt 0
-  $btnRemoveSelected.Enabled = $listToThaw.SelectedItems.Count -gt 0
-  $btnRemoveAll.Enabled = $listToThaw.Items.Count -gt 0
+  $btnAddFreeze.Enabled = $listAvailable.SelectedItems.Count -gt 0
+  $btnAddAllFreeze.Enabled = $listAvailable.Items.Count -gt 0
+  $btnRemoveFreeze.Enabled = $listToFreeze.SelectedItems.Count -gt 0
+  $btnRemoveAllFreeze.Enabled = $listToFreeze.Items.Count -gt 0
+
+  $btnAddThaw.Enabled = $listAvailable.SelectedItems.Count -gt 0
+  $btnAddAllThaw.Enabled = $listAvailable.Items.Count -gt 0
+  $btnRemoveThaw.Enabled = $listToThaw.SelectedItems.Count -gt 0
+  $btnRemoveAllThaw.Enabled = $listToThaw.Items.Count -gt 0
 }
 
 function Refresh-LayerLists {
@@ -643,14 +699,19 @@ function Refresh-LayerLists {
 
   $selectedAvailable = @()
   foreach ($item in $listAvailable.SelectedItems) { $selectedAvailable += $item.ToString() }
+  $selectedToFreeze = @()
+  foreach ($item in $listToFreeze.SelectedItems) { $selectedToFreeze += $item.ToString() }
   $selectedToThaw = @()
   foreach ($item in $listToThaw.SelectedItems) { $selectedToThaw += $item.ToString() }
 
-  $availableLayers = @($allSorted | Where-Object { -not $layersToThawSet.Contains($_) })
+  $availableLayers = @($allSorted | Where-Object {
+      -not $layersToFreezeSet.Contains($_) -and -not $layersToThawSet.Contains($_)
+    })
   if (-not [string]::IsNullOrWhiteSpace($filterText)) {
     $availableLayers = @($availableLayers | Where-Object { $_.IndexOf($filterText, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 })
   }
 
+  $layersToFreezeSorted = @($layersToFreezeSet | Sort-Object)
   $layersToThawSorted = @($layersToThawSet | Sort-Object)
 
   $listAvailable.BeginUpdate()
@@ -659,6 +720,13 @@ function Refresh-LayerLists {
     $listAvailable.Items.AddRange([object[]]$availableLayers)
   }
   $listAvailable.EndUpdate()
+
+  $listToFreeze.BeginUpdate()
+  $listToFreeze.Items.Clear()
+  if ($layersToFreezeSorted.Count -gt 0) {
+    $listToFreeze.Items.AddRange([object[]]$layersToFreezeSorted)
+  }
+  $listToFreeze.EndUpdate()
 
   $listToThaw.BeginUpdate()
   $listToThaw.Items.Clear()
@@ -671,30 +739,77 @@ function Refresh-LayerLists {
     $idx = $listAvailable.Items.IndexOf($item)
     if ($idx -ge 0) { $listAvailable.SetSelected($idx, $true) }
   }
+  foreach ($item in $selectedToFreeze) {
+    $idx = $listToFreeze.Items.IndexOf($item)
+    if ($idx -ge 0) { $listToFreeze.SetSelected($idx, $true) }
+  }
   foreach ($item in $selectedToThaw) {
     $idx = $listToThaw.Items.IndexOf($item)
     if ($idx -ge 0) { $listToThaw.SetSelected($idx, $true) }
   }
 
-  $lbl.Text = "Move layers to the right list to thaw them."
-  $lblAvailable.Text = "Available layers: $($availableLayers.Count)"
-  $lblThaw.Text = "Layers to thaw: $($layersToThawSorted.Count)"
-  $btnOk.Enabled = $layersToThawSorted.Count -gt 0
+  $lbl.Text = "Move layers to the Freeze list to freeze them, or to the Thaw list to thaw them. Layers left on the left are untouched."
+  $lblAvailable.Text = "Available: $($availableLayers.Count)"
+  $lblFreeze.Text = "To Freeze: $($layersToFreezeSorted.Count)"
+  $lblThaw.Text = "To Thaw: $($layersToThawSorted.Count)"
+  $btnOk.Enabled = ($layersToFreezeSorted.Count + $layersToThawSorted.Count) -gt 0
   Update-MoveButtons
 }
 
-function Add-SelectedAvailableLayers {
+function Add-SelectedAvailableToFreeze {
   $selected = @()
   foreach ($item in $listAvailable.SelectedItems) { $selected += $item.ToString() }
-  foreach ($layerName in $selected) { [void]$layersToThawSet.Add($layerName) }
+  foreach ($layerName in $selected) {
+    [void]$layersToThawSet.Remove($layerName)
+    [void]$layersToFreezeSet.Add($layerName)
+  }
   Refresh-LayerLists $txtFilter.Text
   $listAvailable.Focus()
 }
 
-function Add-AllVisibleAvailableLayers {
+function Add-AllVisibleAvailableToFreeze {
   $visible = @()
   foreach ($item in $listAvailable.Items) { $visible += $item.ToString() }
-  foreach ($layerName in $visible) { [void]$layersToThawSet.Add($layerName) }
+  foreach ($layerName in $visible) {
+    [void]$layersToThawSet.Remove($layerName)
+    [void]$layersToFreezeSet.Add($layerName)
+  }
+  Refresh-LayerLists $txtFilter.Text
+  $listAvailable.Focus()
+}
+
+function Remove-SelectedFreezeLayers {
+  $selected = @()
+  foreach ($item in $listToFreeze.SelectedItems) { $selected += $item.ToString() }
+  foreach ($layerName in $selected) { [void]$layersToFreezeSet.Remove($layerName) }
+  Refresh-LayerLists $txtFilter.Text
+  $listToFreeze.Focus()
+}
+
+function Remove-AllFreezeLayers {
+  $layersToFreezeSet.Clear()
+  Refresh-LayerLists $txtFilter.Text
+  $listAvailable.Focus()
+}
+
+function Add-SelectedAvailableToThaw {
+  $selected = @()
+  foreach ($item in $listAvailable.SelectedItems) { $selected += $item.ToString() }
+  foreach ($layerName in $selected) {
+    [void]$layersToFreezeSet.Remove($layerName)
+    [void]$layersToThawSet.Add($layerName)
+  }
+  Refresh-LayerLists $txtFilter.Text
+  $listAvailable.Focus()
+}
+
+function Add-AllVisibleAvailableToThaw {
+  $visible = @()
+  foreach ($item in $listAvailable.Items) { $visible += $item.ToString() }
+  foreach ($layerName in $visible) {
+    [void]$layersToFreezeSet.Remove($layerName)
+    [void]$layersToThawSet.Add($layerName)
+  }
   Refresh-LayerLists $txtFilter.Text
   $listAvailable.Focus()
 }
@@ -721,20 +836,26 @@ $btnClear.add_Click({
   })
 
 $listAvailable.add_SelectedIndexChanged({ Update-MoveButtons })
+$listToFreeze.add_SelectedIndexChanged({ Update-MoveButtons })
 $listToThaw.add_SelectedIndexChanged({ Update-MoveButtons })
 
-$btnAddSelected.add_Click({ Add-SelectedAvailableLayers })
-$btnAddAll.add_Click({ Add-AllVisibleAvailableLayers })
-$btnRemoveSelected.add_Click({ Remove-SelectedThawLayers })
-$btnRemoveAll.add_Click({ Remove-AllThawLayers })
+$btnAddFreeze.add_Click({ Add-SelectedAvailableToFreeze })
+$btnAddAllFreeze.add_Click({ Add-AllVisibleAvailableToFreeze })
+$btnRemoveFreeze.add_Click({ Remove-SelectedFreezeLayers })
+$btnRemoveAllFreeze.add_Click({ Remove-AllFreezeLayers })
 
-$listAvailable.add_DoubleClick({ Add-SelectedAvailableLayers })
+$btnAddThaw.add_Click({ Add-SelectedAvailableToThaw })
+$btnAddAllThaw.add_Click({ Add-AllVisibleAvailableToThaw })
+$btnRemoveThaw.add_Click({ Remove-SelectedThawLayers })
+$btnRemoveAllThaw.add_Click({ Remove-AllThawLayers })
+
+$listToFreeze.add_DoubleClick({ Remove-SelectedFreezeLayers })
 $listToThaw.add_DoubleClick({ Remove-SelectedThawLayers })
 
-$listAvailable.add_KeyDown({
+$listToFreeze.add_KeyDown({
     param($sender, $e)
-    if ($e.KeyCode -eq [System.Windows.Forms.Keys]::Enter) {
-      Add-SelectedAvailableLayers
+    if ($e.KeyCode -eq [System.Windows.Forms.Keys]::Delete -or $e.KeyCode -eq [System.Windows.Forms.Keys]::Back) {
+      Remove-SelectedFreezeLayers
       $e.Handled = $true
     }
   })
@@ -754,20 +875,24 @@ Write-Host "PROGRESS: Layer selection dialog should be visible on the primary di
 Write-Host "PROGRESS: TRACE branch=layer_selection_dialog"
 if ($form.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { exit }
 
+$layersToFreeze = @($layersToFreezeSet | Sort-Object)
 $layersToThaw = @($layersToThawSet | Sort-Object)
-if ($layersToThaw.Count -eq 0) { Write-Host "No layers added to the right list. Exiting."; exit }
+if ($layersToFreeze.Count -eq 0 -and $layersToThaw.Count -eq 0) {
+  Write-Host "No layers were queued for freeze or thaw. Exiting."
+  exit
+}
 
 # ---------------- 6) UPDATE PHASE (STATE-AWARE, NO COM) ----------------
-$thawReport = Join-Path $ToolDir "ThawReport.tsv"
-"DWG`tLayer`tExists`tWasCurrent`tWasOff`tWasFrozen`tWasLocked`tAction`tResultFrozen`tSaveStatus" |
-Set-Content -Path $thawReport -Encoding ASCII
+$updateReport = Join-Path $ToolDir "LayerUpdateReport.tsv"
+"DWG`tLayer`tOpType`tExists`tWasCurrent`tWasOff`tWasFrozen`tWasLocked`tAction`tResultFrozen`tSaveStatus" |
+  Set-Content -Path $updateReport -Encoding ASCII
 
-$thawReportForLisp = ($thawReport -replace '\\', '/')
+$updateReportForLisp = ($updateReport -replace '\\', '/')
 
 $updateLsp = Join-Path $ToolDir "update_layers.lsp"
 $updateLspForLisp = ($updateLsp -replace '\\', '/')
-$lispLayerList = $layersToThaw | ForEach-Object { "`"$_`"" }
-$lispLayerListStr = $lispLayerList -join " "
+$lispFreezeList = if ($layersToFreeze.Count -gt 0) { ($layersToFreeze | ForEach-Object { "`"$_`"" }) -join " " } else { "" }
+$lispThawList = if ($layersToThaw.Count -gt 0) { ($layersToThaw | ForEach-Object { "`"$_`"" }) -join " " } else { "" }
 
 $updateLspContent = @"
 (defun _t (b) (if b "T" "F"))
@@ -794,75 +919,147 @@ $updateLspContent = @"
   (< (_color62 rec) 0)
 )
 
-(defun _log (f dwg lay exists wasCur wasOff wasFroz wasLock action resFroz saveStat / tab)
+(defun _log (f dwg lay opType exists wasCur wasOff wasFroz wasLock action resFroz saveStat / tab)
   (setq tab (chr 9))
   (write-line
-    (strcat dwg tab lay tab exists tab wasCur tab wasOff tab wasFroz tab wasLock tab action tab resFroz tab saveStat)
+    (strcat dwg tab lay tab opType tab exists tab wasCur tab wasOff tab wasFroz tab wasLock tab action tab resFroz tab saveStat)
     f
   )
 )
 
-(defun c:BatchThaw (/ f dwg layName rec exists wasCur wasOff wasFroz wasLock action rec2 resFroz saveAfter saveStatus)
+(defun _ensure-temp-current-layer (/ tmp)
+  (setq tmp "HEADLESS_TEMP")
+  (if (null (tblsearch "LAYER" tmp))
+    (command "_.-LAYER" "_New" tmp "")
+  )
+  (command "_.-LAYER" "_Thaw" tmp "")
+  (command "_.-LAYER" "_On" tmp "")
+  (command "_.-LAYER" "_Unlock" tmp "")
+  (command "_.-LAYER" "_Make" tmp "")
+  tmp
+)
+
+(defun _freeze-one (f dwg layName freezeSet / rec exists wasCur wasOff wasFroz wasLock action rec2 resFroz)
+  (setq rec (tblsearch "LAYER" layName))
+  (setq exists (if rec T nil))
+  (setq wasCur (if exists (= (strcase layName) (strcase (getvar "CLAYER"))) nil))
+  (setq wasOff (if exists (_offp rec) nil))
+  (setq wasFroz (if exists (_frozenp rec) nil))
+  (setq wasLock (if exists (_lockedp rec) nil))
+  (setq action "")
+
+  (cond
+    ((not exists)
+      (setq action "NOT_FOUND")
+      (setq resFroz "?")
+    )
+    (wasFroz
+      (setq action "SKIP_ALREADY_FROZEN")
+      (setq resFroz "T")
+    )
+    (T
+      (if wasCur (progn (_ensure-temp-current-layer) (setq action (strcat action "SWITCH_CLAYER;"))))
+      (if wasLock (progn (command "_.-LAYER" "_Unlock" layName "") (setq action (strcat action "UNLOCK;"))))
+
+      (command "_.-LAYER" "_Freeze" layName "")
+      (setq action (strcat action "FREEZE;"))
+      (if wasOff (setq action (strcat action "LEFT_OFF;")))
+
+      (setq rec2 (tblsearch "LAYER" layName))
+      (setq resFroz (if (and rec2 (_frozenp rec2)) "T" "F"))
+    )
+  )
+
+  (_log f dwg layName "FREEZE"
+    (_t exists) (_t wasCur) (_t wasOff) (_t wasFroz) (_t wasLock)
+    action resFroz "?"
+  )
+)
+
+(defun _thaw-one (f dwg layName freezeSet / rec exists wasCur wasOff wasFroz wasLock action rec2 resFroz)
+  ;; Defensive: if this layer is also queued for freeze, prefer freeze and skip thaw.
+  (if (member (strcase layName) freezeSet)
+    (progn
+      (_log f dwg layName "THAW" "?" "?" "?" "?" "?" "CONFLICT_FREEZE_WINS" "?" "?")
+    )
+    (progn
+      (setq rec (tblsearch "LAYER" layName))
+      (setq exists (if rec T nil))
+      (setq wasCur (if exists (= (strcase layName) (strcase (getvar "CLAYER"))) nil))
+      (setq wasOff (if exists (_offp rec) nil))
+      (setq wasFroz (if exists (_frozenp rec) nil))
+      (setq wasLock (if exists (_lockedp rec) nil))
+      (setq action "")
+
+      (cond
+        ((not exists)
+          (setq action "NOT_FOUND")
+          (setq resFroz "?")
+        )
+        ((not wasFroz)
+          (setq action "SKIP_ALREADY_THAWED")
+          (setq resFroz "F")
+        )
+        (T
+          (command "_.-LAYER" "_Thaw" layName "")
+          (setq action "THAW;")
+          (setq rec2 (tblsearch "LAYER" layName))
+          (setq resFroz (if (and rec2 (_frozenp rec2)) "T" "F"))
+        )
+      )
+
+      (_log f dwg layName "THAW"
+        (_t exists) (_t wasCur) (_t wasOff) (_t wasFroz) (_t wasLock)
+        action resFroz "?"
+      )
+    )
+  )
+)
+
+(defun c:BatchUpdate (/ f dwg freezeList thawList freezeSet saveAfter saveStatus)
 
   (setvar "CMDECHO" 0)
   (setq dwg (getvar "DWGNAME"))
 
-  (setq f (open "$thawReportForLisp" "a"))
+  (setq f (open "$updateReportForLisp" "a"))
   (if (null f)
     (progn
-      (prompt "\\nERROR: Could not open ThawReport.tsv for append.")
+      (prompt "\\nERROR: Could not open LayerUpdateReport.tsv for append.")
       (command "_.QUIT" "_N")
       (princ)
     )
   )
 
-  (foreach layName (list $lispLayerListStr)
+  (setq freezeList (list $lispFreezeList))
+  (setq thawList (list $lispThawList))
 
-    (setq rec (tblsearch "LAYER" layName))
-    (setq exists (if rec T nil))
+  ;; Filter out empty placeholder from empty lists.
+  (setq freezeList (vl-remove "" freezeList))
+  (setq thawList (vl-remove "" thawList))
 
-    (setq wasCur (if exists (= (strcase layName) (strcase (getvar "CLAYER"))) nil))
-    (setq wasOff (if exists (_offp rec) nil))
-    (setq wasFroz (if exists (_frozenp rec) nil))
-    (setq wasLock (if exists (_lockedp rec) nil))
-    (setq action "")
+  ;; Build an upper-cased freeze set for conflict detection in thaw pass.
+  (setq freezeSet (mapcar 'strcase freezeList))
 
-    (cond
-      ((not exists)
-        (setq action "NOT_FOUND")
-        (setq resFroz "?")
-      )
-      ((not wasFroz)
-        (setq action "SKIP_NOT_FROZEN")
-        (setq resFroz "F")
-      )
-      (T
-        (command "_.-LAYER" "_Thaw" layName "")
-        (setq action (strcat action "THAW;"))
+  (foreach layName freezeList
+    (_freeze-one f dwg layName freezeSet)
+  )
 
-        (setq rec2 (tblsearch "LAYER" layName))
-        (setq resFroz (if (and rec2 (_frozenp rec2)) "T" "F"))
-      )
-    )
-
-    (_log f dwg layName
-      (_t exists) (_t wasCur) (_t wasOff) (_t wasFroz) (_t wasLock)
-      action resFroz "?"
-    )
+  (foreach layName thawList
+    (_thaw-one f dwg layName freezeSet)
   )
 
   (command "_.QSAVE")
   (setq saveAfter (getvar "DBMOD"))
   (setq saveStatus (if (= saveAfter 0) "SAVE_OK" (strcat "SAVE_FAILED_DBMOD=" (itoa saveAfter))))
 
-  (_log f dwg "<DWG_SAVE>" "T" "?" "?" "?" "?" "QSAVE" "?" saveStatus)
+  (_log f dwg "<DWG_SAVE>" "SAVE" "T" "?" "?" "?" "?" "QSAVE" "?" saveStatus)
 
   (close f)
   (princ)
 )
 
-(defun c:BatchThawFiles (/)
-  (c:BatchThaw)
+(defun c:BatchUpdateFiles (/)
+  (c:BatchUpdate)
   (command "_.QUIT" "_N")
   (princ)
 )
@@ -881,7 +1078,7 @@ $updateScrLines = @(
   "SECURELOAD",
   "0",
   "(load `"$updateLspForLisp`")",
-  "(c:BatchThawFiles)"
+  "(c:BatchUpdateFiles)"
 )
 Set-Content -Path $updateScr -Value ($updateScrLines -join "`r`n") -Encoding ASCII
 
@@ -890,6 +1087,8 @@ $logFile = Join-Path ([Environment]::GetFolderPath("Desktop")) "LayerUpdateLog.t
 "Starting Update at $(Get-Date)" | Out-File $logFile
 "Files:" | Out-File $logFile -Append
 $files | ForEach-Object { $_ | Out-File $logFile -Append }
+"Layers to freeze: $($layersToFreeze -join ', ')" | Out-File $logFile -Append
+"Layers to thaw:   $($layersToThaw -join ', ')" | Out-File $logFile -Append
 
 Write-Host "PROGRESS: Updating $($files.Count) file(s)..."
 
@@ -927,6 +1126,6 @@ if ($files.Count -gt 0) {
 }
 
 Write-Host "Done."
-Write-Host "Report: $thawReport"
+Write-Host "Report: $updateReport"
 Write-Host "Logs: $ToolDir"
 Write-Host "Summary log: $logFile"

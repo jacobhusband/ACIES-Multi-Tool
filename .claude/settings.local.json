@@ -23,7 +23,9 @@
       "Bash(where:*)",
       "Bash(git push:*)",
       "Bash(node --check script.js)",
-      "Bash(git stash *)"
+      "Bash(git stash *)",
+      "Bash(node --check \"/c/Users/JacobH/Documents/dev/ProjectManagement/script.js\")",
+      "Bash(awk -F: '$1 < 30383 && $1 > 30100 {print}')"
     ]
   }
 }

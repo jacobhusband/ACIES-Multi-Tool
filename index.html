@@ -194,6 +194,24 @@
                         </button>
                         <button class="icon-btn" id="pinUrgentDeliverablesBtn" aria-label="Pin urgent deliverables"
                             title="Pin all overdue and due-today deliverables"></button>
+                        <div class="projects-view-toggle" role="group" aria-label="Projects view mode">
+                            <button type="button" class="view-toggle-btn is-active" id="viewToggleList" data-view-mode="list" aria-pressed="true" title="List view">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <line x1="8" y1="6" x2="21" y2="6"></line>
+                                    <line x1="8" y1="12" x2="21" y2="12"></line>
+                                    <line x1="8" y1="18" x2="21" y2="18"></line>
+                                    <line x1="3" y1="6" x2="3.01" y2="6"></line>
+                                    <line x1="3" y1="12" x2="3.01" y2="12"></line>
+                                    <line x1="3" y1="18" x2="3.01" y2="18"></line>
+                                </svg>
+                            </button>
+                            <button type="button" class="view-toggle-btn" id="viewToggleCard" data-view-mode="card" aria-pressed="false" title="Card view">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <rect x="3" y="3" width="7" height="18" rx="1"></rect>
+                                    <rect x="14" y="3" width="7" height="11" rx="1"></rect>
+                                </svg>
+                            </button>
+                        </div>
                         <button class="icon-btn" id="projectsHelpBtn" aria-label="Projects help" title="Projects help">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -303,6 +321,36 @@
                         </div>
                     </div>
                 </div>
+                <div class="projects-card-controls" id="projectsCardControls" hidden>
+                    <div class="projects-week-nav" id="projectsWeekNav">
+                        <button type="button" class="icon-btn week-nav-btn" id="weekNavPrev" aria-label="Previous week" title="Previous week">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="15 18 9 12 15 6"></polyline>
+                            </svg>
+                        </button>
+                        <span class="projects-week-nav__label" id="weekNavLabel">This Week</span>
+                        <button type="button" class="icon-btn week-nav-btn" id="weekNavNext" aria-label="Next week" title="Next week">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="9 18 15 12 9 6"></polyline>
+                            </svg>
+                        </button>
+                        <button type="button" class="week-nav-today" id="weekNavToday" title="Jump to current week">This Week</button>
+                    </div>
+                    <div class="projects-column-config-wrap">
+                        <button type="button" class="icon-btn" id="columnConfigBtn" aria-label="Configure columns" title="Configure columns" aria-expanded="false">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <line x1="4" y1="6" x2="20" y2="6"></line>
+                                <line x1="4" y1="12" x2="20" y2="12"></line>
+                                <line x1="4" y1="18" x2="20" y2="18"></line>
+                                <circle cx="8" cy="6" r="2" fill="currentColor"></circle>
+                                <circle cx="16" cy="12" r="2" fill="currentColor"></circle>
+                                <circle cx="10" cy="18" r="2" fill="currentColor"></circle>
+                            </svg>
+                        </button>
+                        <div id="columnConfigMenu" class="column-config-menu" role="menu" hidden></div>
+                    </div>
+                </div>
+                <div class="projects-card-view" id="projectsCardView" hidden></div>
                 <table class="table projects-table">
                     <thead>
                         <tr>

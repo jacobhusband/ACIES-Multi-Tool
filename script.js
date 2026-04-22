@@ -8863,6 +8863,16 @@ const DEFAULT_CLOUD_SYNC_STATE = {
   signedIn: false,
 };
 
+const DEFAULT_PROJECT_CARD_COLUMNS = [
+  { key: "pinned", label: "Pinned", hidden: false },
+  { key: "Waiting", label: "Waiting", hidden: false },
+  { key: "Working", label: "Working", hidden: false },
+  { key: "Pending Review", label: "Pending Review", hidden: false },
+  { key: "Complete", label: "Complete", hidden: false },
+  { key: "Delivered", label: "Delivered", hidden: false },
+  { key: "nodate", label: "No date", hidden: false },
+];
+
 let userSettings = {
   userName: "",
   discipline: ["Electrical"],
@@ -8874,6 +8884,8 @@ let userSettings = {
   autoPrimary: false,
   separateDeliverableCompletionGroups: true,
   groupDeliverablesByProject: false,
+  projectsViewMode: "list",
+  projectCardColumns: DEFAULT_PROJECT_CARD_COLUMNS.map((c) => ({ ...c })),
   defaultPmInitials: "",
   cleanDwgOptions: { ...DEFAULT_CLEAN_DWG_OPTIONS },
   publishDwgOptions: { ...DEFAULT_PUBLISH_DWG_OPTIONS },
@@ -9099,11 +9111,45 @@ let lastCloudComparableFingerprints = {
 let deliverablesFilter = "active";
 let separateDeliverableCompletionGroups = true;
 let groupDeliverablesByProject = false;
+let projectsViewMode = "list";
+let projectCardColumns = DEFAULT_PROJECT_CARD_COLUMNS.map((c) => ({ ...c }));
+let projectCardWeek = getWeekStartDate(new Date());
+
+function normalizeProjectCardColumns(raw) {
+  const defaults = DEFAULT_PROJECT_CARD_COLUMNS;
+  const defaultKeys = new Set(defaults.map((c) => c.key));
+  const list = Array.isArray(raw) ? raw : [];
+  const seen = new Set();
+  const normalized = [];
+  for (const entry of list) {
+    if (!entry || typeof entry !== "object") continue;
+    const key = String(entry.key || "").trim();
+    if (!key || !defaultKeys.has(key) || seen.has(key)) continue;
+    const fallback = defaults.find((c) => c.key === key);
+    normalized.push({
+      key,
+      label: String(entry.label || fallback.label),
+      hidden: entry.hidden === true,
+    });
+    seen.add(key);
+  }
+  for (const col of defaults) {
+    if (!seen.has(col.key)) normalized.push({ ...col });
+  }
+  return normalized;
+}
+
 function syncProjectViewPreferencesFromSettings() {
   separateDeliverableCompletionGroups =
     userSettings.separateDeliverableCompletionGroups !== false;
   groupDeliverablesByProject =
     userSettings.groupDeliverablesByProject === true;
+  projectsViewMode =
+    userSettings.projectsViewMode === "card" ? "card" : "list";
+  projectCardColumns = normalizeProjectCardColumns(
+    userSettings.projectCardColumns
+  );
+  userSettings.projectCardColumns = projectCardColumns.map((c) => ({ ...c }));
 }
 let activeNoteTab = null;
 let activeNotebookType = "note";
@@ -11473,6 +11519,8 @@ function getDefaultSyncableSettings() {
     autoPrimary: false,
     separateDeliverableCompletionGroups: true,
     groupDeliverablesByProject: false,
+    projectsViewMode: "list",
+    projectCardColumns: DEFAULT_PROJECT_CARD_COLUMNS.map((c) => ({ ...c })),
     defaultPmInitials: "",
     cleanDwgOptions: { ...DEFAULT_CLEAN_DWG_OPTIONS },
     publishDwgOptions: { ...DEFAULT_PUBLISH_DWG_OPTIONS },
@@ -11499,6 +11547,8 @@ function sanitizeSettingsForCloud(settings = userSettings) {
     separateDeliverableCompletionGroups:
       source.separateDeliverableCompletionGroups !== false,
     groupDeliverablesByProject: source.groupDeliverablesByProject === true,
+    projectsViewMode: source.projectsViewMode === "card" ? "card" : "list",
+    projectCardColumns: normalizeProjectCardColumns(source.projectCardColumns),
     defaultPmInitials: String(source.defaultPmInitials || "")
       .trim()
       .toUpperCase(),
@@ -11536,6 +11586,8 @@ function normalizeCloudSettingsDoc(raw = {}) {
     separateDeliverableCompletionGroups:
       source.separateDeliverableCompletionGroups !== false,
     groupDeliverablesByProject: source.groupDeliverablesByProject === true,
+    projectsViewMode: source.projectsViewMode === "card" ? "card" : "list",
+    projectCardColumns: normalizeProjectCardColumns(source.projectCardColumns),
     defaultPmInitials: String(source.defaultPmInitials || "")
       .trim()
       .toUpperCase(),
@@ -14138,15 +14190,23 @@ function applyPrimaryStatus(p) {
   const primary = STATUS_PRIORITY.find((status) => hasStatus(p, status));
   p.status = primary || "";
 }
-function toggleStatus(p, label) {
-  if (!Array.isArray(p.statuses)) p.statuses = [];
-  const key = LABEL_TO_KEY[label];
-  if (key) setTag(p, key, !p.statuses.includes(label));
+function setSingleStatus(p, label) {
+  if (!p) return;
+  const canonical = label && STATUS_CANON.includes(label) ? label : "";
+  p.statuses = canonical ? [canonical] : [];
+  p.statusTags = canonical ? [LABEL_TO_KEY[canonical]].filter(Boolean) : [];
+  p.status = canonical;
   if (isFinished(p) && Array.isArray(p.tasks)) {
     p.tasks.forEach((task) => {
       task.done = true;
     });
   }
+}
+function toggleStatus(p, label) {
+  if (!p) return;
+  if (!Array.isArray(p.statuses)) p.statuses = [];
+  const current = p.statuses[0] || "";
+  setSingleStatus(p, current === label ? "" : label);
 }
 function syncStatusArrays(p) {
   if (!Array.isArray(p.statuses)) p.statuses = [];
@@ -14155,9 +14215,11 @@ function syncStatusArrays(p) {
     const L = KEY_TO_LABEL[k];
     if (L && !p.statuses.includes(L)) p.statuses.push(L);
   }
-  p.statuses = [...new Set(p.statuses.filter((s) => STATUS_CANON.includes(s)))];
-  p.statusTags = p.statuses.map((s) => LABEL_TO_KEY[s]).filter(Boolean);
-  applyPrimaryStatus(p);
+  const valid = [...new Set(p.statuses.filter((s) => STATUS_CANON.includes(s)))];
+  const primary = STATUS_PRIORITY.find((s) => valid.includes(s)) || "";
+  p.statuses = primary ? [primary] : [];
+  p.statusTags = primary ? [LABEL_TO_KEY[primary]].filter(Boolean) : [];
+  p.status = primary;
 }
 function migrateStatuses(arr) {
   for (const p of arr) {
@@ -14171,21 +14233,6 @@ function migrateStatuses(arr) {
       syncStatusArrays(p);
     }
   }
-}
-function setTag(p, key, on) {
-  const tags = getStatusTags(p);
-  const idx = tags.indexOf(key);
-  if (on && idx === -1) tags.push(key);
-  if (!on && idx !== -1) tags.splice(idx, 1);
-  p.statusTags = tags;
-  const label = KEY_TO_LABEL[key];
-  if (!Array.isArray(p.statuses)) p.statuses = [];
-  const j = p.statuses.indexOf(label);
-  if (label) {
-    if (on && j === -1) p.statuses.push(label);
-    if (!on && j !== -1) p.statuses.splice(j, 1);
-  }
-  applyPrimaryStatus(p);
 }
 function getStatusTags(p) {
   let tags = Array.isArray(p.statusTags) ? [...p.statusTags] : [];
@@ -20598,45 +20645,44 @@ function createStatusDropdown(deliverable, project, card) {
   // Dropdown menu - status options only (no Show details)
   const menu = el("div", { className: "deliverable-status-menu" });
 
+  const radioGroupName = `deliverable-status-${deliverable.id || createId("dlv")}`;
   availableStatuses.forEach(status => {
-    const isActive = deliverable.statuses && deliverable.statuses.includes(status);
+    const isActive = hasStatus(deliverable, status);
     const option = el("label", { className: "deliverable-status-option" });
 
-    const checkbox = el("input", {
-      type: "checkbox",
-      checked: isActive
+    const radio = el("input", {
+      type: "radio",
+      name: radioGroupName,
+      checked: isActive,
     });
 
-    checkbox.addEventListener("change", async (e) => {
+    radio.addEventListener("change", async (e) => {
       e.stopPropagation();
-
-      if (!deliverable.statuses) {
-        deliverable.statuses = [];
-      }
-
-      if (checkbox.checked) {
-        if (!deliverable.statuses.includes(status)) {
-          deliverable.statuses.push(status);
-        }
-      } else {
-        deliverable.statuses = deliverable.statuses.filter(s => s !== status);
-      }
-
-      deliverable.statusTags = deliverable.statuses
-        .map((s) => LABEL_TO_KEY[s])
-        .filter(Boolean);
-      syncStatusArrays(deliverable);
-
-      // Save changes
+      if (!radio.checked) return;
+      setSingleStatus(deliverable, status);
       await save();
       setDeliverableStatusDropdownState(dropdown, false);
       renderProjectsPreservingExpandedDeliverables();
     });
 
     const label = el("span", { textContent: status });
-    option.append(checkbox, label);
+    option.append(radio, label);
     menu.appendChild(option);
   });
+
+  const clearBtn = el("button", {
+    type: "button",
+    className: "deliverable-status-clear",
+    textContent: "Clear status",
+  });
+  clearBtn.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    setSingleStatus(deliverable, "");
+    await save();
+    setDeliverableStatusDropdownState(dropdown, false);
+    renderProjectsPreservingExpandedDeliverables();
+  });
+  menu.appendChild(clearBtn);
 
   // Toggle dropdown
   trigger.addEventListener("click", (e) => {
@@ -22658,15 +22704,508 @@ function buildMatchContextRow(q, project, context) {
   return tr;
 }
 
+const KANBAN_COLUMN_SLUGS = {
+  pinned: "pinned",
+  Waiting: "waiting",
+  Working: "working",
+  "Pending Review": "pending-review",
+  Complete: "complete",
+  Delivered: "delivered",
+  nodate: "nodate",
+};
+
+function formatProjectWeekLabel(weekStart) {
+  const start = new Date(weekStart);
+  const end = new Date(weekStart);
+  end.setDate(end.getDate() + 6);
+  const sameMonth = start.getMonth() === end.getMonth();
+  const startMonth = start.toLocaleString(undefined, { month: "short" });
+  const endMonth = end.toLocaleString(undefined, { month: "short" });
+  const startDay = start.getDate();
+  const endDay = end.getDate();
+  const year = end.getFullYear();
+  return sameMonth
+    ? `${startMonth} ${startDay} – ${endDay}, ${year}`
+    : `${startMonth} ${startDay} – ${endMonth} ${endDay}, ${year}`;
+}
+
+function updateProjectsViewModeUi() {
+  const listBtn = document.getElementById("viewToggleList");
+  const cardBtn = document.getElementById("viewToggleCard");
+  const isCard = projectsViewMode === "card";
+  if (listBtn) {
+    listBtn.classList.toggle("is-active", !isCard);
+    listBtn.setAttribute("aria-pressed", String(!isCard));
+  }
+  if (cardBtn) {
+    cardBtn.classList.toggle("is-active", isCard);
+    cardBtn.setAttribute("aria-pressed", String(isCard));
+  }
+  const table = document.querySelector("#projects-panel .projects-table");
+  const cardView = document.getElementById("projectsCardView");
+  const cardControls = document.getElementById("projectsCardControls");
+  const emptyState = document.getElementById("emptyState");
+  const filterControls = document.getElementById("projectsFilterControls");
+  if (table) table.hidden = isCard;
+  if (cardView) cardView.hidden = !isCard;
+  if (cardControls) cardControls.hidden = !isCard;
+  if (filterControls) filterControls.hidden = isCard;
+  if (emptyState && isCard) emptyState.style.display = "none";
+}
+
+function updateWeekNavLabel() {
+  const label = document.getElementById("weekNavLabel");
+  const todayBtn = document.getElementById("weekNavToday");
+  if (label) label.textContent = formatProjectWeekLabel(projectCardWeek);
+  if (todayBtn) {
+    const current = getWeekStartDate(new Date());
+    const isThisWeek = projectCardWeek.getTime() === current.getTime();
+    todayBtn.disabled = isThisWeek;
+    todayBtn.classList.toggle("is-current", isThisWeek);
+  }
+}
+
+function deliverableDueInWeek(deliverable, weekStart) {
+  const d = parseDueStr(deliverable?.due);
+  if (!d) return false;
+  const weekEnd = new Date(weekStart);
+  weekEnd.setDate(weekStart.getDate() + 6);
+  weekEnd.setHours(23, 59, 59, 999);
+  return d >= weekStart && d <= weekEnd;
+}
+
+function deliverableIsOverdueIncomplete(deliverable, weekStart) {
+  const d = parseDueStr(deliverable?.due);
+  if (!d) return false;
+  return d < weekStart && !isFinished(deliverable);
+}
+
+function buildCardProjectMeta(project) {
+  const meta = el("div", { className: "kanban-card-project-meta" });
+  const idText = String(project?.id || "").trim();
+  if (idText) {
+    meta.appendChild(
+      el("span", {
+        className: "kanban-card-project-id",
+        textContent: idText,
+      })
+    );
+  }
+  const nameText = String(project?.name || "").trim();
+  if (nameText) {
+    meta.appendChild(
+      el("span", {
+        className: "kanban-card-project-name",
+        textContent: nameText,
+        title: nameText,
+      })
+    );
+  }
+  return meta.childNodes.length ? meta : null;
+}
+
+function renderCardView() {
+  const host = document.getElementById("projectsCardView");
+  if (!host) return;
+  host.innerHTML = "";
+
+  const weekStart = projectCardWeek;
+  const currentWeekStart = getWeekStartDate(new Date());
+  const isCurrentWeek = weekStart.getTime() === currentWeekStart.getTime();
+
+  const visibleColumns = projectCardColumns.filter((c) => !c.hidden);
+  const pinnedShown = visibleColumns.some((c) => c.key === "pinned");
+  const nodateShown = visibleColumns.some((c) => c.key === "nodate");
+
+  const buckets = new Map(visibleColumns.map((c) => [c.key, []]));
+
+  for (const project of db) {
+    for (const deliverable of getProjectDeliverables(project)) {
+      const hasDue = !!parseDueStr(deliverable?.due);
+      if (!hasDue) {
+        if (nodateShown) {
+          buckets.get("nodate").push({ project, deliverable });
+        }
+        continue;
+      }
+
+      const inWeek = deliverableDueInWeek(deliverable, weekStart);
+      const overduePull =
+        isCurrentWeek &&
+        deliverableIsOverdueIncomplete(deliverable, weekStart);
+      if (!inWeek && !overduePull) continue;
+
+      if (pinnedShown && project.pinned) {
+        buckets.get("pinned").push({ project, deliverable });
+        continue;
+      }
+
+      const primary =
+        STATUS_PRIORITY.find((s) => hasStatus(deliverable, s)) || "Waiting";
+      if (buckets.has(primary)) {
+        buckets.get(primary).push({ project, deliverable });
+      }
+    }
+  }
+
+  for (const col of visibleColumns) {
+    const slug = KANBAN_COLUMN_SLUGS[col.key] || "other";
+    const column = el("section", {
+      className: `kanban-column kanban-column--${slug}`,
+    });
+    column.dataset.columnKey = col.key;
+
+    const header = el("header", { className: "kanban-column__header" });
+    const titleWrap = el("div", { className: "kanban-column__title" });
+    titleWrap.append(
+      el("span", {
+        className: "kanban-column__label",
+        textContent: col.label,
+      }),
+      el("span", {
+        className: "kanban-column__count",
+        textContent: String(buckets.get(col.key).length),
+      })
+    );
+    header.appendChild(titleWrap);
+    column.appendChild(header);
+
+    const cardsHost = el("div", { className: "kanban-column__cards" });
+    if (buckets.get(col.key).length === 0) {
+      cardsHost.appendChild(
+        el("div", {
+          className: "kanban-column__empty",
+          textContent: "No cards",
+        })
+      );
+    } else {
+      for (const { project, deliverable } of buckets.get(col.key)) {
+        const isPrimary = project.overviewDeliverableId === deliverable.id;
+        const card = renderDeliverableCard(deliverable, isPrimary, project);
+        card.draggable = true;
+        const projectMeta = buildCardProjectMeta(project);
+        if (projectMeta) card.insertBefore(projectMeta, card.firstChild);
+        cardsHost.appendChild(card);
+      }
+    }
+    column.appendChild(cardsHost);
+    host.appendChild(column);
+  }
+
+  attachKanbanDragHandlers(host);
+}
+
+function setProjectsViewMode(mode) {
+  const next = mode === "card" ? "card" : "list";
+  if (projectsViewMode === next) {
+    updateProjectsViewModeUi();
+    return;
+  }
+  projectsViewMode = next;
+  userSettings.projectsViewMode = next;
+  if (typeof debouncedSaveUserSettings === "function") {
+    debouncedSaveUserSettings();
+  }
+  render();
+}
+
+function shiftProjectCardWeek(days) {
+  const next = new Date(projectCardWeek);
+  next.setDate(next.getDate() + days);
+  projectCardWeek = getWeekStartDate(next);
+  if (typeof renderProjectsPreservingExpandedDeliverables === "function") {
+    renderProjectsPreservingExpandedDeliverables();
+  } else {
+    render();
+  }
+}
+
+function resetProjectCardWeek() {
+  projectCardWeek = getWeekStartDate(new Date());
+  if (typeof renderProjectsPreservingExpandedDeliverables === "function") {
+    renderProjectsPreservingExpandedDeliverables();
+  } else {
+    render();
+  }
+}
+
+function setupProjectsViewModeControls() {
+  const listBtn = document.getElementById("viewToggleList");
+  const cardBtn = document.getElementById("viewToggleCard");
+  if (listBtn) listBtn.addEventListener("click", () => setProjectsViewMode("list"));
+  if (cardBtn) cardBtn.addEventListener("click", () => setProjectsViewMode("card"));
+
+  const prevBtn = document.getElementById("weekNavPrev");
+  const nextBtn = document.getElementById("weekNavNext");
+  const todayBtn = document.getElementById("weekNavToday");
+  if (prevBtn) prevBtn.addEventListener("click", () => shiftProjectCardWeek(-7));
+  if (nextBtn) nextBtn.addEventListener("click", () => shiftProjectCardWeek(7));
+  if (todayBtn) todayBtn.addEventListener("click", () => resetProjectCardWeek());
+
+  const configBtn = document.getElementById("columnConfigBtn");
+  if (configBtn) {
+    configBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleColumnConfigMenu();
+    });
+  }
+  document.addEventListener("click", (e) => {
+    const menu = document.getElementById("columnConfigMenu");
+    const btn = document.getElementById("columnConfigBtn");
+    if (!menu || menu.hidden) return;
+    if (menu.contains(e.target) || (btn && btn.contains(e.target))) return;
+    closeColumnConfigMenu();
+  });
+
+  updateProjectsViewModeUi();
+  updateWeekNavLabel();
+}
+
+function toggleColumnConfigMenu() {
+  const menu = document.getElementById("columnConfigMenu");
+  if (!menu) return;
+  if (menu.hidden) {
+    renderColumnConfigMenu();
+    menu.hidden = false;
+    document.getElementById("columnConfigBtn")?.setAttribute("aria-expanded", "true");
+  } else {
+    closeColumnConfigMenu();
+  }
+}
+
+function closeColumnConfigMenu() {
+  const menu = document.getElementById("columnConfigMenu");
+  if (!menu) return;
+  menu.hidden = true;
+  document.getElementById("columnConfigBtn")?.setAttribute("aria-expanded", "false");
+}
+
+function persistProjectCardColumns() {
+  userSettings.projectCardColumns = projectCardColumns.map((c) => ({ ...c }));
+  if (typeof debouncedSaveUserSettings === "function") {
+    debouncedSaveUserSettings();
+  }
+}
+
+function moveProjectCardColumn(fromIndex, toIndex) {
+  if (
+    fromIndex < 0 ||
+    toIndex < 0 ||
+    fromIndex >= projectCardColumns.length ||
+    toIndex >= projectCardColumns.length ||
+    fromIndex === toIndex
+  ) {
+    return;
+  }
+  const [moved] = projectCardColumns.splice(fromIndex, 1);
+  projectCardColumns.splice(toIndex, 0, moved);
+  persistProjectCardColumns();
+  renderColumnConfigMenu();
+  renderProjectsPreservingExpandedDeliverables();
+}
+
+function toggleProjectCardColumnHidden(key, hidden) {
+  const col = projectCardColumns.find((c) => c.key === key);
+  if (!col) return;
+  col.hidden = !!hidden;
+  persistProjectCardColumns();
+  renderColumnConfigMenu();
+  renderProjectsPreservingExpandedDeliverables();
+}
+
+function renderColumnConfigMenu() {
+  const menu = document.getElementById("columnConfigMenu");
+  if (!menu) return;
+  menu.innerHTML = "";
+
+  const title = el("div", {
+    className: "column-config-title",
+    textContent: "Board columns",
+  });
+  menu.appendChild(title);
+
+  projectCardColumns.forEach((col, index) => {
+    const row = el("div", { className: "column-config-row" });
+    row.draggable = true;
+    row.dataset.columnIndex = String(index);
+
+    const handle = el("span", {
+      className: "column-config-handle",
+      "aria-hidden": "true",
+      textContent: "⋮⋮",
+    });
+
+    const label = el("label", { className: "column-config-label" });
+    const checkbox = el("input", {
+      type: "checkbox",
+      checked: !col.hidden,
+    });
+    checkbox.addEventListener("change", (e) => {
+      toggleProjectCardColumnHidden(col.key, !e.target.checked);
+    });
+    const text = el("span", { textContent: col.label });
+    label.append(checkbox, text);
+
+    row.append(handle, label);
+
+    row.addEventListener("dragstart", (e) => {
+      row.classList.add("is-dragging");
+      if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = "move";
+        try {
+          e.dataTransfer.setData("text/plain", String(index));
+        } catch (_) {}
+      }
+    });
+    row.addEventListener("dragend", () => {
+      row.classList.remove("is-dragging");
+      menu
+        .querySelectorAll(".column-config-row.is-drop-target")
+        .forEach((r) => r.classList.remove("is-drop-target"));
+    });
+    row.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+      menu
+        .querySelectorAll(".column-config-row.is-drop-target")
+        .forEach((r) => r.classList.remove("is-drop-target"));
+      row.classList.add("is-drop-target");
+    });
+    row.addEventListener("drop", (e) => {
+      e.preventDefault();
+      const fromIndex = Number(
+        (e.dataTransfer && e.dataTransfer.getData("text/plain")) || NaN
+      );
+      if (!Number.isFinite(fromIndex)) return;
+      const toIndex = Number(row.dataset.columnIndex);
+      moveProjectCardColumn(fromIndex, toIndex);
+    });
+
+    menu.appendChild(row);
+  });
+}
+
+function findDeliverableContext(deliverableId) {
+  const id = String(deliverableId || "").trim();
+  if (!id) return null;
+  for (const project of db) {
+    const deliverable = getProjectDeliverables(project).find(
+      (d) => String(d.id) === id
+    );
+    if (deliverable) return { project, deliverable };
+  }
+  return null;
+}
+
+let kanbanDragState = null;
+
+function attachKanbanDragHandlers(host) {
+  if (host.dataset.kanbanDragBound === "1") return;
+  host.dataset.kanbanDragBound = "1";
+
+  host.addEventListener("dragstart", (e) => {
+    const card = e.target.closest(".deliverable-card-new");
+    if (!card || !host.contains(card)) return;
+    kanbanDragState = {
+      deliverableId: card.dataset.deliverableId,
+      sourceColumnKey: card.closest(".kanban-column")?.dataset.columnKey || "",
+    };
+    card.classList.add("kanban-dragging");
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = "move";
+      try {
+        e.dataTransfer.setData("text/plain", kanbanDragState.deliverableId);
+      } catch (_) {}
+    }
+  });
+
+  host.addEventListener("dragend", () => {
+    host
+      .querySelectorAll(".deliverable-card-new.kanban-dragging")
+      .forEach((c) => c.classList.remove("kanban-dragging"));
+    host
+      .querySelectorAll(".kanban-column.is-drop-target")
+      .forEach((c) => c.classList.remove("is-drop-target"));
+    kanbanDragState = null;
+  });
+
+  host.addEventListener("dragover", (e) => {
+    if (!kanbanDragState) return;
+    const col = e.target.closest(".kanban-column");
+    if (!col) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+    host
+      .querySelectorAll(".kanban-column.is-drop-target")
+      .forEach((c) => {
+        if (c !== col) c.classList.remove("is-drop-target");
+      });
+    col.classList.add("is-drop-target");
+  });
+
+  host.addEventListener("dragleave", (e) => {
+    const col = e.target.closest(".kanban-column");
+    if (!col) return;
+    if (!col.contains(e.relatedTarget)) {
+      col.classList.remove("is-drop-target");
+    }
+  });
+
+  host.addEventListener("drop", async (e) => {
+    if (!kanbanDragState) return;
+    const col = e.target.closest(".kanban-column");
+    if (!col) return;
+    e.preventDefault();
+
+    const targetKey = col.dataset.columnKey;
+    const { deliverableId, sourceColumnKey } = kanbanDragState;
+    kanbanDragState = null;
+    host
+      .querySelectorAll(".kanban-column.is-drop-target")
+      .forEach((c) => c.classList.remove("is-drop-target"));
+    if (!targetKey || targetKey === sourceColumnKey) return;
+
+    if (targetKey === "nodate") {
+      // Drop onto "No date" is a no-op in v1 to avoid silently clearing a due date.
+      return;
+    }
+
+    const ctx = findDeliverableContext(deliverableId);
+    if (!ctx) return;
+    const { project, deliverable } = ctx;
+
+    if (targetKey === "pinned") {
+      project.pinned = true;
+      if (typeof syncPinnedProjectOrders === "function") {
+        syncPinnedProjectOrders();
+      }
+    } else {
+      deliverable.statuses = [targetKey];
+      syncStatusArrays(deliverable);
+    }
+
+    await save();
+    renderProjectsPreservingExpandedDeliverables();
+  });
+}
+
 function render() {
   const tbody = document.getElementById("tbody");
   const emptyState = document.getElementById("emptyState");
   syncProjectsFilterDropdowns();
+  updateProjectsViewModeUi();
+  updateWeekNavLabel();
   tbody.innerHTML = "";
 
   const q = val("search").toLowerCase();
   const matchContextMap = new Map();
   const projectListContextMap = new Map();
+  const isCardView = projectsViewMode === "card";
+
+  if (isCardView) {
+    renderCardView();
+    return;
+  }
 
   let items = db.filter((p) => {
     if (q) {
@@ -29854,6 +30393,7 @@ function initEventListeners() {
     pinUrgentDeliverablesBtn.appendChild(createIcon(PIN_ICON_PATH, 16));
     pinUrgentDeliverablesBtn.onclick = () => pinUrgentDeliverables();
   }
+  setupProjectsViewModeControls();
   const deliverableNotepadAddBtn = document.getElementById(
     "deliverableNotepadAddBtn"
   );

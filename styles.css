@@ -2711,12 +2711,6 @@ input.has-field-error {
   border-color: var(--warning);
 }
 
-.st-work[aria-pressed="true"] {
-  background: var(--info);
-  border-color: var(--info);
-  color: #ffffff;
-}
-
 .st-pr[aria-pressed="true"] {
   background: var(--warning);
   color: var(--btn-text-on-accent);
@@ -7523,11 +7517,6 @@ dialog::backdrop {
   color: var(--btn-text-on-accent);
 }
 
-.deliverable-status-badge.working {
-  background: var(--info);
-  color: #ffffff;
-}
-
 .deliverable-status-badge.pendingreview {
   background: var(--warning);
   color: var(--btn-text-on-accent);
@@ -8262,6 +8251,16 @@ dialog::backdrop {
 .work-item-pin-btn.is-pinned {
   background: var(--accent-dim);
   color: var(--accent);
+}
+
+.deliverable-pin-btn {
+  border: 1px solid transparent;
+  flex-shrink: 0;
+}
+
+.deliverable-pin-btn.is-pinned {
+  border-color: rgba(16, 185, 129, 0.35);
+  box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.08);
 }
 
 /* Add task input row */
@@ -11631,6 +11630,7 @@ input:checked+.slider:before {
 }
 
 .projects-card-view {
+  --projects-card-column-width: min(480px, calc(100vw - 32px));
   display: flex;
   gap: 14px;
   overflow-x: auto;
@@ -11645,7 +11645,11 @@ input:checked+.slider:before {
 }
 
 .kanban-column {
-  flex: 0 0 480px;
+  flex: 0 0 var(--projects-card-column-width);
+  width: var(--projects-card-column-width);
+  max-width: var(--projects-card-column-width);
+  min-width: 0;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   background: color-mix(in srgb, var(--surface) 80%, transparent);
@@ -11658,13 +11662,26 @@ input:checked+.slider:before {
 
 .kanban-card-project-meta {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   padding: 6px 10px 2px;
   font-size: 11px;
   color: var(--muted);
   border-bottom: 1px dashed var(--border, rgba(255, 255, 255, 0.08));
   margin-bottom: 4px;
+  overflow: hidden;
+}
+
+.kanban-card-project-identity {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
   overflow: hidden;
 }
 
@@ -11676,12 +11693,43 @@ input:checked+.slider:before {
 }
 
 .kanban-card-project-name {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
   font-weight: 500;
   color: var(--text, inherit);
   opacity: 0.85;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.kanban-card-project-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.kanban-card-project-actions .btn.icon-only {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  box-shadow: none;
+  opacity: 0.72;
+}
+
+.kanban-card-project-actions .btn.icon-only:hover,
+.kanban-card-project-actions .btn.icon-only:focus-visible {
+  opacity: 1;
+}
+
+.kanban-card-project-actions .btn.icon-only:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+  transform: none;
 }
 
 .kanban-column__header {
@@ -11725,11 +11773,15 @@ input:checked+.slider:before {
 
 .kanban-column__cards {
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 10px;
   display: flex;
   flex-direction: column;
   gap: 10px;
   flex: 1;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .kanban-column__empty {
@@ -11747,6 +11799,10 @@ input:checked+.slider:before {
 }
 
 .kanban-column .deliverable-card-new {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   cursor: grab;
 }
 
@@ -11762,9 +11818,6 @@ input:checked+.slider:before {
 }
 .kanban-column--waiting .kanban-column__label {
   color: var(--warning, #f59e0b);
-}
-.kanban-column--working .kanban-column__label {
-  color: var(--info, #3b82f6);
 }
 .kanban-column--pending-review .kanban-column__label {
   color: #f59e0b;

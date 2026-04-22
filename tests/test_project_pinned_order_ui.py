@@ -29,7 +29,6 @@ class ProjectPinnedOrderUiTests(unittest.TestCase):
             "base.pinnedOrder = base.pinned ? getLowestPinnedProjectOrder(projects) : null;",
             "const pinned = getPinnedProjectsInManualOrder(items);",
             "items = pinned.concat(unpinned);",
-            "setProjectPinnedState(project, true, db);",
             "pinned: false,",
             "pinnedOrder: null,",
         ):
@@ -63,6 +62,28 @@ class ProjectPinnedOrderUiTests(unittest.TestCase):
             "orderedDeliverableRows.forEach((row) => {",
         ):
             self.assertIn(expected, script)
+
+    def test_card_view_drop_from_pinned_column_unpins_deliverable_before_status_update(self):
+        script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
+        drop_start = script.index('host.addEventListener("drop", async (e) => {')
+        drop_end = script.index("await save();", drop_start)
+        drop_block = script[drop_start:drop_end]
+
+        self.assertIn(
+            'const { deliverableId, sourceColumnKey } = kanbanDragState;',
+            drop_block,
+        )
+        self.assertIn("setDeliverablePinnedState(deliverable, true);", drop_block)
+        self.assertIn(
+            'if (sourceColumnKey === "pinned" && deliverable.pinned) {',
+            drop_block,
+        )
+        self.assertIn("setDeliverablePinnedState(deliverable, false);", drop_block)
+        self.assertLess(
+            drop_block.index("setDeliverablePinnedState(deliverable, false);"),
+            drop_block.index("deliverable.statuses = [targetKey];"),
+        )
+        self.assertNotIn("setProjectPinnedState(project", drop_block)
 
     def test_project_pinned_order_styles_exist(self):
         css = STYLES_CSS_PATH.read_text(encoding="utf-8")

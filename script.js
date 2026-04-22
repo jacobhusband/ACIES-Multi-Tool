@@ -1,7 +1,6 @@
 // ===================== CONFIGURATION & CONSTANTS =====================
 const STATUS_CANON = [
   "Waiting",
-  "Working",
   "Pending Review",
   "Complete",
   "Delivered",
@@ -10,19 +9,16 @@ const STATUS_PRIORITY = [
   "Delivered",
   "Complete",
   "Pending Review",
-  "Working",
   "Waiting",
 ];
 const LABEL_TO_KEY = {
   Waiting: "waiting",
-  Working: "working",
   "Pending Review": "pendingReview",
   Complete: "complete",
   Delivered: "delivered",
 };
 const KEY_TO_LABEL = {
   waiting: "Waiting",
-  working: "Working",
   pendingReview: "Pending Review",
   complete: "Complete",
   delivered: "Delivered",
@@ -91,6 +87,8 @@ const EYE_ICON_PATH =
   "M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5C21.27 7.61 17 4.5 12 4.5zm0 12.5a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-8a3 3 0 1 0 0 6 3 3 0 0 0 0-6z";
 const PIN_ICON_PATH =
   "M12 2C8.13 2 5 5.13 5 9c0 2.76 1.87 5.08 4.42 5.76L10 22l2-3 2 3-.42-7.24C16.13 14.08 18 11.76 18 9c0-3.87-3.13-7-7-7zm0 8.5A2.5 2.5 0 1 1 12 5a2.5 2.5 0 0 1 0 5z";
+const FOLDER_ICON_PATH =
+  "M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z";
 const NOTE_ICON_PATH =
   "M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm1 7V3.5L20.5 9H15zM8 13h8v2H8v-2zm0 4h8v2H8v-2zm0-8h5v2H8V9z";
 const PENCIL_ICON_PATH =
@@ -8866,7 +8864,6 @@ const DEFAULT_CLOUD_SYNC_STATE = {
 const DEFAULT_PROJECT_CARD_COLUMNS = [
   { key: "pinned", label: "Pinned", hidden: false },
   { key: "Waiting", label: "Waiting", hidden: false },
-  { key: "Working", label: "Working", hidden: false },
   { key: "Pending Review", label: "Pending Review", hidden: false },
   { key: "Complete", label: "Complete", hidden: false },
   { key: "Delivered", label: "Delivered", hidden: false },
@@ -14085,6 +14082,7 @@ function normalizeDeliverable(deliverable = {}) {
     emailRefs,
     emailRef: emailRefs[0] || null,
     links: buildLegacyLinksFromAttachments(attachments),
+    pinned: deliverable.pinned === true,
     active: deliverable.active === true,
     workroomCadDiscipline: normalizeWorkroomCadDiscipline(
       deliverable.workroomCadDiscipline,
@@ -14130,6 +14128,7 @@ function createDeliverable(seed = {}) {
     statusTags: seed.statusTags || [],
     status: seed.status || "",
     attachments: seedAttachments,
+    pinned: seed.pinned === true,
     active: seed.active !== false,
     workroomCadDiscipline: seed.workroomCadDiscipline || "",
     workroomPhase: seed.workroomPhase || "pre_design",
@@ -14144,17 +14143,6 @@ function canonStatus(s) {
   if (!s) return null;
   const t = String(s).trim().toLowerCase();
   if (["waiting", "wait", "blocked"].includes(t)) return "Waiting";
-  if (
-    [
-      "working",
-      "work",
-      "in progress",
-      "in-progress",
-      "doing",
-      "active",
-    ].includes(t)
-  )
-    return "Working";
   if (
     ["pending review", "pending-review", "review", "pr", "pending"].includes(t)
   )
@@ -14242,11 +14230,6 @@ function getStatusTags(p) {
       tags.push("complete");
     if (s.includes("waiting") && !tags.includes("waiting"))
       tags.push("waiting");
-    if (
-      (s.includes("working") || s.includes("in progress")) &&
-      !tags.includes("working")
-    )
-      tags.push("working");
     if (
       (s.includes("pending review") || s === "pending") &&
       !tags.includes("pendingReview")
@@ -14474,6 +14457,16 @@ function isDeliverableActive(deliverable) {
   return deliverable?.active === true;
 }
 
+function isDeliverablePinned(deliverable) {
+  return deliverable?.pinned === true;
+}
+
+function setDeliverablePinnedState(deliverable, nextPinned) {
+  if (!deliverable || typeof deliverable !== "object") return false;
+  deliverable.pinned = nextPinned === true;
+  return deliverable.pinned === true;
+}
+
 function getProjectActiveDeliverables(project) {
   return getProjectDeliverables(project).filter((deliverable) =>
     isDeliverableActive(deliverable)
@@ -14631,31 +14624,27 @@ function getAllDeliverables() {
 
 async function pinUrgentDeliverables() {
   const confirmed = confirm(
-    "Pin all projects with overdue incomplete deliverables or deliverables due today?"
+    "Pin all overdue incomplete deliverables and deliverables due today?"
   );
   if (!confirmed) return;
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  let projectsPinned = 0;
+  let deliverablesPinned = 0;
   let deliverablesMatched = 0;
 
   db.forEach((project) => {
-    const deliverables = getProjectDeliverables(project);
-    const urgentIncompleteCount = deliverables.filter((deliverable) => {
+    getProjectDeliverables(project).forEach((deliverable) => {
       if (isFinished(deliverable)) return false;
       const due = parseDueStr(deliverable?.due);
       if (!due) return false;
-      return isSameDay(due, today) || due < today;
-    }).length;
-
-    if (!urgentIncompleteCount) return;
-    deliverablesMatched += urgentIncompleteCount;
-    if (!project.pinned) {
-      setProjectPinnedState(project, true, db);
-      projectsPinned += 1;
-    }
+      if (!isSameDay(due, today) && due >= today) return false;
+      deliverablesMatched += 1;
+      if (isDeliverablePinned(deliverable)) return;
+      setDeliverablePinnedState(deliverable, true);
+      deliverablesPinned += 1;
+    });
   });
 
   if (!deliverablesMatched) {
@@ -14666,8 +14655,8 @@ async function pinUrgentDeliverables() {
   await save();
   render();
   toast(
-    projectsPinned
-      ? `Pinned ${projectsPinned} project${projectsPinned === 1 ? "" : "s"} with ${deliverablesMatched} urgent deliverable${deliverablesMatched === 1 ? "" : "s"}.`
+    deliverablesPinned
+      ? `Pinned ${deliverablesPinned} urgent deliverable${deliverablesPinned === 1 ? "" : "s"}.`
       : `${deliverablesMatched} urgent deliverable${deliverablesMatched === 1 ? "" : "s"} already pinned.`
   );
 }
@@ -20382,6 +20371,27 @@ function createDeliverableToolDropdown(deliverable, project, card) {
   return dropdown;
 }
 
+function createDeliverablePinButton(deliverable) {
+  const button = createWorkItemPinButton({
+    pinned: isDeliverablePinned(deliverable),
+    titlePinned: "Unpin deliverable",
+    titleUnpinned: "Pin deliverable",
+    className: "deliverable-pin-btn",
+    onToggle: async (nextPinned) => {
+      setDeliverablePinnedState(deliverable, nextPinned);
+      await save();
+      renderProjectsPreservingExpandedDeliverables();
+      return isDeliverablePinned(deliverable);
+    },
+  });
+  button.draggable = false;
+  button.addEventListener("dragstart", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  });
+  return button;
+}
+
 function createCardHeader(deliverable, isPrimary, card, project) {
   const header = el("div", { className: "deliverable-card-header-new" });
 
@@ -20493,6 +20503,7 @@ function createCardHeader(deliverable, isPrimary, card, project) {
   // Right section: attachments + expand/contract controls
   const actions = el("div", { className: "deliverable-header-actions" });
   const expandToggle = createExpandToggle(card);
+  const pinButton = createDeliverablePinButton(deliverable);
   const toolDropdown = createDeliverableToolDropdown(deliverable, project, card);
   const attachmentControl = createAttachmentControl(
     {
@@ -20507,7 +20518,7 @@ function createCardHeader(deliverable, isPrimary, card, project) {
       onChange: () => updateDeliverableWorkItemUi(card, deliverable),
     }
   );
-  actions.append(attachmentControl, toolDropdown, expandToggle);
+  actions.append(pinButton, attachmentControl, toolDropdown, expandToggle);
   header.appendChild(actions);
 
   return header;
@@ -20623,7 +20634,7 @@ function setDeliverableStatusDropdownState(dropdown, isOpen) {
 }
 
 function createStatusDropdown(deliverable, project, card) {
-  const availableStatuses = ["Waiting", "Working", "Pending Review", "Complete", "Delivered"];
+  const availableStatuses = ["Waiting", "Pending Review", "Complete", "Delivered"];
   const dropdown = el("div", { className: "deliverable-status-dropdown" });
 
   // Trigger button - compact ellipsis icon
@@ -21531,7 +21542,9 @@ function renderDeliverableCard(deliverable, isPrimary, project) {
   const deliverableId = String(deliverable?.id || createId("dlv")).trim();
   if (!deliverable?.id) deliverable.id = deliverableId;
   const card = el("div", {
-    className: `deliverable-card-new ${isPrimary ? "is-primary" : ""} details-collapsed`,
+    className: `deliverable-card-new ${isPrimary ? "is-primary" : ""} ${
+      isDeliverablePinned(deliverable) ? "is-pinned-deliverable" : ""
+    } details-collapsed`,
   });
   card.dataset.deliverableId = deliverableId;
 
@@ -22286,6 +22299,83 @@ function enablePinnedProjectRowDrag(row, handle, project) {
   });
 }
 
+function getDeliverableCardSavedPath(project, deliverable) {
+  const deliverablePathAttachment = getAttachmentOwnerAttachments({
+    kind: "deliverable",
+    owner: deliverable,
+  }).find((attachment) => {
+    const type = String(attachment?.type || "").trim();
+    return ["folder", "file", "path"].includes(type) && String(attachment?.target || "").trim();
+  });
+  const deliverablePath = String(deliverablePathAttachment?.target || "").trim();
+  return deliverablePath || String(project?.path || "").trim();
+}
+
+function createSavedPathButton(project, deliverable = null) {
+  const savedPath = getDeliverableCardSavedPath(project, deliverable);
+  const button = createIconButton({
+    className: "btn icon-only",
+    title: savedPath ? "Open saved file path" : "No saved file path",
+    ariaLabel: savedPath ? "Open saved file path" : "No saved file path",
+    path: FOLDER_ICON_PATH,
+    onClick: async () => {
+      if (!savedPath) {
+        toast("No saved file path.");
+        return;
+      }
+      if (!window.pywebview?.api?.open_path) {
+        toast("Open path is unavailable.");
+        return;
+      }
+      try {
+        const result = await window.pywebview.api.open_path(convertPath(savedPath));
+        if (result?.status && result.status !== "success") {
+          throw new Error(result.message || "Unable to open saved file path.");
+        }
+        toast("Opening path...");
+      } catch (error) {
+        toast(error?.message || "Unable to open saved file path.");
+      }
+    },
+  });
+  button.draggable = false;
+  button.disabled = !savedPath;
+  return button;
+}
+
+function createProjectActionButtons(
+  projectIndex,
+  className = "actions-stack",
+  { includeFolderButton = false, project = null, deliverable = null } = {}
+) {
+  const actionsStack = el("div", { className });
+  if (includeFolderButton) {
+    actionsStack.appendChild(createSavedPathButton(project, deliverable));
+  }
+  const editButton = createIconButton({
+    className: "btn icon-only",
+    title: "Edit",
+    ariaLabel: "Edit project",
+    path: PENCIL_ICON_PATH,
+    onClick: () => openEdit(projectIndex),
+  });
+  const deleteButton = createIconButton({
+    className: "btn btn-danger icon-only",
+    title: "Delete",
+    ariaLabel: "Delete project",
+    path: TRASH_ICON_PATH,
+    onClick: () => removeProject(projectIndex),
+  });
+  editButton.draggable = false;
+  deleteButton.draggable = false;
+  actionsStack.append(editButton, deleteButton);
+  actionsStack.addEventListener("dragstart", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  });
+  return actionsStack;
+}
+
 function buildProjectTableRow(project, projectIndex, rowTemplate) {
   const tr = rowTemplate.content.cloneNode(true).querySelector("tr");
   tr.classList.add("project-row");
@@ -22398,24 +22488,7 @@ function buildProjectTableRow(project, projectIndex, rowTemplate) {
   const actionsCell = tr.querySelector(".cell-actions");
   if (actionsCell) {
     actionsCell.innerHTML = "";
-    const actionsStack = el("div", { className: "actions-stack" });
-    actionsStack.append(
-      createIconButton({
-        className: "btn icon-only",
-        title: "Edit",
-        ariaLabel: "Edit project",
-        path: PENCIL_ICON_PATH,
-        onClick: () => openEdit(projectIndex),
-      }),
-      createIconButton({
-        className: "btn btn-danger icon-only",
-        title: "Delete",
-        ariaLabel: "Delete project",
-        path: TRASH_ICON_PATH,
-        onClick: () => removeProject(projectIndex),
-      })
-    );
-    actionsCell.append(actionsStack);
+    actionsCell.append(createProjectActionButtons(projectIndex));
   }
 
   return tr;
@@ -22430,7 +22503,6 @@ function renderGroupedProjectDeliverablesCell(
   deliverablesCell.innerHTML = "";
 
   const visibleDeliverables = projectListContext.visibleDeliverables;
-  const priorityId = projectListContext.activeAnchorDeliverable?.id;
 
   if (visibleDeliverables.length) {
     if (projectListContext.showTimeframeNote && projectListContext.timeframeNote) {
@@ -22444,7 +22516,7 @@ function renderGroupedProjectDeliverablesCell(
 
     const cardsContainer = el("div", { className: "deliverable-cards-container" });
     visibleDeliverables.forEach((deliverable) => {
-      const isPrimary = deliverable.id === priorityId;
+      const isPrimary = isDeliverableActive(deliverable);
       cardsContainer.appendChild(renderDeliverableCard(deliverable, isPrimary, project));
     });
 
@@ -22622,8 +22694,7 @@ function renderUngroupedDeliverableRows({
     }
 
     const tr = buildProjectTableRow(project, projectIndex, rowTemplate);
-    const isPrimary =
-      deliverable?.id === projectListContext.activeAnchorDeliverable?.id;
+    const isPrimary = isDeliverableActive(deliverable);
     renderProjectDeliverableCell(
       tr.querySelector(".cell-deliverables"),
       deliverable,
@@ -22707,7 +22778,6 @@ function buildMatchContextRow(q, project, context) {
 const KANBAN_COLUMN_SLUGS = {
   pinned: "pinned",
   Waiting: "waiting",
-  Working: "working",
   "Pending Review": "pending-review",
   Complete: "complete",
   Delivered: "delivered",
@@ -22780,11 +22850,12 @@ function deliverableIsOverdueIncomplete(deliverable, weekStart) {
   return d < weekStart && !isFinished(deliverable);
 }
 
-function buildCardProjectMeta(project) {
+function buildCardProjectMeta(project, projectIndex, deliverable) {
   const meta = el("div", { className: "kanban-card-project-meta" });
+  const identity = el("div", { className: "kanban-card-project-identity" });
   const idText = String(project?.id || "").trim();
   if (idText) {
-    meta.appendChild(
+    identity.appendChild(
       el("span", {
         className: "kanban-card-project-id",
         textContent: idText,
@@ -22793,11 +22864,21 @@ function buildCardProjectMeta(project) {
   }
   const nameText = String(project?.name || "").trim();
   if (nameText) {
-    meta.appendChild(
+    identity.appendChild(
       el("span", {
         className: "kanban-card-project-name",
         textContent: nameText,
         title: nameText,
+      })
+    );
+  }
+  if (identity.childNodes.length) meta.appendChild(identity);
+  if (Number.isInteger(projectIndex) && projectIndex >= 0) {
+    meta.appendChild(
+      createProjectActionButtons(projectIndex, "kanban-card-project-actions", {
+        includeFolderButton: true,
+        project,
+        deliverable,
       })
     );
   }
@@ -22823,6 +22904,10 @@ function renderCardView() {
     for (const deliverable of getProjectDeliverables(project)) {
       const hasDue = !!parseDueStr(deliverable?.due);
       if (!hasDue) {
+        if (pinnedShown && isDeliverablePinned(deliverable)) {
+          buckets.get("pinned").push({ project, deliverable });
+          continue;
+        }
         if (nodateShown) {
           buckets.get("nodate").push({ project, deliverable });
         }
@@ -22835,7 +22920,7 @@ function renderCardView() {
         deliverableIsOverdueIncomplete(deliverable, weekStart);
       if (!inWeek && !overduePull) continue;
 
-      if (pinnedShown && project.pinned) {
+      if (pinnedShown && isDeliverablePinned(deliverable)) {
         buckets.get("pinned").push({ project, deliverable });
         continue;
       }
@@ -22880,10 +22965,10 @@ function renderCardView() {
       );
     } else {
       for (const { project, deliverable } of buckets.get(col.key)) {
-        const isPrimary = project.overviewDeliverableId === deliverable.id;
+        const isPrimary = isDeliverableActive(deliverable);
         const card = renderDeliverableCard(deliverable, isPrimary, project);
         card.draggable = true;
-        const projectMeta = buildCardProjectMeta(project);
+        const projectMeta = buildCardProjectMeta(project, db.indexOf(project), deliverable);
         if (projectMeta) card.insertBefore(projectMeta, card.firstChild);
         cardsHost.appendChild(card);
       }
@@ -23172,14 +23257,14 @@ function attachKanbanDragHandlers(host) {
 
     const ctx = findDeliverableContext(deliverableId);
     if (!ctx) return;
-    const { project, deliverable } = ctx;
+    const { deliverable } = ctx;
 
     if (targetKey === "pinned") {
-      project.pinned = true;
-      if (typeof syncPinnedProjectOrders === "function") {
-        syncPinnedProjectOrders();
-      }
+      setDeliverablePinnedState(deliverable, true);
     } else {
+      if (sourceColumnKey === "pinned" && deliverable.pinned) {
+        setDeliverablePinnedState(deliverable, false);
+      }
       deliverable.statuses = [targetKey];
       syncStatusArrays(deliverable);
     }
@@ -23346,7 +23431,6 @@ function renderStatusToggles(p) {
   };
   [
     ["wait", "Waiting"],
-    ["work", "Working"],
     ["pr", "Pending Review"],
     ["comp", "Complete"],
     ["del", "Delivered"],
@@ -23833,6 +23917,7 @@ function addDeliverableCard(deliverable, activeAnchorId, options = {}) {
     .querySelector(".deliverable-card");
   const deliverableId = deliverable.id || createId("dlv");
   card.dataset.deliverableId = deliverableId;
+  card.dataset.pinned = String(isDeliverablePinned(deliverable));
   syncDeliverableAttachmentFields(deliverable);
   setDeliverableCardAttachments(card, deliverable.attachments);
 
@@ -24075,7 +24160,6 @@ function buildStatusPicker(selected = [], onToggle) {
   };
   [
     ["wait", "Waiting"],
-    ["work", "Working"],
     ["pr", "Pending Review"],
     ["comp", "Complete"],
     ["del", "Delivered"],
@@ -24774,6 +24858,11 @@ function readForm() {
 
   document.querySelectorAll("#deliverableList .deliverable-card").forEach((card) => {
     const deliverableId = card.dataset.deliverableId || createId("dlv");
+    const existingDeliverable = existingProject
+      ? getProjectDeliverables(existingProject).find(
+          (deliverable) => String(deliverable?.id || "") === String(deliverableId)
+        )
+      : null;
     const name = card.querySelector(".d-name").value.trim();
     const due = card.querySelector(".d-due").value.trim();
     const statuses = readStatusPickerFrom(
@@ -24819,6 +24908,7 @@ function readForm() {
       tasks,
       statuses,
       attachments,
+      pinned: !!existingDeliverable?.pinned || card.dataset.pinned === "true",
       active: !!card.querySelector(".d-active")?.checked,
     });
 

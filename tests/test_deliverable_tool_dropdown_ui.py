@@ -49,7 +49,7 @@ class DeliverableToolDropdownUiTests(unittest.TestCase):
             'const launchContext = buildProjectsTabToolLaunchContext(project, deliverable);',
             "launchSharedToolCard(entry.id, launchContext);",
             'const toolDropdown = createDeliverableToolDropdown(deliverable, project, card);',
-            "actions.append(attachmentControl, toolDropdown, expandToggle);",
+            "actions.append(pinButton, attachmentControl, toolDropdown, expandToggle);",
         ):
             self.assertIn(expected, text)
 

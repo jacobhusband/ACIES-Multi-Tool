@@ -27,7 +27,7 @@ const KEY_TO_LABEL = {
   complete: "Complete",
   delivered: "Delivered",
 };
-const HELP_TOPICS = ["projects", "notebook", "tools", "timesheets"];
+const HELP_TOPICS = ["projects", "notebook", "tools", "timesheets", "misc"];
 const THEME_STORAGE_KEY = "acies-theme";
 const FIREBASE_JS_SDK_VERSION = "12.7.0";
 const FIREBASE_COMPAT_SCRIPT_URLS = [

@@ -2068,6 +2068,7 @@
                 <button type="button" class="help-topic-btn" data-help-topic="notebook">Notebook</button>
                 <button type="button" class="help-topic-btn" data-help-topic="tools">Tools</button>
                 <button type="button" class="help-topic-btn" data-help-topic="timesheets">Timesheets</button>
+                <button type="button" class="help-topic-btn" data-help-topic="misc">Misc</button>
             </nav>
             <article class="help-dlg-content" id="helpDlgContent">
                 <section class="help-topic" data-help-topic="projects">
@@ -2081,30 +2082,31 @@
                             Outlook email and let the AI assistant create one from the message.</li>
                         <li><strong>Edit:</strong> click a project card or row to open the edit dialog. You can rename
                             it, change dates, add/remove deliverables, and adjust status.</li>
-                        <li><strong>Merge duplicates:</strong> the <em>Merge similar</em> action scans for projects
-                            with near-identical names and lets you consolidate them.</li>
                     </ul>
+                    <p class="tiny muted">Merge similar projects is available in <strong>Settings &gt; Actions</strong>
+                        when duplicate cleanup is needed.</p>
 
                     <h3>Status values</h3>
+                    <p>Setting a deliverable status helps keep work organized and shows where that deliverable stands
+                        at a glance.</p>
                     <ul>
-                        <li><strong>Waiting</strong> — work hasn't started yet.</li>
-                        <li><strong>On hold</strong> — paused, usually waiting on a client or stakeholder.</li>
-                        <li><strong>Pending Review</strong> — finished on your end, awaiting QA or check.</li>
-                        <li><strong>Complete</strong> — deliverable is done but not yet sent out.</li>
-                        <li><strong>Delivered</strong> — final package has been sent.</li>
+                        <li><strong>Waiting:</strong> something is preventing work from proceeding, such as engineer
+                            coordination or background information being prepared. It is not explicitly on hold.</li>
+                        <li><strong>On hold:</strong> explicitly paused, usually waiting on a client or stakeholder.</li>
+                        <li><strong>Pending Review:</strong> finished on your end, awaiting QA or check.</li>
+                        <li><strong>Complete:</strong> deliverable is done but not yet sent out.</li>
+                        <li><strong>Delivered:</strong> final package has been sent.</li>
                     </ul>
 
                     <h3>View modes &amp; filters</h3>
                     <ul>
-                        <li><strong>Card vs. list view:</strong> toggle from the toolbar. Card view is good for
-                            scanning pinned work; list view is better for bulk actions.</li>
+                        <li><strong>Card and list view:</strong> both modes are available ways to view workload.</li>
                         <li><strong>Pin a project or deliverable:</strong> click the pin icon on the card. Pinned
                             items stay at the top across sessions.</li>
                         <li><strong>Status filters:</strong> click a status chip at the top of the panel to filter.
-                            <em>On hold</em> is hidden by default — toggle it on to bring those projects back.
+                            <em>On hold</em> is hidden by default; toggle it on to bring those projects back.
                         </li>
-                        <li><strong>Search:</strong> typing in the search box automatically drops you into list view
-                            so results are easier to scan.</li>
+                        <li><strong>Search</strong> enables quick location of projects using relevant keywords.</li>
                     </ul>
 
                     <h3>Deliverables</h3>
@@ -2202,6 +2204,18 @@
                         <li><strong>Add expense:</strong> attach a project and amount. You can attach a photo of the
                             receipt — click the thumbnail to preview it full-size.</li>
                         <li>Expenses export alongside hours when you export the week.</li>
+                    </ul>
+                </section>
+
+                <section class="help-topic" data-help-topic="misc" hidden>
+                    <h2>Misc</h2>
+                    <p>Global controls are available from the app header.</p>
+
+                    <ul>
+                        <li><strong>Settings:</strong> the cogwheel opens app preferences and actions.</li>
+                        <li><strong>Theme:</strong> the theme toggle switches between light and dark mode.</li>
+                        <li><strong>Scratchpad:</strong> use the scratchpad for quick unsorted notes that do not need a
+                            notebook page.</li>
                     </ul>
                 </section>
             </article>

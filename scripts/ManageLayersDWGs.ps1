@@ -267,7 +267,170 @@ function Invoke-AcadCore {
     Stop-ProcessTree -Pid $p.Id
     return @{ TimedOut = $true; ExitCode = $null; Pid = $p.Id }
   }
-  return @{ TimedOut = $false; ExitCode = $p.ExitCode; Pid = $p.Id }
+  $null = $p.WaitForExit()
+  try { $p.Refresh() } catch {}
+  $exitCode = $null
+  try {
+    if ($p.HasExited) {
+      $exitCode = $p.ExitCode
+    }
+  }
+  catch {
+    $exitCode = $null
+  }
+  return @{ TimedOut = $false; ExitCode = $exitCode; Pid = $p.Id }
+}
+
+function Get-TextFileLineCount {
+  param([string]$Path)
+
+  if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+    return 0
+  }
+  return [int]((Get-Content -LiteralPath $Path -Encoding ASCII | Measure-Object -Line).Lines)
+}
+
+function Get-ManageLayersReportRows {
+  param(
+    [Parameter(Mandatory = $true)][string]$ReportPath,
+    [int]$SkipLines = 0
+  )
+
+  if ([string]::IsNullOrWhiteSpace($ReportPath) -or -not (Test-Path -LiteralPath $ReportPath -PathType Leaf)) {
+    return @()
+  }
+
+  $allLines = @(Get-Content -LiteralPath $ReportPath -Encoding ASCII)
+  if ($SkipLines -lt 0) { $SkipLines = 0 }
+  if ($allLines.Count -le $SkipLines) {
+    return @()
+  }
+
+  $rows = @()
+  foreach ($line in @($allLines | Select-Object -Skip $SkipLines)) {
+    if ([string]::IsNullOrWhiteSpace($line)) { continue }
+    $parts = @($line -split "`t", 11)
+    while ($parts.Count -lt 11) {
+      $parts += ""
+    }
+    $rows += [pscustomobject]@{
+      DWG          = $parts[0]
+      Layer        = $parts[1]
+      OpType       = $parts[2]
+      Exists       = $parts[3]
+      WasCurrent   = $parts[4]
+      WasOff       = $parts[5]
+      WasFrozen    = $parts[6]
+      WasLocked    = $parts[7]
+      Action       = $parts[8]
+      ResultFrozen = $parts[9]
+      SaveStatus   = $parts[10]
+    }
+  }
+
+  return @($rows)
+}
+
+function Join-ShortList {
+  param(
+    [string[]]$Values,
+    [int]$MaxItems = 3
+  )
+
+  $items = @($Values | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+  if ($items.Count -eq 0) { return "" }
+  if ($items.Count -le $MaxItems) { return ($items -join ", ") }
+  return ("{0}, +{1} more" -f (($items | Select-Object -First $MaxItems) -join ", "), ($items.Count - $MaxItems))
+}
+
+function Test-ManageLayersAttempt {
+  param(
+    [object[]]$Rows,
+    [string[]]$FreezeLayers = @(),
+    [string[]]$ThawLayers = @()
+  )
+
+  $rows = @($Rows)
+  $freezeLayers = @($FreezeLayers | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+  $thawLayers = @($ThawLayers | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+
+  if ($rows.Count -eq 0) {
+    return @{
+      Success = $false
+      Reason  = "No report rows were written."
+    }
+  }
+
+  $saveRows = @($rows | Where-Object { $_.OpType -eq "SAVE" -and $_.Layer -eq "<DWG_SAVE>" })
+  if ($saveRows.Count -eq 0) {
+    return @{
+      Success = $false
+      Reason  = "No save confirmation row was written."
+    }
+  }
+
+  $saveStatus = [string]$saveRows[-1].SaveStatus
+  if ($saveStatus -ne "SAVE_OK") {
+    $reason = if ([string]::IsNullOrWhiteSpace($saveStatus)) {
+      "Save status was blank."
+    }
+    else {
+      "Save status was $saveStatus."
+    }
+    return @{
+      Success = $false
+      Reason  = $reason
+    }
+  }
+
+  $missing = New-Object 'System.Collections.Generic.List[string]'
+  $mismatched = New-Object 'System.Collections.Generic.List[string]'
+
+  foreach ($layerName in $freezeLayers) {
+    $matches = @($rows | Where-Object { $_.OpType -eq "FREEZE" -and $_.Layer -eq $layerName })
+    if ($matches.Count -eq 0) {
+      $missing.Add("FREEZE:$layerName")
+      continue
+    }
+
+    $row = $matches[-1]
+    if ($row.Exists -eq "T" -and $row.ResultFrozen -ne "T") {
+      $mismatched.Add("FREEZE:$layerName->$($row.ResultFrozen)")
+    }
+  }
+
+  foreach ($layerName in $thawLayers) {
+    $matches = @($rows | Where-Object { $_.OpType -eq "THAW" -and $_.Layer -eq $layerName })
+    if ($matches.Count -eq 0) {
+      $missing.Add("THAW:$layerName")
+      continue
+    }
+
+    $row = $matches[-1]
+    if ($row.Exists -eq "T" -and $row.ResultFrozen -ne "F") {
+      $mismatched.Add("THAW:$layerName->$($row.ResultFrozen)")
+    }
+  }
+
+  if ($missing.Count -gt 0) {
+    return @{
+      Success = $false
+      Reason  = ("Missing report rows for {0}." -f (Join-ShortList -Values $missing))
+    }
+  }
+
+  if ($mismatched.Count -gt 0) {
+    return @{
+      Success = $false
+      Reason  = ("Layer state did not verify for {0}." -f (Join-ShortList -Values $mismatched))
+    }
+  }
+
+  return @{
+    Success    = $true
+    Reason     = "Verified."
+    SaveStatus = $saveStatus
+  }
 }
 
 # ---------------- 4) EXTRACTION PHASE ----------------
@@ -1095,27 +1258,60 @@ Write-Host "PROGRESS: Updating $($files.Count) file(s)..."
 $outLog = Join-Path $ToolDir "update_batch.out.txt"
 $errLog = Join-Path $ToolDir "update_batch.err.txt"
 $fileIndex = 0
+$MaxUpdateAttemptsPerFile = 2
+$failedFiles = @()
 
 foreach ($dwgFile in $files) {
   $fileIndex++
-  Write-Host "PROGRESS: Processing $fileIndex of $($files.Count): $([IO.Path]::GetFileName($dwgFile))"
-  if (Test-Path $outLog) { Remove-Item $outLog -Force }
-  if (Test-Path $errLog) { Remove-Item $errLog -Force }
+  $fileSucceeded = $false
 
-  $r = Invoke-AcadCore -DwgPath $dwgFile -ScriptPath $updateScr -OutLog $outLog -ErrLog $errLog -TimeoutSeconds $ProcessTimeoutSeconds
+  for ($attempt = 1; $attempt -le $MaxUpdateAttemptsPerFile -and -not $fileSucceeded; $attempt++) {
+    Write-Host "PROGRESS: Processing $fileIndex of $($files.Count): $([IO.Path]::GetFileName($dwgFile)) (attempt $attempt of $MaxUpdateAttemptsPerFile)"
+    if (Test-Path $outLog) { Remove-Item $outLog -Force }
+    if (Test-Path $errLog) { Remove-Item $errLog -Force }
 
-  if ($r.TimedOut) {
-    Write-Host "    -> TIMEOUT. Killed." -ForegroundColor Red
-    "FAILED (Timeout): $dwgFile" | Out-File $logFile -Append
+    $reportLineCountBefore = Get-TextFileLineCount -Path $updateReport
+    $r = Invoke-AcadCore -DwgPath $dwgFile -ScriptPath $updateScr -OutLog $outLog -ErrLog $errLog -TimeoutSeconds $ProcessTimeoutSeconds
+    $attemptRows = Get-ManageLayersReportRows -ReportPath $updateReport -SkipLines $reportLineCountBefore
+    $verification = Test-ManageLayersAttempt -Rows $attemptRows -FreezeLayers $layersToFreeze -ThawLayers $layersToThaw
+
+    $attemptReason = ""
+    if ($r.TimedOut) {
+      $attemptReason = "Timed out after $ProcessTimeoutSeconds seconds."
+    }
+    elseif (-not $verification.Success) {
+      $attemptReason = $verification.Reason
+    }
+    else {
+      $fileSucceeded = $true
+    }
+
+    if ($fileSucceeded) {
+      $displayExitCode = if ($null -eq $r.ExitCode) { "unavailable" } else { [string]$r.ExitCode }
+      $successColor = if ($attempt -eq 1 -and $displayExitCode -eq "0") { "Green" } else { "Yellow" }
+      Write-Host "    -> Verified OK on attempt $attempt of $MaxUpdateAttemptsPerFile (exit code $displayExitCode)." -ForegroundColor $successColor
+      "DONE (verified on attempt $attempt, exit code $displayExitCode): $dwgFile" | Out-File $logFile -Append
+      continue
+    }
+
+    if ($attempt -lt $MaxUpdateAttemptsPerFile) {
+      Write-Host "PROGRESS: Verification failed for $([IO.Path]::GetFileName($dwgFile)) on attempt $attempt of $MaxUpdateAttemptsPerFile: $attemptReason"
+      "RETRY ($attempt/$MaxUpdateAttemptsPerFile): $dwgFile :: $attemptReason" | Out-File $logFile -Append
+      Start-Sleep -Seconds 2
+      continue
+    }
+
+    Write-Host "    -> FAILED verification: $attemptReason" -ForegroundColor Red
+    "FAILED ($attemptReason): $dwgFile" | Out-File $logFile -Append
+    $failedFiles += $dwgFile
   }
-  elseif ($r.ExitCode -eq 0) {
-    Write-Host "    -> ExitCode 0" -ForegroundColor Green
-    "DONE (0): $dwgFile" | Out-File $logFile -Append
-  }
-  else {
-    Write-Host "    -> ExitCode $($r.ExitCode)" -ForegroundColor Yellow
-    "DONE ($($r.ExitCode)): $dwgFile" | Out-File $logFile -Append
-  }
+}
+
+if ($failedFiles.Count -gt 0) {
+  Write-Host "PROGRESS: ERROR: $($failedFiles.Count) of $($files.Count) file(s) failed to verify layer updates."
+}
+else {
+  Write-Host "PROGRESS: Successfully updated $($files.Count) drawing(s)."
 }
 
 if ($files.Count -gt 0) {
@@ -1129,3 +1325,7 @@ Write-Host "Done."
 Write-Host "Report: $updateReport"
 Write-Host "Logs: $ToolDir"
 Write-Host "Summary log: $logFile"
+if ($failedFiles.Count -gt 0) {
+  exit 1
+}
+exit 0

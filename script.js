@@ -27,21 +27,7 @@ const KEY_TO_LABEL = {
   complete: "Complete",
   delivered: "Delivered",
 };
-const HELP_LINKS = {
-  main: "https://brainy-seahorse-3c5.notion.site/ACIES-Desktop-Application-2b03fdbb662c80afa61af555bddc9e61?pvs=74",
-  projects:
-    "https://brainy-seahorse-3c5.notion.site/Projects-2b13fdbb662c803b9898d86ec9389e41",
-  notes:
-    "https://brainy-seahorse-3c5.notion.site/Notes-2b13fdbb662c80dd86c8e9d3f0d65081",
-  checklists:
-    "https://brainy-seahorse-3c5.notion.site/Checklists-2b13fdbb662c80dd86c8e9d3f0d65123",
-  tools:
-    "https://brainy-seahorse-3c5.notion.site/Tools-2b13fdbb662c80afbab9d68204f9cd23",
-  plugins:
-    "https://brainy-seahorse-3c5.notion.site/Plugins-2b13fdbb662c801abfe9cc46927eb73a",
-  timesheets:
-    "https://brainy-seahorse-3c5.notion.site/ACIES-Desktop-Application-2b03fdbb662c80afa61af555bddc9e61?pvs=74",
-};
+const HELP_TOPICS = ["projects", "notebook", "tools", "timesheets"];
 const THEME_STORAGE_KEY = "acies-theme";
 const FIREBASE_JS_SDK_VERSION = "12.7.0";
 const FIREBASE_COMPAT_SCRIPT_URLS = [
@@ -25767,8 +25753,7 @@ function renderTextsView() {
     const label = isChecklistMode ? "Checklists help" : "Notes help";
     helpBtn.title = label;
     helpBtn.setAttribute("aria-label", label);
-    helpBtn.onclick = () =>
-      openExternalUrl(isChecklistMode ? HELP_LINKS.checklists : HELP_LINKS.notes);
+    helpBtn.onclick = () => openHelp("notebook");
   }
 
   if (notesPane) {
@@ -31510,6 +31495,31 @@ function handleProjectSearchInput() {
   render();
 }
 
+function getActiveHelpTopic() {
+  const tab = document.querySelector(".main-tab-btn.active")?.dataset.tab;
+  if (tab === "texts") return "notebook";
+  return HELP_TOPICS.includes(tab) ? tab : "projects";
+}
+
+function setActiveHelpTopic(topic) {
+  const next = HELP_TOPICS.includes(topic) ? topic : "projects";
+  document.querySelectorAll("#helpDlgSidebar .help-topic-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.helpTopic === next);
+  });
+  document.querySelectorAll("#helpDlgContent .help-topic").forEach((section) => {
+    section.hidden = section.dataset.helpTopic !== next;
+  });
+  const content = document.getElementById("helpDlgContent");
+  if (content) content.scrollTop = 0;
+}
+
+function openHelp(topic) {
+  const dlg = document.getElementById("helpDlg");
+  if (!dlg) return;
+  setActiveHelpTopic(topic);
+  showDialog(dlg);
+}
+
 function initEventListeners() {
   document.getElementById("search").addEventListener(
     "input",
@@ -31521,9 +31531,16 @@ function initEventListeners() {
   );
 
   document.getElementById("mainHelpBtn").onclick = () =>
-    openExternalUrl(HELP_LINKS.main);
+    openHelp(getActiveHelpTopic());
   document.getElementById("projectsHelpBtn").onclick = () =>
-    openExternalUrl(HELP_LINKS.projects);
+    openHelp("projects");
+  const helpDlgSidebar = document.getElementById("helpDlgSidebar");
+  if (helpDlgSidebar) {
+    helpDlgSidebar.addEventListener("click", (e) => {
+      const btn = e.target.closest(".help-topic-btn");
+      if (btn && btn.dataset.helpTopic) setActiveHelpTopic(btn.dataset.helpTopic);
+    });
+  }
   setupProjectsViewModeControls();
   const deliverableNotepadAddBtn = document.getElementById(
     "deliverableNotepadAddBtn"
@@ -31764,12 +31781,9 @@ function initEventListeners() {
     if (!document.hidden) handleAppFocus();
   });
 
-  document.getElementById("toolsHelpBtn").onclick = () =>
-    openExternalUrl(HELP_LINKS.tools);
-  document.getElementById("pluginsHelpBtn").onclick = () =>
-    openExternalUrl(HELP_LINKS.plugins);
+  document.getElementById("toolsHelpBtn").onclick = () => openHelp("tools");
   document.getElementById("timesheetsHelpBtn").onclick = () =>
-    openExternalUrl(HELP_LINKS.timesheets);
+    openHelp("timesheets");
 
   // Templates event listeners
   const addTemplateBtn = document.getElementById("addTemplateBtn");
@@ -31788,11 +31802,6 @@ function initEventListeners() {
   if (copyDeliverableSelect) {
     copyDeliverableSelect.onchange = () => updateCopyDialogAutoFields();
   }
-  const templatesHelpBtn = document.getElementById("templatesHelpBtn");
-  if (templatesHelpBtn) {
-    templatesHelpBtn.onclick = () => openExternalUrl(HELP_LINKS.main);
-  }
-
   document.getElementById("prevWeekBtn").onclick = () =>
     navigateTimesheetWeek(-1);
   document.getElementById("nextWeekBtn").onclick = () =>

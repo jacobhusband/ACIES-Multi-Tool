@@ -691,16 +691,6 @@
                     <div class="commands-section">
                         <div class="commands-header">
                             <h4 class="tools-section-title">AutoCAD Plugins</h4>
-                            <div class="toolbar-actions">
-                                <button class="icon-btn" id="pluginsHelpBtn" aria-label="Plugins help"
-                                    title="Plugins help"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"
-                                        stroke="currentColor" stroke-width="2" stroke-linecap="round"
-                                        stroke-linejoin="round">
-                                        <circle cx="12" cy="12" r="10"></circle>
-                                        <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
-                                        <line x1="12" y1="17" x2="12.01" y2="17"></line>
-                                    </svg></button>
-                            </div>
                         </div>
                         <div id="commands-container" class="tools-grid">
                             <!-- Command cards will be dynamically inserted here -->
@@ -2064,6 +2054,157 @@
                 <button class="btn ghost" onclick="closeDlg('googleAccountDlg')">Close</button>
                 <button class="btn" id="googleSignOutBtn" type="button">Sign out</button>
             </div>
+        </div>
+    </dialog>
+
+    <dialog id="helpDlg" class="help-dialog">
+        <div class="modal-header">
+            <div class="title">Help</div>
+            <button class="btn ghost" onclick="closeDlg('helpDlg')">Close</button>
+        </div>
+        <div class="modal-body help-dlg-body">
+            <nav class="help-dlg-sidebar" id="helpDlgSidebar" aria-label="Help topics">
+                <button type="button" class="help-topic-btn" data-help-topic="projects">Projects</button>
+                <button type="button" class="help-topic-btn" data-help-topic="notebook">Notebook</button>
+                <button type="button" class="help-topic-btn" data-help-topic="tools">Tools</button>
+                <button type="button" class="help-topic-btn" data-help-topic="timesheets">Timesheets</button>
+            </nav>
+            <article class="help-dlg-content" id="helpDlgContent">
+                <section class="help-topic" data-help-topic="projects">
+                    <h2>Projects</h2>
+                    <p>The Projects tab is where you track every active job. Each project holds a set of
+                        deliverables, due dates, and status flags that drive the rest of the app.</p>
+
+                    <h3>Creating &amp; editing</h3>
+                    <ul>
+                        <li><strong>Add a project:</strong> use the <em>New</em> button in the toolbar, or paste an
+                            Outlook email and let the AI assistant create one from the message.</li>
+                        <li><strong>Edit:</strong> click a project card or row to open the edit dialog. You can rename
+                            it, change dates, add/remove deliverables, and adjust status.</li>
+                        <li><strong>Merge duplicates:</strong> the <em>Merge similar</em> action scans for projects
+                            with near-identical names and lets you consolidate them.</li>
+                    </ul>
+
+                    <h3>Status values</h3>
+                    <ul>
+                        <li><strong>Waiting</strong> — work hasn't started yet.</li>
+                        <li><strong>On hold</strong> — paused, usually waiting on a client or stakeholder.</li>
+                        <li><strong>Pending Review</strong> — finished on your end, awaiting QA or check.</li>
+                        <li><strong>Complete</strong> — deliverable is done but not yet sent out.</li>
+                        <li><strong>Delivered</strong> — final package has been sent.</li>
+                    </ul>
+
+                    <h3>View modes &amp; filters</h3>
+                    <ul>
+                        <li><strong>Card vs. list view:</strong> toggle from the toolbar. Card view is good for
+                            scanning pinned work; list view is better for bulk actions.</li>
+                        <li><strong>Pin a project or deliverable:</strong> click the pin icon on the card. Pinned
+                            items stay at the top across sessions.</li>
+                        <li><strong>Status filters:</strong> click a status chip at the top of the panel to filter.
+                            <em>On hold</em> is hidden by default — toggle it on to bring those projects back.
+                        </li>
+                        <li><strong>Search:</strong> typing in the search box automatically drops you into list view
+                            so results are easier to scan.</li>
+                    </ul>
+
+                    <h3>Deliverables</h3>
+                    <p>Every project has one or more deliverables with their own due dates and status. Use the
+                        deliverable notepad to collect items from multiple projects and export them to Excel when
+                        building a combined scope or invoice.</p>
+                </section>
+
+                <section class="help-topic" data-help-topic="notebook" hidden>
+                    <h2>Notebook</h2>
+                    <p>The Notebook tab holds two kinds of content: free-form <strong>Notes</strong> and structured
+                        <strong>Checklists</strong>. Use the sidebar on the left of the Notebook to switch between
+                        them.
+                    </p>
+
+                    <h3>Notes</h3>
+                    <ul>
+                        <li><strong>Pages:</strong> create tabs for each topic (meeting logs, standards references,
+                            etc.). Your content autosaves as you type.</li>
+                        <li><strong>Search:</strong> the search box at the top searches across every note page.
+                            Results show the matching pages so you can jump straight in.</li>
+                        <li><strong>Scratchpad:</strong> the pencil icon in the app header opens a quick scratchpad
+                            for unsorted notes that don't need their own page.</li>
+                    </ul>
+
+                    <h3>Checklists</h3>
+                    <ul>
+                        <li><strong>Templates:</strong> new checklists are created from a template. Each checklist
+                            remembers the template it came from.</li>
+                        <li><strong>Subheaders:</strong> use <em>+ Add Subheader</em> to group related items.</li>
+                        <li><strong>Override template:</strong> saves the current checklist's items back to its
+                            template so future checklists start from the updated version.</li>
+                        <li><strong>Reset to template defaults:</strong> restores the checklist to whatever its
+                            template currently contains.</li>
+                        <li><strong>Delete:</strong> removes the checklist. The template is not affected.</li>
+                    </ul>
+                </section>
+
+                <section class="help-topic" data-help-topic="tools" hidden>
+                    <h2>Tools</h2>
+                    <p>The Tools tab is where you run bundled utilities and AutoCAD plugins. Tools are grouped into
+                        cards; click a card's chevron to expand its details.</p>
+
+                    <h3>Running a tool</h3>
+                    <ul>
+                        <li>Most tools run immediately when you click their action button. Progress and logs appear
+                            on the card.</li>
+                        <li>If a process is running, an <strong>Abort Process</strong> button appears in the toolbar
+                            — use it if a tool hangs or needs to be cancelled.</li>
+                    </ul>
+
+                    <h3>AutoCAD Plugins</h3>
+                    <ul>
+                        <li><strong>Installation:</strong> the first time you run a plugin, the app installs it into
+                            your AutoCAD profile. If prerequisites are missing you'll see an install prompt.</li>
+                        <li><strong>Version selection:</strong> when multiple AutoCAD versions are installed, the app
+                            asks which one to target.</li>
+                        <li><strong>Uninstall:</strong> available from the plugin card menu. This removes the plugin
+                            from AutoCAD but does not delete your drawings.</li>
+                    </ul>
+
+                    <h3>Updates</h3>
+                    <p>Use the refresh icon next to the version label in the app header to check for tool and app
+                        updates. When an update is available, an <em>Update</em> button appears — click it to install
+                        the latest bundle.</p>
+                </section>
+
+                <section class="help-topic" data-help-topic="timesheets" hidden>
+                    <h2>Timesheets</h2>
+                    <p>The Timesheets tab is a weekly grid for logging hours and expenses against your projects.</p>
+
+                    <h3>Navigating weeks</h3>
+                    <ul>
+                        <li>Use <strong>Previous</strong> and <strong>Next</strong> to move between weeks, or
+                            <strong>Current week</strong> to jump back to today.
+                        </li>
+                        <li>The displayed range updates the header and determines what's saved and exported.</li>
+                    </ul>
+
+                    <h3>Logging time</h3>
+                    <ul>
+                        <li><strong>Add project entry:</strong> pick an existing project and log hours against it —
+                            the entry is linked so the project's status reflects the work.</li>
+                        <li><strong>Add manual entry:</strong> use this for work that isn't tied to a tracked project
+                            (admin, training, etc.). You can free-type the label.</li>
+                        <li>Edit any cell to update hours; totals at the bottom recalculate automatically.</li>
+                    </ul>
+
+                    <h3>Exporting</h3>
+                    <p>Click <strong>Export Excel</strong> to save the current week as an .xlsx file using the
+                        built-in template. The output matches the format the accounting team expects.</p>
+
+                    <h3>Expenses</h3>
+                    <ul>
+                        <li><strong>Add expense:</strong> attach a project and amount. You can attach a photo of the
+                            receipt — click the thumbnail to preview it full-size.</li>
+                        <li>Expenses export alongside hours when you export the week.</li>
+                    </ul>
+                </section>
+            </article>
         </div>
     </dialog>
 

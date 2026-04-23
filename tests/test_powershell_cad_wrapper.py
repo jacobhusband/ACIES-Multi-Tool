@@ -142,7 +142,7 @@ class PowerShellCadWrapperTests(unittest.TestCase):
                         text,
                     )
                     self.assertIn(
-                        'Write-Host "PROGRESS: Processing $fileIndex of $($files.Count): $([IO.Path]::GetFileName($dwgFile))"',
+                        'Write-Host "PROGRESS: Processing $fileIndex of $($files.Count): $([IO.Path]::GetFileName($dwgFile)) (attempt $attempt of $MaxUpdateAttemptsPerFile)"',
                         text,
                     )
                     self.assertIn('Write-Host "PROGRESS: OUTPUT_FOLDER: $outputFolder"', text)
@@ -151,6 +151,21 @@ class PowerShellCadWrapperTests(unittest.TestCase):
         text = CLEAN_XREF_SCRIPT_PATH.read_text(encoding="utf-8")
         self.assertIn('Write-Host "PROGRESS: Processing $i of $($files.Count):', text)
         self.assertIn('Write-Host "PROGRESS: OUTPUT_FOLDER: $outputFolder"', text)
+
+    def test_manage_layers_script_retries_until_report_rows_verify(self):
+        text = (REPO_ROOT / "scripts" / "ManageLayersDWGs.ps1").read_text(encoding="utf-8")
+
+        for expected in (
+            "function Get-ManageLayersReportRows {",
+            "function Test-ManageLayersAttempt {",
+            "$MaxUpdateAttemptsPerFile = 2",
+            'Write-Host "PROGRESS: Processing $fileIndex of $($files.Count): $([IO.Path]::GetFileName($dwgFile)) (attempt $attempt of $MaxUpdateAttemptsPerFile)"',
+            'Write-Host "PROGRESS: Verification failed for $([IO.Path]::GetFileName($dwgFile)) on attempt $attempt of $MaxUpdateAttemptsPerFile: $attemptReason"',
+            '"DONE (verified on attempt $attempt, exit code $displayExitCode): $dwgFile" | Out-File $logFile -Append',
+            'Write-Host "PROGRESS: ERROR: $($failedFiles.Count) of $($files.Count) file(s) failed to verify layer updates."',
+            'Write-Host "PROGRESS: Successfully updated $($files.Count) drawing(s)."',
+        ):
+            self.assertIn(expected, text)
 
     @unittest.skipUnless(sys.platform == "win32", "PowerShell STA relaunch is Windows-only")
     def test_sta_relaunch_preserves_files_list_path(self):

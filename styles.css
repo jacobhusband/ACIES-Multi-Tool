@@ -4981,6 +4981,65 @@ dialog::backdrop {
   overflow-y: auto;
 }
 
+.help-dialog {
+  width: min(860px, 90vw);
+}
+.help-dlg-body {
+  display: flex;
+  gap: 0;
+  padding: 0;
+  max-height: 70vh;
+}
+.help-dlg-sidebar {
+  flex: 0 0 180px;
+  border-right: 1px solid var(--glass-border);
+  padding: 1rem 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  overflow-y: auto;
+}
+.help-topic-btn {
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid transparent;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-family: inherit;
+}
+.help-topic-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.help-topic-btn.active {
+  background: var(--accent-bg, var(--bg-hover));
+  color: var(--accent, var(--text-primary));
+  border-color: var(--accent, var(--glass-border));
+}
+.help-dlg-content {
+  flex: 1;
+  padding: 1.25rem 1.5rem;
+  overflow-y: auto;
+  line-height: 1.55;
+}
+.help-dlg-content h2 {
+  margin-top: 0;
+}
+.help-dlg-content h3 {
+  margin-top: 1.25rem;
+  margin-bottom: 0.5rem;
+}
+.help-dlg-content ul,
+.help-dlg-content ol {
+  padding-left: 1.25rem;
+}
+.help-dlg-content li {
+  margin-bottom: 0.35rem;
+}
+
 .modal-grid {
   display: grid;
   grid-template-columns: repeat(12, 1fr);

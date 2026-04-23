@@ -2633,6 +2633,12 @@ input.has-field-error {
   border-color: var(--warning);
 }
 
+.st-hold[aria-pressed="true"] {
+  background: linear-gradient(135deg, #64748b, #475569);
+  border-color: #94a3b8;
+  color: var(--btn-text-on-accent);
+}
+
 .st-pr[aria-pressed="true"] {
   background: var(--warning);
   color: var(--btn-text-on-accent);
@@ -4837,9 +4843,19 @@ dialog::backdrop {
 .scratchpad-toolbar {
   display: flex;
   gap: 0.25rem;
+  flex-wrap: wrap;
+  align-items: center;
   padding: 0.5rem 1rem;
   border-bottom: 1px solid var(--glass-border);
   background: var(--bg-tertiary);
+}
+.scratchpad-toolbar-group {
+  display: flex;
+  gap: 0.25rem;
+  align-items: center;
+}
+.scratchpad-image-tools {
+  margin-left: auto;
 }
 .scratchpad-fmt-btn {
   width: 32px;
@@ -4855,11 +4871,55 @@ dialog::backdrop {
   line-height: 1;
   transition: var(--transition-fast);
 }
-.scratchpad-fmt-btn:hover {
+.scratchpad-tool-btn {
+  min-width: 32px;
+  height: 32px;
+  padding: 0 0.55rem;
+  border: 1px solid var(--glass-border);
+  background: var(--surface);
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 1;
+  transition: var(--transition-fast);
+}
+.scratchpad-fmt-btn:hover,
+.scratchpad-tool-btn:hover {
   background: var(--bg-hover);
 }
-.scratchpad-fmt-btn:active {
+.scratchpad-fmt-btn:active,
+.scratchpad-tool-btn:active {
   transform: translateY(1px);
+}
+.scratchpad-tool-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}
+.scratchpad-image-controls {
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+  padding-left: 0.45rem;
+  margin-left: 0.2rem;
+  border-left: 1px solid var(--glass-border);
+}
+.scratchpad-image-controls[hidden] {
+  display: none !important;
+}
+#scratchpadImageSizeRange {
+  width: 96px;
+}
+.scratchpad-image-size-label {
+  min-width: 2.8rem;
+  font-size: 0.74rem;
+  color: var(--text-secondary);
+  text-align: right;
 }
 .scratchpad-editor {
   flex: 1;
@@ -4871,6 +4931,23 @@ dialog::backdrop {
   color: var(--text-primary);
   cursor: text;
   min-height: 0;
+  word-break: break-word;
+}
+.scratchpad-editor.is-drop-target {
+  background: var(--bg-hover);
+}
+.scratchpad-editor img.scratchpad-inline-image {
+  display: inline-block;
+  max-width: 100%;
+  height: auto;
+  vertical-align: middle;
+  margin: 0.15rem 0.2rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.scratchpad-editor img.scratchpad-inline-image.is-selected {
+  outline: 2px solid var(--accent, var(--accent-500, #2f6fed));
+  outline-offset: 2px;
 }
 .scratchpad-editor:empty::before {
   content: attr(data-placeholder);
@@ -7436,6 +7513,11 @@ dialog::backdrop {
 
 .deliverable-status-badge.waiting {
   background: var(--warning);
+  color: var(--btn-text-on-accent);
+}
+
+.deliverable-status-badge.onhold {
+  background: linear-gradient(135deg, #64748b, #475569);
   color: var(--btn-text-on-accent);
 }
 
@@ -11756,8 +11838,17 @@ input:checked+.slider:before {
 }
 
 .column-config-label > input[type="checkbox"] {
+  width: auto;
+  min-width: 0;
   flex-shrink: 0;
   margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  appearance: auto;
+  -webkit-appearance: checkbox;
   cursor: pointer;
 }
 
@@ -11960,6 +12051,9 @@ input:checked+.slider:before {
 }
 .kanban-column--waiting .kanban-column__label {
   color: var(--warning, #f59e0b);
+}
+.kanban-column--on-hold .kanban-column__label {
+  color: #94a3b8;
 }
 .kanban-column--pending-review .kanban-column__label {
   color: #f59e0b;

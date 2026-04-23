@@ -1,6 +1,7 @@
 // ===================== CONFIGURATION & CONSTANTS =====================
 const STATUS_CANON = [
   "Waiting",
+  "On hold",
   "Pending Review",
   "Complete",
   "Delivered",
@@ -9,16 +10,19 @@ const STATUS_PRIORITY = [
   "Delivered",
   "Complete",
   "Pending Review",
+  "On hold",
   "Waiting",
 ];
 const LABEL_TO_KEY = {
   Waiting: "waiting",
+  "On hold": "onHold",
   "Pending Review": "pendingReview",
   Complete: "complete",
   Delivered: "delivered",
 };
 const KEY_TO_LABEL = {
   waiting: "Waiting",
+  onHold: "On hold",
   pendingReview: "Pending Review",
   complete: "Complete",
   delivered: "Delivered",
@@ -8903,11 +8907,15 @@ const DEFAULT_PROJECT_CARD_COLUMNS = [
   { key: "pinned", label: "Pinned", hidden: false },
   { key: "none", label: "None", hidden: false },
   { key: "Waiting", label: "Waiting", hidden: false },
+  { key: "On hold", label: "On hold", hidden: false },
   { key: "Pending Review", label: "Pending Review", hidden: false },
   { key: "Complete", label: "Complete", hidden: false },
   { key: "Delivered", label: "Delivered", hidden: false },
   { key: "nodate", label: "No date", hidden: false },
 ];
+const PROJECT_CARD_COLUMNS_BY_KEY = new Map(
+  DEFAULT_PROJECT_CARD_COLUMNS.map((column) => [column.key, column])
+);
 
 let userSettings = {
   userName: "",
@@ -9150,6 +9158,18 @@ let groupDeliverablesByProject = false;
 let projectsViewMode = "list";
 let projectCardColumns = DEFAULT_PROJECT_CARD_COLUMNS.map((c) => ({ ...c }));
 let projectCardWeek = getWeekStartDate(new Date());
+const PROJECTS_CARD_HORIZONTAL_WHEEL_MULTIPLIER = 0.4;
+
+function getDefaultProjectCardColumn(key) {
+  return PROJECT_CARD_COLUMNS_BY_KEY.get(String(key || "").trim()) || null;
+}
+
+function getProjectCardColumnLabel(column) {
+  const fallback = getDefaultProjectCardColumn(column?.key);
+  const label =
+    typeof column?.label === "string" ? column.label.trim() : "";
+  return label || fallback?.label || String(column?.key || "").trim();
+}
 
 function normalizeProjectCardColumns(raw) {
   const defaults = DEFAULT_PROJECT_CARD_COLUMNS;
@@ -9191,10 +9211,9 @@ function normalizeProjectCardColumns(raw) {
     if (!entry || typeof entry !== "object") continue;
     const key = String(entry.key || "").trim();
     if (!key || !defaultKeys.has(key) || seen.has(key)) continue;
-    const fallback = defaults.find((c) => c.key === key);
     normalized.push({
       key,
-      label: String(entry.label || fallback.label),
+      label: getProjectCardColumnLabel({ key, label: entry.label }),
       hidden: entry.hidden === true,
     });
     seen.add(key);
@@ -14212,6 +14231,8 @@ function canonStatus(s) {
   if (!s) return null;
   const t = String(s).trim().toLowerCase();
   if (["waiting", "wait", "blocked"].includes(t)) return "Waiting";
+  if (["on hold", "on-hold", "onhold", "hold", "paused", "pause"].includes(t))
+    return "On hold";
   if (
     ["pending review", "pending-review", "review", "pr", "pending"].includes(t)
   )
@@ -14299,6 +14320,11 @@ function getStatusTags(p) {
       tags.push("complete");
     if (s.includes("waiting") && !tags.includes("waiting"))
       tags.push("waiting");
+    if (
+      (s.includes("on hold") || s.includes("onhold") || s.includes("paused")) &&
+      !tags.includes("onHold")
+    )
+      tags.push("onHold");
     if (
       (s.includes("pending review") || s === "pending") &&
       !tags.includes("pendingReview")
@@ -20818,7 +20844,13 @@ function createDeliverableActionsDropdown(deliverable, project, card) {
   menu.appendChild(expandItem);
 
   const statusSubmenu = buildDeliverableActionsSubmenu("Status", (submenu) => {
-    const availableStatuses = ["Waiting", "Pending Review", "Complete", "Delivered"];
+    const availableStatuses = [
+      "Waiting",
+      "On hold",
+      "Pending Review",
+      "Complete",
+      "Delivered",
+    ];
     availableStatuses.forEach((status) => {
       const isActive = hasStatus(deliverable, status);
       const item = buildDeliverableActionsItem({
@@ -21220,7 +21252,13 @@ function setDeliverableStatusDropdownState(dropdown, isOpen) {
 }
 
 function createStatusDropdown(deliverable, project, card) {
-  const availableStatuses = ["Waiting", "Pending Review", "Complete", "Delivered"];
+  const availableStatuses = [
+    "Waiting",
+    "On hold",
+    "Pending Review",
+    "Complete",
+    "Delivered",
+  ];
   const dropdown = el("div", { className: "deliverable-status-dropdown" });
 
   // Trigger button - compact ellipsis icon
@@ -23299,6 +23337,7 @@ const KANBAN_COLUMN_SLUGS = {
   pinned: "pinned",
   none: "none",
   Waiting: "waiting",
+  "On hold": "on-hold",
   "Pending Review": "pending-review",
   Complete: "complete",
   Delivered: "delivered",
@@ -23456,7 +23495,7 @@ function renderCardView(items = db, projectListContextMap = null) {
     titleWrap.append(
       el("span", {
         className: "kanban-column__label",
-        textContent: col.label,
+        textContent: getProjectCardColumnLabel(col),
       }),
       el("span", {
         className: "kanban-column__count",
@@ -23529,11 +23568,44 @@ function resetProjectCardWeek() {
   }
 }
 
+function bindProjectsCardViewWheelScroll() {
+  const cardView = document.getElementById("projectsCardView");
+  if (!cardView || cardView.dataset.horizontalWheelBound === "1") return;
+  cardView.dataset.horizontalWheelBound = "1";
+
+  cardView.addEventListener(
+    "wheel",
+    (event) => {
+      const cardsHost = event.target?.closest?.(".kanban-column__cards");
+      const prefersVerticalScroll =
+        cardsHost && Math.abs(event.deltaY) >= Math.abs(event.deltaX);
+
+      if (prefersVerticalScroll) {
+        const scrollingDown = event.deltaY > 0;
+        const canKeepScrollingVertically = scrollingDown
+          ? cardsHost.scrollTop + cardsHost.clientHeight < cardsHost.scrollHeight - 1
+          : cardsHost.scrollTop > 1;
+        if (canKeepScrollingVertically) return;
+      }
+
+      const horizontalDelta =
+        Math.abs(event.deltaX) > 0 ? event.deltaX : event.deltaY;
+      if (!horizontalDelta) return;
+
+      event.preventDefault();
+      cardView.scrollLeft +=
+        horizontalDelta * PROJECTS_CARD_HORIZONTAL_WHEEL_MULTIPLIER;
+    },
+    { passive: false }
+  );
+}
+
 function setupProjectsViewModeControls() {
   const listBtn = document.getElementById("viewToggleList");
   const cardBtn = document.getElementById("viewToggleCard");
   if (listBtn) listBtn.addEventListener("click", () => setProjectsViewMode("list"));
   if (cardBtn) cardBtn.addEventListener("click", () => setProjectsViewMode("card"));
+  bindProjectsCardViewWheelScroll();
 
   const prevBtn = document.getElementById("weekNavPrev");
   const nextBtn = document.getElementById("weekNavNext");
@@ -23581,6 +23653,7 @@ function closeColumnConfigMenu() {
 }
 
 function persistProjectCardColumns() {
+  projectCardColumns = normalizeProjectCardColumns(projectCardColumns);
   userSettings.projectCardColumns = projectCardColumns.map((c) => ({ ...c }));
   if (typeof debouncedSaveUserSettings === "function") {
     debouncedSaveUserSettings();
@@ -23625,6 +23698,7 @@ function renderColumnConfigMenu() {
   menu.appendChild(title);
 
   projectCardColumns.forEach((col, index) => {
+    const columnLabel = getProjectCardColumnLabel(col);
     const row = el("div", { className: "column-config-row" });
     row.draggable = true;
     row.dataset.columnIndex = String(index);
@@ -23643,7 +23717,7 @@ function renderColumnConfigMenu() {
     checkbox.addEventListener("change", (e) => {
       toggleProjectCardColumnHidden(col.key, !e.target.checked);
     });
-    const text = el("span", { textContent: col.label });
+    const text = el("span", { textContent: columnLabel });
     label.append(checkbox, text);
 
     row.append(handle, label);
@@ -23948,6 +24022,7 @@ function renderStatusToggles(p) {
   };
   [
     ["wait", "Waiting"],
+    ["hold", "On hold"],
     ["pr", "Pending Review"],
     ["comp", "Complete"],
     ["del", "Delivered"],
@@ -24661,6 +24736,7 @@ function buildStatusPicker(selected = [], onToggle) {
   };
   [
     ["wait", "Waiting"],
+    ["hold", "On hold"],
     ["pr", "Pending Review"],
     ["comp", "Complete"],
     ["del", "Delivered"],
@@ -30380,9 +30456,343 @@ function showStatsModal() {
 
 let scratchpadSaveTimer = null;
 let scratchpadBindingsInitialized = false;
+let scratchpadSelectionRange = null;
+let scratchpadSelectedImage = null;
+const SCRATCHPAD_IMAGE_MIN_WIDTH_PERCENT = 10;
+const SCRATCHPAD_IMAGE_MAX_WIDTH_PERCENT = 100;
+const SCRATCHPAD_IMAGE_STEP_PERCENT = 5;
+const SCRATCHPAD_IMAGE_DEFAULT_WIDTH_PERCENT = 80;
 function setScratchpadStatus(text) {
   const el = document.getElementById("scratchpadStatus");
   if (el) el.textContent = text || "";
+}
+function normalizeScratchpadImagePercent(
+  value,
+  fallback = SCRATCHPAD_IMAGE_DEFAULT_WIDTH_PERCENT
+) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  const stepped =
+    Math.round(numeric / SCRATCHPAD_IMAGE_STEP_PERCENT) *
+    SCRATCHPAD_IMAGE_STEP_PERCENT;
+  return Math.min(
+    SCRATCHPAD_IMAGE_MAX_WIDTH_PERCENT,
+    Math.max(SCRATCHPAD_IMAGE_MIN_WIDTH_PERCENT, stepped)
+  );
+}
+function isScratchpadNodeInEditor(node, editor) {
+  if (!node || !editor) return false;
+  const target = node.nodeType === Node.TEXT_NODE ? node.parentNode : node;
+  return !!target && editor.contains(target);
+}
+function cloneScratchpadRange(range) {
+  if (!range) return null;
+  try {
+    return range.cloneRange();
+  } catch (_) {
+    return null;
+  }
+}
+function getScratchpadSelectionRange(editor) {
+  const selection = window.getSelection?.();
+  if (!selection || selection.rangeCount === 0) return null;
+  const range = selection.getRangeAt(0);
+  return isScratchpadNodeInEditor(range.commonAncestorContainer, editor)
+    ? range
+    : null;
+}
+function saveScratchpadSelection(editor) {
+  const range = getScratchpadSelectionRange(editor);
+  if (range) scratchpadSelectionRange = cloneScratchpadRange(range);
+}
+function getScratchpadEditorContentWidth(editor) {
+  if (!editor) return 0;
+  const styles = window.getComputedStyle(editor);
+  const horizontalPadding =
+    (parseFloat(styles.paddingLeft || "0") || 0) +
+    (parseFloat(styles.paddingRight || "0") || 0);
+  return Math.max(160, editor.clientWidth - horizontalPadding);
+}
+function restoreScratchpadSelection(editor) {
+  if (!editor) return null;
+  editor.focus();
+  let range = cloneScratchpadRange(scratchpadSelectionRange);
+  if (!range || !isScratchpadNodeInEditor(range.commonAncestorContainer, editor)) {
+    range = document.createRange();
+    range.selectNodeContents(editor);
+    range.collapse(false);
+  }
+  const selection = window.getSelection?.();
+  if (!selection) return range;
+  selection.removeAllRanges();
+  selection.addRange(range);
+  scratchpadSelectionRange = cloneScratchpadRange(range);
+  return range;
+}
+function getScratchpadSerializedHtml(editor) {
+  if (!editor) return "";
+  const clone = editor.cloneNode(true);
+  clone.querySelectorAll("img").forEach((img) => {
+    img.classList.add("scratchpad-inline-image");
+    img.classList.remove("is-selected");
+  });
+  return clone.innerHTML;
+}
+function queueScratchpadSave(editor) {
+  if (!editor) return;
+  scratchpadHtml = getScratchpadSerializedHtml(editor);
+  setScratchpadStatus("Saving...");
+  if (scratchpadSaveTimer) clearTimeout(scratchpadSaveTimer);
+  scratchpadSaveTimer = setTimeout(async () => {
+    const ok = await saveNotes();
+    setScratchpadStatus(ok ? "Saved OK" : "Save failed");
+  }, 800);
+}
+function getScratchpadImageWidthPercent(img, editor) {
+  if (!img || !editor) return SCRATCHPAD_IMAGE_DEFAULT_WIDTH_PERCENT;
+  const dataPercent = normalizeScratchpadImagePercent(img.dataset.widthPercent, NaN);
+  if (Number.isFinite(dataPercent)) return dataPercent;
+  const rawStyleWidth = String(img.style.width || "").trim();
+  if (rawStyleWidth.endsWith("%")) {
+    return normalizeScratchpadImagePercent(parseFloat(rawStyleWidth));
+  }
+  const widthPx =
+    parseFloat(rawStyleWidth) ||
+    parseFloat(img.getAttribute("width") || "") ||
+    img.getBoundingClientRect().width ||
+    img.naturalWidth ||
+    0;
+  if (!widthPx) return SCRATCHPAD_IMAGE_DEFAULT_WIDTH_PERCENT;
+  const baseWidth = getScratchpadEditorContentWidth(editor);
+  if (!baseWidth) return SCRATCHPAD_IMAGE_DEFAULT_WIDTH_PERCENT;
+  return normalizeScratchpadImagePercent((widthPx / baseWidth) * 100);
+}
+function getActiveScratchpadImage(editor) {
+  if (!editor || !scratchpadSelectedImage || !editor.contains(scratchpadSelectedImage)) {
+    return null;
+  }
+  return scratchpadSelectedImage;
+}
+function updateScratchpadImageControls() {
+  const editor = document.getElementById("scratchpadEditor");
+  const controls = document.getElementById("scratchpadImageControls");
+  const sizeRange = document.getElementById("scratchpadImageSizeRange");
+  const sizeLabel = document.getElementById("scratchpadImageSizeLabel");
+  const smallerBtn = document.getElementById("scratchpadImageSmallerBtn");
+  const largerBtn = document.getElementById("scratchpadImageLargerBtn");
+  const resetBtn = document.getElementById("scratchpadImageResetBtn");
+  const removeBtn = document.getElementById("scratchpadRemoveImageBtn");
+  const activeImage = getActiveScratchpadImage(editor);
+  const hasImage = !!activeImage;
+  if (controls) controls.hidden = !hasImage;
+  [sizeRange, smallerBtn, largerBtn, resetBtn, removeBtn].forEach((el) => {
+    if (el) el.disabled = !hasImage;
+  });
+  if (!hasImage) {
+    if (sizeLabel) sizeLabel.textContent = "";
+    return;
+  }
+  const percent = getScratchpadImageWidthPercent(activeImage, editor);
+  if (sizeRange) sizeRange.value = String(percent);
+  if (sizeLabel) sizeLabel.textContent = `${percent}%`;
+}
+function clearScratchpadSelectedImage() {
+  if (scratchpadSelectedImage) scratchpadSelectedImage.classList.remove("is-selected");
+  scratchpadSelectedImage = null;
+  updateScratchpadImageControls();
+}
+function setScratchpadSelectedImage(img, { selectInEditor = false } = {}) {
+  const editor = document.getElementById("scratchpadEditor");
+  if (!editor || !img || !editor.contains(img)) {
+    clearScratchpadSelectedImage();
+    return;
+  }
+  if (scratchpadSelectedImage && scratchpadSelectedImage !== img) {
+    scratchpadSelectedImage.classList.remove("is-selected");
+  }
+  scratchpadSelectedImage = img;
+  scratchpadSelectedImage.classList.add("is-selected");
+  if (selectInEditor) {
+    const range = document.createRange();
+    range.selectNode(img);
+    const selection = window.getSelection?.();
+    if (selection) {
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+    scratchpadSelectionRange = cloneScratchpadRange(range);
+  }
+  updateScratchpadImageControls();
+}
+function applyScratchpadImageWidth(img, percent, { save = true } = {}) {
+  const editor = document.getElementById("scratchpadEditor");
+  if (!editor || !img || !editor.contains(img)) return;
+  const normalizedPercent = normalizeScratchpadImagePercent(percent);
+  const widthPx = Math.max(
+    32,
+    Math.round((getScratchpadEditorContentWidth(editor) * normalizedPercent) / 100)
+  );
+  img.dataset.widthPercent = String(normalizedPercent);
+  img.classList.add("scratchpad-inline-image");
+  img.style.width = `${widthPx}px`;
+  img.style.maxWidth = "100%";
+  img.style.height = "auto";
+  img.removeAttribute("width");
+  img.removeAttribute("height");
+  updateScratchpadImageControls();
+  if (save) queueScratchpadSave(editor);
+}
+function normalizeScratchpadInlineImage(img) {
+  const editor = document.getElementById("scratchpadEditor");
+  if (!editor || !img || !editor.contains(img)) return;
+  img.classList.add("scratchpad-inline-image");
+  img.draggable = false;
+  if (!img.alt) img.alt = "Inserted image";
+  applyScratchpadImageWidth(img, getScratchpadImageWidthPercent(img, editor), {
+    save: false,
+  });
+}
+function normalizeScratchpadEditorImages(editor) {
+  if (!editor) return;
+  editor.querySelectorAll("img").forEach((img) => normalizeScratchpadInlineImage(img));
+  if (scratchpadSelectedImage && !editor.contains(scratchpadSelectedImage)) {
+    clearScratchpadSelectedImage();
+  } else {
+    updateScratchpadImageControls();
+  }
+}
+function moveScratchpadCaretToPoint(editor, x, y) {
+  if (!editor) return;
+  let range = null;
+  if (document.caretRangeFromPoint) {
+    range = document.caretRangeFromPoint(x, y);
+  } else if (document.caretPositionFromPoint) {
+    const position = document.caretPositionFromPoint(x, y);
+    if (position?.offsetNode) {
+      range = document.createRange();
+      range.setStart(position.offsetNode, position.offset);
+      range.collapse(true);
+    }
+  }
+  if (!range || !isScratchpadNodeInEditor(range.commonAncestorContainer, editor)) {
+    return;
+  }
+  const selection = window.getSelection?.();
+  if (!selection) return;
+  selection.removeAllRanges();
+  selection.addRange(range);
+  scratchpadSelectionRange = cloneScratchpadRange(range);
+}
+function placeScratchpadCaretAfterNode(editor, node) {
+  if (!editor) return;
+  const range = document.createRange();
+  if (node?.parentNode) {
+    range.setStartAfter(node);
+  } else {
+    range.selectNodeContents(editor);
+  }
+  range.collapse(true);
+  const selection = window.getSelection?.();
+  if (selection) {
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+  scratchpadSelectionRange = cloneScratchpadRange(range);
+}
+function insertScratchpadImage(dataUrl, altText = "Inserted image") {
+  const editor = document.getElementById("scratchpadEditor");
+  if (!editor || !dataUrl) return null;
+  const range = restoreScratchpadSelection(editor) || getScratchpadSelectionRange(editor);
+  if (!range) return null;
+  range.deleteContents();
+  const img = document.createElement("img");
+  img.src = dataUrl;
+  img.alt = String(altText || "Inserted image").trim() || "Inserted image";
+  img.dataset.widthPercent = String(SCRATCHPAD_IMAGE_DEFAULT_WIDTH_PERCENT);
+  range.insertNode(img);
+  const spacer = document.createTextNode(" ");
+  img.parentNode?.insertBefore(spacer, img.nextSibling);
+  placeScratchpadCaretAfterNode(editor, spacer);
+  normalizeScratchpadInlineImage(img);
+  setScratchpadSelectedImage(img);
+  queueScratchpadSave(editor);
+  return img;
+}
+async function insertScratchpadImages(files) {
+  const imageFiles = Array.from(files || []).filter((file) =>
+    String(file?.type || "").toLowerCase().startsWith("image/")
+  );
+  if (!imageFiles.length) return;
+  const editor = document.getElementById("scratchpadEditor");
+  if (!editor) return;
+  restoreScratchpadSelection(editor);
+  let inserted = 0;
+  for (const file of imageFiles) {
+    const dataUrl = await readFileAsDataUrl(file);
+    if (!insertScratchpadImage(dataUrl, file.name || "Inserted image")) continue;
+    inserted += 1;
+  }
+  if (inserted) {
+    toast(inserted === 1 ? "Image inserted." : `Inserted ${inserted} images.`);
+  }
+}
+function openScratchpadImagePicker() {
+  const editor = document.getElementById("scratchpadEditor");
+  const input = document.getElementById("scratchpadImageInput");
+  if (!editor || !input) {
+    toast("Image picker is unavailable.");
+    return;
+  }
+  saveScratchpadSelection(editor);
+  input.value = "";
+  input.click();
+}
+function removeScratchpadSelectedImage() {
+  const editor = document.getElementById("scratchpadEditor");
+  const img = getActiveScratchpadImage(editor);
+  if (!editor || !img) return;
+  const nextSibling = img.nextSibling;
+  const previousSibling = img.previousSibling;
+  img.remove();
+  if (
+    nextSibling?.nodeType === Node.TEXT_NODE &&
+    !String(nextSibling.textContent || "").trim()
+  ) {
+    nextSibling.remove();
+  }
+  clearScratchpadSelectedImage();
+  placeScratchpadCaretAfterNode(editor, previousSibling || editor.lastChild);
+  queueScratchpadSave(editor);
+}
+function getScratchpadImageFromSelection(editor) {
+  const range = getScratchpadSelectionRange(editor);
+  if (!range) return null;
+  if (
+    range.startContainer === range.endContainer &&
+    range.startContainer?.nodeType === Node.ELEMENT_NODE &&
+    range.endOffset === range.startOffset + 1
+  ) {
+    const node = range.startContainer.childNodes[range.startOffset];
+    if (node instanceof HTMLImageElement && editor.contains(node)) {
+      return node;
+    }
+  }
+  const target =
+    range.startContainer?.nodeType === Node.ELEMENT_NODE
+      ? range.startContainer
+      : range.startContainer?.parentElement;
+  return target instanceof HTMLImageElement
+    ? target
+    : target?.closest?.("img.scratchpad-inline-image") || null;
+}
+function syncScratchpadSelectionState(editor) {
+  saveScratchpadSelection(editor);
+  const selectedImage = getScratchpadImageFromSelection(editor);
+  if (selectedImage) {
+    setScratchpadSelectedImage(selectedImage);
+  } else {
+    clearScratchpadSelectedImage();
+  }
 }
 function initScratchpadBindings() {
   if (scratchpadBindingsInitialized) return;
@@ -30390,13 +30800,8 @@ function initScratchpadBindings() {
   const editor = document.getElementById("scratchpadEditor");
   if (!panel || !editor) return;
   editor.addEventListener("input", () => {
-    scratchpadHtml = editor.innerHTML;
-    setScratchpadStatus("Saving…");
-    if (scratchpadSaveTimer) clearTimeout(scratchpadSaveTimer);
-    scratchpadSaveTimer = setTimeout(async () => {
-      const ok = await saveNotes();
-      setScratchpadStatus(ok ? "Saved ✓" : "Save failed");
-    }, 800);
+    normalizeScratchpadEditorImages(editor);
+    queueScratchpadSave(editor);
   });
   editor.addEventListener("keydown", (e) => {
     if (!(e.ctrlKey || e.metaKey)) return;
@@ -30407,6 +30812,66 @@ function initScratchpadBindings() {
       document.execCommand(map[key], false);
     }
   });
+  editor.addEventListener("keydown", (e) => {
+    if (
+      scratchpadSelectedImage &&
+      (e.key === "Backspace" || e.key === "Delete")
+    ) {
+      e.preventDefault();
+      removeScratchpadSelectedImage();
+      return;
+    }
+    if (e.key === "Escape") clearScratchpadSelectedImage();
+  });
+  editor.addEventListener("mouseup", () => syncScratchpadSelectionState(editor));
+  editor.addEventListener("keyup", () => syncScratchpadSelectionState(editor));
+  editor.addEventListener("click", (e) => {
+    if (e.target instanceof HTMLImageElement) {
+      e.preventDefault();
+      setScratchpadSelectedImage(e.target, { selectInEditor: true });
+      return;
+    }
+    clearScratchpadSelectedImage();
+    saveScratchpadSelection(editor);
+  });
+  editor.addEventListener("dragover", (e) => {
+    const hasImageFile = Array.from(e.dataTransfer?.items || []).some(
+      (item) =>
+        item.kind === "file" &&
+        String(item.type || "").toLowerCase().startsWith("image/")
+    );
+    if (!hasImageFile) return;
+    e.preventDefault();
+    editor.classList.add("is-drop-target");
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+  });
+  editor.addEventListener("dragleave", (e) => {
+    if (!editor.contains(e.relatedTarget)) editor.classList.remove("is-drop-target");
+  });
+  editor.addEventListener("drop", async (e) => {
+    const files = Array.from(e.dataTransfer?.files || []).filter((file) =>
+      String(file?.type || "").toLowerCase().startsWith("image/")
+    );
+    editor.classList.remove("is-drop-target");
+    if (!files.length) return;
+    e.preventDefault();
+    moveScratchpadCaretToPoint(editor, e.clientX, e.clientY);
+    await insertScratchpadImages(files);
+  });
+  editor.addEventListener("paste", async (e) => {
+    const files = Array.from(e.clipboardData?.files || []).filter((file) =>
+      String(file?.type || "").toLowerCase().startsWith("image/")
+    );
+    const itemFiles = Array.from(e.clipboardData?.items || [])
+      .map((item) => item.getAsFile?.())
+      .filter((file) =>
+        String(file?.type || "").toLowerCase().startsWith("image/")
+      );
+    const images = files.length ? files : itemFiles;
+    if (!images.length) return;
+    e.preventDefault();
+    await insertScratchpadImages(images);
+  });
   panel.querySelectorAll(".scratchpad-fmt-btn").forEach((btn) => {
     btn.addEventListener("mousedown", (e) => e.preventDefault());
     btn.addEventListener("click", () => {
@@ -30414,8 +30879,81 @@ function initScratchpadBindings() {
       editor.focus();
     });
   });
+  [
+    "scratchpadInsertImageBtn",
+    "scratchpadImageSmallerBtn",
+    "scratchpadImageLargerBtn",
+    "scratchpadImageResetBtn",
+    "scratchpadRemoveImageBtn",
+  ]
+    .map((id) => document.getElementById(id))
+    .filter(Boolean)
+    .forEach((btn) => {
+      btn.addEventListener("mousedown", (e) => e.preventDefault());
+    });
+  const imageInput = document.getElementById("scratchpadImageInput");
+  if (imageInput) {
+    imageInput.addEventListener("change", async () => {
+      await insertScratchpadImages(imageInput.files || []);
+      imageInput.value = "";
+    });
+  }
+  const insertImageBtn = document.getElementById("scratchpadInsertImageBtn");
+  if (insertImageBtn) {
+    insertImageBtn.addEventListener("click", () => openScratchpadImagePicker());
+  }
+  const imageSizeRange = document.getElementById("scratchpadImageSizeRange");
+  if (imageSizeRange) {
+    imageSizeRange.addEventListener("input", (e) => {
+      const activeImage = getActiveScratchpadImage(editor);
+      if (!activeImage) return;
+      applyScratchpadImageWidth(activeImage, e.target.value);
+    });
+  }
+  const smallerBtn = document.getElementById("scratchpadImageSmallerBtn");
+  if (smallerBtn) {
+    smallerBtn.addEventListener("click", () => {
+      const activeImage = getActiveScratchpadImage(editor);
+      if (!activeImage) return;
+      applyScratchpadImageWidth(
+        activeImage,
+        getScratchpadImageWidthPercent(activeImage, editor) -
+          SCRATCHPAD_IMAGE_STEP_PERCENT
+      );
+    });
+  }
+  const largerBtn = document.getElementById("scratchpadImageLargerBtn");
+  if (largerBtn) {
+    largerBtn.addEventListener("click", () => {
+      const activeImage = getActiveScratchpadImage(editor);
+      if (!activeImage) return;
+      applyScratchpadImageWidth(
+        activeImage,
+        getScratchpadImageWidthPercent(activeImage, editor) +
+          SCRATCHPAD_IMAGE_STEP_PERCENT
+      );
+    });
+  }
+  const resetBtn = document.getElementById("scratchpadImageResetBtn");
+  if (resetBtn) {
+    resetBtn.addEventListener("click", () => {
+      const activeImage = getActiveScratchpadImage(editor);
+      if (!activeImage) return;
+      applyScratchpadImageWidth(
+        activeImage,
+        SCRATCHPAD_IMAGE_DEFAULT_WIDTH_PERCENT
+      );
+    });
+  }
+  const removeBtn = document.getElementById("scratchpadRemoveImageBtn");
+  if (removeBtn) removeBtn.addEventListener("click", () => removeScratchpadSelectedImage());
   const closeBtn = document.getElementById("scratchpadCloseBtn");
   if (closeBtn) closeBtn.addEventListener("click", () => setScratchpadOpen(false));
+  window.addEventListener("resize", () => {
+    if (panel.hidden) return;
+    normalizeScratchpadEditorImages(editor);
+  });
+  updateScratchpadImageControls();
   scratchpadBindingsInitialized = true;
 }
 function setScratchpadOpen(open) {
@@ -30431,12 +30969,14 @@ function setScratchpadOpen(open) {
     panel.hidden = false;
     document.body.classList.add("scratchpad-open");
     if (btn) btn.classList.add("is-active");
+    normalizeScratchpadEditorImages(editor);
     setScratchpadStatus("");
     setTimeout(() => editor.focus(), 0);
   } else {
     panel.hidden = true;
     document.body.classList.remove("scratchpad-open");
     if (btn) btn.classList.remove("is-active");
+    clearScratchpadSelectedImage();
   }
 }
 function toggleScratchpad() {

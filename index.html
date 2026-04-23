@@ -280,6 +280,7 @@
                                     <button type="button" class="projects-filter-option is-selected" data-filter-value="all" role="menuitemradio" aria-checked="true" tabindex="-1">All</button>
                                     <button type="button" class="projects-filter-option" data-filter-value="incomplete" role="menuitemradio" aria-checked="false" tabindex="-1">Incomplete</button>
                                     <button type="button" class="projects-filter-option" data-filter-value="Waiting" role="menuitemradio" aria-checked="false" tabindex="-1">Waiting</button>
+                                    <button type="button" class="projects-filter-option" data-filter-value="On hold" role="menuitemradio" aria-checked="false" tabindex="-1">On hold</button>
                                     <button type="button" class="projects-filter-option" data-filter-value="Pending Review" role="menuitemradio" aria-checked="false" tabindex="-1">Pending Review</button>
                                     <button type="button" class="projects-filter-option" data-filter-value="Complete" role="menuitemradio" aria-checked="false" tabindex="-1">Complete</button>
                                     <button type="button" class="projects-filter-option" data-filter-value="Delivered" role="menuitemradio" aria-checked="false" tabindex="-1">Delivered</button>
@@ -927,11 +928,25 @@
             </button>
         </div>
         <div class="scratchpad-toolbar" role="toolbar" aria-label="Formatting">
-            <button type="button" class="scratchpad-fmt-btn" data-cmd="bold" aria-label="Bold" title="Bold (Ctrl+B)"><strong>B</strong></button>
-            <button type="button" class="scratchpad-fmt-btn" data-cmd="italic" aria-label="Italic" title="Italic (Ctrl+I)"><em>I</em></button>
-            <button type="button" class="scratchpad-fmt-btn" data-cmd="underline" aria-label="Underline" title="Underline (Ctrl+U)"><u>U</u></button>
-            <button type="button" class="scratchpad-fmt-btn" data-cmd="strikeThrough" aria-label="Strikethrough" title="Strikethrough"><s>S</s></button>
+            <div class="scratchpad-toolbar-group" aria-label="Text formatting">
+                <button type="button" class="scratchpad-fmt-btn" data-cmd="bold" aria-label="Bold" title="Bold (Ctrl+B)"><strong>B</strong></button>
+                <button type="button" class="scratchpad-fmt-btn" data-cmd="italic" aria-label="Italic" title="Italic (Ctrl+I)"><em>I</em></button>
+                <button type="button" class="scratchpad-fmt-btn" data-cmd="underline" aria-label="Underline" title="Underline (Ctrl+U)"><u>U</u></button>
+                <button type="button" class="scratchpad-fmt-btn" data-cmd="strikeThrough" aria-label="Strikethrough" title="Strikethrough"><s>S</s></button>
+            </div>
+            <div class="scratchpad-toolbar-group scratchpad-image-tools" aria-label="Image tools">
+                <button type="button" class="scratchpad-tool-btn" id="scratchpadInsertImageBtn" aria-label="Insert image" title="Insert image">Img</button>
+                <div class="scratchpad-image-controls" id="scratchpadImageControls" hidden>
+                    <button type="button" class="scratchpad-tool-btn" id="scratchpadImageSmallerBtn" aria-label="Make selected image smaller" title="Make selected image smaller">-</button>
+                    <input type="range" id="scratchpadImageSizeRange" min="10" max="100" step="5" value="80" aria-label="Selected image width" />
+                    <button type="button" class="scratchpad-tool-btn" id="scratchpadImageLargerBtn" aria-label="Make selected image larger" title="Make selected image larger">+</button>
+                    <button type="button" class="scratchpad-tool-btn" id="scratchpadImageResetBtn" aria-label="Reset selected image width" title="Reset selected image width">Fit</button>
+                    <button type="button" class="scratchpad-tool-btn" id="scratchpadRemoveImageBtn" aria-label="Remove selected image" title="Remove selected image">Del</button>
+                    <span class="scratchpad-image-size-label" id="scratchpadImageSizeLabel">80%</span>
+                </div>
+            </div>
         </div>
+        <input type="file" id="scratchpadImageInput" accept="image/*" multiple hidden />
         <div id="scratchpadEditor" class="scratchpad-editor" contenteditable="true" spellcheck="true"
             role="textbox" aria-multiline="true" aria-label="Scratchpad notes"
             data-placeholder="Start typing your unsorted notes…"></div>

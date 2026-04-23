@@ -25,9 +25,9 @@ class ProjectDeliverablePinUiTests(unittest.TestCase):
     def test_deliverable_pin_button_and_card_view_bucket_use_deliverable_state(self):
         script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
         header_start = script.index("function createDeliverablePinButton(deliverable) {")
-        header_end = script.index("function createCardHeader(", header_start)
+        header_end = script.index("let openDeliverableActionsDropdown", header_start)
         pin_button_block = script[header_start:header_end]
-        card_view_start = script.index("function renderCardView() {")
+        card_view_start = script.index("function renderCardView(")
         card_view_end = script.index("function setProjectsViewMode(", card_view_start)
         card_view_block = script[card_view_start:card_view_end]
 
@@ -40,9 +40,13 @@ class ProjectDeliverablePinUiTests(unittest.TestCase):
         ):
             self.assertIn(expected, pin_button_block)
 
-        self.assertIn("actions.append(pinButton, attachmentControl, toolDropdown, expandToggle);", script)
+        self.assertIn(
+            "const actionsDropdown = createDeliverableActionsDropdown(deliverable, project, card);",
+            script,
+        )
+        self.assertIn("actions.append(actionsDropdown);", script)
         self.assertIn("isDeliverablePinned(deliverable) ? \"is-pinned-deliverable\" : \"\"", script)
-        self.assertIn("if (pinnedShown && isDeliverablePinned(deliverable)) {", card_view_block)
+        self.assertIn("if (pinnedShown && isPinnedDeliverable) {", card_view_block)
         self.assertNotIn("pinnedShown && project.pinned", card_view_block)
 
     def test_pin_urgent_deliverables_pins_deliverables_not_projects(self):

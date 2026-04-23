@@ -38,7 +38,7 @@ class DeliverableLinkAndProjectPathUiTests(unittest.TestCase):
             "return findWorkroomProjectRootById(projectPath) || projectPath;", script
         )
 
-    def test_unified_attachment_wiring_exists(self):
+    def test_deliverable_and_work_item_attachment_wiring_exists(self):
         script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
 
         for expected in (
@@ -46,36 +46,35 @@ class DeliverableLinkAndProjectPathUiTests(unittest.TestCase):
             "function mergeCloudAndLocalAttachments(remoteAttachments = [], localAttachments = []) {",
             "function getDeliverableCardAttachments(card) {",
             "function setDeliverableCardAttachments(card, attachments) {",
-            "function getModalProjectAttachments() {",
-            "function setModalProjectAttachments(attachments) {",
             "function syncProjectAttachmentFields(project) {",
             "function syncDeliverableAttachmentFields(deliverable) {",
             "function createAttachmentTriggerIcon(size = 15) {",
             "function createAttachmentControl(descriptor = {}, options = {}) {",
+            "function createWorkItemAttachmentControls({",
             'svg.setAttribute("class", "attachment-trigger-icon");',
             "function openAttachmentPanel(context) {",
             "async function requestAttachmentPanelClose(options = {}) {",
             "await addDroppedEmailToAttachmentContext(openAttachmentPanelContext, event);",
-            "attachments: getModalProjectAttachments(),",
             "const attachments = getDeliverableCardAttachments(card);",
             "trigger.appendChild(createAttachmentTriggerIcon());",
             'className: "project-details-header",',
             'className: "project-details-main",',
-            "projectDetailsHeader.append(projectDetailsMain, projectAttachmentInline);",
+            "projectDetailsHeader.append(projectDetailsMain);",
             "nameCell.appendChild(projectDetailsHeader);",
-            'kind: "project",',
             'kind: "deliverable",',
         ):
             self.assertIn(expected, script)
 
-        self.assertNotIn("deliverablesCell.appendChild(projectAttachmentInline);", script)
+        self.assertNotIn("projectAttachmentInline", script)
+        self.assertNotIn('className: "project-inline-attachment"', script)
 
     def test_unified_attachment_markup_and_styles_exist(self):
         html = INDEX_HTML_PATH.read_text(encoding="utf-8")
         css = STYLES_CSS_PATH.read_text(encoding="utf-8")
 
-        self.assertIn('id="modalProjectAttachmentHost"', html)
         self.assertIn('<div class="deliverable-attachment-control"></div>', html)
+        self.assertNotIn("Project Attachments", html)
+        self.assertNotIn('id="modalProjectAttachmentHost"', html)
         self.assertNotIn('<div class="deliverable-link-control"></div>', html)
         self.assertNotIn('class="deliverable-email-slots"', html)
 
@@ -83,8 +82,6 @@ class DeliverableLinkAndProjectPathUiTests(unittest.TestCase):
             ".project-details-header {",
             ".project-details-main {",
             ".project-title-text {",
-            ".modal-project-attachment-host {",
-            ".project-inline-attachment {",
             ".attachment-trigger .attachment-trigger-icon {",
             ".attachment-trigger.has-attachments {",
             ".attachment-panel {",
@@ -92,6 +89,9 @@ class DeliverableLinkAndProjectPathUiTests(unittest.TestCase):
             ".attachment-action-btn {",
         ):
             self.assertIn(expected, css)
+
+        self.assertNotIn(".modal-project-attachment-host {", css)
+        self.assertNotIn(".project-inline-attachment {", css)
 
 
 if __name__ == "__main__":

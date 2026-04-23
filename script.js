@@ -87,6 +87,14 @@ const EYE_ICON_PATH =
   "M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5C21.27 7.61 17 4.5 12 4.5zm0 12.5a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-8a3 3 0 1 0 0 6 3 3 0 0 0 0-6z";
 const PIN_ICON_PATH =
   "M12 2C8.13 2 5 5.13 5 9c0 2.76 1.87 5.08 4.42 5.76L10 22l2-3 2 3-.42-7.24C16.13 14.08 18 11.76 18 9c0-3.87-3.13-7-7-7zm0 8.5A2.5 2.5 0 1 1 12 5a2.5 2.5 0 0 1 0 5z";
+const EXPAND_ICON_PATH =
+  "M5 5h5V3H3v7h2V5zm9-2v2h5v5h2V3h-7zm5 16h-5v2h7v-7h-2v5zM5 14H3v7h7v-2H5v-5z";
+const STATUS_ICON_PATH =
+  "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm-1.1 14.2-4.2-4.2 1.4-1.4 2.8 2.8 5.7-5.7 1.4 1.4-7.1 7.1z";
+const TOOLS_ICON_PATH =
+  "M22.7 19l-9.1-9.1c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3l4.4 4.4-3 3-4.4-4.4C.5 7.1 1 10.1 3 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.4-.4.4-1 0-1.4z";
+const ATTACHMENT_ICON_PATH =
+  "M16.5 6v11.5c0 2.21-1.79 4-4 4s-4-1.79-4-4V5c0-1.38 1.12-2.5 2.5-2.5s2.5 1.12 2.5 2.5v10.5c0 .55-.45 1-1 1s-1-.45-1-1V6H10v9.5c0 1.38 1.12 2.5 2.5 2.5s2.5-1.12 2.5-2.5V5c0-2.21-1.79-4-4-4S7 2.79 7 5v12.5c0 3.04 2.46 5.5 5.5 5.5s5.5-2.46 5.5-5.5V6h-1.5z";
 const FOLDER_ICON_PATH =
   "M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z";
 const NOTE_ICON_PATH =
@@ -3737,6 +3745,7 @@ const SHARED_TOOL_LAUNCH_REGISTRY = Object.freeze([
     label: "Local Project Manager",
     menuLabel: "Local Projects",
     launchType: "project-manager",
+    category: "general",
     isReady: true,
   },
   {
@@ -3744,6 +3753,7 @@ const SHARED_TOOL_LAUNCH_REGISTRY = Object.freeze([
     label: "Publish CAD DWGs in Headless Mode",
     menuLabel: "Publish",
     launchType: "user-selects-files",
+    category: "general",
     isReady: true,
   },
   {
@@ -3751,6 +3761,7 @@ const SHARED_TOOL_LAUNCH_REGISTRY = Object.freeze([
     label: "Freeze/Thaw Layers in CAD DWGs Headless Mode",
     menuLabel: "Freeze/Thaw",
     launchType: "user-selects-files",
+    category: "general",
     isReady: true,
   },
   {
@@ -3758,6 +3769,7 @@ const SHARED_TOOL_LAUNCH_REGISTRY = Object.freeze([
     label: "Prepare CAD DWG for Reference",
     menuLabel: "Prepare XREFs",
     launchType: "user-selects-files",
+    category: "general",
     isReady: true,
   },
   {
@@ -3765,6 +3777,7 @@ const SHARED_TOOL_LAUNCH_REGISTRY = Object.freeze([
     label: "Create Narrative of Changes Template",
     menuLabel: "Create NOC",
     launchType: "user-selects-folder",
+    category: "templates",
     isReady: true,
   },
   {
@@ -3772,6 +3785,7 @@ const SHARED_TOOL_LAUNCH_REGISTRY = Object.freeze([
     label: "Create Plan Check Comments Template",
     menuLabel: "Create PCC",
     launchType: "user-selects-folder",
+    category: "templates",
     isReady: true,
   },
   {
@@ -3779,6 +3793,7 @@ const SHARED_TOOL_LAUNCH_REGISTRY = Object.freeze([
     label: "Wire Sizer",
     menuLabel: "Wire Sizer",
     launchType: "modal",
+    category: "electrical",
     isReady: true,
   },
   {
@@ -3786,6 +3801,7 @@ const SHARED_TOOL_LAUNCH_REGISTRY = Object.freeze([
     label: "Panel Schedule AI",
     menuLabel: "Panel Schedule AI",
     launchType: "modal",
+    category: "electrical",
     isReady: true,
   },
   {
@@ -3793,6 +3809,7 @@ const SHARED_TOOL_LAUNCH_REGISTRY = Object.freeze([
     label: "Backup Drawings",
     menuLabel: "Backup DWGs",
     launchType: "archive-project",
+    category: "general",
     isReady: true,
   },
   {
@@ -3800,6 +3817,7 @@ const SHARED_TOOL_LAUNCH_REGISTRY = Object.freeze([
     label: "Lighting Schedule AI",
     menuLabel: "Lighting Schedule AI",
     launchType: "modal",
+    category: "electrical",
     isReady: false,
   },
   {
@@ -3807,6 +3825,7 @@ const SHARED_TOOL_LAUNCH_REGISTRY = Object.freeze([
     label: "Title 24 Compliance",
     menuLabel: "Title 24 Compliance",
     launchType: "modal",
+    category: "electrical",
     isReady: false,
   },
 ]);
@@ -3843,6 +3862,25 @@ function getDeliverableToolMenuEntries() {
   return deliverableMenuOrder
     .map((toolId) => readyEntryMap.get(toolId) || null)
     .filter(Boolean);
+}
+
+const DELIVERABLE_TOOL_CATEGORIES = Object.freeze([
+  { key: "general", label: "General" },
+  { key: "electrical", label: "Electrical" },
+  { key: "templates", label: "Templates" },
+]);
+
+function getDeliverableToolMenuEntriesByCategory() {
+  const entries = getDeliverableToolMenuEntries();
+  const byCategory = new Map(DELIVERABLE_TOOL_CATEGORIES.map((c) => [c.key, []]));
+  entries.forEach((entry) => {
+    const key = String(entry?.category || "general").trim().toLowerCase();
+    const bucket = byCategory.get(key) || byCategory.get("general");
+    bucket.push(entry);
+  });
+  return DELIVERABLE_TOOL_CATEGORIES
+    .map((cat) => ({ ...cat, entries: byCategory.get(cat.key) || [] }))
+    .filter((cat) => cat.entries.length > 0);
 }
 
 function getLaunchContextProjectRoot(launchContext = null) {
@@ -8863,6 +8901,7 @@ const DEFAULT_CLOUD_SYNC_STATE = {
 
 const DEFAULT_PROJECT_CARD_COLUMNS = [
   { key: "pinned", label: "Pinned", hidden: false },
+  { key: "none", label: "None", hidden: false },
   { key: "Waiting", label: "Waiting", hidden: false },
   { key: "Pending Review", label: "Pending Review", hidden: false },
   { key: "Complete", label: "Complete", hidden: false },
@@ -9118,6 +9157,36 @@ function normalizeProjectCardColumns(raw) {
   const list = Array.isArray(raw) ? raw : [];
   const seen = new Set();
   const normalized = [];
+  const findDefaultIndex = (key) =>
+    defaults.findIndex((defaultColumn) => defaultColumn.key === key);
+  const insertMissingColumn = (column) => {
+    const defaultIndex = findDefaultIndex(column.key);
+    const previousDefaultKeys = defaults
+      .slice(0, defaultIndex)
+      .map((defaultColumn) => defaultColumn.key)
+      .reverse();
+    const previousKey = previousDefaultKeys.find((key) =>
+      normalized.some((existing) => existing.key === key)
+    );
+    if (previousKey) {
+      const previousIndex = normalized.findIndex(
+        (existing) => existing.key === previousKey
+      );
+      normalized.splice(previousIndex + 1, 0, { ...column });
+      seen.add(column.key);
+      return;
+    }
+    const nextIndex = normalized.findIndex(
+      (existing) => findDefaultIndex(existing.key) > defaultIndex
+    );
+    if (nextIndex >= 0) {
+      normalized.splice(nextIndex, 0, { ...column });
+    } else {
+      normalized.push({ ...column });
+    }
+    seen.add(column.key);
+  };
+
   for (const entry of list) {
     if (!entry || typeof entry !== "object") continue;
     const key = String(entry.key || "").trim();
@@ -9131,7 +9200,7 @@ function normalizeProjectCardColumns(raw) {
     seen.add(key);
   }
   for (const col of defaults) {
-    if (!seen.has(col.key)) normalized.push({ ...col });
+    if (!seen.has(col.key)) insertMissingColumn(col);
   }
   return normalized;
 }
@@ -20392,6 +20461,538 @@ function createDeliverablePinButton(deliverable) {
   return button;
 }
 
+let openDeliverableActionsDropdown = null;
+let deliverableActionsGlobalHandlersBound = false;
+
+function createDeliverableActionsTriggerIcon() {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("fill", "currentColor");
+  svg.setAttribute("class", "deliverable-actions-trigger-icon");
+  svg.innerHTML =
+    '<circle cx="12" cy="5" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="12" cy="19" r="1.8"></circle>';
+  return svg;
+}
+
+function setDeliverableActionsDropdownState(dropdown, isOpen) {
+  if (!dropdown) return;
+  const menu = dropdown.querySelector(":scope > .deliverable-actions-menu");
+  const trigger = dropdown.querySelector(":scope > .deliverable-actions-trigger");
+  const card = dropdown.closest(".deliverable-card-new");
+  const cell = dropdown.closest(".cell-deliverables");
+  const row = dropdown.closest(".row");
+
+  menu?.classList.toggle("open", isOpen);
+  trigger?.classList.toggle("open", isOpen);
+  trigger?.setAttribute("aria-expanded", String(isOpen));
+  dropdown.classList.toggle("open", isOpen);
+  card?.classList.toggle("deliverable-menu-open", isOpen);
+  cell?.classList.toggle("deliverable-menu-open", isOpen);
+  row?.classList.toggle("deliverable-menu-open", isOpen);
+
+  if (!isOpen) {
+    dropdown
+      .querySelectorAll(".deliverable-actions-submenu.open")
+      .forEach((sub) => sub.classList.remove("open"));
+    dropdown
+      .querySelectorAll('.deliverable-actions-item[aria-expanded="true"]')
+      .forEach((item) => item.setAttribute("aria-expanded", "false"));
+  }
+
+  if (isOpen) {
+    openDeliverableActionsDropdown = dropdown;
+  } else if (openDeliverableActionsDropdown === dropdown) {
+    openDeliverableActionsDropdown = null;
+  }
+}
+
+function closeOpenDeliverableActionsDropdown({ except = null, focusTrigger = false } = {}) {
+  if (!openDeliverableActionsDropdown || openDeliverableActionsDropdown === except) return;
+  const dropdown = openDeliverableActionsDropdown;
+  setDeliverableActionsDropdownState(dropdown, false);
+  if (focusTrigger) {
+    dropdown.querySelector(".deliverable-actions-trigger")?.focus();
+  }
+}
+
+function closeDeliverableActionsSiblingSubmenus(wrapper) {
+  const parent = wrapper?.parentElement;
+  if (!parent) return;
+  parent
+    .querySelectorAll(":scope > .deliverable-actions-submenu-wrapper")
+    .forEach((sibling) => {
+      if (sibling === wrapper) return;
+      sibling
+        .querySelectorAll(".deliverable-actions-submenu.open")
+        .forEach((s) => s.classList.remove("open"));
+      sibling
+        .querySelectorAll('.deliverable-actions-item[aria-expanded="true"]')
+        .forEach((i) => i.setAttribute("aria-expanded", "false"));
+    });
+}
+
+function ensureDeliverableActionsGlobalHandlers() {
+  if (deliverableActionsGlobalHandlersBound) return;
+  deliverableActionsGlobalHandlersBound = true;
+
+  document.addEventListener("click", (e) => {
+    if (!openDeliverableActionsDropdown) return;
+    if (openDeliverableActionsDropdown.contains(e.target)) return;
+    setDeliverableActionsDropdownState(openDeliverableActionsDropdown, false);
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || !openDeliverableActionsDropdown) return;
+    const dropdown = openDeliverableActionsDropdown;
+    const openSubmenus = dropdown.querySelectorAll(".deliverable-actions-submenu.open");
+    if (openSubmenus.length > 0) {
+      e.preventDefault();
+      const deepest = openSubmenus[openSubmenus.length - 1];
+      deepest.classList.remove("open");
+      const parentItem = deepest.parentElement?.querySelector(
+        ":scope > .deliverable-actions-item"
+      );
+      parentItem?.setAttribute("aria-expanded", "false");
+      return;
+    }
+    e.preventDefault();
+    closeOpenDeliverableActionsDropdown({ focusTrigger: true });
+  });
+}
+
+function setDeliverableActionsItemLabel(item, label) {
+  const labelEl = item?.querySelector?.(":scope > .deliverable-actions-item-label");
+  if (labelEl) {
+    labelEl.textContent = label;
+  } else if (item) {
+    item.textContent = label;
+  }
+}
+
+function buildDeliverableActionsItem({
+  label,
+  onClick,
+  danger = false,
+  disabled = false,
+  iconPath = "",
+}) {
+  const btn = el("button", {
+    className: "deliverable-actions-item" + (danger ? " danger" : ""),
+    type: "button",
+    role: "menuitem",
+  });
+  if (iconPath) {
+    const icon = createIcon(iconPath, 14);
+    icon.classList.add("deliverable-actions-item-icon");
+    btn.appendChild(icon);
+  }
+  btn.appendChild(
+    el("span", {
+      className: "deliverable-actions-item-label",
+      textContent: label,
+    })
+  );
+  if (disabled) btn.disabled = true;
+  btn.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (btn.disabled) return;
+    onClick?.(e);
+  });
+  return btn;
+}
+
+function buildDeliverableActionsSubmenu(label, renderSubmenu) {
+  const options = arguments[2] || {};
+  const wrapper = el("div", { className: "deliverable-actions-submenu-wrapper" });
+  const parent = el("button", {
+    className: "deliverable-actions-item has-submenu",
+    type: "button",
+    "aria-haspopup": "true",
+    "aria-expanded": "false",
+    role: "menuitem",
+  });
+  if (options.iconPath) {
+    const icon = createIcon(options.iconPath, 14);
+    icon.classList.add("deliverable-actions-item-icon");
+    parent.appendChild(icon);
+  }
+  parent.appendChild(
+    el("span", {
+      className: "deliverable-actions-item-label",
+      textContent: label,
+    })
+  );
+  const submenu = el("div", { className: "deliverable-actions-submenu", role: "menu" });
+  renderSubmenu(submenu);
+
+  let closeTimer = null;
+  const cancelClose = () => {
+    if (closeTimer) {
+      clearTimeout(closeTimer);
+      closeTimer = null;
+    }
+  };
+
+  const applySubmenuFlip = () => {
+    submenu.classList.remove("flip-left");
+    submenu.style.top = "";
+    submenu.style.left = "";
+
+    const parentRect = parent.getBoundingClientRect();
+    const containingMenuRect =
+      wrapper.parentElement?.getBoundingClientRect?.() || parentRect;
+    const menuOverlap = 1;
+    const viewportPadding = 8;
+    const placeSubmenu = (targetTop, targetLeft) => {
+      submenu.style.top = `${targetTop}px`;
+      submenu.style.left = `${targetLeft}px`;
+      let placedRect = submenu.getBoundingClientRect();
+      const topCorrection = targetTop - placedRect.top;
+      const leftCorrection = targetLeft - placedRect.left;
+      if (Math.abs(topCorrection) > 0.5 || Math.abs(leftCorrection) > 0.5) {
+        submenu.style.top = `${targetTop + topCorrection}px`;
+        submenu.style.left = `${targetLeft + leftCorrection}px`;
+        placedRect = submenu.getBoundingClientRect();
+      }
+      return placedRect;
+    };
+
+    let targetTop = Math.max(viewportPadding, parentRect.top);
+    let targetLeft = containingMenuRect.right - menuOverlap;
+    let rect = placeSubmenu(targetTop, targetLeft);
+    if (rect.right > window.innerWidth - viewportPadding) {
+      const flippedLeft = containingMenuRect.left - rect.width + menuOverlap;
+      if (flippedLeft >= viewportPadding) {
+        submenu.classList.add("flip-left");
+        targetLeft = flippedLeft;
+        rect = placeSubmenu(targetTop, targetLeft);
+      }
+    }
+
+    if (rect.bottom > window.innerHeight - viewportPadding) {
+      targetTop = Math.max(
+        viewportPadding,
+        window.innerHeight - rect.height - viewportPadding
+      );
+      placeSubmenu(targetTop, targetLeft);
+    }
+  };
+
+  const openSubmenu = (open) => {
+    cancelClose();
+    const currentlyOpen = submenu.classList.contains("open");
+    const nextOpen = typeof open === "boolean" ? open : !currentlyOpen;
+    if (nextOpen) closeDeliverableActionsSiblingSubmenus(wrapper);
+    submenu.classList.toggle("open", nextOpen);
+    parent.setAttribute("aria-expanded", String(nextOpen));
+    if (nextOpen) applySubmenuFlip();
+  };
+
+  const scheduleClose = () => {
+    cancelClose();
+    closeTimer = setTimeout(() => {
+      closeTimer = null;
+      openSubmenu(false);
+    }, 180);
+  };
+
+  parent.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    openSubmenu();
+  });
+  parent.addEventListener("mouseenter", () => openSubmenu(true));
+  submenu.addEventListener("mouseenter", cancelClose);
+  wrapper.addEventListener("mouseleave", scheduleClose);
+
+  wrapper.append(parent, submenu);
+  return wrapper;
+}
+
+function updateDeliverableActionsTriggerState(trigger, attachments) {
+  if (!trigger) return;
+  const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
+  trigger.classList.toggle("has-attachments", hasAttachments);
+  trigger.setAttribute(
+    "data-attachment-count",
+    hasAttachments ? String(attachments.length) : ""
+  );
+}
+
+async function handleDeliverableActionsDrop(context, event) {
+  const dt = event?.dataTransfer;
+  if (!dt) return;
+  const files = Array.from(dt.files || []);
+  const emailFiles = files.filter(isSupportedEmailFile);
+  const nonEmailFiles = files.filter((f) => !isSupportedEmailFile(f));
+
+  if (emailFiles.length > 0 || files.length === 0) {
+    await addDroppedEmailToAttachmentContext(context, event);
+  }
+
+  if (nonEmailFiles.length > 0) {
+    const existing = context.getAttachments();
+    const additions = nonEmailFiles
+      .map((file) => {
+        const target = String(file.path || file.name || "").trim();
+        if (!target) return null;
+        return normalizeAttachmentEntry({
+          type: "file",
+          target,
+          description: "",
+        });
+      })
+      .filter(Boolean);
+    if (additions.length > 0) {
+      await context.setAttachments([...existing, ...additions]);
+    }
+  }
+}
+
+function createDeliverableActionsDropdown(deliverable, project, card) {
+  ensureDeliverableActionsGlobalHandlers();
+  ensureAttachmentPanel();
+
+  const dropdown = el("div", { className: "deliverable-actions-dropdown" });
+  const trigger = el("button", {
+    className: "deliverable-actions-trigger",
+    type: "button",
+    title: "Deliverable actions",
+    "aria-label": "Deliverable actions",
+    "aria-haspopup": "true",
+    "aria-expanded": "false",
+  });
+  trigger.appendChild(createDeliverableActionsTriggerIcon());
+
+  const menu = el("div", { className: "deliverable-actions-menu", role: "menu" });
+
+  const attachmentDescriptor = {
+    kind: "deliverable",
+    owner: deliverable,
+    deliverable,
+    project,
+    scope: "projects-tab",
+  };
+  const getAttachments = () => getAttachmentOwnerAttachments(attachmentDescriptor);
+  const setAttachments = async (nextAttachments) => {
+    const normalized = await setAttachmentOwnerAttachments(attachmentDescriptor, nextAttachments, {
+      persistNow: true,
+      onChange: () => updateDeliverableWorkItemUi(card, deliverable),
+    });
+    updateDeliverableActionsTriggerState(trigger, normalized);
+    return normalized;
+  };
+  const attachmentContext = {
+    ...attachmentDescriptor,
+    trigger,
+    getAttachments,
+    setAttachments,
+  };
+
+  const pinItem = buildDeliverableActionsItem({
+    label: isDeliverablePinned(deliverable) ? "Unpin deliverable" : "Pin deliverable",
+    iconPath: PIN_ICON_PATH,
+    onClick: async () => {
+      setDeliverableActionsDropdownState(dropdown, false);
+      setDeliverablePinnedState(deliverable, !isDeliverablePinned(deliverable));
+      await save();
+      renderProjectsPreservingExpandedDeliverables();
+    },
+  });
+  menu.appendChild(pinItem);
+
+  const expandItem = buildDeliverableActionsItem({
+    label: card?.classList.contains("details-collapsed") ? "Expand details" : "Collapse details",
+    iconPath: EXPAND_ICON_PATH,
+    onClick: () => {
+      setDeliverableActionsDropdownState(dropdown, false);
+      const nextCollapsed = !card.classList.contains("details-collapsed");
+      setDeliverableDetailsCollapsed(card, nextCollapsed);
+      setDeliverableActionsItemLabel(
+        expandItem,
+        nextCollapsed ? "Expand details" : "Collapse details"
+      );
+    },
+  });
+  menu.appendChild(expandItem);
+
+  const statusSubmenu = buildDeliverableActionsSubmenu("Status", (submenu) => {
+    const availableStatuses = ["Waiting", "Pending Review", "Complete", "Delivered"];
+    availableStatuses.forEach((status) => {
+      const isActive = hasStatus(deliverable, status);
+      const item = buildDeliverableActionsItem({
+        label: isActive ? `${status} ✓` : status,
+        onClick: async () => {
+          setDeliverableActionsDropdownState(dropdown, false);
+          setSingleStatus(deliverable, status);
+          await save();
+          renderProjectsPreservingExpandedDeliverables();
+        },
+      });
+      submenu.appendChild(item);
+    });
+    const clearItem = buildDeliverableActionsItem({
+      label: "Clear status",
+      onClick: async () => {
+        setDeliverableActionsDropdownState(dropdown, false);
+        setSingleStatus(deliverable, "");
+        await save();
+        renderProjectsPreservingExpandedDeliverables();
+      },
+    });
+    submenu.appendChild(clearItem);
+  }, { iconPath: STATUS_ICON_PATH });
+  menu.appendChild(statusSubmenu);
+
+  const toolsSubmenu = buildDeliverableActionsSubmenu("Tools", (submenu) => {
+    const categories = getDeliverableToolMenuEntriesByCategory();
+    if (categories.length === 0) {
+      submenu.appendChild(
+        el("div", {
+          className: "deliverable-actions-empty",
+          textContent: "No tools available",
+        })
+      );
+      return;
+    }
+    categories.forEach((cat) => {
+      const catWrapper = buildDeliverableActionsSubmenu(cat.label, (catSubmenu) => {
+        cat.entries.forEach((entry) => {
+          const toolItem = buildDeliverableActionsItem({
+            label: entry.menuLabel || entry.label,
+            onClick: () => {
+              setDeliverableActionsDropdownState(dropdown, false);
+              const launchContext = buildProjectsTabToolLaunchContext(project, deliverable);
+              launchSharedToolCard(entry.id, launchContext);
+            },
+          });
+          toolItem.setAttribute("data-shared-tool-id", entry.id);
+          toolItem.setAttribute("data-launch-type", entry.launchType);
+          catSubmenu.appendChild(toolItem);
+        });
+      });
+      catWrapper
+        .querySelector(":scope > .deliverable-actions-item")
+        ?.setAttribute("data-tool-category", cat.key);
+      submenu.appendChild(catWrapper);
+    });
+  }, { iconPath: TOOLS_ICON_PATH });
+  menu.appendChild(toolsSubmenu);
+
+  const attachmentItem = buildDeliverableActionsItem({
+    label: "Attachments",
+    iconPath: ATTACHMENT_ICON_PATH,
+    onClick: () => {
+      closeOpenDeliverableToolDropdown();
+      closeOpenDeliverableStatusDropdowns();
+      setDeliverableActionsDropdownState(dropdown, false);
+      openAttachmentPanel(attachmentContext);
+    },
+  });
+  attachmentItem.classList.add("deliverable-actions-attachments");
+  menu.appendChild(attachmentItem);
+
+  const projectIndex = Array.isArray(db) ? db.indexOf(project) : -1;
+  if (project && projectIndex >= 0) {
+    menu.appendChild(el("div", { className: "deliverable-actions-divider" }));
+
+    if (project.path) {
+      menu.appendChild(
+        buildDeliverableActionsItem({
+          label: "Open Project Folder",
+          iconPath: FOLDER_ICON_PATH,
+          onClick: async () => {
+            setDeliverableActionsDropdownState(dropdown, false);
+            if (!window.pywebview?.api?.open_path) {
+              toast("Open path is unavailable.");
+              return;
+            }
+            try {
+              const result = await window.pywebview.api.open_path(convertPath(project.path));
+              if (result?.status && result.status !== "success") {
+                throw new Error(result.message || "Unable to open folder.");
+              }
+              toast("Opening folder...");
+            } catch (error) {
+              toast(error?.message || "Failed to open path.");
+            }
+          },
+        })
+      );
+    }
+
+    menu.appendChild(
+      buildDeliverableActionsItem({
+        label: "Edit Project",
+        iconPath: PENCIL_ICON_PATH,
+        onClick: () => {
+          setDeliverableActionsDropdownState(dropdown, false);
+          openEdit(projectIndex);
+        },
+      })
+    );
+
+    menu.appendChild(
+      buildDeliverableActionsItem({
+        label: "Delete Project",
+        danger: true,
+        iconPath: TRASH_ICON_PATH,
+        onClick: () => {
+          setDeliverableActionsDropdownState(dropdown, false);
+          removeProject(projectIndex);
+        },
+      })
+    );
+  }
+
+  trigger.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const isOpen = !dropdown.classList.contains("open");
+    closeOpenDeliverableActionsDropdown({ except: dropdown });
+    closeOpenDeliverableToolDropdown();
+    closeOpenDeliverableStatusDropdowns();
+    if (openAttachmentPanelContext) {
+      void requestAttachmentPanelClose();
+    }
+    setDeliverableActionsDropdownState(dropdown, isOpen);
+  });
+
+  trigger.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    trigger.classList.add("is-dragover");
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+  });
+  trigger.addEventListener("dragleave", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    trigger.classList.remove("is-dragover");
+  });
+  trigger.addEventListener("drop", async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    trigger.classList.remove("is-dragover");
+    try {
+      await handleDeliverableActionsDrop(attachmentContext, e);
+    } catch (error) {
+      console.warn("Failed to process dropped files:", error);
+      toast(error?.message || "Unable to process dropped files.");
+    }
+  });
+
+  trigger.draggable = false;
+  trigger.addEventListener("dragstart", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  });
+
+  dropdown.append(trigger, menu);
+  updateDeliverableActionsTriggerState(trigger, getAttachments());
+  return dropdown;
+}
+
 function createCardHeader(deliverable, isPrimary, card, project) {
   const header = el("div", { className: "deliverable-card-header-new" });
 
@@ -20500,25 +21101,10 @@ function createCardHeader(deliverable, isPrimary, card, project) {
 
   header.appendChild(leftSection);
 
-  // Right section: attachments + expand/contract controls
+  // Right section: single consolidated actions dropdown
   const actions = el("div", { className: "deliverable-header-actions" });
-  const expandToggle = createExpandToggle(card);
-  const pinButton = createDeliverablePinButton(deliverable);
-  const toolDropdown = createDeliverableToolDropdown(deliverable, project, card);
-  const attachmentControl = createAttachmentControl(
-    {
-      kind: "deliverable",
-      owner: deliverable,
-      deliverable,
-      project,
-      scope: "projects-tab",
-    },
-    {
-      persistNow: true,
-      onChange: () => updateDeliverableWorkItemUi(card, deliverable),
-    }
-  );
-  actions.append(pinButton, attachmentControl, toolDropdown, expandToggle);
+  const actionsDropdown = createDeliverableActionsDropdown(deliverable, project, card);
+  actions.append(actionsDropdown);
   header.appendChild(actions);
 
   return header;
@@ -22108,7 +22694,7 @@ function buildProjectDeliverableRowEntries(items, projectListContextMap = null) 
         projectListContext,
         deliverable,
         dueDate: parseDueStr(deliverable?.due),
-        isPinnedProject: !!project?.pinned,
+        isPinnedDeliverable: isDeliverablePinned(deliverable),
         isCompleteDeliverable: isFinished(deliverable),
       });
     });
@@ -22117,7 +22703,7 @@ function buildProjectDeliverableRowEntries(items, projectListContextMap = null) 
 }
 
 function getProjectDeliverableRowSortBucket(row) {
-  if (!shouldSortCompletedProjectsLast() || row?.isPinnedProject) return 0;
+  if (row?.isPinnedDeliverable || !shouldSortCompletedProjectsLast()) return 0;
   if (!row?.isCompleteDeliverable) return row?.dueDate ? 0 : 1;
   return row?.dueDate ? 2 : 3;
 }
@@ -22164,8 +22750,8 @@ function compareProjectDeliverableRowIdentity(a, b) {
 }
 
 function compareProjectDeliverableRows(a, b) {
-  const aPinned = !!a?.isPinnedProject;
-  const bPinned = !!b?.isPinnedProject;
+  const aPinned = !!a?.isPinnedDeliverable;
+  const bPinned = !!b?.isPinnedDeliverable;
   if (aPinned !== bPinned) return aPinned ? -1 : 1;
 
   const dir = currentSort.dir === "asc" ? 1 : -1;
@@ -22380,28 +22966,6 @@ function buildProjectTableRow(project, projectIndex, rowTemplate) {
   const tr = rowTemplate.content.cloneNode(true).querySelector("tr");
   tr.classList.add("project-row");
 
-  const selectCell = tr.querySelector(".cell-select");
-  const pinBtn = selectCell?.querySelector(".pin-btn");
-  if (pinBtn) {
-    const isPinned = !!project?.pinned;
-    tr.classList.toggle("is-pinned-project", isPinned);
-    pinBtn.classList.toggle("is-pinned", isPinned);
-    pinBtn.setAttribute("aria-pressed", String(isPinned));
-    pinBtn.setAttribute("aria-label", isPinned ? "Unpin project" : "Pin project");
-    pinBtn.setAttribute("title", isPinned ? "Unpin project" : "Pin project");
-    pinBtn.textContent = "";
-    pinBtn.appendChild(createIcon(PIN_ICON_PATH, 14));
-    pinBtn.draggable = false;
-    if (isPinned) enablePinnedProjectRowDrag(tr, pinBtn, project);
-    pinBtn.onclick = async (e) => {
-      e.stopPropagation();
-      if (Date.now() < projectPinHandleSuppressClickUntil) return;
-      setProjectPinnedState(project, !project?.pinned, db);
-      await save();
-      renderProjectsPreservingExpandedDeliverables();
-    };
-  }
-
   const idCell = tr.querySelector(".cell-id");
   if (idCell) {
     const idBadge = idCell.querySelector(".id-badge") || idCell;
@@ -22455,23 +23019,7 @@ function buildProjectTableRow(project, projectIndex, rowTemplate) {
       );
     }
 
-    const projectAttachmentInline = el("div", {
-      className: "project-inline-attachment",
-    });
-    projectAttachmentInline.appendChild(
-      createAttachmentControl(
-        {
-          kind: "project",
-          owner: project,
-          project,
-          scope: "projects-tab",
-        },
-        {
-          persistNow: true,
-        }
-      )
-    );
-    projectDetailsHeader.append(projectDetailsMain, projectAttachmentInline);
+    projectDetailsHeader.append(projectDetailsMain);
     nameCell.appendChild(projectDetailsHeader);
 
     const projectNotes = (project?.notes || "").trim();
@@ -22569,25 +23117,18 @@ function renderGroupedProjectRows({
 }) {
   let lastWeekKey = null;
   let lastCompleteWeekKey = null;
-  let pinnedSectionShown = false;
   let completeProjectsSectionShown = false;
 
   items.forEach((project) => {
     const projectListContext = projectListContextMap.get(project);
     if (!projectListContext) return;
 
-    const isPinnedProject = !!project?.pinned;
     const projectDue = getProjectSortKey(project, projectListContext);
     const weekKey = projectDue ? formatWeekKey(projectDue) : "no-date";
     const isCompleteOnlyProject =
       shouldSortCompletedProjectsLast() && !projectListContext.hasIncompleteActiveWork;
 
-    if (isPinnedProject) {
-      if (!pinnedSectionShown) {
-        appendSectionSeparator("Pinned Projects");
-        pinnedSectionShown = true;
-      }
-    } else if (isCompleteOnlyProject) {
+    if (isCompleteOnlyProject) {
       if (!completeProjectsSectionShown) {
         appendSectionSeparator("Complete Projects");
         completeProjectsSectionShown = true;
@@ -22628,27 +23169,6 @@ function renderUngroupedDeliverableRows({
     projectListContextMap
   );
   sortProjectDeliverableRows(deliverableRows);
-  const orderedDeliverableRows = [];
-  if (items.some((project) => project?.pinned)) {
-    const pinnedDeliverableRows = new Map();
-    const unpinnedDeliverableRows = [];
-    deliverableRows.forEach((row) => {
-      if (row?.isPinnedProject) {
-        const projectRows = pinnedDeliverableRows.get(row.project) || [];
-        projectRows.push(row);
-        pinnedDeliverableRows.set(row.project, projectRows);
-      } else {
-        unpinnedDeliverableRows.push(row);
-      }
-    });
-    items.filter((project) => project?.pinned).forEach((project) => {
-      const projectRows = pinnedDeliverableRows.get(project);
-      if (projectRows?.length) orderedDeliverableRows.push(...projectRows);
-    });
-    orderedDeliverableRows.push(...unpinnedDeliverableRows);
-  } else {
-    orderedDeliverableRows.push(...deliverableRows);
-  }
 
   let lastWeekKey = null;
   let lastCompleteWeekKey = null;
@@ -22656,25 +23176,25 @@ function renderUngroupedDeliverableRows({
   let completeDeliverablesSectionShown = false;
   const searchContextProjects = new Set();
 
-  orderedDeliverableRows.forEach((row) => {
+  deliverableRows.forEach((row) => {
     const {
       project,
       projectIndex,
       projectListContext,
       deliverable,
       dueDate,
-      isPinnedProject,
+      isPinnedDeliverable,
       isCompleteDeliverable,
     } = row;
     const weekKey = dueDate ? formatWeekKey(dueDate) : "no-date";
     const isSeparatedCompleteDeliverable =
       shouldSortCompletedProjectsLast() &&
-      !isPinnedProject &&
+      !isPinnedDeliverable &&
       isCompleteDeliverable;
 
-    if (isPinnedProject) {
+    if (isPinnedDeliverable) {
       if (!pinnedSectionShown) {
-        appendSectionSeparator("Pinned Projects");
+        appendSectionSeparator("Pinned Deliverables");
         pinnedSectionShown = true;
       }
     } else if (isSeparatedCompleteDeliverable) {
@@ -22727,7 +23247,7 @@ function createContextSnippet(text, q, contextChars = 60) {
 
 function buildMatchContextRow(q, project, context) {
   const tr = el("tr", { className: "search-context-row" });
-  const td = el("td", { colSpan: 7 });
+  const td = el("td", { colSpan: 6 });
   const container = el("div", { className: "search-context" });
 
   if (context.projectFields.includes("notes") && project.notes) {
@@ -22777,6 +23297,7 @@ function buildMatchContextRow(q, project, context) {
 
 const KANBAN_COLUMN_SLUGS = {
   pinned: "pinned",
+  none: "none",
   Waiting: "waiting",
   "Pending Review": "pending-review",
   Complete: "complete",
@@ -22873,19 +23394,10 @@ function buildCardProjectMeta(project, projectIndex, deliverable) {
     );
   }
   if (identity.childNodes.length) meta.appendChild(identity);
-  if (Number.isInteger(projectIndex) && projectIndex >= 0) {
-    meta.appendChild(
-      createProjectActionButtons(projectIndex, "kanban-card-project-actions", {
-        includeFolderButton: true,
-        project,
-        deliverable,
-      })
-    );
-  }
   return meta.childNodes.length ? meta : null;
 }
 
-function renderCardView() {
+function renderCardView(items = db, projectListContextMap = null) {
   const host = document.getElementById("projectsCardView");
   if (!host) return;
   host.innerHTML = "";
@@ -22900,36 +23412,35 @@ function renderCardView() {
 
   const buckets = new Map(visibleColumns.map((c) => [c.key, []]));
 
-  for (const project of db) {
-    for (const deliverable of getProjectDeliverables(project)) {
-      const hasDue = !!parseDueStr(deliverable?.due);
-      if (!hasDue) {
-        if (pinnedShown && isDeliverablePinned(deliverable)) {
-          buckets.get("pinned").push({ project, deliverable });
-          continue;
-        }
-        if (nodateShown) {
-          buckets.get("nodate").push({ project, deliverable });
-        }
-        continue;
-      }
+  const deliverableRows = buildProjectDeliverableRowEntries(
+    Array.isArray(items) ? items : db,
+    projectListContextMap
+  );
+  sortProjectDeliverableRows(deliverableRows);
 
-      const inWeek = deliverableDueInWeek(deliverable, weekStart);
-      const overduePull =
-        isCurrentWeek &&
-        deliverableIsOverdueIncomplete(deliverable, weekStart);
-      if (!inWeek && !overduePull) continue;
+  for (const { project, deliverable, dueDate, isPinnedDeliverable } of deliverableRows) {
+    if (pinnedShown && isPinnedDeliverable) {
+      buckets.get("pinned").push({ project, deliverable });
+      continue;
+    }
 
-      if (pinnedShown && isDeliverablePinned(deliverable)) {
-        buckets.get("pinned").push({ project, deliverable });
-        continue;
+    if (!dueDate) {
+      if (nodateShown) {
+        buckets.get("nodate").push({ project, deliverable });
       }
+      continue;
+    }
 
-      const primary =
-        STATUS_PRIORITY.find((s) => hasStatus(deliverable, s)) || "Waiting";
-      if (buckets.has(primary)) {
-        buckets.get(primary).push({ project, deliverable });
-      }
+    const inWeek = deliverableDueInWeek(deliverable, weekStart);
+    const overduePull =
+      isCurrentWeek &&
+      deliverableIsOverdueIncomplete(deliverable, weekStart);
+    if (!inWeek && !overduePull) continue;
+
+    const primary =
+      STATUS_PRIORITY.find((s) => hasStatus(deliverable, s)) || "none";
+    if (buckets.has(primary)) {
+      buckets.get(primary).push({ project, deliverable });
     }
   }
 
@@ -22980,16 +23491,20 @@ function renderCardView() {
   attachKanbanDragHandlers(host);
 }
 
-function setProjectsViewMode(mode) {
+function setProjectsViewMode(mode, options = {}) {
   const next = mode === "card" ? "card" : "list";
-  if (projectsViewMode === next) {
+  const shouldPersist = options.persist !== false;
+  const didChange = projectsViewMode !== next;
+  projectsViewMode = next;
+  if (shouldPersist && userSettings.projectsViewMode !== next) {
+    userSettings.projectsViewMode = next;
+    if (typeof debouncedSaveUserSettings === "function") {
+      debouncedSaveUserSettings();
+    }
+  }
+  if (!didChange) {
     updateProjectsViewModeUi();
     return;
-  }
-  projectsViewMode = next;
-  userSettings.projectsViewMode = next;
-  if (typeof debouncedSaveUserSettings === "function") {
-    debouncedSaveUserSettings();
   }
   render();
 }
@@ -23265,8 +23780,12 @@ function attachKanbanDragHandlers(host) {
       if (sourceColumnKey === "pinned" && deliverable.pinned) {
         setDeliverablePinnedState(deliverable, false);
       }
-      deliverable.statuses = [targetKey];
-      syncStatusArrays(deliverable);
+      if (targetKey === "none") {
+        setSingleStatus(deliverable, "");
+      } else {
+        deliverable.statuses = [targetKey];
+        syncStatusArrays(deliverable);
+      }
     }
 
     await save();
@@ -23287,11 +23806,6 @@ function render() {
   const projectListContextMap = new Map();
   const isCardView = projectsViewMode === "card";
 
-  if (isCardView) {
-    renderCardView();
-    return;
-  }
-
   let items = db.filter((p) => {
     if (q) {
       const ctx = getMatchContext(q, p);
@@ -23304,10 +23818,13 @@ function render() {
     return projectListContext.matchesFilters;
   });
 
-  const pinned = getPinnedProjectsInManualOrder(items);
-  const unpinned = items.filter((p) => !p?.pinned);
-  sortProjectsByCurrent(unpinned, projectListContextMap);
-  items = pinned.concat(unpinned);
+  sortProjectsByCurrent(items, projectListContextMap);
+
+  if (isCardView) {
+    emptyState.style.display = "none";
+    renderCardView(items, projectListContextMap);
+    return;
+  }
 
   updateSortHeaders();
 
@@ -23379,7 +23896,7 @@ function render() {
 
   const appendSectionSeparator = (label) => {
     const sep = el("tr", { className: "week-separator-row" });
-    sep.appendChild(el("td", { colSpan: 7 }, [
+    sep.appendChild(el("td", { colSpan: 6 }, [
       el("div", { className: "week-separator" }, [
         el("span", { className: "week-separator-label", textContent: label })
       ])
@@ -23660,22 +24177,6 @@ function fillForm(project) {
   const deliverableList = document.getElementById("deliverableList");
   deliverableList.innerHTML = "";
   setModalProjectDraft(p);
-  const projectAttachmentHost = document.getElementById("modalProjectAttachmentHost");
-  if (projectAttachmentHost) {
-    projectAttachmentHost.replaceChildren(
-      createAttachmentControl(
-        {
-          kind: "project",
-          owner: getModalProjectDraft(),
-          project: getModalProjectDraft(),
-          scope: "edit-modal",
-        },
-        {
-          persistNow: false,
-        }
-      )
-    );
-  }
   const sortedDeliverables = p.deliverables.slice();
   const activeAnchorDeliverable = getActiveAnchorDeliverable(p);
   sortDeliverablesByPrimaryThenDueDesc(
@@ -30461,10 +30962,18 @@ function guardUnderConstructionToolAccess(card, label, event) {
   return false;
 }
 
+function handleProjectSearchInput() {
+  if (projectsViewMode === "card" && val("search")) {
+    setProjectsViewMode("list", { persist: false });
+    return;
+  }
+  render();
+}
+
 function initEventListeners() {
   document.getElementById("search").addEventListener(
     "input",
-    debounce(() => render(), 250)
+    debounce(handleProjectSearchInput, 250)
   );
   document.getElementById("notesSearch").addEventListener(
     "input",
@@ -30475,14 +30984,6 @@ function initEventListeners() {
     openExternalUrl(HELP_LINKS.main);
   document.getElementById("projectsHelpBtn").onclick = () =>
     openExternalUrl(HELP_LINKS.projects);
-  const pinUrgentDeliverablesBtn = document.getElementById(
-    "pinUrgentDeliverablesBtn"
-  );
-  if (pinUrgentDeliverablesBtn) {
-    pinUrgentDeliverablesBtn.textContent = "";
-    pinUrgentDeliverablesBtn.appendChild(createIcon(PIN_ICON_PATH, 16));
-    pinUrgentDeliverablesBtn.onclick = () => pinUrgentDeliverables();
-  }
   setupProjectsViewModeControls();
   const deliverableNotepadAddBtn = document.getElementById(
     "deliverableNotepadAddBtn"

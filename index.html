@@ -192,8 +192,6 @@
                                 <line x1="6" y1="20" x2="6" y2="14"></line>
                             </svg>
                         </button>
-                        <button class="icon-btn" id="pinUrgentDeliverablesBtn" aria-label="Pin urgent deliverables"
-                            title="Pin all overdue and due-today deliverables"></button>
                         <div class="projects-view-toggle" role="group" aria-label="Projects view mode">
                             <button type="button" class="view-toggle-btn is-active" id="viewToggleList" data-view-mode="list" aria-pressed="true" title="List view">
                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -353,17 +351,6 @@
                 <table class="table projects-table">
                     <thead>
                         <tr>
-                            <th class="cell-select">
-                                <span class="pin-header" aria-hidden="true">
-                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                        stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <path
-                                            d="M12 2c-3.31 0-6 2.69-6 6 0 2.76 1.87 5.08 4.42 5.76L10 22l2-3 2 3-.42-8.24C16.13 13.08 18 10.76 18 8c0-3.31-2.69-6-6-6z">
-                                        </path>
-                                        <circle cx="12" cy="8" r="2"></circle>
-                                    </svg>
-                                </span>
-                            </th>
                             <th style="width:90px" data-sort="id">ID</th>
                             <th data-sort="name">Project Details</th>
                             <th class="deliverables-header" data-sort="due" colspan="3">Deliverable</th>
@@ -1137,10 +1124,6 @@
                 <div class="col-12 modal-full-only">
                     <label class="label">Global Notes</label>
                     <textarea id="f_notes" rows="3" placeholder="Global notes"></textarea>
-                </div>
-                <div class="col-12 modal-full-only">
-                    <label class="label">Project Attachments</label>
-                    <div id="modalProjectAttachmentHost" class="modal-project-attachment-host"></div>
                 </div>
             </div>
             <div class="section-divider modal-full-only"></div>
@@ -2529,9 +2512,6 @@
     <!-- HTML Templates for JS rendering -->
     <template id="project-row-template">
         <tr class="row">
-            <td class="cell-select">
-                <button class="pin-btn" type="button" aria-label="Pin project"></button>
-            </td>
             <td class="cell-id"><span class="id-badge"></span></td>
             <td class="cell-name"></td>
             <td class="cell-deliverables" colspan="3"></td>

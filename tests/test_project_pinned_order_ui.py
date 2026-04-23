@@ -3,65 +3,51 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+INDEX_HTML_PATH = REPO_ROOT / "index.html"
 SCRIPT_JS_PATH = REPO_ROOT / "script.js"
 STYLES_CSS_PATH = REPO_ROOT / "styles.css"
 
 
-class ProjectPinnedOrderUiTests(unittest.TestCase):
-    def test_project_pinned_order_script_wiring_exists(self):
+class ProjectPinnedDeliverablesUiTests(unittest.TestCase):
+    def test_list_view_uses_deliverable_pin_state_for_pinned_section(self):
         script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
 
         for expected in (
-            "let pinnedProjectDragState = null;",
-            "let projectPinHandleSuppressClickUntil = 0;",
-            "function normalizePinnedProjectOrder(value) {",
-            "function getPinnedProjectsInManualOrder(items = db) {",
-            "function syncPinnedProjectOrders(items = db, { seedMissing = false } = {}) {",
-            "function getNextPinnedProjectOrder(items = db) {",
-            "function getLowestPinnedProjectOrder(projects = []) {",
-            "function setProjectPinnedState(project, nextPinned, items = db) {",
-            "function movePinnedProjectToTarget(project, targetProject, before = true, items = db) {",
-            "pinnedOrder: normalizePinnedProjectOrder(project?.pinnedOrder),",
-            "if (!out.pinned) out.pinnedOrder = null;",
-            "if (syncPinnedProjectOrders(merged, { seedMissing: true })) {",
-            "syncPinnedProjectOrders(db, { seedMissing: true });",
-            "pinnedOrder: normalizePinnedProjectOrder(existingProject?.pinnedOrder),",
-            "base.pinnedOrder = base.pinned ? getLowestPinnedProjectOrder(projects) : null;",
-            "const pinned = getPinnedProjectsInManualOrder(items);",
-            "items = pinned.concat(unpinned);",
-            "pinned: false,",
-            "pinnedOrder: null,",
+            "isPinnedDeliverable: isDeliverablePinned(deliverable),",
+            "const aPinned = !!a?.isPinnedDeliverable;",
+            "const bPinned = !!b?.isPinnedDeliverable;",
+            "if (row?.isPinnedDeliverable || !shouldSortCompletedProjectsLast()) return 0;",
+            "const {\n      project,\n      projectIndex,\n      projectListContext,\n      deliverable,\n      dueDate,\n      isPinnedDeliverable,",
+            "if (isPinnedDeliverable) {",
+            'appendSectionSeparator("Pinned Deliverables");',
         ):
             self.assertIn(expected, script)
 
-    def test_project_pinned_order_drag_and_ungrouped_render_wiring_exists(self):
+        self.assertNotIn("appendSectionSeparator(\"Pinned Projects\");", script)
+        self.assertNotIn("const pinned = getPinnedProjectsInManualOrder(items);", script)
+        self.assertNotIn("items = pinned.concat(unpinned);", script)
+        self.assertNotIn("isPinnedProject:", script)
+
+    def test_card_view_uses_same_deliverable_rows_as_list_view(self):
         script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
+        card_view_start = script.index("function renderCardView(")
+        card_view_end = script.index("function setProjectsViewMode(", card_view_start)
+        card_view_block = script[card_view_start:card_view_end]
+        render_start = script.index("function render() {")
+        render_end = script.index("function renderStatusToggles(", render_start)
+        render_block = script[render_start:render_end]
 
         for expected in (
-            "function clearPinnedProjectDragStyles() {",
-            'tbody.querySelectorAll(".project-row").forEach((row) => {',
-            'row.classList.remove("project-dragging", "project-drop-before", "project-drop-after");',
-            "function enablePinnedProjectRowDrag(row, handle, project) {",
-            "handle.draggable = true;",
-            'row.classList.add("project-dragging");',
-            'row.classList.toggle("project-drop-before", before);',
-            'row.classList.toggle("project-drop-after", !before);',
-            "const moved = movePinnedProjectToTarget(",
-            "projectPinHandleSuppressClickUntil = Date.now() + 250;",
-            "await save();",
-            "renderProjectsPreservingExpandedDeliverables();",
-            'tr.classList.add("project-row");',
-            'tr.classList.toggle("is-pinned-project", isPinned);',
-            "if (isPinned) enablePinnedProjectRowDrag(tr, pinBtn, project);",
-            "if (Date.now() < projectPinHandleSuppressClickUntil) return;",
-            "setProjectPinnedState(project, !project?.pinned, db);",
-            "const orderedDeliverableRows = [];",
-            "const pinnedDeliverableRows = new Map();",
-            "const unpinnedDeliverableRows = [];",
-            "items.filter((project) => project?.pinned).forEach((project) => {",
-            "orderedDeliverableRows.forEach((row) => {",
+            "function renderCardView(items = db, projectListContextMap = null) {",
+            "const deliverableRows = buildProjectDeliverableRowEntries(",
+            "sortProjectDeliverableRows(deliverableRows);",
+            "for (const { project, deliverable, dueDate, isPinnedDeliverable } of deliverableRows) {",
+            "if (pinnedShown && isPinnedDeliverable) {",
+            "buckets.get(\"pinned\").push({ project, deliverable });",
         ):
-            self.assertIn(expected, script)
+            self.assertIn(expected, card_view_block)
+
+        self.assertIn("renderCardView(items, projectListContextMap);", render_block)
 
     def test_card_view_drop_from_pinned_column_unpins_deliverable_before_status_update(self):
         script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
@@ -85,22 +71,36 @@ class ProjectPinnedOrderUiTests(unittest.TestCase):
         )
         self.assertNotIn("setProjectPinnedState(project", drop_block)
 
-    def test_project_pinned_order_styles_exist(self):
+    def test_project_pin_ui_is_removed(self):
+        html = INDEX_HTML_PATH.read_text(encoding="utf-8")
+        script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
         css = STYLES_CSS_PATH.read_text(encoding="utf-8")
 
-        for expected in (
-            ".project-row.is-pinned-project .pin-btn {",
-            ".project-row.is-pinned-project .pin-btn:active {",
-            ".project-row.project-dragging {",
-            ".project-row.project-drop-before td {",
-            ".project-row.project-drop-after td {",
-            "cursor: grab;",
-            "cursor: grabbing;",
-            "opacity: 0.6;",
-            "border-top: 2px solid var(--accent);",
-            "border-bottom: 2px solid var(--accent);",
+        for removed in (
+            'id="pinUrgentDeliverablesBtn"',
+            'class="pin-header"',
+            'class="pin-btn"',
+            'class="cell-select"',
+            'aria-label="Pin project"',
         ):
-            self.assertIn(expected, css)
+            self.assertNotIn(removed, html)
+
+        for removed in (
+            "pinUrgentDeliverablesBtn",
+            'tr.classList.toggle("is-pinned-project", isPinned);',
+            "if (isPinned) enablePinnedProjectRowDrag(tr, pinBtn, project);",
+            "setProjectPinnedState(project, !project?.pinned, db);",
+        ):
+            self.assertNotIn(removed, script)
+
+        for removed in (
+            ".pin-btn {",
+            ".pin-header {",
+            ".table th.cell-select {",
+            ".row td.cell-select {",
+            ".project-row.is-pinned-project .pin-btn {",
+        ):
+            self.assertNotIn(removed, css)
 
 
 if __name__ == "__main__":

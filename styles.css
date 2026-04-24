@@ -7686,7 +7686,7 @@ dialog::backdrop {
 }
 
 .deliverable-status-dropdown.open {
-  z-index: 220;
+  z-index: 1000;
 }
 
 .deliverable-status-trigger {
@@ -7735,7 +7735,7 @@ dialog::backdrop {
   border: 1px solid var(--glass-border);
   border-radius: var(--radius);
   box-shadow: var(--shadow-lg);
-  z-index: 230;
+  z-index: 1000;
   overflow: hidden;
 }
 
@@ -8493,7 +8493,7 @@ dialog::backdrop {
 }
 
 .deliverable-tool-dropdown.open {
-  z-index: 220;
+  z-index: 1000;
 }
 
 .deliverable-tool-trigger {
@@ -8543,6 +8543,7 @@ dialog::backdrop {
   border: 1px solid var(--glass-border);
   background: var(--menu-bg);
   box-shadow: var(--shadow-lg);
+  z-index: 1000;
 }
 
 .deliverable-tool-menu.open {
@@ -8578,7 +8579,7 @@ dialog::backdrop {
 }
 
 .deliverable-actions-dropdown.open {
-  z-index: 230;
+  z-index: 1000;
 }
 
 .deliverable-actions-trigger {
@@ -8648,7 +8649,7 @@ dialog::backdrop {
   border: 1px solid var(--glass-border);
   background: var(--menu-bg);
   box-shadow: var(--shadow-lg);
-  z-index: 240;
+  z-index: 1000;
 }
 
 .deliverable-actions-menu.open {
@@ -12071,6 +12072,19 @@ input:checked+.slider:before {
   min-width: 0;
   max-width: 100%;
   box-sizing: border-box;
+}
+
+.kanban-column__cards.dropdown-open {
+  overflow: visible;
+}
+
+.kanban-column.dropdown-open {
+  overflow: visible;
+  z-index: 999;
+}
+
+.projects-card-view.dropdown-open {
+  overflow-y: hidden;
 }
 
 .kanban-column__empty {

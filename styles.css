@@ -1178,6 +1178,12 @@ main {
   margin: 0 auto;
   padding: 1.5rem;
 }
+
+body[data-active-tab="projects"][data-projects-layout-width="wide"] main {
+  max-width: none;
+  width: 100%;
+}
+
 :root {
   --scratchpad-width: min(450px, 35vw);
 }
@@ -2834,38 +2840,6 @@ input.has-field-error {
   line-height: 1.5;
 }
 
-.email-intake-mode-switch {
-  width: 100%;
-  gap: 0.5rem;
-  padding: 6px;
-}
-
-.email-intake-mode-option {
-  position: relative;
-  flex: 1 1 0;
-}
-
-.email-intake-mode-option input {
-  position: absolute;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.email-intake-mode-label {
-  display: block;
-  padding: 0.7rem 0.9rem;
-  border-radius: calc(var(--radius-sm) - 2px);
-  text-align: center;
-  color: var(--muted);
-  cursor: pointer;
-  transition: background 0.2s ease, color 0.2s ease;
-}
-
-.email-intake-mode-option input:checked + .email-intake-mode-label {
-  background: var(--accent-dim);
-  color: var(--accent);
-}
-
 .email-intake-panel[hidden] {
   display: none !important;
 }
@@ -2875,169 +2849,6 @@ input.has-field-error {
   justify-content: space-between;
   align-items: flex-start;
   gap: 1rem;
-}
-
-.email-intake-scan-status {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-}
-
-.outlook-scan-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-.outlook-scan-toolbar .input {
-  min-width: 140px;
-}
-
-.outlook-scan-results {
-  display: flex;
-  flex-direction: column;
-  gap: 0.85rem;
-}
-
-.outlook-scan-progress,
-.outlook-scan-report {
-  padding: 0.9rem 1rem;
-  border-radius: var(--radius);
-  border: 1px solid var(--glass-border);
-  background: var(--surface);
-}
-
-.outlook-scan-progress.is-active {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent);
-}
-
-.outlook-scan-progress.is-error {
-  border-color: var(--danger);
-}
-
-.outlook-scan-report summary {
-  cursor: pointer;
-  font-weight: 600;
-  color: var(--text);
-  list-style: none;
-}
-
-.outlook-scan-report summary::-webkit-details-marker {
-  display: none;
-}
-
-.outlook-scan-report[open] summary {
-  margin-bottom: 0.85rem;
-}
-
-.outlook-scan-report-summary {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 0.65rem 0.9rem;
-}
-
-.outlook-scan-report-row {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-}
-
-.outlook-scan-report-value {
-  color: var(--text);
-  line-height: 1.4;
-}
-
-.outlook-scan-report-log {
-  display: flex;
-  flex-direction: column;
-  gap: 0.65rem;
-  margin-top: 0.95rem;
-}
-
-.outlook-scan-log-item {
-  padding-top: 0.65rem;
-  border-top: 1px solid var(--glass-border);
-}
-
-.outlook-scan-log-item:first-child {
-  padding-top: 0;
-  border-top: 0;
-}
-
-.outlook-scan-log-head {
-  display: flex;
-  justify-content: space-between;
-  gap: 0.75rem;
-  align-items: center;
-}
-
-.outlook-scan-log-stage {
-  font-weight: 600;
-  color: var(--text);
-}
-
-.outlook-scan-log-message {
-  margin-top: 0.25rem;
-  color: var(--text);
-  line-height: 1.45;
-}
-
-.outlook-scan-section {
-  display: flex;
-  flex-direction: column;
-  gap: 0.55rem;
-}
-
-.outlook-scan-list,
-.outlook-scan-skipped-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.65rem;
-}
-
-.outlook-scan-card,
-.outlook-scan-skipped-item {
-  padding: 0.9rem 1rem;
-  border-radius: var(--radius);
-  border: 1px solid var(--glass-border);
-  background: var(--surface);
-}
-
-.outlook-scan-card-head {
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-}
-
-.outlook-scan-card-project,
-.outlook-scan-skipped-subject {
-  font-weight: 600;
-  color: var(--text);
-}
-
-.outlook-scan-card-deliverable {
-  font-size: 0.95rem;
-  color: var(--text-secondary);
-}
-
-.outlook-scan-card-meta {
-  margin-top: 0.45rem;
-}
-
-.outlook-scan-card-notes {
-  margin-top: 0.65rem;
-  line-height: 1.5;
-  color: var(--text);
-}
-
-.outlook-scan-related-list,
-.outlook-scan-card-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-top: 0.75rem;
 }
 
 /* Notes Internal Tabs Fix */
@@ -4988,10 +4799,12 @@ dialog::backdrop {
   display: flex;
   gap: 0;
   padding: 0;
+  height: min(560px, 70vh);
   max-height: 70vh;
 }
 .help-dlg-sidebar {
   flex: 0 0 180px;
+  min-height: 0;
   border-right: 1px solid var(--glass-border);
   padding: 1rem 0.5rem;
   display: flex;
@@ -5021,6 +4834,8 @@ dialog::backdrop {
 }
 .help-dlg-content {
   flex: 1;
+  min-width: 0;
+  min-height: 0;
   padding: 1.25rem 1.5rem;
   overflow-y: auto;
   line-height: 1.55;
@@ -11761,6 +11576,10 @@ input:checked+.slider:before {
   color: var(--btn-text-on-accent, #fff);
 }
 
+.projects-width-toggle svg[hidden] {
+  display: none;
+}
+
 .projects-card-controls {
   display: flex;
   align-items: center;
@@ -11922,12 +11741,16 @@ input:checked+.slider:before {
 
 .projects-card-view {
   --projects-card-column-width: min(480px, calc(100vw - 32px));
+  --projects-card-view-height: max(
+    360px,
+    calc(100vh - var(--header-height) - var(--toolbar-height) - 5.5rem)
+  );
   display: flex;
   gap: 14px;
   overflow-x: auto;
   overflow-y: hidden;
   padding: 8px 4px 16px;
-  min-height: 300px;
+  min-height: var(--projects-card-view-height);
 }
 
 .projects-card-view[hidden] {
@@ -11945,8 +11768,8 @@ input:checked+.slider:before {
   background: color-mix(in srgb, var(--surface) 80%, transparent);
   border: 1px solid var(--border, rgba(255, 255, 255, 0.06));
   border-radius: 10px;
-  max-height: calc(100vh - 240px);
-  min-height: 200px;
+  min-height: var(--projects-card-view-height);
+  max-height: var(--projects-card-view-height);
 }
 
 .kanban-card-project-meta {

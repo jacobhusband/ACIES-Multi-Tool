@@ -8915,6 +8915,7 @@ let userSettings = {
   separateDeliverableCompletionGroups: true,
   groupDeliverablesByProject: false,
   projectsViewMode: "list",
+  projectsWideLayout: true,
   projectCardColumns: DEFAULT_PROJECT_CARD_COLUMNS.map((c) => ({ ...c })),
   defaultPmInitials: "",
   cleanDwgOptions: { ...DEFAULT_CLEAN_DWG_OPTIONS },
@@ -9109,6 +9110,7 @@ let googleAuthState = { ...DEFAULT_GOOGLE_AUTH_STATE };
 let googleAuthBusy = false;
 let outlookScanCapabilityState = { ...DEFAULT_OUTLOOK_SCAN_CAPABILITY };
 let emailIntakeBusy = false;
+let emailIntakeActivityId = "";
 let outlookScanState = { ...DEFAULT_OUTLOOK_SCAN_STATE };
 let cloudSyncState = { ...DEFAULT_CLOUD_SYNC_STATE };
 let cloudSyncConfig = null;
@@ -9142,6 +9144,7 @@ let deliverablesFilter = "active";
 let separateDeliverableCompletionGroups = true;
 let groupDeliverablesByProject = false;
 let projectsViewMode = "list";
+let projectsWideLayout = true;
 let projectCardColumns = DEFAULT_PROJECT_CARD_COLUMNS.map((c) => ({ ...c }));
 let projectCardWeek = getWeekStartDate(new Date());
 const PROJECTS_CARD_HORIZONTAL_WHEEL_MULTIPLIER = 0.4;
@@ -9217,10 +9220,13 @@ function syncProjectViewPreferencesFromSettings() {
     userSettings.groupDeliverablesByProject === true;
   projectsViewMode =
     userSettings.projectsViewMode === "card" ? "card" : "list";
+  projectsWideLayout = userSettings.projectsWideLayout !== false;
   projectCardColumns = normalizeProjectCardColumns(
     userSettings.projectCardColumns
   );
+  userSettings.projectsWideLayout = projectsWideLayout;
   userSettings.projectCardColumns = projectCardColumns.map((c) => ({ ...c }));
+  updateProjectsLayoutWidthUi();
 }
 let activeNoteTab = null;
 let activeNotebookType = "note";
@@ -9731,7 +9737,7 @@ async function handleGoogleSignOut() {
 }
 
 function normalizeEmailIntakeMode(value = "") {
-  return String(value || "").trim().toLowerCase() === "scan" ? "scan" : "paste";
+  return "paste";
 }
 
 function normalizeOutlookScanCapability(raw = {}) {
@@ -9999,49 +10005,39 @@ window.updateOutlookScanProgress = function (payload = {}) {
 
 function renderOutlookScanUi() {
   const toolbarBtn = document.getElementById("outlookScanBtn");
-  const pasteModeInput = document.getElementById("emailIntakeModePaste");
-  const scanModeInput = document.getElementById("emailIntakeModeScan");
+  const pasteModeInput = null;
+  const scanModeInput = null;
   const pastePanel = document.getElementById("emailIntakePastePanel");
-  const scanPanel = document.getElementById("emailIntakeScanPanel");
-  const capabilityStatusEl = document.getElementById("outlookScanCapabilityStatus");
-  const capabilityDetailsEl = document.getElementById(
-    "outlookScanCapabilityDetails"
-  );
+  const scanPanel = null;
+  const capabilityStatusEl = null;
+  const capabilityDetailsEl = null;
   const emailArea = document.getElementById("emailArea");
-  const aiSpinner = document.getElementById("aiSpinner");
   const processBtn = document.getElementById("btnProcessEmail");
-  const scanDateInput = document.getElementById("outlookScanDate");
-  const progressEl = document.getElementById("outlookScanProgress");
-  const runBtn = document.getElementById("outlookScanRunBtn");
-  const summaryEl = document.getElementById("outlookScanSummary");
-  const metaEl = document.getElementById("outlookScanMeta");
-  const reportEl = document.getElementById("outlookScanReport");
-  const reportSummaryEl = document.getElementById("outlookScanReportSummary");
-  const reportLogEl = document.getElementById("outlookScanReportLog");
-  const suggestionsEl = document.getElementById("outlookScanSuggestions");
-  const skippedEl = document.getElementById("outlookScanSkipped");
-  const emptyEl = document.getElementById("outlookScanEmpty");
+  const scanDateInput = null;
+  const progressEl = null;
+  const runBtn = null;
+  const summaryEl = null;
+  const metaEl = null;
+  const reportEl = null;
+  const reportSummaryEl = null;
+  const reportLogEl = null;
+  const suggestionsEl = null;
+  const skippedEl = null;
+  const emptyEl = null;
 
-  const mode = normalizeEmailIntakeMode(outlookScanState.mode);
-  const capability = normalizeOutlookScanCapability(outlookScanCapabilityState);
-  const desktopAvailable = !!capability.desktopAvailable;
-  const desktopReason = String(capability.desktopReason || "").trim();
-  const scanBusy = outlookScanState.busy;
-  const busy = scanBusy || capability.loading;
-  const visibleSuggestions = getOutlookScanVisibleSuggestions();
-  const skipped = Array.isArray(outlookScanState.skipped)
-    ? outlookScanState.skipped
-    : [];
-  const lastResult = outlookScanState.lastResult;
-  const progress = normalizeOutlookScanProgress(outlookScanState.progress || {});
-  const reportModel = buildOutlookScanReportModel();
-  const selectedDayLabel = formatOutlookScanSelectedDayLabel(
-    reportModel.scanDate,
-    reportModel.timeframe
-  );
-  const showReport =
-    !scanBusy &&
-    !!(reportModel.log.length || reportModel.errorMessage || lastResult);
+  const mode = "paste";
+  const capability = { loading: false };
+  const desktopAvailable = false;
+  const desktopReason = "";
+  const scanBusy = false;
+  const busy = emailIntakeBusy;
+  const visibleSuggestions = [];
+  const skipped = [];
+  const lastResult = null;
+  const progress = createEmptyOutlookScanProgress();
+  const reportModel = {};
+  const selectedDayLabel = "";
+  const showReport = false;
 
   if (toolbarBtn) {
     toolbarBtn.disabled = false;
@@ -10084,14 +10080,9 @@ function renderOutlookScanUi() {
   if (emailArea) {
     emailArea.disabled = emailIntakeBusy;
   }
-  if (aiSpinner) {
-    aiSpinner.hidden = !emailIntakeBusy;
-  }
   if (processBtn) {
     processBtn.disabled = emailIntakeBusy;
-    processBtn.textContent = emailIntakeBusy
-      ? "Processing..."
-      : "Process with AI";
+    processBtn.textContent = "Process with AI";
   }
   if (scanDateInput) {
     scanDateInput.value = normalizeOutlookScanDateInput(outlookScanState.scanDate);
@@ -10438,14 +10429,47 @@ function setEmailIntakeMode(mode = "paste") {
   renderOutlookScanUi();
 }
 
-async function openOutlookScanDialog(mode = outlookScanState.mode) {
-  setEmailIntakeMode(mode);
+async function openOutlookScanDialog(mode = "paste") {
+  setEmailIntakeMode("paste");
   const dialog = document.getElementById("outlookScanDlg");
   if (dialog) {
     renderOutlookScanUi();
     showDialog(dialog);
   }
-  await loadOutlookScanCapability({ silent: true });
+}
+
+function beginEmailIntakeActivity() {
+  initActivityTray();
+  emailIntakeActivityId = createActivityId("email_intake_ai");
+  beginActivity({
+    activityId: emailIntakeActivityId,
+    kind: "email-intake",
+    label: "Email Intake",
+    message: "Processing with AI...",
+    progress: 15,
+  });
+  return emailIntakeActivityId;
+}
+
+function updateEmailIntakeActivity(message, progress = 50) {
+  if (!emailIntakeActivityId) return;
+  updateActivity(emailIntakeActivityId, {
+    message,
+    progress,
+    status: ACTIVITY_STATUS.RUNNING,
+  });
+}
+
+function completeEmailIntakeActivity(message = "Email processed with AI.") {
+  if (!emailIntakeActivityId) return;
+  completeActivity(emailIntakeActivityId, { message });
+  emailIntakeActivityId = "";
+}
+
+function failEmailIntakeActivity(message = "AI email processing failed.") {
+  if (!emailIntakeActivityId) return;
+  failActivity(emailIntakeActivityId, { message });
+  emailIntakeActivityId = "";
 }
 
 async function processEmailIntakePaste() {
@@ -10461,6 +10485,7 @@ async function processEmailIntakePaste() {
   const AI_EMAIL_TIMEOUT_MS = 120000;
   let timeoutId = null;
   emailIntakeBusy = true;
+  beginEmailIntakeActivity();
   renderOutlookScanUi();
   try {
     const aiRequest = window.pywebview.api.process_email_with_ai(
@@ -10469,6 +10494,7 @@ async function processEmailIntakePaste() {
       userSettings.userName,
       userSettings.discipline
     );
+    updateEmailIntakeActivity("Waiting for AI response...", 35);
     const timeoutPromise = new Promise((_, reject) => {
       timeoutId = setTimeout(() => {
         reject(
@@ -10488,13 +10514,15 @@ async function processEmailIntakePaste() {
     if (res?.status === "success") {
       const emailField = document.getElementById("emailArea");
       if (emailField) emailField.value = "";
+      completeEmailIntakeActivity();
       closeDlg("outlookScanDlg");
       handleAiProjectResult(res.data || {});
       return;
     }
     throw new Error(res?.message || "Failed to process email.");
   } catch (e) {
-    toast("AI Error: " + (e?.message || "Unknown error."));
+    const errorMessage = e?.message || "Unknown error.";
+    failEmailIntakeActivity("AI Error: " + errorMessage);
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
     emailIntakeBusy = false;
@@ -11591,6 +11619,7 @@ function getDefaultSyncableSettings() {
     separateDeliverableCompletionGroups: true,
     groupDeliverablesByProject: false,
     projectsViewMode: "list",
+    projectsWideLayout: true,
     projectCardColumns: DEFAULT_PROJECT_CARD_COLUMNS.map((c) => ({ ...c })),
     defaultPmInitials: "",
     cleanDwgOptions: { ...DEFAULT_CLEAN_DWG_OPTIONS },
@@ -11619,6 +11648,7 @@ function sanitizeSettingsForCloud(settings = userSettings) {
       source.separateDeliverableCompletionGroups !== false,
     groupDeliverablesByProject: source.groupDeliverablesByProject === true,
     projectsViewMode: source.projectsViewMode === "card" ? "card" : "list",
+    projectsWideLayout: source.projectsWideLayout !== false,
     projectCardColumns: normalizeProjectCardColumns(source.projectCardColumns),
     defaultPmInitials: String(source.defaultPmInitials || "")
       .trim()
@@ -11658,6 +11688,7 @@ function normalizeCloudSettingsDoc(raw = {}) {
       source.separateDeliverableCompletionGroups !== false,
     groupDeliverablesByProject: source.groupDeliverablesByProject === true,
     projectsViewMode: source.projectsViewMode === "card" ? "card" : "list",
+    projectsWideLayout: source.projectsWideLayout !== false,
     projectCardColumns: normalizeProjectCardColumns(source.projectCardColumns),
     defaultPmInitials: String(source.defaultPmInitials || "")
       .trim()
@@ -13275,6 +13306,7 @@ async function loadUserSettings() {
       userSettings.separateDeliverableCompletionGroups !== false;
     userSettings.groupDeliverablesByProject =
       userSettings.groupDeliverablesByProject === true;
+    userSettings.projectsWideLayout = userSettings.projectsWideLayout !== false;
     userSettings.cloudSync = normalizeCloudSyncSettings(userSettings.cloudSync);
     syncProjectViewPreferencesFromSettings();
     updateCloudSyncState({
@@ -23369,6 +23401,27 @@ function updateProjectsViewModeUi() {
   if (emptyState && isCard) emptyState.style.display = "none";
 }
 
+function updateProjectsLayoutWidthUi() {
+  const isWide = projectsWideLayout !== false;
+  if (document.body) {
+    document.body.dataset.projectsLayoutWidth = isWide ? "wide" : "contained";
+  }
+
+  const toggleBtn = document.getElementById("projectsWidthToggle");
+  if (!toggleBtn) return;
+
+  const stateLabel = isWide ? "Wide project layout" : "Contained project layout";
+  toggleBtn.classList.toggle("is-active", isWide);
+  toggleBtn.setAttribute("aria-pressed", String(isWide));
+  toggleBtn.setAttribute("aria-label", stateLabel);
+  toggleBtn.title = stateLabel;
+
+  const wideIcon = toggleBtn.querySelector(".projects-width-toggle__wide");
+  const containedIcon = toggleBtn.querySelector(".projects-width-toggle__contained");
+  if (wideIcon) wideIcon.hidden = !isWide;
+  if (containedIcon) containedIcon.hidden = isWide;
+}
+
 function updateWeekNavLabel() {
   const label = document.getElementById("weekNavLabel");
   const todayBtn = document.getElementById("weekNavToday");
@@ -23534,6 +23587,18 @@ function setProjectsViewMode(mode, options = {}) {
   render();
 }
 
+function setProjectsWideLayout(enabled, options = {}) {
+  const next = enabled !== false;
+  const shouldPersist = options.persist !== false;
+  projectsWideLayout = next;
+  userSettings.projectsWideLayout = next;
+  updateProjectsLayoutWidthUi();
+
+  if (shouldPersist && typeof debouncedSaveUserSettings === "function") {
+    debouncedSaveUserSettings();
+  }
+}
+
 function shiftProjectCardWeek(days) {
   const next = new Date(projectCardWeek);
   next.setDate(next.getDate() + days);
@@ -23589,8 +23654,14 @@ function bindProjectsCardViewWheelScroll() {
 function setupProjectsViewModeControls() {
   const listBtn = document.getElementById("viewToggleList");
   const cardBtn = document.getElementById("viewToggleCard");
+  const widthBtn = document.getElementById("projectsWidthToggle");
   if (listBtn) listBtn.addEventListener("click", () => setProjectsViewMode("list"));
   if (cardBtn) cardBtn.addEventListener("click", () => setProjectsViewMode("card"));
+  if (widthBtn) {
+    widthBtn.addEventListener("click", () =>
+      setProjectsWideLayout(!projectsWideLayout)
+    );
+  }
   bindProjectsCardViewWheelScroll();
 
   const prevBtn = document.getElementById("weekNavPrev");
@@ -23616,6 +23687,7 @@ function setupProjectsViewModeControls() {
   });
 
   updateProjectsViewModeUi();
+  updateProjectsLayoutWidthUi();
   updateWeekNavLabel();
 }
 
@@ -31389,9 +31461,13 @@ function initTabbedInterfaces() {
   const notesResults = document.getElementById("notesSearchResults");
   const checklistResults = document.getElementById("checklistSearchResults");
 
+  document.body.dataset.activeTab =
+    document.querySelector(".main-tab-btn.active")?.dataset.tab || "projects";
+
   mainTabContainer.addEventListener("click", (e) => {
     if (!e.target.matches(".main-tab-btn")) return;
     const tab = e.target.dataset.tab;
+    document.body.dataset.activeTab = tab;
 
     document
       .querySelectorAll(".main-tab-btn")
@@ -31864,36 +31940,9 @@ function initEventListeners() {
   if (outlookScanBtn) {
     outlookScanBtn.onclick = () => openOutlookScanDialog();
   }
-  const emailIntakeModePaste = document.getElementById("emailIntakeModePaste");
-  if (emailIntakeModePaste) {
-    emailIntakeModePaste.onchange = (event) => {
-      if (event?.target?.checked) setEmailIntakeMode("paste");
-    };
-  }
-  const emailIntakeModeScan = document.getElementById("emailIntakeModeScan");
-  if (emailIntakeModeScan) {
-    emailIntakeModeScan.onchange = (event) => {
-      if (event?.target?.checked) setEmailIntakeMode("scan");
-    };
-  }
   const btnProcessEmail = document.getElementById("btnProcessEmail");
   if (btnProcessEmail) {
     btnProcessEmail.onclick = () => processEmailIntakePaste();
-  }
-  const outlookScanRunBtn = document.getElementById("outlookScanRunBtn");
-  if (outlookScanRunBtn) {
-    outlookScanRunBtn.onclick = () => runOutlookInboxScan();
-  }
-  const outlookScanDate = document.getElementById("outlookScanDate");
-  if (outlookScanDate) {
-    outlookScanDate.onchange = (event) =>
-      setOutlookScanDate(event?.target?.value || getTodayLocalDateInputValue());
-  }
-  const outlookScanReport = document.getElementById("outlookScanReport");
-  if (outlookScanReport) {
-    outlookScanReport.addEventListener("toggle", () => {
-      outlookScanState.reportOpen = !!outlookScanReport.open;
-    });
   }
   const headerAccountSignOutBtn = document.getElementById(
     "headerAccountSignOutBtn"

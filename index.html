@@ -24,7 +24,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 
-<body>
+<body data-active-tab="projects" data-projects-layout-width="wide">
     <div id="appLoader" class="app-loader" role="status" aria-live="polite" aria-label="Loading">
         <div class="app-loader-content">
             <img src="./assets/acies.png" alt="ACIES" class="app-loader-logo" onerror="this.style.display='none'" />
@@ -210,6 +210,22 @@
                                 </svg>
                             </button>
                         </div>
+                        <button class="icon-btn projects-width-toggle is-active" id="projectsWidthToggle" type="button" aria-label="Wide project layout" aria-pressed="true" title="Wide project layout">
+                            <svg class="projects-width-toggle__wide" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="15 3 21 3 21 9"></polyline>
+                                <polyline points="9 21 3 21 3 15"></polyline>
+                                <line x1="21" y1="3" x2="14" y2="10"></line>
+                                <line x1="3" y1="21" x2="10" y2="14"></line>
+                            </svg>
+                            <svg class="projects-width-toggle__contained" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" hidden>
+                                <polyline points="4 14 10 14 10 20"></polyline>
+                                <polyline points="20 10 14 10 14 4"></polyline>
+                                <line x1="14" y1="10" x2="21" y2="3"></line>
+                                <line x1="3" y1="21" x2="10" y2="14"></line>
+                            </svg>
+                        </button>
                         <button class="icon-btn" id="projectsHelpBtn" aria-label="Projects help" title="Projects help">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1155,17 +1171,6 @@
             <button class="btn ghost" onclick="closeDlg('outlookScanDlg')">Close</button>
         </div>
         <div class="modal-body stack">
-            <div class="email-intake-mode-switch radio-group" id="emailIntakeModeGroup" role="radiogroup"
-                aria-label="Email intake mode">
-                <label class="email-intake-mode-option">
-                    <input type="radio" name="emailIntakeMode" id="emailIntakeModePaste" value="paste" checked />
-                    <span class="email-intake-mode-label">Paste Email</span>
-                </label>
-                <label class="email-intake-mode-option">
-                    <input type="radio" name="emailIntakeMode" id="emailIntakeModeScan" value="scan" />
-                    <span class="email-intake-mode-label">Scan Outlook Day</span>
-                </label>
-            </div>
             <section id="emailIntakePastePanel" class="email-intake-panel stack">
                 <div class="email-intake-panel-head">
                     <div>
@@ -1176,43 +1181,6 @@
                     <button type="button" class="btn-primary tiny" id="btnProcessEmail">Process with AI</button>
                 </div>
                 <textarea id="emailArea" rows="15" placeholder="Paste email content here..."></textarea>
-                <div id="aiSpinner" class="spinner" hidden>Processing with AI...</div>
-            </section>
-            <section id="emailIntakeScanPanel" class="email-intake-panel stack" hidden>
-                <div class="email-intake-scan-status">
-                    <div id="outlookScanCapabilityStatus" class="sync-auth-status">Checking Desktop Outlook...</div>
-                    <div id="outlookScanCapabilityDetails" class="tiny muted">
-                        Checking whether Desktop Outlook is available on this machine.
-                    </div>
-                </div>
-                <div class="outlook-scan-toolbar">
-                    <label class="label" for="outlookScanDate">Day</label>
-                    <input id="outlookScanDate" type="date" class="input" />
-                    <button type="button" class="btn-primary tiny" id="outlookScanRunBtn">Scan day</button>
-                </div>
-                <div class="outlook-scan-results">
-                    <div id="outlookScanProgress" class="outlook-scan-progress">
-                        <div id="outlookScanSummary" class="sync-auth-status">No Outlook day scan has been run yet.
-                        </div>
-                        <div id="outlookScanMeta" class="tiny muted">Choose a day, then run a scan.</div>
-                    </div>
-                    <details id="outlookScanReport" class="outlook-scan-report" hidden>
-                        <summary>Scan report</summary>
-                        <div id="outlookScanReportSummary" class="outlook-scan-report-summary"></div>
-                        <div id="outlookScanReportLog" class="outlook-scan-report-log"></div>
-                    </details>
-                    <div id="outlookScanEmpty" class="tiny muted">
-                        Suggestions and skipped emails will appear here after a scan.
-                    </div>
-                    <div class="outlook-scan-section">
-                        <div class="label">Suggested deliverables</div>
-                        <div id="outlookScanSuggestions" class="outlook-scan-list"></div>
-                    </div>
-                    <div class="outlook-scan-section">
-                        <div class="label">Skipped emails</div>
-                        <div id="outlookScanSkipped" class="outlook-scan-skipped-list"></div>
-                    </div>
-                </div>
             </section>
         </div>
     </dialog>

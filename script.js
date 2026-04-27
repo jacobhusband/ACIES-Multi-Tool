@@ -23649,6 +23649,9 @@ function updateProjectsViewModeUi() {
     cardBtn.classList.toggle("is-active", isCard);
     cardBtn.setAttribute("aria-pressed", String(isCard));
   }
+  if (document.body) {
+    document.body.dataset.projectsViewMode = isCard ? "card" : "list";
+  }
   const table = document.querySelector("#projects-panel .projects-table");
   const cardView = document.getElementById("projectsCardView");
   const cardControls = document.getElementById("projectsCardControls");
@@ -23905,20 +23908,31 @@ function bindProjectsCardViewWheelScroll() {
   cardView.addEventListener(
     "wheel",
     (event) => {
-      const cardsHost = event.target?.closest?.(".kanban-column__cards");
+      const target =
+        event.target instanceof Element ? event.target : event.target?.parentElement;
+      const column = target?.closest?.(".kanban-column");
+      const cardsHost =
+        target?.closest?.(".kanban-column__cards") ||
+        column?.querySelector?.(".kanban-column__cards");
       const prefersVerticalScroll =
-        cardsHost && Math.abs(event.deltaY) >= Math.abs(event.deltaX);
+        cardsHost && !event.shiftKey && Math.abs(event.deltaY) >= Math.abs(event.deltaX);
 
       if (prefersVerticalScroll) {
-        const scrollingDown = event.deltaY > 0;
-        const canKeepScrollingVertically = scrollingDown
-          ? cardsHost.scrollTop + cardsHost.clientHeight < cardsHost.scrollHeight - 1
-          : cardsHost.scrollTop > 1;
-        if (canKeepScrollingVertically) return;
+        const maxScrollTop = Math.max(0, cardsHost.scrollHeight - cardsHost.clientHeight);
+        const nextScrollTop = Math.min(
+          maxScrollTop,
+          Math.max(0, cardsHost.scrollTop + event.deltaY)
+        );
+        if (nextScrollTop !== cardsHost.scrollTop) {
+          event.preventDefault();
+          cardsHost.scrollTop = nextScrollTop;
+        }
+        return;
       }
 
-      const horizontalDelta =
-        Math.abs(event.deltaX) > 0 ? event.deltaX : event.deltaY;
+      const horizontalDelta = event.shiftKey
+        ? event.deltaY || event.deltaX
+        : event.deltaX;
       if (!horizontalDelta) return;
 
       event.preventDefault();

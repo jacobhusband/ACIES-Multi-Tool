@@ -13785,6 +13785,11 @@ function normalizePinnedProjectOrder(value) {
   return normalized >= 0 ? normalized : null;
 }
 
+function normalizePinnedDeliverableOrder(value) {
+  if (value == null || value === "") return null;
+  return normalizePinnedProjectOrder(value);
+}
+
 function compareProjectsByStableIdentity(a, b) {
   const idDiff = String(a?.id || "").localeCompare(String(b?.id || ""), undefined, {
     numeric: true,
@@ -14190,6 +14195,9 @@ function normalizeDeliverable(deliverable = {}) {
     emailRef: emailRefs[0] || null,
     links: buildLegacyLinksFromAttachments(attachments),
     pinned: deliverable.pinned === true,
+    pinnedOrder: deliverable.pinned === true
+      ? normalizePinnedDeliverableOrder(deliverable.pinnedOrder)
+      : null,
     active: deliverable.active === true,
     workroomCadDiscipline: normalizeWorkroomCadDiscipline(
       deliverable.workroomCadDiscipline,
@@ -14236,6 +14244,7 @@ function createDeliverable(seed = {}) {
     status: seed.status || "",
     attachments: seedAttachments,
     pinned: seed.pinned === true,
+    pinnedOrder: normalizePinnedDeliverableOrder(seed.pinnedOrder),
     active: seed.active !== false,
     workroomCadDiscipline: seed.workroomCadDiscipline || "",
     workroomPhase: seed.workroomPhase || "pre_design",
@@ -14578,6 +14587,9 @@ function isDeliverablePinned(deliverable) {
 function setDeliverablePinnedState(deliverable, nextPinned) {
   if (!deliverable || typeof deliverable !== "object") return false;
   deliverable.pinned = nextPinned === true;
+  deliverable.pinnedOrder = deliverable.pinned
+    ? normalizePinnedDeliverableOrder(deliverable.pinnedOrder)
+    : null;
   return deliverable.pinned === true;
 }
 
@@ -23024,6 +23036,91 @@ function sortProjectDeliverableRows(items) {
   items.sort((a, b) => compareProjectDeliverableRows(a, b));
 }
 
+function compareProjectDeliverableRowsByDueDesc(a, b) {
+  const dueDiff = compareDueDateValues(
+    a?.dueDate || parseDueStr(a?.deliverable?.due) || null,
+    b?.dueDate || parseDueStr(b?.deliverable?.due) || null,
+    "desc"
+  );
+  if (dueDiff) return dueDiff;
+  return compareProjectDeliverableRowIdentity(a, b);
+}
+
+function comparePinnedDeliverableCardRows(a, b) {
+  const aPinnedOrder = normalizePinnedDeliverableOrder(
+    a?.deliverable?.pinnedOrder
+  );
+  const bPinnedOrder = normalizePinnedDeliverableOrder(
+    b?.deliverable?.pinnedOrder
+  );
+
+  if (aPinnedOrder !== null && bPinnedOrder !== null) {
+    if (aPinnedOrder !== bPinnedOrder) return aPinnedOrder - bPinnedOrder;
+  } else if (aPinnedOrder !== null || bPinnedOrder !== null) {
+    return aPinnedOrder !== null ? -1 : 1;
+  }
+
+  return compareProjectDeliverableRowsByDueDesc(a, b);
+}
+
+function sortCardViewBucketRows(columnKey, rows = []) {
+  rows.sort((a, b) =>
+    columnKey === "pinned"
+      ? comparePinnedDeliverableCardRows(a, b)
+      : compareProjectDeliverableRowsByDueDesc(a, b)
+  );
+}
+
+function getPinnedDeliverableOrderEntries(items = db) {
+  const entries = [];
+  (Array.isArray(items) ? items : []).forEach((project, projectIndex) => {
+    getProjectDeliverables(project).forEach((deliverable, deliverableIndex) => {
+      if (!isDeliverablePinned(deliverable)) return;
+      entries.push({
+        project,
+        projectIndex,
+        deliverable,
+        deliverableIndex,
+        dueDate: parseDueStr(deliverable?.due),
+        isPinnedDeliverable: true,
+      });
+    });
+  });
+  entries.sort(comparePinnedDeliverableCardRows);
+  return entries;
+}
+
+function movePinnedDeliverableToTarget(
+  draggedDeliverableId,
+  targetDeliverableId,
+  before = true,
+  items = db
+) {
+  const draggedId = String(draggedDeliverableId || "").trim();
+  const targetId = String(targetDeliverableId || "").trim();
+  if (!draggedId || !targetId || draggedId === targetId) return false;
+
+  const entries = getPinnedDeliverableOrderEntries(items);
+  const fromIndex = entries.findIndex(
+    ({ deliverable }) => String(deliverable?.id || "") === draggedId
+  );
+  if (fromIndex < 0) return false;
+
+  const [movedEntry] = entries.splice(fromIndex, 1);
+  const targetIndex = entries.findIndex(
+    ({ deliverable }) => String(deliverable?.id || "") === targetId
+  );
+  if (!movedEntry || targetIndex < 0) return false;
+
+  const insertIndex = before ? targetIndex : targetIndex + 1;
+  entries.splice(insertIndex, 0, movedEntry);
+  entries.forEach(({ deliverable }, index) => {
+    deliverable.pinned = true;
+    deliverable.pinnedOrder = index;
+  });
+  return true;
+}
+
 function clearPinnedProjectDragStyles() {
   const tbody = document.getElementById("tbody");
   if (!tbody) return;
@@ -23661,13 +23758,23 @@ function renderCardView(items = db, projectListContextMap = null) {
 
   for (const { project, deliverable, dueDate, isPinnedDeliverable } of deliverableRows) {
     if (pinnedShown && isPinnedDeliverable) {
-      buckets.get("pinned").push({ project, deliverable });
+      buckets.get("pinned").push({
+        project,
+        deliverable,
+        dueDate,
+        isPinnedDeliverable,
+      });
       continue;
     }
 
     if (!dueDate) {
       if (nodateShown) {
-        buckets.get("nodate").push({ project, deliverable });
+        buckets.get("nodate").push({
+          project,
+          deliverable,
+          dueDate,
+          isPinnedDeliverable,
+        });
       }
       continue;
     }
@@ -23681,7 +23788,12 @@ function renderCardView(items = db, projectListContextMap = null) {
     const primary =
       STATUS_PRIORITY.find((s) => hasStatus(deliverable, s)) || "none";
     if (buckets.has(primary)) {
-      buckets.get(primary).push({ project, deliverable });
+      buckets.get(primary).push({
+        project,
+        deliverable,
+        dueDate,
+        isPinnedDeliverable,
+      });
     }
   }
 
@@ -23707,8 +23819,11 @@ function renderCardView(items = db, projectListContextMap = null) {
     header.appendChild(titleWrap);
     column.appendChild(header);
 
+    const bucketRows = buckets.get(col.key);
+    sortCardViewBucketRows(col.key, bucketRows);
+
     const cardsHost = el("div", { className: "kanban-column__cards" });
-    if (buckets.get(col.key).length === 0) {
+    if (bucketRows.length === 0) {
       cardsHost.appendChild(
         el("div", {
           className: "kanban-column__empty",
@@ -23716,7 +23831,7 @@ function renderCardView(items = db, projectListContextMap = null) {
         })
       );
     } else {
-      for (const { project, deliverable } of buckets.get(col.key)) {
+      for (const { project, deliverable } of bucketRows) {
         const isPrimary = isDeliverableActive(deliverable);
         const card = renderDeliverableCard(deliverable, isPrimary, project);
         card.draggable = true;
@@ -23994,13 +24109,103 @@ function findDeliverableContext(deliverableId) {
 
 let kanbanDragState = null;
 
+function clearKanbanCardDropStyles(host) {
+  host
+    ?.querySelectorAll(
+      ".deliverable-card-new.kanban-drop-before, .deliverable-card-new.kanban-drop-after"
+    )
+    .forEach((card) => {
+      card.classList.remove("kanban-drop-before", "kanban-drop-after");
+      delete card.dataset.dropPosition;
+    });
+}
+
+function getKanbanCardDropPosition(event, card) {
+  const rect = card.getBoundingClientRect();
+  return event.clientY < rect.top + rect.height / 2 ? "before" : "after";
+}
+
+const KANBAN_TEXT_INPUT_TYPES = new Set([
+  "",
+  "email",
+  "number",
+  "password",
+  "search",
+  "tel",
+  "text",
+  "url",
+]);
+
+function getKanbanTextEditorFromTarget(target) {
+  const element =
+    target instanceof Element
+      ? target
+      : target?.parentElement instanceof Element
+        ? target.parentElement
+        : null;
+  if (!element) return null;
+
+  const editor = element.closest("textarea, input, [contenteditable]");
+  if (!editor || !editor.closest(".deliverable-card-new")) return null;
+  if (editor.matches("[contenteditable]")) return editor;
+  if (editor instanceof HTMLTextAreaElement) return editor;
+  if (editor instanceof HTMLInputElement) {
+    const type = String(editor.getAttribute("type") || "text").toLowerCase();
+    return KANBAN_TEXT_INPUT_TYPES.has(type) ? editor : null;
+  }
+  return null;
+}
+
+function suppressKanbanCardDragWhileEditing(editor) {
+  const card = editor?.closest?.(".deliverable-card-new");
+  if (!card || card.dataset.kanbanDragSuppressed === "1") return;
+
+  const wasDraggable = card.draggable;
+  card.dataset.kanbanDragSuppressed = "1";
+  card.draggable = false;
+
+  const ownerDocument = editor.ownerDocument || document;
+  const restore = () => {
+    card.draggable = wasDraggable;
+    delete card.dataset.kanbanDragSuppressed;
+    ownerDocument.removeEventListener("pointerup", restore, true);
+    ownerDocument.removeEventListener("pointercancel", restore, true);
+    ownerDocument.removeEventListener("mouseup", restore, true);
+    editor.removeEventListener("blur", restore, true);
+  };
+
+  ownerDocument.addEventListener("pointerup", restore, true);
+  ownerDocument.addEventListener("pointercancel", restore, true);
+  ownerDocument.addEventListener("mouseup", restore, true);
+  editor.addEventListener("blur", restore, true);
+}
+
 function attachKanbanDragHandlers(host) {
   if (host.dataset.kanbanDragBound === "1") return;
   host.dataset.kanbanDragBound = "1";
 
+  const handleEditorPointerStart = (e) => {
+    const editor = getKanbanTextEditorFromTarget(e.target);
+    if (editor) suppressKanbanCardDragWhileEditing(editor);
+  };
+
+  host.addEventListener("pointerdown", handleEditorPointerStart, true);
+  host.addEventListener("mousedown", handleEditorPointerStart, true);
+
   host.addEventListener("dragstart", (e) => {
     const card = e.target.closest(".deliverable-card-new");
     if (!card || !host.contains(card)) return;
+
+    if (
+      card.dataset.kanbanDragSuppressed === "1" ||
+      getKanbanTextEditorFromTarget(e.target)
+    ) {
+      e.preventDefault();
+      e.stopPropagation();
+      kanbanDragState = null;
+      return;
+    }
+
     kanbanDragState = {
       deliverableId: card.dataset.deliverableId,
       sourceColumnKey: card.closest(".kanban-column")?.dataset.columnKey || "",
@@ -24018,6 +24223,7 @@ function attachKanbanDragHandlers(host) {
     host
       .querySelectorAll(".deliverable-card-new.kanban-dragging")
       .forEach((c) => c.classList.remove("kanban-dragging"));
+    clearKanbanCardDropStyles(host);
     host
       .querySelectorAll(".kanban-column.is-drop-target")
       .forEach((c) => c.classList.remove("is-drop-target"));
@@ -24030,12 +24236,26 @@ function attachKanbanDragHandlers(host) {
     if (!col) return;
     e.preventDefault();
     if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+    clearKanbanCardDropStyles(host);
     host
       .querySelectorAll(".kanban-column.is-drop-target")
       .forEach((c) => {
         if (c !== col) c.classList.remove("is-drop-target");
       });
     col.classList.add("is-drop-target");
+
+    const targetCard = e.target.closest(".deliverable-card-new");
+    if (
+      kanbanDragState.sourceColumnKey === "pinned" &&
+      col.dataset.columnKey === "pinned" &&
+      targetCard &&
+      targetCard.dataset.deliverableId !== kanbanDragState.deliverableId
+    ) {
+      const dropPosition = getKanbanCardDropPosition(e, targetCard);
+      targetCard.dataset.dropPosition = dropPosition;
+      targetCard.classList.toggle("kanban-drop-before", dropPosition === "before");
+      targetCard.classList.toggle("kanban-drop-after", dropPosition === "after");
+    }
   });
 
   host.addEventListener("dragleave", (e) => {
@@ -24052,12 +24272,32 @@ function attachKanbanDragHandlers(host) {
     if (!col) return;
     e.preventDefault();
 
+    const targetCard = e.target.closest(".deliverable-card-new");
+    const targetDeliverableId = String(targetCard?.dataset.deliverableId || "");
+    const dropPosition =
+      targetCard?.dataset.dropPosition ||
+      (targetCard ? getKanbanCardDropPosition(e, targetCard) : "before");
     const targetKey = col.dataset.columnKey;
     const { deliverableId, sourceColumnKey } = kanbanDragState;
     kanbanDragState = null;
+    clearKanbanCardDropStyles(host);
     host
       .querySelectorAll(".kanban-column.is-drop-target")
       .forEach((c) => c.classList.remove("is-drop-target"));
+
+    if (targetKey === "pinned" && sourceColumnKey === "pinned") {
+      const moved = movePinnedDeliverableToTarget(
+        deliverableId,
+        targetDeliverableId,
+        dropPosition !== "after"
+      );
+      if (moved) {
+        await save();
+        renderProjectsPreservingExpandedDeliverables();
+      }
+      return;
+    }
+
     if (!targetKey || targetKey === sourceColumnKey) return;
 
     if (targetKey === "nodate") {
@@ -24715,6 +24955,8 @@ function addDeliverableCard(deliverable, activeAnchorId, options = {}) {
   const deliverableId = deliverable.id || createId("dlv");
   card.dataset.deliverableId = deliverableId;
   card.dataset.pinned = String(isDeliverablePinned(deliverable));
+  card.dataset.pinnedOrder =
+    normalizePinnedDeliverableOrder(deliverable.pinnedOrder) ?? "";
   syncDeliverableAttachmentFields(deliverable);
   setDeliverableCardAttachments(card, deliverable.attachments);
 
@@ -25707,6 +25949,9 @@ function readForm() {
       statuses,
       attachments,
       pinned: !!existingDeliverable?.pinned || card.dataset.pinned === "true",
+      pinnedOrder: normalizePinnedDeliverableOrder(
+        existingDeliverable?.pinnedOrder ?? card.dataset.pinnedOrder
+      ),
       active: !!card.querySelector(".d-active")?.checked,
     });
 

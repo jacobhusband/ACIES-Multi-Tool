@@ -51,7 +51,7 @@ class ProjectCardNoneColumnUiTests(unittest.TestCase):
     def test_drop_to_none_clears_status_without_storing_none(self):
         script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
         start = script.index('host.addEventListener("drop", async (e) => {')
-        end = script.index("await save();", start)
+        end = script.index("function render() {", start)
         block = script[start:end]
 
         self.assertIn('if (targetKey === "none") {', block)

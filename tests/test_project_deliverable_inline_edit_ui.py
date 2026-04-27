@@ -142,6 +142,35 @@ class ProjectDeliverableInlineEditUiTests(unittest.TestCase):
         self.assertIn("accent-color: var(--accent);", checkbox_block)
         self.assertIn("cursor: pointer;", checkbox_block)
 
+    def test_card_view_text_editors_do_not_start_kanban_drag(self):
+        script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
+        drag_block = self._block(
+            script,
+            "let kanbanDragState = null;",
+            "function render() {",
+        )
+
+        for expected in (
+            "const KANBAN_TEXT_INPUT_TYPES = new Set([",
+            "function getKanbanTextEditorFromTarget(target) {",
+            'element.closest("textarea, input, [contenteditable]")',
+            'card.dataset.kanbanDragSuppressed = "1";',
+            "card.draggable = false;",
+            'host.addEventListener("pointerdown", handleEditorPointerStart, true);',
+            'host.addEventListener("mousedown", handleEditorPointerStart, true);',
+            'card.dataset.kanbanDragSuppressed === "1"',
+            "e.preventDefault();",
+            "e.stopPropagation();",
+        ):
+            self.assertIn(expected, drag_block)
+
+        self.assertLess(
+            drag_block.index(
+                'host.addEventListener("pointerdown", handleEditorPointerStart, true);'
+            ),
+            drag_block.index('host.addEventListener("dragstart", (e) => {'),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

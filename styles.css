@@ -11937,6 +11937,18 @@ input:checked+.slider:before {
   cursor: grabbing;
 }
 
+.kanban-column .deliverable-card-new.kanban-drop-before {
+  box-shadow:
+    0 -3px 0 var(--accent),
+    var(--shadow, 0 8px 18px rgba(0, 0, 0, 0.18));
+}
+
+.kanban-column .deliverable-card-new.kanban-drop-after {
+  box-shadow:
+    0 3px 0 var(--accent),
+    var(--shadow, 0 8px 18px rgba(0, 0, 0, 0.18));
+}
+
 /* column accents */
 .kanban-column--pinned .kanban-column__label,
 .kanban-column--pinned .kanban-column__count {

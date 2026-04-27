@@ -43,16 +43,52 @@ class ProjectPinnedDeliverablesUiTests(unittest.TestCase):
             "sortProjectDeliverableRows(deliverableRows);",
             "for (const { project, deliverable, dueDate, isPinnedDeliverable } of deliverableRows) {",
             "if (pinnedShown && isPinnedDeliverable) {",
-            "buckets.get(\"pinned\").push({ project, deliverable });",
+            'buckets.get("pinned").push({',
+            "const bucketRows = buckets.get(col.key);",
+            "sortCardViewBucketRows(col.key, bucketRows);",
         ):
             self.assertIn(expected, card_view_block)
 
         self.assertIn("renderCardView(items, projectListContextMap);", render_block)
 
+    def test_card_view_sorts_due_dates_youngest_first_by_default(self):
+        script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
+        helper_start = script.index("function compareProjectDeliverableRowsByDueDesc")
+        helper_end = script.index("function clearPinnedProjectDragStyles()", helper_start)
+        helper_block = script[helper_start:helper_end]
+
+        for expected in (
+            "function compareProjectDeliverableRowsByDueDesc(a, b) {",
+            "compareDueDateValues(",
+            '"desc"',
+            "function sortCardViewBucketRows(columnKey, rows = []) {",
+            'columnKey === "pinned"',
+            "comparePinnedDeliverableCardRows(a, b)",
+            "compareProjectDeliverableRowsByDueDesc(a, b)",
+        ):
+            self.assertIn(expected, helper_block)
+
+    def test_pinned_deliverables_default_to_due_desc_then_manual_order(self):
+        script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
+        helper_start = script.index("function normalizePinnedDeliverableOrder")
+        helper_end = script.index("function clearPinnedProjectDragStyles()", helper_start)
+        helper_block = script[helper_start:helper_end]
+
+        for expected in (
+            "function normalizePinnedDeliverableOrder(value) {",
+            "function comparePinnedDeliverableCardRows(a, b) {",
+            "normalizePinnedDeliverableOrder(",
+            "return aPinnedOrder - bPinnedOrder;",
+            "return compareProjectDeliverableRowsByDueDesc(a, b);",
+            "function movePinnedDeliverableToTarget(",
+            "deliverable.pinnedOrder = index;",
+        ):
+            self.assertIn(expected, helper_block)
+
     def test_card_view_drop_from_pinned_column_unpins_deliverable_before_status_update(self):
         script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
         drop_start = script.index('host.addEventListener("drop", async (e) => {')
-        drop_end = script.index("await save();", drop_start)
+        drop_end = script.index("function render() {", drop_start)
         drop_block = script[drop_start:drop_end]
 
         self.assertIn(
@@ -70,6 +106,42 @@ class ProjectPinnedDeliverablesUiTests(unittest.TestCase):
             drop_block.index("deliverable.statuses = [targetKey];"),
         )
         self.assertNotIn("setProjectPinnedState(project", drop_block)
+
+    def test_card_view_drop_reorders_deliverables_within_pinned_column(self):
+        script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
+        css = STYLES_CSS_PATH.read_text(encoding="utf-8")
+        drop_start = script.index('host.addEventListener("drop", async (e) => {')
+        drop_end = script.index("function render() {", drop_start)
+        drop_block = script[drop_start:drop_end]
+        dragover_start = script.index('host.addEventListener("dragover", (e) => {')
+        dragover_end = script.index('host.addEventListener("dragleave"', dragover_start)
+        dragover_block = script[dragover_start:dragover_end]
+
+        for expected in (
+            'kanbanDragState.sourceColumnKey === "pinned"',
+            'col.dataset.columnKey === "pinned"',
+            'targetCard.dataset.deliverableId !== kanbanDragState.deliverableId',
+            "getKanbanCardDropPosition(e, targetCard)",
+            "kanban-drop-before",
+            "kanban-drop-after",
+        ):
+            self.assertIn(expected, dragover_block)
+
+        for expected in (
+            'if (targetKey === "pinned" && sourceColumnKey === "pinned") {',
+            "const moved = movePinnedDeliverableToTarget(",
+            "dropPosition !== \"after\"",
+            "await save();",
+            "renderProjectsPreservingExpandedDeliverables();",
+        ):
+            self.assertIn(expected, drop_block)
+
+        self.assertLess(
+            drop_block.index('if (targetKey === "pinned" && sourceColumnKey === "pinned") {'),
+            drop_block.index("if (!targetKey || targetKey === sourceColumnKey) return;"),
+        )
+        self.assertIn(".kanban-column .deliverable-card-new.kanban-drop-before {", css)
+        self.assertIn(".kanban-column .deliverable-card-new.kanban-drop-after {", css)
 
     def test_project_pin_ui_is_removed(self):
         html = INDEX_HTML_PATH.read_text(encoding="utf-8")

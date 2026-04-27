@@ -45,7 +45,8 @@
         <div class="header-center">
             <nav class="main-nav">
                 <button class="main-tab-btn active" data-tab="projects">Projects</button>
-                <button class="main-tab-btn" data-tab="texts">Notebook</button>
+                <button class="main-tab-btn" data-tab="notes">Notes</button>
+                <button class="main-tab-btn" data-tab="checklists">Checklists</button>
                 <button class="main-tab-btn" data-tab="tools">Tools</button>
                 <button class="main-tab-btn" data-tab="timesheets">Timesheets</button>
             </nav>
@@ -351,6 +352,17 @@
                         <button type="button" class="week-nav-today" id="weekNavToday" title="Jump to current week">This Week</button>
                     </div>
                     <div class="projects-column-config-wrap">
+                        <button type="button" class="icon-btn projects-empty-columns-toggle is-active" id="projectsEmptyColumnsToggle" aria-label="Minimize empty columns" aria-pressed="true" title="Minimize empty columns">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                                <rect x="3" y="4" width="4" height="16" rx="1"></rect>
+                                <rect x="10" y="4" width="4" height="16" rx="1"></rect>
+                                <rect x="17" y="4" width="4" height="16" rx="1"></rect>
+                                <path d="M8 12h8"></path>
+                                <path d="m13 9 3 3-3 3"></path>
+                                <path d="m11 9-3 3 3 3"></path>
+                            </svg>
+                        </button>
                         <button type="button" class="icon-btn" id="columnConfigBtn" aria-label="Configure columns" title="Configure columns" aria-expanded="false">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                 <line x1="4" y1="6" x2="20" y2="6"></line>
@@ -392,12 +404,12 @@
                 </div>
             </section>
         </div>
-        <!-- Tab Panel for Notebook -->
-        <div id="texts-panel" class="tab-panel" hidden>
+        <!-- Tab Panel for Notes -->
+        <div id="notes-panel" class="tab-panel" hidden>
             <div class="panel stack full-height">
                 <div class="panel-toolbar texts-toolbar">
                     <div class="texts-toolbar-main">
-                        <div id="textsSearchWrap" class="nav-search expanded-search">
+                        <div class="nav-search expanded-search">
                             <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none"
                                 stroke="currentColor" stroke-width="2" stroke-linecap="round"
                                 stroke-linejoin="round">
@@ -407,7 +419,7 @@
                             <input id="notesSearch" type="search" placeholder="Search notes..." />
                         </div>
                         <div class="toolbar-actions">
-                            <button class="icon-btn" id="textsHelpBtn" aria-label="Notes help" title="Notes help"><svg
+                            <button class="icon-btn" id="notesHelpBtn" aria-label="Notes help" title="Notes help"><svg
                                     width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                     stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                     <circle cx="12" cy="12" r="10"></circle>
@@ -419,7 +431,7 @@
                 </div>
                 <div class="texts-content">
                     <div class="notebook-layout">
-                        <aside class="notebook-sidebar">
+                        <aside class="notebook-sidebar single-section">
                             <section class="notebook-sidebar-section">
                                 <div class="notes-controls">
                                     <div class="notebook-section-header">
@@ -427,10 +439,72 @@
                                     </div>
                                     <div class="notes-user-tabs-row">
                                         <nav class="inner-tabs notes-nav-list" id="notesTabsContainer"></nav>
-                                        <!-- Add/Remove buttons moved inside inner-tabs via JS -->
                                     </div>
                                 </div>
                             </section>
+                        </aside>
+                        <div class="notebook-content-shell">
+                            <section class="notes-editor texts-view-pane" id="textsNotesPane">
+                                <div class="notebook-empty-state" id="notesEmptyState" hidden>
+                                    <div class="notebook-empty-state-icon">
+                                        <svg width="40" height="40" viewBox="0 0 24 24" fill="none"
+                                            stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+                                            stroke-linejoin="round">
+                                            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+                                            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+                                        </svg>
+                                    </div>
+                                    <h3 class="notebook-empty-state-title">No notes yet</h3>
+                                    <p class="notebook-empty-state-body">Create your first page to start taking
+                                        notes. Pages autosave as you type.</p>
+                                    <button class="btn btn-accent" type="button" id="notesEmptyStateCreateBtn">+
+                                        Create your first page</button>
+                                </div>
+                                <div class="notebook-editor-content" id="notesEditorContent">
+                                    <div class="notes-editor-header">
+                                        <h3 class="section-title" id="activeNoteTitle">Notes</h3>
+                                    </div>
+                                    <div class="inner-tab-content">
+                                        <textarea id="notesTextarea" class="notes-textarea"
+                                            placeholder="Select a page to start writing notes..."></textarea>
+                                    </div>
+                                    <div id="notesSearchResults" class="notes-search-results"></div>
+                                </div>
+                            </section>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <!-- Tab Panel for Checklists -->
+        <div id="checklists-panel" class="tab-panel" hidden>
+            <div class="panel stack full-height">
+                <div class="panel-toolbar texts-toolbar">
+                    <div class="texts-toolbar-main">
+                        <div class="nav-search expanded-search">
+                            <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                                stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                stroke-linejoin="round">
+                                <circle cx="11" cy="11" r="8"></circle>
+                                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                            </svg>
+                            <input id="checklistsSearch" type="search" placeholder="Search checklist items..." />
+                        </div>
+                        <div class="toolbar-actions">
+                            <button class="icon-btn" id="checklistsHelpBtn" aria-label="Checklists help"
+                                title="Checklists help"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                                    stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                    stroke-linejoin="round">
+                                    <circle cx="12" cy="12" r="10"></circle>
+                                    <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+                                    <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                                </svg></button>
+                        </div>
+                    </div>
+                </div>
+                <div class="texts-content">
+                    <div class="notebook-layout">
+                        <aside class="notebook-sidebar single-section">
                             <section class="notebook-sidebar-section">
                                 <div class="checklists-controls">
                                     <div class="notebook-section-header">
@@ -441,61 +515,71 @@
                                 </div>
                             </section>
                         </aside>
-                        <div class="notebook-content-shell" id="notebookContentShell">
-                            <section class="notes-editor texts-view-pane" id="textsNotesPane">
-                                <div class="notes-editor-header">
-                                    <h3 class="section-title" id="activeNoteTitle">Notes</h3>
+                        <div class="notebook-content-shell">
+                            <section class="checklist-editor texts-view-pane" id="textsChecklistsPane">
+                                <div class="notebook-empty-state" id="checklistsEmptyState" hidden>
+                                    <div class="notebook-empty-state-icon">
+                                        <svg width="40" height="40" viewBox="0 0 24 24" fill="none"
+                                            stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+                                            stroke-linejoin="round">
+                                            <path d="M9 11l3 3L22 4"></path>
+                                            <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+                                        </svg>
+                                    </div>
+                                    <h3 class="notebook-empty-state-title">No checklists yet</h3>
+                                    <p class="notebook-empty-state-body">Create your first checklist from a blank
+                                        slate or a template.</p>
+                                    <button class="btn btn-accent" type="button"
+                                        id="checklistsEmptyStateCreateBtn">+ Create your first checklist</button>
                                 </div>
-                                <div class="inner-tab-content">
-                                    <textarea id="notesTextarea" class="notes-textarea"
-                                        placeholder="Select a page to start writing notes..."></textarea>
-                                </div>
-                                <div id="notesSearchResults" class="notes-search-results"></div>
-                            </section>
-                            <section class="checklist-editor texts-view-pane" id="textsChecklistsPane" hidden>
-                                <div class="checklist-editor-header">
-                                    <input type="text" id="checklistName" class="checklist-name-input"
-                                        placeholder="Checklist Name" />
-                                    <div class="checklist-actions">
-                                        <div class="checklist-action-dropdown checklist-settings-dropdown"
-                                            id="checklistSettingsDropdown" hidden>
-                                            <button class="icon-btn" id="checklistSettingsBtn" type="button"
-                                                aria-label="Checklist options" aria-haspopup="menu"
-                                                aria-expanded="false" title="Checklist options">
-                                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
-                                                    stroke="currentColor" stroke-width="2" stroke-linecap="round"
-                                                    stroke-linejoin="round">
-                                                    <path
-                                                        d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
-                                                    <circle cx="12" cy="12" r="3" />
-                                                </svg>
-                                            </button>
-                                            <div class="checklist-action-menu checklist-settings-menu"
-                                                id="checklistSettingsMenu" role="menu"
-                                                aria-label="Checklist options">
-                                                <button class="checklist-menu-item"
-                                                    id="overrideChecklistTemplateBtn" type="button" role="menuitem"
-                                                    title="Save this checklist over its template">Override
-                                                    template</button>
-                                                <button class="checklist-menu-item" id="resetChecklistBtn"
-                                                    type="button" role="menuitem" title="Reset to default items">Reset
-                                                    to template defaults</button>
-                                                <button class="checklist-menu-item danger" id="deleteChecklistBtn"
-                                                    type="button" role="menuitem" title="Delete this checklist">Delete
-                                                    checklist</button>
+                                <div class="notebook-editor-content" id="checklistsEditorContent">
+                                    <div class="checklist-editor-header">
+                                        <input type="text" id="checklistName" class="checklist-name-input"
+                                            placeholder="Checklist Name" />
+                                        <div class="checklist-actions">
+                                            <div class="checklist-action-dropdown checklist-settings-dropdown"
+                                                id="checklistSettingsDropdown" hidden>
+                                                <button class="icon-btn" id="checklistSettingsBtn" type="button"
+                                                    aria-label="Checklist options" aria-haspopup="menu"
+                                                    aria-expanded="false" title="Checklist options">
+                                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                                                        stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                                        stroke-linejoin="round">
+                                                        <path
+                                                            d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+                                                        <circle cx="12" cy="12" r="3" />
+                                                    </svg>
+                                                </button>
+                                                <div class="checklist-action-menu checklist-settings-menu"
+                                                    id="checklistSettingsMenu" role="menu"
+                                                    aria-label="Checklist options">
+                                                    <button class="checklist-menu-item"
+                                                        id="overrideChecklistTemplateBtn" type="button"
+                                                        role="menuitem"
+                                                        title="Save this checklist over its template">Override
+                                                        template</button>
+                                                    <button class="checklist-menu-item" id="resetChecklistBtn"
+                                                        type="button" role="menuitem"
+                                                        title="Reset to default items">Reset to template
+                                                        defaults</button>
+                                                    <button class="checklist-menu-item danger"
+                                                        id="deleteChecklistBtn" type="button" role="menuitem"
+                                                        title="Delete this checklist">Delete checklist</button>
+                                                </div>
                                             </div>
                                         </div>
                                     </div>
-                                </div>
-                                <div id="checklistSearchResults" class="checklist-search-results"></div>
-                                <div class="checklist-items" id="checklistItemsContainer">
-                                    <!-- Checklist items rendered here -->
-                                </div>
-                                <div class="checklist-add-item">
-                                    <div class="checklist-add-actions">
-                                        <button class="btn btn-accent tiny" id="addChecklistItemBtn">+ Add Item</button>
-                                        <button class="btn tiny checklist-add-subheader-btn"
-                                            id="addChecklistSubheaderBtn">+ Add Subheader</button>
+                                    <div id="checklistSearchResults" class="checklist-search-results"></div>
+                                    <div class="checklist-items" id="checklistItemsContainer">
+                                        <!-- Checklist items rendered here -->
+                                    </div>
+                                    <div class="checklist-add-item">
+                                        <div class="checklist-add-actions">
+                                            <button class="btn btn-accent tiny" id="addChecklistItemBtn">+ Add
+                                                Item</button>
+                                            <button class="btn tiny checklist-add-subheader-btn"
+                                                id="addChecklistSubheaderBtn">+ Add Subheader</button>
+                                        </div>
                                     </div>
                                 </div>
                             </section>
@@ -2033,7 +2117,8 @@
         <div class="modal-body help-dlg-body">
             <nav class="help-dlg-sidebar" id="helpDlgSidebar" aria-label="Help topics">
                 <button type="button" class="help-topic-btn" data-help-topic="projects">Projects</button>
-                <button type="button" class="help-topic-btn" data-help-topic="notebook">Notebook</button>
+                <button type="button" class="help-topic-btn" data-help-topic="notes">Notes</button>
+                <button type="button" class="help-topic-btn" data-help-topic="checklists">Checklists</button>
                 <button type="button" class="help-topic-btn" data-help-topic="tools">Tools</button>
                 <button type="button" class="help-topic-btn" data-help-topic="timesheets">Timesheets</button>
                 <button type="button" class="help-topic-btn" data-help-topic="misc">Misc</button>
@@ -2083,34 +2168,59 @@
                         building a combined scope or invoice.</p>
                 </section>
 
-                <section class="help-topic" data-help-topic="notebook" hidden>
-                    <h2>Notebook</h2>
-                    <p>The Notebook tab holds two kinds of content: free-form <strong>Notes</strong> and structured
-                        <strong>Checklists</strong>. Use the sidebar on the left of the Notebook to switch between
-                        them.
-                    </p>
+                <section class="help-topic" data-help-topic="notes" hidden>
+                    <h2>Notes</h2>
+                    <p>The Notes tab is for free-form writing. Each page has its own tab in the sidebar and
+                        autosaves as you type.</p>
 
-                    <h3>Notes</h3>
+                    <h3>Pages</h3>
                     <ul>
-                        <li><strong>Pages:</strong> create tabs for each topic (meeting logs, standards references,
-                            etc.). Your content autosaves as you type.</li>
-                        <li><strong>Search:</strong> the search box at the top searches across every note page.
-                            Results show the matching pages so you can jump straight in.</li>
-                        <li><strong>Scratchpad:</strong> the pencil icon in the app header opens a quick scratchpad
-                            for unsorted notes that don't need their own page.</li>
+                        <li><strong>Create:</strong> click <em>+ New page</em> in the sidebar to add a tab for each
+                            topic (meeting logs, standards references, etc.).</li>
+                        <li><strong>Delete:</strong> hover a page tab and click the X icon. Deletes are permanent
+                            after confirmation.</li>
+                        <li><strong>Autosave:</strong> content saves as you type — there is no save button.</li>
                     </ul>
 
-                    <h3>Checklists</h3>
+                    <h3>Searching</h3>
                     <ul>
-                        <li><strong>Templates:</strong> new checklists are created from a template. Each checklist
-                            remembers the template it came from.</li>
-                        <li><strong>Subheaders:</strong> use <em>+ Add Subheader</em> to group related items.</li>
+                        <li>The search box at the top of the Notes tab searches the active page. Results show the
+                            matching paragraphs so you can jump straight in.</li>
+                        <li>Click a result to scroll the textarea to that paragraph and select the matching text.</li>
+                    </ul>
+
+                    <h3>Scratchpad</h3>
+                    <p>The pencil icon in the app header opens a quick scratchpad for unsorted notes that don't
+                        need their own page.</p>
+                </section>
+
+                <section class="help-topic" data-help-topic="checklists" hidden>
+                    <h2>Checklists</h2>
+                    <p>The Checklists tab holds structured, repeatable lists. Each checklist starts from a template
+                        and can be customized per project.</p>
+
+                    <h3>Creating</h3>
+                    <ul>
+                        <li><strong>Blank checklist:</strong> click <em>+ New checklist</em> and choose
+                            <em>Blank</em>.</li>
+                        <li><strong>From template:</strong> the same menu lists the templates available for your
+                            current discipline. Each checklist remembers the template it came from.</li>
+                        <li><strong>Subheaders:</strong> use <em>+ Add Subheader</em> in the editor to group
+                            related items.</li>
+                    </ul>
+
+                    <h3>Template actions</h3>
+                    <ul>
                         <li><strong>Override template:</strong> saves the current checklist's items back to its
                             template so future checklists start from the updated version.</li>
                         <li><strong>Reset to template defaults:</strong> restores the checklist to whatever its
                             template currently contains.</li>
                         <li><strong>Delete:</strong> removes the checklist. The template is not affected.</li>
                     </ul>
+
+                    <h3>Searching</h3>
+                    <p>The search box at the top filters the active checklist's items. Click a result to focus
+                        that row in the editor.</p>
                 </section>
 
                 <section class="help-topic" data-help-topic="tools" hidden>

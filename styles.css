@@ -5783,7 +5783,8 @@ dialog::backdrop {
   min-height: 600px;
 }
 
-#texts-panel .full-height {
+#notes-panel .full-height,
+#checklists-panel .full-height {
   height: clamp(700px, calc(100vh - var(--header-height) - 3.5rem), 920px);
   min-height: clamp(700px, calc(100vh - var(--header-height) - 3.5rem), 920px);
   max-height: clamp(700px, calc(100vh - var(--header-height) - 3.5rem), 920px);
@@ -5900,6 +5901,10 @@ dialog::backdrop {
   min-height: 0;
 }
 
+.notebook-sidebar.single-section {
+  gap: 0;
+}
+
 .notebook-sidebar-section {
   flex: 1 1 0;
   display: flex;
@@ -5907,6 +5912,68 @@ dialog::backdrop {
   justify-content: flex-start;
   align-items: stretch;
   min-height: 0;
+}
+
+.notebook-sidebar.single-section .notebook-sidebar-section {
+  flex: 1 1 100%;
+}
+
+.notebook-editor-content {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.notebook-editor-content[hidden] {
+  display: none;
+}
+
+.notebook-empty-state {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 0.75rem;
+  padding: 3rem 1.5rem;
+  color: var(--text-secondary);
+}
+
+.notebook-empty-state[hidden] {
+  display: none;
+}
+
+.notebook-empty-state-icon {
+  width: 64px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--bg-tertiary);
+  color: var(--accent);
+  margin-bottom: 0.25rem;
+}
+
+.notebook-empty-state-title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.notebook-empty-state-body {
+  margin: 0;
+  max-width: 320px;
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.notebook-empty-state .btn {
+  margin-top: 0.5rem;
 }
 
 .notebook-content-shell {
@@ -6087,7 +6154,8 @@ dialog::backdrop {
 }
 
 @media (max-width: 900px) {
-  #texts-panel .full-height {
+  #notes-panel .full-height,
+  #checklists-panel .full-height {
     height: clamp(620px, calc(100vh - var(--header-height) - 2.5rem), 780px);
     min-height: clamp(620px, calc(100vh - var(--header-height) - 2.5rem), 780px);
     max-height: clamp(620px, calc(100vh - var(--header-height) - 2.5rem), 780px);
@@ -10818,19 +10886,39 @@ input:checked+.slider:before {
   width: 1.4rem;
   height: 1.4rem;
   flex: 0 0 auto;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   border-radius: 999px;
   color: currentColor;
   line-height: 1;
-  opacity: 0.45;
+  opacity: 0;
+  transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
+  cursor: pointer;
+}
+
+.notes-nav-list .tab-delete-icon svg,
+.checklists-nav-list .tab-delete-icon svg {
+  display: block;
+}
+
+.notes-nav-list .inner-tab-btn:hover .tab-delete-icon,
+.checklists-nav-list .inner-tab-btn:hover .tab-delete-icon,
+.notes-nav-list .inner-tab-btn:focus-within .tab-delete-icon,
+.checklists-nav-list .inner-tab-btn:focus-within .tab-delete-icon,
+.notes-nav-list .inner-tab-btn.active .tab-delete-icon,
+.checklists-nav-list .inner-tab-btn.active .tab-delete-icon {
+  opacity: 0.55;
 }
 
 .notes-nav-list .tab-delete-icon:hover,
-.checklists-nav-list .tab-delete-icon:hover {
+.checklists-nav-list .tab-delete-icon:hover,
+.notes-nav-list .tab-delete-icon:focus-visible,
+.checklists-nav-list .tab-delete-icon:focus-visible {
   background: rgba(239, 68, 68, 0.16);
   color: #ef4444;
   opacity: 1;
+  outline: none;
 }
 
 .notes-nav-list .add-tab-btn,
@@ -11638,6 +11726,9 @@ input:checked+.slider:before {
 
 .projects-column-config-wrap {
   position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .column-config-menu {
@@ -11742,6 +11833,7 @@ input:checked+.slider:before {
 
 .projects-card-view {
   --projects-card-column-width: min(480px, calc(100vw - 32px));
+  --projects-card-empty-column-width: 112px;
   --projects-card-view-height: max(
     360px,
     calc(100vh - var(--header-height) - var(--toolbar-height) - 5.5rem)
@@ -11807,6 +11899,52 @@ body[data-active-tab="projects"][data-projects-view-mode="card"] .projects-card-
   border-radius: 10px;
   min-height: var(--projects-card-view-height);
   max-height: var(--projects-card-view-height);
+}
+
+.projects-card-view.minimize-empty-columns .kanban-column.is-empty {
+  flex-basis: var(--projects-card-empty-column-width);
+  width: var(--projects-card-empty-column-width);
+  max-width: var(--projects-card-empty-column-width);
+}
+
+.projects-card-view.minimize-empty-columns
+  .kanban-column.is-empty
+  .kanban-column__header {
+  justify-content: center;
+  padding: 10px 6px;
+}
+
+.projects-card-view.minimize-empty-columns
+  .kanban-column.is-empty
+  .kanban-column__title {
+  width: 100%;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  text-align: center;
+}
+
+.projects-card-view.minimize-empty-columns
+  .kanban-column.is-empty
+  .kanban-column__label {
+  max-width: 100%;
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.projects-card-view.minimize-empty-columns
+  .kanban-column.is-empty
+  .kanban-column__cards {
+  padding: 8px 6px;
+}
+
+.projects-card-view.minimize-empty-columns
+  .kanban-column.is-empty
+  .kanban-column__empty {
+  padding: 12px 4px;
+  font-size: 11px;
 }
 
 .kanban-card-project-meta {

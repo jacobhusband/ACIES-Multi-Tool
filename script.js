@@ -27,7 +27,7 @@ const KEY_TO_LABEL = {
   complete: "Complete",
   delivered: "Delivered",
 };
-const HELP_TOPICS = ["projects", "notebook", "tools", "timesheets", "misc"];
+const HELP_TOPICS = ["projects", "notes", "checklists", "tools", "timesheets", "misc"];
 const THEME_STORAGE_KEY = "acies-theme";
 const FIREBASE_JS_SDK_VERSION = "12.7.0";
 const FIREBASE_COMPAT_SCRIPT_URLS = [
@@ -8917,6 +8917,7 @@ let userSettings = {
   groupDeliverablesByProject: false,
   projectsViewMode: "list",
   projectsWideLayout: true,
+  minimizeEmptyProjectColumns: true,
   projectCardColumns: DEFAULT_PROJECT_CARD_COLUMNS.map((c) => ({ ...c })),
   defaultPmInitials: "",
   cleanDwgOptions: { ...DEFAULT_CLEAN_DWG_OPTIONS },
@@ -9146,6 +9147,7 @@ let separateDeliverableCompletionGroups = true;
 let groupDeliverablesByProject = false;
 let projectsViewMode = "list";
 let projectsWideLayout = true;
+let minimizeEmptyProjectColumns = true;
 let projectCardColumns = DEFAULT_PROJECT_CARD_COLUMNS.map((c) => ({ ...c }));
 let projectCardWeek = getWeekStartDate(new Date());
 const PROJECTS_CARD_HORIZONTAL_WHEEL_MULTIPLIER = 0.4;
@@ -9222,15 +9224,18 @@ function syncProjectViewPreferencesFromSettings() {
   projectsViewMode =
     userSettings.projectsViewMode === "card" ? "card" : "list";
   projectsWideLayout = userSettings.projectsWideLayout !== false;
+  minimizeEmptyProjectColumns =
+    userSettings.minimizeEmptyProjectColumns !== false;
   projectCardColumns = normalizeProjectCardColumns(
     userSettings.projectCardColumns
   );
   userSettings.projectsWideLayout = projectsWideLayout;
+  userSettings.minimizeEmptyProjectColumns = minimizeEmptyProjectColumns;
   userSettings.projectCardColumns = projectCardColumns.map((c) => ({ ...c }));
   updateProjectsLayoutWidthUi();
+  updateProjectsEmptyColumnUi();
 }
 let activeNoteTab = null;
-let activeNotebookType = "note";
 let notesSearchQuery = "";
 let scratchpadHtml = "";
 let checklistSearchQuery = "";
@@ -11621,6 +11626,7 @@ function getDefaultSyncableSettings() {
     groupDeliverablesByProject: false,
     projectsViewMode: "list",
     projectsWideLayout: true,
+    minimizeEmptyProjectColumns: true,
     projectCardColumns: DEFAULT_PROJECT_CARD_COLUMNS.map((c) => ({ ...c })),
     defaultPmInitials: "",
     cleanDwgOptions: { ...DEFAULT_CLEAN_DWG_OPTIONS },
@@ -11650,6 +11656,7 @@ function sanitizeSettingsForCloud(settings = userSettings) {
     groupDeliverablesByProject: source.groupDeliverablesByProject === true,
     projectsViewMode: source.projectsViewMode === "card" ? "card" : "list",
     projectsWideLayout: source.projectsWideLayout !== false,
+    minimizeEmptyProjectColumns: source.minimizeEmptyProjectColumns !== false,
     projectCardColumns: normalizeProjectCardColumns(source.projectCardColumns),
     defaultPmInitials: String(source.defaultPmInitials || "")
       .trim()
@@ -11690,6 +11697,7 @@ function normalizeCloudSettingsDoc(raw = {}) {
     groupDeliverablesByProject: source.groupDeliverablesByProject === true,
     projectsViewMode: source.projectsViewMode === "card" ? "card" : "list",
     projectsWideLayout: source.projectsWideLayout !== false,
+    minimizeEmptyProjectColumns: source.minimizeEmptyProjectColumns !== false,
     projectCardColumns: normalizeProjectCardColumns(source.projectCardColumns),
     defaultPmInitials: String(source.defaultPmInitials || "")
       .trim()
@@ -12373,7 +12381,6 @@ async function prepareLocalStateForUserSwitch(nextUid) {
   notesDb = {};
   noteTabs = ["General"];
   activeNoteTab = "General";
-  activeNotebookType = "note";
   notesSearchQuery = "";
   checklistSearchQuery = "";
   timesheetDb = { weeks: {}, lastModified: null };
@@ -12407,8 +12414,8 @@ async function prepareLocalStateForUserSwitch(nextUid) {
   syncAllCloudComparableFingerprints();
   renderNoteTabs();
   renderChecklistTabs();
-  renderChecklistItems();
-  renderTextsView();
+  renderNotesView();
+  renderChecklistsView();
   renderTemplates();
   renderTimesheets();
   render();
@@ -12625,7 +12632,6 @@ async function applyRemoteCloudDoc(domain, remoteDoc) {
       noteTabs = [...cloudNotes.tabs];
       notesDb = deepCloneJson(cloudNotes.general, {});
       activeNoteTab = noteTabs.includes(activeNoteTab) ? activeNoteTab : noteTabs[0];
-      ensureActiveNotebookSelection(activeNotebookType);
       touchLocalSyncTimestamp("notes", cloudNotes.updatedAt);
       await saveNotes({
         skipCloud: true,
@@ -12633,9 +12639,7 @@ async function applyRemoteCloudDoc(domain, remoteDoc) {
         silent: true,
       });
       renderNoteTabs();
-      renderChecklistTabs();
-      renderTextsView();
-      renderNoteSearchResults();
+      renderNotesView();
       return cloudNotes.updatedAt;
     }
     if (domain === "templates") {
@@ -12668,16 +12672,14 @@ async function applyRemoteCloudDoc(domain, remoteDoc) {
       activeChecklistTabId =
         checklistsDb.checklists.find((checklist) => checklist.id === activeChecklistTabId)
           ?.id || checklistsDb.checklists[0]?.id || null;
-      ensureActiveNotebookSelection(activeNotebookType);
       touchLocalSyncTimestamp("checklists", cloudChecklists.updatedAt);
       await saveChecklists({
         skipCloud: true,
         saveTimestamp: false,
         silent: true,
       });
-      renderNoteTabs();
       renderChecklistTabs();
-      renderTextsView();
+      renderChecklistsView();
       return cloudChecklists.updatedAt;
     }
   } finally {
@@ -13308,6 +13310,8 @@ async function loadUserSettings() {
     userSettings.groupDeliverablesByProject =
       userSettings.groupDeliverablesByProject === true;
     userSettings.projectsWideLayout = userSettings.projectsWideLayout !== false;
+    userSettings.minimizeEmptyProjectColumns =
+      userSettings.minimizeEmptyProjectColumns !== false;
     userSettings.cloudSync = normalizeCloudSyncSettings(userSettings.cloudSync);
     syncProjectViewPreferencesFromSettings();
     updateCloudSyncState({
@@ -23685,6 +23689,27 @@ function updateProjectsLayoutWidthUi() {
   if (containedIcon) containedIcon.hidden = isWide;
 }
 
+function updateProjectsEmptyColumnUi() {
+  const enabled = minimizeEmptyProjectColumns !== false;
+  if (document.body) {
+    document.body.dataset.minimizeEmptyProjectColumns = enabled ? "true" : "false";
+  }
+
+  const cardView = document.getElementById("projectsCardView");
+  if (cardView) {
+    cardView.classList.toggle("minimize-empty-columns", enabled);
+  }
+
+  const toggleBtn = document.getElementById("projectsEmptyColumnsToggle");
+  if (!toggleBtn) return;
+
+  const stateLabel = enabled ? "Minimize empty columns" : "Use full-width empty columns";
+  toggleBtn.classList.toggle("is-active", enabled);
+  toggleBtn.setAttribute("aria-pressed", String(enabled));
+  toggleBtn.setAttribute("aria-label", stateLabel);
+  toggleBtn.title = stateLabel;
+}
+
 function updateWeekNavLabel() {
   const label = document.getElementById("weekNavLabel");
   const todayBtn = document.getElementById("weekNavToday");
@@ -23742,6 +23767,7 @@ function renderCardView(items = db, projectListContextMap = null) {
   const host = document.getElementById("projectsCardView");
   if (!host) return;
   host.innerHTML = "";
+  updateProjectsEmptyColumnUi();
 
   const weekStart = projectCardWeek;
   const currentWeekStart = getWeekStartDate(new Date());
@@ -23801,11 +23827,15 @@ function renderCardView(items = db, projectListContextMap = null) {
   }
 
   for (const col of visibleColumns) {
+    const bucketRows = buckets.get(col.key);
+    sortCardViewBucketRows(col.key, bucketRows);
+
     const slug = KANBAN_COLUMN_SLUGS[col.key] || "other";
     const column = el("section", {
       className: `kanban-column kanban-column--${slug}`,
     });
     column.dataset.columnKey = col.key;
+    column.classList.toggle("is-empty", bucketRows.length === 0);
 
     const header = el("header", { className: "kanban-column__header" });
     const titleWrap = el("div", { className: "kanban-column__title" });
@@ -23816,14 +23846,11 @@ function renderCardView(items = db, projectListContextMap = null) {
       }),
       el("span", {
         className: "kanban-column__count",
-        textContent: String(buckets.get(col.key).length),
+        textContent: String(bucketRows.length),
       })
     );
     header.appendChild(titleWrap);
     column.appendChild(header);
-
-    const bucketRows = buckets.get(col.key);
-    sortCardViewBucketRows(col.key, bucketRows);
 
     const cardsHost = el("div", { className: "kanban-column__cards" });
     if (bucketRows.length === 0) {
@@ -23874,6 +23901,18 @@ function setProjectsWideLayout(enabled, options = {}) {
   projectsWideLayout = next;
   userSettings.projectsWideLayout = next;
   updateProjectsLayoutWidthUi();
+
+  if (shouldPersist && typeof debouncedSaveUserSettings === "function") {
+    debouncedSaveUserSettings();
+  }
+}
+
+function setMinimizeEmptyProjectColumns(enabled, options = {}) {
+  const next = enabled !== false;
+  const shouldPersist = options.persist !== false;
+  minimizeEmptyProjectColumns = next;
+  userSettings.minimizeEmptyProjectColumns = next;
+  updateProjectsEmptyColumnUi();
 
   if (shouldPersist && typeof debouncedSaveUserSettings === "function") {
     debouncedSaveUserSettings();
@@ -23947,11 +23986,17 @@ function setupProjectsViewModeControls() {
   const listBtn = document.getElementById("viewToggleList");
   const cardBtn = document.getElementById("viewToggleCard");
   const widthBtn = document.getElementById("projectsWidthToggle");
+  const emptyColumnsBtn = document.getElementById("projectsEmptyColumnsToggle");
   if (listBtn) listBtn.addEventListener("click", () => setProjectsViewMode("list"));
   if (cardBtn) cardBtn.addEventListener("click", () => setProjectsViewMode("card"));
   if (widthBtn) {
     widthBtn.addEventListener("click", () =>
       setProjectsWideLayout(!projectsWideLayout)
+    );
+  }
+  if (emptyColumnsBtn) {
+    emptyColumnsBtn.addEventListener("click", () =>
+      setMinimizeEmptyProjectColumns(!minimizeEmptyProjectColumns)
     );
   }
   bindProjectsCardViewWheelScroll();
@@ -23980,6 +24025,7 @@ function setupProjectsViewModeControls() {
 
   updateProjectsViewModeUi();
   updateProjectsLayoutWidthUi();
+  updateProjectsEmptyColumnUi();
   updateWeekNavLabel();
 }
 
@@ -26156,10 +26202,6 @@ function importRows(rows, hasHeader = true) {
 // ===================== NOTES SYSTEM =====================
 const debouncedSaveNotes = debounce(saveNotes, 500);
 
-function normalizeNotebookType(type) {
-  return type === "checklist" ? "checklist" : "note";
-}
-
 function hasActiveNoteSelection() {
   return Boolean(activeNoteTab && noteTabs.includes(activeNoteTab));
 }
@@ -26168,121 +26210,94 @@ function hasActiveChecklistSelection() {
   return Boolean(getChecklistById(activeChecklistTabId));
 }
 
-function ensureActiveNotebookSelection(preferredType = activeNotebookType) {
-  const normalizedPreferred = normalizeNotebookType(preferredType);
-  const hasNote = hasActiveNoteSelection();
-  const hasChecklist = hasActiveChecklistSelection();
-
-  if (normalizedPreferred === "note" && hasNote) {
-    activeNotebookType = "note";
-    return;
-  }
-
-  if (normalizedPreferred === "checklist" && hasChecklist) {
-    activeNotebookType = "checklist";
-    return;
-  }
-
-  if (hasNote) {
-    activeNotebookType = "note";
-    return;
-  }
-
-  if (hasChecklist) {
-    activeNotebookType = "checklist";
-    return;
-  }
-
-  activeNotebookType = "note";
-}
-
-function syncNotebookSearchUi() {
+function renderNotesView() {
   const searchInput = document.getElementById("notesSearch");
-  if (!searchInput) return;
+  const emptyState = document.getElementById("notesEmptyState");
+  const editorContent = document.getElementById("notesEditorContent");
+  const hasSelection = hasActiveNoteSelection();
 
-  const isChecklistMode = activeNotebookType === "checklist";
-  const hasActiveSelection = isChecklistMode
-    ? hasActiveChecklistSelection()
-    : hasActiveNoteSelection();
-  const nextValue = isChecklistMode ? checklistSearchQuery : notesSearchQuery;
-
-  searchInput.placeholder = isChecklistMode
-    ? "Search checklist items..."
-    : "Search notes...";
-  searchInput.disabled = !hasActiveSelection;
-  if (searchInput.value !== nextValue) {
-    searchInput.value = nextValue;
+  if (searchInput) {
+    searchInput.disabled = !hasSelection;
+    if (searchInput.value !== notesSearchQuery) {
+      searchInput.value = notesSearchQuery;
+    }
   }
+
+  if (emptyState) emptyState.hidden = hasSelection;
+  if (editorContent) editorContent.hidden = !hasSelection;
+
+  renderNoteSearchResults();
+  updateActiveNoteTextarea();
 }
 
-function handleNotebookSearchInput(e) {
-  const nextValue = String(e?.target?.value || "");
-  if (activeNotebookType === "checklist") {
-    checklistSearchQuery = nextValue;
-    renderChecklistSearchResults();
+function renderChecklistsView() {
+  const searchInput = document.getElementById("checklistsSearch");
+  const emptyState = document.getElementById("checklistsEmptyState");
+  const editorContent = document.getElementById("checklistsEditorContent");
+  const hasSelection = hasActiveChecklistSelection();
+
+  if (searchInput) {
+    searchInput.disabled = !hasSelection;
+    if (searchInput.value !== checklistSearchQuery) {
+      searchInput.value = checklistSearchQuery;
+    }
+  }
+
+  if (emptyState) emptyState.hidden = hasSelection;
+  if (editorContent) editorContent.hidden = !hasSelection;
+
+  renderChecklistSearchResults();
+  renderChecklistItems();
+}
+
+function createTabDeleteIcon(title, onClick) {
+  const span = el("span", {
+    className: "tab-delete-icon",
+    role: "button",
+    tabIndex: "0",
+    title,
+    "aria-label": title,
+    onclick: onClick,
+    onkeydown: (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        onClick(e);
+      }
+    },
+  });
+  span.innerHTML =
+    '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="4" y1="4" x2="12" y2="12"/><line x1="12" y1="4" x2="4" y2="12"/></svg>';
+  return span;
+}
+
+function promptCreateNotePage() {
+  const name = prompt("Enter name for new page:");
+  if (!name || !name.trim()) return;
+  const trimmed = name.trim();
+  if (noteTabs.includes(trimmed)) {
+    toast("Page name already exists.");
     return;
   }
-
-  notesSearchQuery = nextValue;
-  renderNoteSearchResults();
-}
-
-function renderTextsView() {
-  ensureActiveNotebookSelection();
-
-  const searchWrap = document.getElementById("textsSearchWrap");
-  const notesPane = document.getElementById("textsNotesPane");
-  const checklistsPane = document.getElementById("textsChecklistsPane");
-  const helpBtn = document.getElementById("textsHelpBtn");
-  const isChecklistMode = activeNotebookType === "checklist";
-
-  if (searchWrap) {
-    searchWrap.hidden = false;
-    searchWrap.setAttribute("aria-hidden", "false");
-  }
-
-  syncNotebookSearchUi();
-
-  if (helpBtn) {
-    const label = isChecklistMode ? "Checklists help" : "Notes help";
-    helpBtn.title = label;
-    helpBtn.setAttribute("aria-label", label);
-    helpBtn.onclick = () => openHelp("notebook");
-  }
-
-  if (notesPane) {
-    notesPane.hidden = isChecklistMode;
-    notesPane.setAttribute("aria-hidden", String(isChecklistMode));
-  }
-
-  if (checklistsPane) {
-    checklistsPane.hidden = !isChecklistMode;
-    checklistsPane.setAttribute("aria-hidden", String(!isChecklistMode));
-  }
-
-  if (isChecklistMode) {
-    renderChecklistSearchResults();
-  } else {
-    renderNoteSearchResults();
-  }
+  noteTabs.push(trimmed);
+  activeNoteTab = trimmed;
+  saveNotes();
+  renderNoteTabs();
+  renderNotesView();
 }
 
 function renderNoteTabs() {
-  ensureActiveNotebookSelection();
   const container = document.getElementById("notesTabsContainer");
+  if (!container) return;
   container.innerHTML = "";
   noteTabs.forEach((tabName) => {
-    const isActive = activeNotebookType === "note" && tabName === activeNoteTab;
+    const isActive = tabName === activeNoteTab;
     const btn = el("button", {
       className: `inner-tab-btn ${isActive ? "active" : ""}`,
       type: "button",
       onclick: () => {
         activeNoteTab = tabName;
-        activeNotebookType = "note";
         renderNoteTabs();
-        renderChecklistTabs();
-        renderTextsView();
-        renderNoteSearchResults();
+        renderNotesView();
       },
     });
     btn.appendChild(
@@ -26291,28 +26306,22 @@ function renderNoteTabs() {
         textContent: tabName,
       })
     );
-    const delIcon = el("span", {
-      className: "tab-delete-icon",
-      textContent: "x",
-      title: "Delete Page",
-      onclick: (e) => {
-        e.stopPropagation();
-        if (confirm(`Permanently delete page "${tabName}"?`)) {
-          const idx = noteTabs.indexOf(tabName);
-          if (idx > -1) {
-            noteTabs.splice(idx, 1);
-            delete notesDb[tabName];
-            if (activeNoteTab === tabName)
-              activeNoteTab =
-                noteTabs.length > 0 ? noteTabs[Math.max(0, idx - 1)] : null;
-            ensureActiveNotebookSelection(activeNotebookType);
-            saveNotes();
-            renderNoteTabs();
-            renderChecklistTabs();
-            renderTextsView();
+    const delIcon = createTabDeleteIcon("Delete page", (e) => {
+      e.stopPropagation();
+      if (confirm(`Permanently delete page "${tabName}"?`)) {
+        const idx = noteTabs.indexOf(tabName);
+        if (idx > -1) {
+          noteTabs.splice(idx, 1);
+          delete notesDb[tabName];
+          if (activeNoteTab === tabName) {
+            activeNoteTab =
+              noteTabs.length > 0 ? noteTabs[Math.max(0, idx - 1)] : null;
           }
+          saveNotes();
+          renderNoteTabs();
+          renderNotesView();
         }
-      },
+      }
     });
     btn.appendChild(delIcon);
     container.appendChild(btn);
@@ -26323,20 +26332,7 @@ function renderNoteTabs() {
     textContent: "+",
     title: "Add New Page",
     "aria-label": "Add new page",
-    onclick: () => {
-      const name = prompt("Enter name for new page:");
-      if (name && name.trim()) {
-        if (!noteTabs.includes(name.trim())) {
-          noteTabs.push(name.trim());
-          activeNoteTab = name.trim();
-          activeNotebookType = "note";
-          saveNotes();
-          renderNoteTabs();
-          renderChecklistTabs();
-          renderTextsView();
-        } else toast("Page name already exists.");
-      }
-    },
+    onclick: promptCreateNotePage,
   });
   container.appendChild(addBtn);
   updateActiveNoteTextarea();
@@ -26580,17 +26576,14 @@ function handleCreateBlankChecklist() {
   checklistCreateMenuOpen = false;
   const name = prompt("Enter name for new checklist:");
   if (!name || !name.trim()) {
-    renderNoteTabs();
     renderChecklistTabs();
-    renderTextsView();
+    renderChecklistsView();
     return;
   }
   const newChecklist = createChecklist(name.trim());
   activeChecklistTabId = newChecklist.id;
-  activeNotebookType = "checklist";
-  renderNoteTabs();
   renderChecklistTabs();
-  renderTextsView();
+  renderChecklistsView();
 }
 
 function handleCreateChecklistFromTemplate(templateKey) {
@@ -26598,20 +26591,16 @@ function handleCreateChecklistFromTemplate(templateKey) {
   const newChecklist = createChecklistFromTemplate(templateKey);
   if (!newChecklist) {
     toast("Template not found.");
-    renderNoteTabs();
     renderChecklistTabs();
-    renderTextsView();
+    renderChecklistsView();
     return;
   }
   activeChecklistTabId = newChecklist.id;
-  activeNotebookType = "checklist";
-  renderNoteTabs();
   renderChecklistTabs();
-  renderTextsView();
+  renderChecklistsView();
 }
 
 function renderChecklistTabs() {
-  ensureActiveNotebookSelection();
   const container = document.getElementById("checklistsTabsContainer");
   const actionsContainer = document.getElementById("checklistsSidebarActions");
   if (!container) return;
@@ -26622,18 +26611,15 @@ function renderChecklistTabs() {
   }
 
   checklistsDb.checklists.forEach((checklist) => {
-    const isActive =
-      activeNotebookType === "checklist" && checklist.id === activeChecklistTabId;
+    const isActive = checklist.id === activeChecklistTabId;
     const btn = el("button", {
       className: `inner-tab-btn ${isActive ? "active" : ""}`,
       type: "button",
       onclick: () => {
         closeChecklistMenus();
         activeChecklistTabId = checklist.id;
-        activeNotebookType = "checklist";
-        renderNoteTabs();
         renderChecklistTabs();
-        renderTextsView();
+        renderChecklistsView();
       },
     });
     btn.appendChild(
@@ -26643,25 +26629,17 @@ function renderChecklistTabs() {
       })
     );
 
-    // Add remove icon
-    const delIcon = el("span", {
-      className: "tab-delete-icon",
-      textContent: "x",
-      title: "Delete Checklist",
-      onclick: (e) => {
-        e.stopPropagation();
-        if (confirm(`Permanently delete checklist "${checklist.name}"?`)) {
-          closeChecklistMenus();
-          deleteChecklist(checklist.id);
-          if (activeChecklistTabId === checklist.id) {
-            activeChecklistTabId = checklistsDb.checklists[0]?.id || null;
-          }
-          ensureActiveNotebookSelection(activeNotebookType);
-          renderNoteTabs();
-          renderChecklistTabs();
-          renderTextsView();
+    const delIcon = createTabDeleteIcon("Delete checklist", (e) => {
+      e.stopPropagation();
+      if (confirm(`Permanently delete checklist "${checklist.name}"?`)) {
+        closeChecklistMenus();
+        deleteChecklist(checklist.id);
+        if (activeChecklistTabId === checklist.id) {
+          activeChecklistTabId = checklistsDb.checklists[0]?.id || null;
         }
-      },
+        renderChecklistTabs();
+        renderChecklistsView();
+      }
     });
     btn.appendChild(delIcon);
 
@@ -26671,7 +26649,6 @@ function renderChecklistTabs() {
   if (activeChecklistTabId && !getChecklistById(activeChecklistTabId)) {
     activeChecklistTabId = checklistsDb.checklists[0]?.id || null;
   }
-  ensureActiveNotebookSelection(activeNotebookType);
 
   const sidebarActionsTarget = actionsContainer || container;
   const templates = getChecklistTemplatesForCurrentDisciplines();
@@ -27103,10 +27080,8 @@ document.getElementById("deleteChecklistBtn")?.addEventListener("click", () => {
   if (checklist && confirm(`Delete checklist "${checklist.name}"?`)) {
     deleteChecklist(checklist.id);
     activeChecklistTabId = checklistsDb.checklists[0]?.id || null;
-    ensureActiveNotebookSelection(activeNotebookType);
-    renderNoteTabs();
     renderChecklistTabs();
-    renderTextsView();
+    renderChecklistsView();
     return;
   }
   syncChecklistMenuUi();
@@ -31899,11 +31874,13 @@ function initTabbedInterfaces() {
       p.classList.toggle("active", p.id === `${tab}-panel`);
     });
 
-    if (tab !== "texts" && notesResults) notesResults.innerHTML = "";
-    if (tab !== "texts" && checklistResults) checklistResults.innerHTML = "";
+    if (tab !== "notes" && notesResults) notesResults.innerHTML = "";
+    if (tab !== "checklists" && checklistResults) checklistResults.innerHTML = "";
 
-    if (tab === "texts") {
-      renderTextsView();
+    if (tab === "notes") {
+      renderNotesView();
+    } else if (tab === "checklists") {
+      renderChecklistsView();
     } else if (tab === "tools") {
       ensureBundlesRendered();
     } else if (tab === "projects") {
@@ -31995,7 +31972,6 @@ function handleProjectSearchInput() {
 
 function getActiveHelpTopic() {
   const tab = document.querySelector(".main-tab-btn.active")?.dataset.tab;
-  if (tab === "texts") return "notebook";
   return HELP_TOPICS.includes(tab) ? tab : "projects";
 }
 
@@ -32025,13 +32001,41 @@ function initEventListeners() {
   );
   document.getElementById("notesSearch").addEventListener(
     "input",
-    debounce((e) => handleNotebookSearchInput(e), 250)
+    debounce((e) => {
+      notesSearchQuery = String(e?.target?.value || "");
+      renderNoteSearchResults();
+    }, 250)
+  );
+  document.getElementById("checklistsSearch").addEventListener(
+    "input",
+    debounce((e) => {
+      checklistSearchQuery = String(e?.target?.value || "");
+      renderChecklistSearchResults();
+    }, 250)
   );
 
   document.getElementById("mainHelpBtn").onclick = () =>
     openHelp(getActiveHelpTopic());
   document.getElementById("projectsHelpBtn").onclick = () =>
     openHelp("projects");
+  const notesHelpBtn = document.getElementById("notesHelpBtn");
+  if (notesHelpBtn) notesHelpBtn.onclick = () => openHelp("notes");
+  const checklistsHelpBtn = document.getElementById("checklistsHelpBtn");
+  if (checklistsHelpBtn) checklistsHelpBtn.onclick = () => openHelp("checklists");
+
+  const notesEmptyCreate = document.getElementById("notesEmptyStateCreateBtn");
+  if (notesEmptyCreate) notesEmptyCreate.onclick = promptCreateNotePage;
+  const checklistsEmptyCreate = document.getElementById(
+    "checklistsEmptyStateCreateBtn"
+  );
+  if (checklistsEmptyCreate) {
+    checklistsEmptyCreate.onclick = () => {
+      checklistCreateMenuOpen = true;
+      syncChecklistMenuUi();
+      const trigger = document.querySelector(".checklist-create-trigger");
+      if (trigger) trigger.focus();
+    };
+  }
   const helpDlgSidebar = document.getElementById("helpDlgSidebar");
   if (helpDlgSidebar) {
     helpDlgSidebar.addEventListener("click", (e) => {
@@ -33817,7 +33821,6 @@ async function init() {
     } else {
       activeChecklistTabId = null;
     }
-    ensureActiveNotebookSelection(activeNotebookType);
 
     if (isNewUser()) {
       hideMainApp();
@@ -33826,8 +33829,8 @@ async function init() {
       showMainApp();
       renderNoteTabs();
       renderChecklistTabs();
-      renderChecklistItems();
-      renderTextsView();
+      renderNotesView();
+      renderChecklistsView();
       renderTemplates();
       renderTimesheets();
       render();

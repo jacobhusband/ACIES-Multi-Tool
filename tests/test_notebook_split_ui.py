@@ -18,114 +18,145 @@ def get_css_block(css: str, selector: str) -> str:
 
 
 class NotebookSplitUiTests(unittest.TestCase):
-    def test_notebook_markup_uses_shared_content_shell(self):
+    def test_main_nav_has_separate_notes_and_checklists_tabs(self):
         html = INDEX_HTML_PATH.read_text(encoding="utf-8")
 
-        self.assertIn('class="notebook-layout"', html)
-        self.assertIn('class="notebook-sidebar"', html)
-        self.assertIn('id="notebookContentShell"', html)
+        self.assertIn('data-tab="notes">Notes</button>', html)
+        self.assertIn('data-tab="checklists">Checklists</button>', html)
+        self.assertNotIn('data-tab="texts"', html)
+        self.assertNotIn('id="texts-panel"', html)
+
+        notes_idx = html.index('data-tab="notes"')
+        checklists_idx = html.index('data-tab="checklists"')
+        tools_idx = html.index('data-tab="tools"')
+        self.assertLess(notes_idx, checklists_idx)
+        self.assertLess(checklists_idx, tools_idx)
+
+    def test_notes_and_checklists_panels_are_independent(self):
+        html = INDEX_HTML_PATH.read_text(encoding="utf-8")
+
+        self.assertIn('id="notes-panel"', html)
+        self.assertIn('id="checklists-panel"', html)
+
+        self.assertIn('id="notesSearch"', html)
+        self.assertIn('id="checklistsSearch"', html)
+        self.assertIn('id="notesHelpBtn"', html)
+        self.assertIn('id="checklistsHelpBtn"', html)
+
         self.assertIn('id="notesTabsContainer"', html)
         self.assertIn('id="checklistsTabsContainer"', html)
         self.assertIn('id="textsNotesPane"', html)
         self.assertIn('id="textsChecklistsPane"', html)
-        self.assertIn('id="checklistSearchResults"', html)
-        self.assertNotIn('id="checklistsHelpBtn"', html)
 
-        shell_index = html.index('id="notebookContentShell"')
-        notes_index = html.index('id="textsNotesPane"')
-        checklists_index = html.index('id="textsChecklistsPane"')
-        self.assertLess(shell_index, notes_index)
-        self.assertLess(notes_index, checklists_index)
+        notes_panel_idx = html.index('id="notes-panel"')
+        checklists_panel_idx = html.index('id="checklists-panel"')
+        notes_tabs_idx = html.index('id="notesTabsContainer"')
+        checklists_tabs_idx = html.index('id="checklistsTabsContainer"')
 
-        checklist_section_match = re.search(
-            r'<section[^>]*id="textsChecklistsPane"[^>]*>',
-            html,
-        )
-        self.assertIsNotNone(checklist_section_match)
-        self.assertIn("hidden", checklist_section_match.group(0))
+        self.assertLess(notes_panel_idx, notes_tabs_idx)
+        self.assertLess(notes_tabs_idx, checklists_panel_idx)
+        self.assertLess(checklists_panel_idx, checklists_tabs_idx)
 
-    def test_notebook_script_uses_shared_active_type_and_mode_aware_search(self):
+    def test_panels_include_empty_state_blocks(self):
+        html = INDEX_HTML_PATH.read_text(encoding="utf-8")
+
+        self.assertIn('id="notesEmptyState"', html)
+        self.assertIn('id="checklistsEmptyState"', html)
+        self.assertIn('id="notesEditorContent"', html)
+        self.assertIn('id="checklistsEditorContent"', html)
+        self.assertIn('id="notesEmptyStateCreateBtn"', html)
+        self.assertIn('id="checklistsEmptyStateCreateBtn"', html)
+
+    def test_help_topics_split_into_notes_and_checklists(self):
+        html = INDEX_HTML_PATH.read_text(encoding="utf-8")
+
+        self.assertIn('data-help-topic="notes"', html)
+        self.assertIn('data-help-topic="checklists"', html)
+        self.assertNotIn('data-help-topic="notebook"', html)
+
+    def test_script_drops_mode_aware_layer_in_favor_of_per_page_renderers(self):
         script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
 
-        self.assertIn('let activeNotebookType = "note";', script)
-        self.assertIn('let notesSearchQuery = "";', script)
-        self.assertIn('let checklistSearchQuery = "";', script)
-        self.assertIn("function ensureActiveNotebookSelection(", script)
-        self.assertIn('const isActive = activeNotebookType === "note" && tabName === activeNoteTab;', script)
+        self.assertNotIn("activeNotebookType", script)
+        self.assertNotIn("ensureActiveNotebookSelection", script)
+        self.assertNotIn("syncNotebookSearchUi", script)
+        self.assertNotIn("handleNotebookSearchInput", script)
+        self.assertNotIn("renderTextsView", script)
+
+        self.assertIn("function renderNotesView()", script)
+        self.assertIn("function renderChecklistsView()", script)
+        self.assertIn("function hasActiveNoteSelection()", script)
+        self.assertIn("function hasActiveChecklistSelection()", script)
+        self.assertIn("function createTabDeleteIcon(", script)
+        self.assertIn("function promptCreateNotePage()", script)
+
+    def test_script_wires_per_page_search_and_help(self):
+        script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
+
+        self.assertIn('document.getElementById("notesSearch")', script)
+        self.assertIn('document.getElementById("checklistsSearch")', script)
+        self.assertIn('notesSearchQuery = String(', script)
+        self.assertIn('checklistSearchQuery = String(', script)
+        self.assertIn('openHelp("notes")', script)
+        self.assertIn('openHelp("checklists")', script)
+
+    def test_help_topics_constant_lists_notes_and_checklists(self):
+        script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
+
         self.assertIn(
-            'activeNotebookType === "checklist" && checklist.id === activeChecklistTabId',
+            'const HELP_TOPICS = ["projects", "notes", "checklists", "tools", "timesheets", "misc"];',
             script,
         )
-        self.assertIn('notesPane.hidden = isChecklistMode;', script)
-        self.assertIn('checklistsPane.hidden = !isChecklistMode;', script)
-        self.assertIn('openExternalUrl(isChecklistMode ? HELP_LINKS.checklists : HELP_LINKS.notes);', script)
-        self.assertIn('searchInput.placeholder = isChecklistMode', script)
-        self.assertIn("function renderChecklistSearchResults() {", script)
-        self.assertIn('focusChecklistRowInput(item.id, { scrollIntoView: true });', script)
-        self.assertNotIn("checklistsHelpBtn", script)
 
-    def test_notebook_styles_keep_vertical_tabs_and_shared_width_model(self):
+    def test_tab_init_routes_to_per_page_renderers(self):
+        script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
+
+        self.assertIn('if (tab === "notes") {', script)
+        self.assertIn('renderNotesView();', script)
+        self.assertIn('} else if (tab === "checklists") {', script)
+        self.assertIn('renderChecklistsView();', script)
+
+    def test_styles_use_split_panel_selectors_and_full_height_sidebar(self):
         css = STYLES_CSS_PATH.read_text(encoding="utf-8")
 
-        full_height_block = get_css_block(css, "#texts-panel .full-height")
+        self.assertNotIn('#texts-panel', css)
+        full_height_block = get_css_block(
+            css, "#notes-panel .full-height,\n#checklists-panel .full-height"
+        )
         self.assertIn(
             "height: clamp(700px, calc(100vh - var(--header-height) - 3.5rem), 920px);",
             full_height_block,
         )
-        self.assertIn(
-            "max-height: clamp(700px, calc(100vh - var(--header-height) - 3.5rem), 920px);",
-            full_height_block,
+
+        single_section_block = get_css_block(
+            css, ".notebook-sidebar.single-section .notebook-sidebar-section"
         )
-        self.assertIn("overflow: clip;", full_height_block)
+        self.assertIn("flex: 1 1 100%;", single_section_block)
 
-        shared_nav_block = get_css_block(css, ".notes-nav-list,\n.checklists-nav-list")
-        self.assertIn("width: 100%;", shared_nav_block)
-        self.assertIn("flex-direction: column;", shared_nav_block)
-        self.assertIn("flex-wrap: nowrap;", shared_nav_block)
-        self.assertIn("overflow-y: auto;", shared_nav_block)
+    def test_styles_define_empty_state_and_hover_only_delete_icon(self):
+        css = STYLES_CSS_PATH.read_text(encoding="utf-8")
 
-        shared_tab_block = get_css_block(
+        empty_state_block = get_css_block(css, ".notebook-empty-state")
+        self.assertIn("display: flex;", empty_state_block)
+        self.assertIn("flex-direction: column;", empty_state_block)
+        self.assertIn("text-align: center;", empty_state_block)
+
+        delete_icon_block = get_css_block(
             css,
-            ".notes-nav-list .inner-tab-btn,\n.checklists-nav-list .inner-tab-btn",
+            ".notes-nav-list .tab-delete-icon,\n.checklists-nav-list .tab-delete-icon",
         )
-        self.assertIn("width: 100%;", shared_tab_block)
+        self.assertIn("opacity: 0;", delete_icon_block)
 
-        shared_create_block = get_css_block(
+        hover_reveal_block = get_css_block(
             css,
-            ".notes-nav-list .add-tab-btn,\n.checklist-create-trigger",
+            ".notes-nav-list .inner-tab-btn:hover .tab-delete-icon,\n"
+            ".checklists-nav-list .inner-tab-btn:hover .tab-delete-icon,\n"
+            ".notes-nav-list .inner-tab-btn:focus-within .tab-delete-icon,\n"
+            ".checklists-nav-list .inner-tab-btn:focus-within .tab-delete-icon,\n"
+            ".notes-nav-list .inner-tab-btn.active .tab-delete-icon,\n"
+            ".checklists-nav-list .inner-tab-btn.active .tab-delete-icon",
         )
-        self.assertIn("width: 100%;", shared_create_block)
-
-        self.assertIn(".notebook-layout {", css)
-        self.assertIn(".notebook-content-shell {", css)
-        self.assertIn(".checklist-search-results {", css)
-        self.assertIn(".checklist-search-result-item {", css)
-        self.assertIn("height: clamp(620px, calc(100vh - var(--header-height) - 2.5rem), 780px);", css)
-        self.assertIn("max-height: clamp(620px, calc(100vh - var(--header-height) - 2.5rem), 780px);", css)
-
-        checklist_editor_block = get_css_block(css, ".checklist-editor")
-        self.assertIn("min-height: 0;", checklist_editor_block)
-        self.assertIn("overflow: hidden;", checklist_editor_block)
-
-        checklist_items_block = get_css_block(css, ".checklist-items")
-        self.assertIn("min-height: 0;", checklist_items_block)
-        self.assertIn("overflow-y: auto;", checklist_items_block)
-
-        self.assertNotRegex(
-            css,
-            re.compile(
-                r"\.checklists-nav-list\s*\{\s*flex-direction:\s*row;\s*flex-wrap:\s*wrap;",
-                re.S,
-            ),
-        )
-        self.assertNotRegex(
-            css,
-            re.compile(
-                r"\.notes-nav-list,\s*\.checklists-nav-list\s*\{\s*flex-direction:\s*row;\s*flex-wrap:\s*wrap;",
-                re.S,
-            ),
-        )
-        self.assertNotIn("max-height: 60vh;", css)
+        self.assertIn("opacity:", hover_reveal_block)
 
 
 if __name__ == "__main__":

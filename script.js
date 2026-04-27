@@ -8082,6 +8082,7 @@ function maybeExpandActivityTray(reason = "update") {
 }
 
 function renderActivityTray() {
+  initActivityTray();
   const { tray, counts, empty, list, clearAll } = getActivityTrayElements();
   if (!tray || !counts || !empty || !list) return;
 
@@ -20360,6 +20361,132 @@ function createAttachmentControl(descriptor = {}, options = {}) {
 
 let openDeliverableToolDropdown = null;
 let deliverableToolDropdownGlobalHandlersBound = false;
+let cardViewDropdownScrollHandlersBound = false;
+
+function positionDropdownMenuInCardView(dropdown, isOpen) {
+  if (!dropdown) return;
+  const menu = dropdown.querySelector(
+    ":scope > .deliverable-tool-menu, :scope > .deliverable-actions-menu, :scope > .deliverable-status-menu"
+  );
+  if (!menu) return;
+
+  if (!isOpen) {
+    menu.style.position = "";
+    menu.style.top = "";
+    menu.style.left = "";
+    menu.style.right = "";
+    menu.style.bottom = "";
+    return;
+  }
+
+  if (!dropdown.closest(".projects-card-view")) return;
+
+  const trigger = dropdown.querySelector(
+    ":scope > .deliverable-tool-trigger, :scope > .deliverable-actions-trigger, :scope > .deliverable-status-trigger"
+  );
+  if (!trigger) return;
+
+  // Apply fixed positioning first so the measured rect reflects unclipped size.
+  menu.style.position = "fixed";
+  menu.style.top = "0px";
+  menu.style.left = "0px";
+  menu.style.right = "auto";
+  menu.style.bottom = "auto";
+
+  const menuRect = menu.getBoundingClientRect();
+  const triggerRect = trigger.getBoundingClientRect();
+  const viewportW = window.innerWidth;
+  const viewportH = window.innerHeight;
+  const gap = 6;
+  const margin = 8;
+  const isLeftAligned = menu.classList.contains("deliverable-status-menu");
+
+  let left = isLeftAligned
+    ? triggerRect.left
+    : triggerRect.right - menuRect.width;
+  left = Math.max(margin, Math.min(left, viewportW - menuRect.width - margin));
+
+  let top = triggerRect.bottom + gap;
+  if (top + menuRect.height > viewportH - margin) {
+    const topAbove = triggerRect.top - menuRect.height - gap;
+    top = topAbove >= margin
+      ? topAbove
+      : Math.max(margin, viewportH - menuRect.height - margin);
+  }
+
+  // An ancestor with backdrop-filter / transform / filter / etc. establishes a
+  // containing block for our fixed menu. getBoundingClientRect returns viewport
+  // coords, so subtract the containing block's viewport offset.
+  const containerOffset = getFixedContainingBlockOffset(menu);
+  menu.style.top = `${Math.round(top - containerOffset.top)}px`;
+  menu.style.left = `${Math.round(left - containerOffset.left)}px`;
+  ensureCardViewDropdownScrollHandlers();
+}
+
+function getFixedContainingBlockOffset(el) {
+  let node = el.parentElement;
+  while (node && node !== document.body && node !== document.documentElement) {
+    const style = getComputedStyle(node);
+    const createsContainingBlock =
+      (style.transform && style.transform !== "none") ||
+      (style.perspective && style.perspective !== "none") ||
+      (style.filter && style.filter !== "none") ||
+      (style.backdropFilter && style.backdropFilter !== "none") ||
+      /\b(transform|perspective|filter)\b/.test(style.willChange || "") ||
+      /\b(paint|layout|strict|content)\b/.test(style.contain || "");
+    if (createsContainingBlock) {
+      const rect = node.getBoundingClientRect();
+      const borderLeft = parseFloat(style.borderLeftWidth) || 0;
+      const borderTop = parseFloat(style.borderTopWidth) || 0;
+      return { left: rect.left + borderLeft, top: rect.top + borderTop };
+    }
+    node = node.parentElement;
+  }
+  return { left: 0, top: 0 };
+}
+
+function closeAllOpenCardViewDropdowns() {
+  if (
+    openDeliverableToolDropdown &&
+    openDeliverableToolDropdown.closest(".projects-card-view")
+  ) {
+    setDeliverableToolDropdownState(openDeliverableToolDropdown, false);
+  }
+  if (
+    openDeliverableActionsDropdown &&
+    openDeliverableActionsDropdown.closest(".projects-card-view")
+  ) {
+    setDeliverableActionsDropdownState(openDeliverableActionsDropdown, false);
+  }
+  document
+    .querySelectorAll(".deliverable-status-dropdown.open")
+    .forEach((dropdown) => {
+      if (dropdown.closest(".projects-card-view")) {
+        setDeliverableStatusDropdownState(dropdown, false);
+      }
+    });
+}
+
+function ensureCardViewDropdownScrollHandlers() {
+  if (cardViewDropdownScrollHandlersBound) return;
+  cardViewDropdownScrollHandlersBound = true;
+
+  document.addEventListener(
+    "scroll",
+    (e) => {
+      const target = e.target;
+      if (!target || target === document) return;
+      if (
+        target.classList?.contains("projects-card-view") ||
+        target.classList?.contains("kanban-column__cards")
+      ) {
+        closeAllOpenCardViewDropdowns();
+      }
+    },
+    true
+  );
+  window.addEventListener("resize", closeAllOpenCardViewDropdowns);
+}
 
 function createDeliverableToolTriggerIcon() {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -20391,6 +20518,18 @@ function setDeliverableToolDropdownState(dropdown, isOpen) {
   card?.classList.toggle("deliverable-menu-open", isOpen);
   cell?.classList.toggle("deliverable-menu-open", isOpen);
   row?.classList.toggle("deliverable-menu-open", isOpen);
+
+  // Handle overflow for card view dropdown
+  const cardsContainer = card?.closest('.kanban-column__cards');
+  if (cardsContainer) {
+    cardsContainer.classList.toggle('dropdown-open', isOpen);
+    const column = cardsContainer.closest('.kanban-column');
+    if (column) column.classList.toggle('dropdown-open', isOpen);
+    const cardView = cardsContainer.closest('.projects-card-view');
+    if (cardView) cardView.classList.toggle('dropdown-open', isOpen);
+  }
+
+  positionDropdownMenuInCardView(dropdown, isOpen);
 
   if (isOpen) {
     openDeliverableToolDropdown = dropdown;
@@ -20534,6 +20673,16 @@ function setDeliverableActionsDropdownState(dropdown, isOpen) {
   cell?.classList.toggle("deliverable-menu-open", isOpen);
   row?.classList.toggle("deliverable-menu-open", isOpen);
 
+  // Handle overflow for card view dropdown
+  const cardsContainer = card?.closest('.kanban-column__cards');
+  if (cardsContainer) {
+    cardsContainer.classList.toggle('dropdown-open', isOpen);
+    const column = cardsContainer.closest('.kanban-column');
+    if (column) column.classList.toggle('dropdown-open', isOpen);
+    const cardView = cardsContainer.closest('.projects-card-view');
+    if (cardView) cardView.classList.toggle('dropdown-open', isOpen);
+  }
+
   if (!isOpen) {
     dropdown
       .querySelectorAll(".deliverable-actions-submenu.open")
@@ -20542,6 +20691,8 @@ function setDeliverableActionsDropdownState(dropdown, isOpen) {
       .querySelectorAll('.deliverable-actions-item[aria-expanded="true"]')
       .forEach((item) => item.setAttribute("aria-expanded", "false"));
   }
+
+  positionDropdownMenuInCardView(dropdown, isOpen);
 
   if (isOpen) {
     openDeliverableActionsDropdown = dropdown;
@@ -21267,6 +21418,18 @@ function setDeliverableStatusDropdownState(dropdown, isOpen) {
   card?.classList.toggle("deliverable-menu-open", isOpen);
   cell?.classList.toggle("deliverable-menu-open", isOpen);
   row?.classList.toggle("deliverable-menu-open", isOpen);
+
+  // Handle overflow for card view dropdown
+  const cardsContainer = card?.closest('.kanban-column__cards');
+  if (cardsContainer) {
+    cardsContainer.classList.toggle('dropdown-open', isOpen);
+    const column = cardsContainer.closest('.kanban-column');
+    if (column) column.classList.toggle('dropdown-open', isOpen);
+    const cardView = cardsContainer.closest('.projects-card-view');
+    if (cardView) cardView.classList.toggle('dropdown-open', isOpen);
+  }
+
+  positionDropdownMenuInCardView(dropdown, isOpen);
 }
 
 function createStatusDropdown(deliverable, project, card) {

@@ -23036,11 +23036,11 @@ function sortProjectDeliverableRows(items) {
   items.sort((a, b) => compareProjectDeliverableRows(a, b));
 }
 
-function compareProjectDeliverableRowsByDueDesc(a, b) {
+function compareProjectDeliverableRowsByDueAsc(a, b) {
   const dueDiff = compareDueDateValues(
     a?.dueDate || parseDueStr(a?.deliverable?.due) || null,
     b?.dueDate || parseDueStr(b?.deliverable?.due) || null,
-    "desc"
+    "asc"
   );
   if (dueDiff) return dueDiff;
   return compareProjectDeliverableRowIdentity(a, b);
@@ -23060,14 +23060,14 @@ function comparePinnedDeliverableCardRows(a, b) {
     return aPinnedOrder !== null ? -1 : 1;
   }
 
-  return compareProjectDeliverableRowsByDueDesc(a, b);
+  return compareProjectDeliverableRowsByDueAsc(a, b);
 }
 
 function sortCardViewBucketRows(columnKey, rows = []) {
   rows.sort((a, b) =>
     columnKey === "pinned"
       ? comparePinnedDeliverableCardRows(a, b)
-      : compareProjectDeliverableRowsByDueDesc(a, b)
+      : compareProjectDeliverableRowsByDueAsc(a, b)
   );
 }
 

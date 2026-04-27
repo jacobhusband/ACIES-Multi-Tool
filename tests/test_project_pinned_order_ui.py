@@ -53,22 +53,22 @@ class ProjectPinnedDeliverablesUiTests(unittest.TestCase):
 
     def test_card_view_sorts_due_dates_youngest_first_by_default(self):
         script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
-        helper_start = script.index("function compareProjectDeliverableRowsByDueDesc")
+        helper_start = script.index("function compareProjectDeliverableRowsByDueAsc")
         helper_end = script.index("function clearPinnedProjectDragStyles()", helper_start)
         helper_block = script[helper_start:helper_end]
 
         for expected in (
-            "function compareProjectDeliverableRowsByDueDesc(a, b) {",
+            "function compareProjectDeliverableRowsByDueAsc(a, b) {",
             "compareDueDateValues(",
-            '"desc"',
+            '"asc"',
             "function sortCardViewBucketRows(columnKey, rows = []) {",
             'columnKey === "pinned"',
             "comparePinnedDeliverableCardRows(a, b)",
-            "compareProjectDeliverableRowsByDueDesc(a, b)",
+            "compareProjectDeliverableRowsByDueAsc(a, b)",
         ):
             self.assertIn(expected, helper_block)
 
-    def test_pinned_deliverables_default_to_due_desc_then_manual_order(self):
+    def test_pinned_deliverables_default_to_due_asc_then_manual_order(self):
         script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
         helper_start = script.index("function normalizePinnedDeliverableOrder")
         helper_end = script.index("function clearPinnedProjectDragStyles()", helper_start)
@@ -79,7 +79,7 @@ class ProjectPinnedDeliverablesUiTests(unittest.TestCase):
             "function comparePinnedDeliverableCardRows(a, b) {",
             "normalizePinnedDeliverableOrder(",
             "return aPinnedOrder - bPinnedOrder;",
-            "return compareProjectDeliverableRowsByDueDesc(a, b);",
+            "return compareProjectDeliverableRowsByDueAsc(a, b);",
             "function movePinnedDeliverableToTarget(",
             "deliverable.pinnedOrder = index;",
         ):

@@ -243,6 +243,13 @@ if (-not $files -or $files.Count -eq 0) {
 
 # Normalize to a string array so single-file runs still behave like multi-file runs.
 $files = @($files)
+$inputFolder = ""
+if ($files.Count -gt 0) {
+  $inputFolder = Split-Path -Path ([string]$files[0]) -Parent
+}
+if (-not [string]::IsNullOrWhiteSpace($inputFolder)) {
+  Write-Host "PROGRESS: INPUT_FOLDER: $inputFolder"
+}
 
 # --- Detect paper size from existing project PDFs ---
 $detectedPaperSize = ""

@@ -237,6 +237,13 @@ if (-not $files -or $files.Count -eq 0) {
 
 # Normalize to a string array so single-file runs still behave like multi-file runs.
 $files = @($files)
+$inputFolder = ""
+if ($files.Count -gt 0) {
+  $inputFolder = Split-Path -Path ([string]$files[0]) -Parent
+}
+if (-not [string]::IsNullOrWhiteSpace($inputFolder)) {
+  Write-Host "PROGRESS: INPUT_FOLDER: $inputFolder"
+}
 
 # ---------------- 3) PREP TOOL FOLDER ----------------
 if (-not (Test-Path $ToolDir)) { New-Item -ItemType Directory -Path $ToolDir | Out-Null }
@@ -1295,7 +1302,7 @@ foreach ($dwgFile in $files) {
     }
 
     if ($attempt -lt $MaxUpdateAttemptsPerFile) {
-      Write-Host "PROGRESS: Verification failed for $([IO.Path]::GetFileName($dwgFile)) on attempt $attempt of $MaxUpdateAttemptsPerFile: $attemptReason"
+      Write-Host "PROGRESS: Verification failed for $([IO.Path]::GetFileName($dwgFile)) on attempt $attempt of ${MaxUpdateAttemptsPerFile}: $attemptReason"
       "RETRY ($attempt/$MaxUpdateAttemptsPerFile): $dwgFile :: $attemptReason" | Out-File $logFile -Append
       Start-Sleep -Seconds 2
       continue

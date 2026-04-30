@@ -370,6 +370,13 @@ if (-not $files -or $files.Count -eq 0) {
 
 # Normalize to string array for single-file selection consistency.
 $files = @($files)
+$inputFolder = ""
+if ($files.Count -gt 0) {
+  $inputFolder = Split-Path -Path ([string]$files[0]) -Parent
+}
+if (-not [string]::IsNullOrWhiteSpace($inputFolder)) {
+  Write-Host "PROGRESS: INPUT_FOLDER: $inputFolder"
+}
 Write-Host "PROGRESS: Processing $($files.Count) file(s)..."
 
 $disciplineShort = Get-DisciplineShort $DisciplineShort

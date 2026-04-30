@@ -32,6 +32,7 @@ class ActivityTrayUiTests(unittest.TestCase):
         self.assertIn(".activity-card", text)
         self.assertIn(".activity-card-progress-bar", text)
         self.assertIn(".activity-card-action.accept", text)
+        self.assertIn(".activity-card-action.rerun", text)
         self.assertIn(".activity-tray-clear", text)
 
     def test_activity_tray_script_helpers_exist(self):
@@ -46,18 +47,26 @@ class ActivityTrayUiTests(unittest.TestCase):
         self.assertIn("function acceptActivity(activityId) {", text)
         self.assertIn("function clearAllActivityNotifications() {", text)
         self.assertIn("function handleActivityTrayClearAll() {", text)
+        self.assertIn("function handleActivityTrayRerun(activityId) {", text)
         self.assertIn("async function handleActivityTrayOpenFolder(activityId) {", text)
         self.assertIn("async function handleActivityTrayCopyCombinedPdf(activityId) {", text)
         self.assertIn("async function handleActivityTrayOpenCombinedPdf(activityId) {", text)
         self.assertIn("function handleActivityTrayAccept(activityId) {", text)
         self.assertIn("function renderActivityTray() {", text)
+        self.assertIn("ACTIVITY_RERUN_TOOL_IDS", text)
+        self.assertIn("rerunDefaultPath", text)
+        self.assertIn("rerunLaunchContext", text)
         self.assertIn("combinedPdfPath", text)
         self.assertIn('textContent: "Copy Combined PDF"', text)
         self.assertIn('textContent: "Open Combined PDF"', text)
+        self.assertIn('textContent: "Rerun"', text)
         self.assertIn('textContent: "Accept"', text)
         self.assertIn('"data-activity-action": "copy-combined-pdf"', text)
         self.assertIn('"data-activity-action": "open-combined-pdf"', text)
         self.assertIn('"data-activity-action": "open"', text)
+        self.assertIn('"data-activity-action": "rerun"', text)
+        self.assertIn('await handleActivityTrayRerun(activityId);', text)
+        self.assertIn('rawMessage.startsWith("INPUT_FOLDER:")', text)
         self.assertIn(
             'const result = await window.pywebview.api.open_path(activity.openFolderPath);',
             text,

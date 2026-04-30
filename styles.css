@@ -6640,6 +6640,11 @@ dialog::backdrop {
   color: var(--text-secondary);
 }
 
+.activity-card-action.rerun {
+  border-color: rgba(16, 185, 129, 0.32);
+  color: var(--accent);
+}
+
 .activity-card-action.accept:hover,
 .activity-card-action.accept:focus-visible {
   border-color: var(--text-secondary);

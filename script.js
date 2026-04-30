@@ -140,6 +140,16 @@ const activityTrayState = {
   initialized: false,
 };
 const activeToolActivityIds = new Map();
+const ACTIVITY_RERUN_TOOL_IDS = new Set([
+  "toolCopyProjectLocally",
+  "toolPublishDwgs",
+  "toolManageLayers",
+  "toolCleanXrefs",
+  "toolCreateNarrativeTemplate",
+  "toolCreatePlanCheckTemplate",
+  "toolCircuitBreaker",
+  "toolBackupDrawings",
+]);
 
 // ===================== CHECKLISTS SYSTEM =====================
 
@@ -4000,6 +4010,10 @@ async function runLocalProjectManager(launchContext = null) {
     progress: 8,
   });
   const resolvedLaunchContext = launchContext || resolveCadLaunchContextForTool();
+  updateActivity(activityId, {
+    rerunLaunchContext: resolvedLaunchContext,
+    rerunDefaultPath: getLaunchContextProjectRoot(resolvedLaunchContext),
+  });
   const launchSource = String(resolvedLaunchContext?.source || "")
     .trim()
     .toLowerCase();
@@ -4030,6 +4044,14 @@ async function runLocalProjectManager(launchContext = null) {
       acceptActivity(activityId);
       return;
     }
+    updateActivity(activityId, {
+      rerunDefaultPath: String(
+        managerResult.serverProjectPath ||
+          managerResult.localProjectPath ||
+          getLaunchContextProjectRoot(resolvedLaunchContext) ||
+          ""
+      ).trim(),
+    });
 
     if (managerResult.action === "sync") {
       const serverSelectedRelativePaths = Array.isArray(
@@ -4299,6 +4321,8 @@ async function handleTemplateToolSave(templateKey, label, options = {}) {
     label,
     message: "Initializing...",
     progress: 5,
+    rerunLaunchContext: launchContext,
+    rerunDefaultPath: getLaunchContextProjectRoot(launchContext),
   });
   if (card) {
     card.classList.add("running");
@@ -4356,6 +4380,9 @@ async function handleTemplateToolSave(templateKey, label, options = {}) {
     });
     return;
   }
+  updateActivity(activityId, {
+    rerunDefaultPath: String(selection.path || "").trim(),
+  });
 
   const templateOptions = { templateKey };
 
@@ -8023,6 +8050,45 @@ function getToolActivityLabel(toolId, fallback = "") {
   return String(fallback || normalizedToolId || "Activity").trim();
 }
 
+function isRerunnableToolId(toolId) {
+  const normalizedToolId = String(toolId || "").trim();
+  if (!ACTIVITY_RERUN_TOOL_IDS.has(normalizedToolId)) return false;
+  if (typeof getSharedToolLaunchEntry !== "function") return true;
+  const entry = getSharedToolLaunchEntry(normalizedToolId);
+  return entry?.isReady === true;
+}
+
+function makeRerunLaunchContext(defaultPath = "", baseContext = null) {
+  const normalizedDefaultPath = String(defaultPath || "").trim();
+  const context =
+    baseContext && typeof baseContext === "object"
+      ? deepCloneJson(baseContext, {})
+      : {};
+  if (!normalizedDefaultPath) {
+    return Object.keys(context).length ? context : null;
+  }
+  return {
+    ...context,
+    source: "rerun",
+    projectPath: normalizedDefaultPath,
+    rootProjectPath: normalizedDefaultPath,
+    cadFilePaths: [],
+  };
+}
+
+function getActivityRerunLaunchContext(activity) {
+  if (!activity || typeof activity !== "object") return null;
+  const defaultPath = String(activity.rerunDefaultPath || "").trim();
+  const storedContext = deepCloneJson(activity.rerunLaunchContext, null);
+  if (defaultPath) return makeRerunLaunchContext(defaultPath, storedContext);
+  return storedContext && typeof storedContext === "object" ? storedContext : null;
+}
+
+function canRerunActivity(activity) {
+  if (!activity || activity.canRerun === false) return false;
+  return isRerunnableToolId(activity.toolId);
+}
+
 function getActivityById(activityId) {
   return activityTrayState.items.find((item) => item.id === activityId) || null;
 }
@@ -8196,6 +8262,22 @@ function renderActivityTray() {
         })
       );
     }
+    if (isTerminal && canRerunActivity(item)) {
+      actions.appendChild(
+        el("button", {
+          className: "activity-card-action rerun",
+          type: "button",
+          textContent: "Rerun",
+          "data-activity-action": "rerun",
+          "data-activity-id": item.id,
+          onclick: (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            void handleActivityTrayRerun(item.id);
+          },
+        })
+      );
+    }
     if (isTerminal) {
       actions.appendChild(
         el("button", {
@@ -8293,6 +8375,28 @@ async function handleActivityTrayOpenCombinedPdf(activityId) {
   }
 }
 
+async function handleActivityTrayRerun(activityId) {
+  const activity = getActivityById(activityId);
+  if (!canRerunActivity(activity)) {
+    toast("Unable to rerun this tool.");
+    return false;
+  }
+  const toolId = String(activity.toolId || "").trim();
+  const label = getToolActivityLabel(toolId, activity.label || "Tool");
+  const card = document.getElementById(toolId);
+  if (activeToolActivityIds.has(toolId) || card?.classList.contains("running")) {
+    toast(`${label} is already running.`);
+    return false;
+  }
+  const launchContext = getActivityRerunLaunchContext(activity);
+  const didLaunch = launchSharedToolCard(toolId, launchContext);
+  if (!didLaunch) {
+    toast(`${label} is unavailable.`);
+    return false;
+  }
+  return true;
+}
+
 function handleActivityTrayAccept(activityId) {
   acceptActivity(activityId);
 }
@@ -8345,6 +8449,10 @@ function initActivityTray() {
     }
     if (action === "open-combined-pdf") {
       await handleActivityTrayOpenCombinedPdf(activityId);
+      return;
+    }
+    if (action === "rerun") {
+      await handleActivityTrayRerun(activityId);
     }
   });
   renderActivityTray();
@@ -8356,10 +8464,18 @@ function upsertActivity(nextItem, { autoExpandReason = "update" } = {}) {
 
   const now = Date.now();
   const existing = getActivityById(incoming.id);
+  const mergedToolId = String(incoming.toolId || existing?.toolId || "").trim();
+  const hasIncomingRerunContext = Object.prototype.hasOwnProperty.call(
+    incoming,
+    "rerunLaunchContext"
+  );
+  const nextRerunLaunchContext = hasIncomingRerunContext
+    ? deepCloneJson(incoming.rerunLaunchContext, null)
+    : deepCloneJson(existing?.rerunLaunchContext, null);
   const merged = {
     id: incoming.id,
     kind: existing?.kind || incoming.kind || "tool",
-    toolId: String(incoming.toolId || existing?.toolId || "").trim(),
+    toolId: mergedToolId,
     label: String(incoming.label || existing?.label || "Activity").trim(),
     message: String(
       incoming.message == null ? existing?.message || "" : incoming.message
@@ -8380,6 +8496,14 @@ function upsertActivity(nextItem, { autoExpandReason = "update" } = {}) {
     combinedPdfPath: String(
       incoming.combinedPdfPath || existing?.combinedPdfPath || ""
     ).trim(),
+    rerunDefaultPath: String(
+      incoming.rerunDefaultPath || existing?.rerunDefaultPath || ""
+    ).trim(),
+    rerunLaunchContext: nextRerunLaunchContext,
+    canRerun:
+      incoming.canRerun == null
+        ? existing?.canRerun ?? isRerunnableToolId(mergedToolId)
+        : Boolean(incoming.canRerun),
     panelCount: Math.max(
       Number(incoming.panelCount ?? existing?.panelCount ?? 0) || 0,
       0
@@ -8424,6 +8548,9 @@ function beginActivity({
   openFolderPath = "",
   openFolderLabel = "Open Folder",
   combinedPdfPath = "",
+  rerunDefaultPath = "",
+  rerunLaunchContext = null,
+  canRerun,
 } = {}) {
   const resolvedId = String(activityId || createActivityId(toolId || kind)).trim();
   return upsertActivity(
@@ -8438,6 +8565,9 @@ function beginActivity({
       openFolderPath,
       openFolderLabel,
       combinedPdfPath,
+      rerunDefaultPath,
+      rerunLaunchContext,
+      canRerun,
     },
     { autoExpandReason: activityTrayState.items.length ? "update" : "first" }
   )?.id || resolvedId;
@@ -8601,12 +8731,24 @@ function updateActivityStatusFromPayload(payload = {}) {
   let combinedPdfPath = String(
     payload?.combinedPdfPath || existing?.combinedPdfPath || ""
   ).trim();
+  let rerunDefaultPath = String(
+    payload?.rerunDefaultPath || existing?.rerunDefaultPath || ""
+  ).trim();
+  const rerunLaunchContext = Object.prototype.hasOwnProperty.call(
+    payload,
+    "rerunLaunchContext"
+  )
+    ? payload.rerunLaunchContext
+    : existing?.rerunLaunchContext || null;
 
   if (rawMessage.startsWith("OUTPUT_FOLDER:")) {
     openFolderPath = rawMessage.substring("OUTPUT_FOLDER:".length).trim();
     nextMessage = existing?.message || "Working...";
   } else if (rawMessage.startsWith("COMBINED_PDF:")) {
     combinedPdfPath = rawMessage.substring("COMBINED_PDF:".length).trim();
+    nextMessage = existing?.message || "Working...";
+  } else if (rawMessage.startsWith("INPUT_FOLDER:")) {
+    rerunDefaultPath = rawMessage.substring("INPUT_FOLDER:".length).trim();
     nextMessage = existing?.message || "Working...";
   } else if (rawMessage.startsWith("WARN:")) {
     nextMessage = rawMessage.substring(5).trim() || "Completed with warnings.";
@@ -8647,6 +8789,9 @@ function updateActivityStatusFromPayload(payload = {}) {
       openFolderPath,
       openFolderLabel: payload?.openFolderLabel || "Open Folder",
       combinedPdfPath,
+      rerunDefaultPath,
+      rerunLaunchContext,
+      canRerun: payload?.canRerun,
       kind: payload?.kind || "tool",
     });
   }
@@ -8663,6 +8808,9 @@ function updateActivityStatusFromPayload(payload = {}) {
       payload?.openFolderLabel || existing?.openFolderLabel || "Open Folder"
     ).trim(),
     combinedPdfPath,
+    rerunDefaultPath,
+    rerunLaunchContext,
+    canRerun: payload?.canRerun,
     panelCount: payload?.panelCount,
     completedCount: payload?.completedCount,
   };
@@ -24378,8 +24526,7 @@ function attachKanbanDragHandlers(host) {
       if (targetKey === "none") {
         setSingleStatus(deliverable, "");
       } else {
-        deliverable.statuses = [targetKey];
-        syncStatusArrays(deliverable);
+        setSingleStatus(deliverable, targetKey);
       }
     }
 
@@ -28830,12 +28977,16 @@ async function runCircuitBreakerInBackground() {
     directoryUploads: firstPanel.directoryUploads || [],
     panelName: firstPanel.panelName || "",
   };
+  const outputFolderPath = outputPath.split(/[\\/]/).slice(0, -1).join("\\");
   const activityId = beginActivity({
     activityId: createActivityId("toolCircuitBreaker"),
     toolId: "toolCircuitBreaker",
     label: "Panel Schedule AI",
     message: "Preparing panel schedule job...",
     progress: 10,
+    rerunLaunchContext: circuitBreakerState.launchContext,
+    rerunDefaultPath:
+      getLaunchContextProjectRoot(circuitBreakerState.launchContext) || outputFolderPath,
   });
   payload.activityId = activityId;
 
@@ -28887,10 +29038,7 @@ async function runCircuitBreakerInBackground() {
       progress: 20,
       panelCount: jobPanelCount,
       completedCount: 0,
-      openFolderPath:
-        circuitBreakerState.outputMode === "existing"
-          ? outputPath.split(/[\\/]/).slice(0, -1).join("\\")
-          : outputPath.split(/[\\/]/).slice(0, -1).join("\\"),
+      openFolderPath: outputFolderPath,
     });
     schedulePanelScheduleStatusPoll(jobId, 1000);
     closeCircuitBreaker();
@@ -32614,6 +32762,8 @@ function initEventListeners() {
         toolId: "toolPublishDwgs",
         message: "Initializing...",
         progress: 5,
+        rerunLaunchContext: launchContext,
+        rerunDefaultPath: getLaunchContextProjectRoot(launchContext),
       });
       try {
         const result = launchContext
@@ -32645,6 +32795,8 @@ function initEventListeners() {
         toolId: "toolManageLayers",
         message: "Initializing...",
         progress: 5,
+        rerunLaunchContext: launchContext,
+        rerunDefaultPath: getLaunchContextProjectRoot(launchContext),
       });
       try {
         const result = launchContext
@@ -32678,6 +32830,8 @@ function initEventListeners() {
         toolId: "toolCleanXrefs",
         message: "Initializing...",
         progress: 5,
+        rerunLaunchContext: launchContext,
+        rerunDefaultPath: getLaunchContextProjectRoot(launchContext),
       });
       try {
         const result = launchContext
@@ -32755,6 +32909,10 @@ function initEventListeners() {
         progress: 8,
       });
       const launchContext = resolveCadLaunchContextForTool();
+      updateActivity(activityId, {
+        rerunLaunchContext: launchContext,
+        rerunDefaultPath: getLaunchContextProjectRoot(launchContext),
+      });
       const launchSource = String(launchContext?.source || "").trim().toLowerCase();
       const hasContextProjectPath = hasLaunchContextProjectPath(launchContext);
 
@@ -32810,6 +32968,9 @@ function initEventListeners() {
 
         if (selectedProjectPath) {
           updateActivity(activityId, {
+            rerunDefaultPath: selectedProjectPath,
+          });
+          updateActivity(activityId, {
             message: "Creating archive backup...",
             progress: 42,
           });
@@ -32855,6 +33016,9 @@ function initEventListeners() {
             ? `Drawing backup created with warnings: ${warningParts.join(", ")}.`
             : "Drawing backup created.",
           openFolderPath: String(result?.archivePath || "").trim(),
+          rerunDefaultPath: String(
+            result?.projectRootPath || result?.resolvedProjectRootPath || selectedProjectPath || ""
+          ).trim(),
         });
       } catch (e) {
         const message = e?.message || "Failed to create drawing backup.";

@@ -58,9 +58,10 @@ class ProjectCardNoneColumnUiTests(unittest.TestCase):
         self.assertIn('setSingleStatus(deliverable, "");', block)
         self.assertLess(
             block.index('if (targetKey === "none") {'),
-            block.index("deliverable.statuses = [targetKey];"),
+            block.index("setSingleStatus(deliverable, targetKey);"),
         )
         self.assertNotIn('deliverable.statuses = ["none"]', block)
+        self.assertNotIn("deliverable.statuses = [targetKey];", block)
 
     def test_none_column_style_exists(self):
         css = STYLES_CSS_PATH.read_text(encoding="utf-8")

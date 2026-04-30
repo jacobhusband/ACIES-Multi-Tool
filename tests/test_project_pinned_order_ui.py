@@ -103,9 +103,19 @@ class ProjectPinnedDeliverablesUiTests(unittest.TestCase):
         self.assertIn("setDeliverablePinnedState(deliverable, false);", drop_block)
         self.assertLess(
             drop_block.index("setDeliverablePinnedState(deliverable, false);"),
-            drop_block.index("deliverable.statuses = [targetKey];"),
+            drop_block.index("setSingleStatus(deliverable, targetKey);"),
         )
         self.assertNotIn("setProjectPinnedState(project", drop_block)
+
+    def test_card_view_drop_replaces_status_and_status_tag_together(self):
+        script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
+        drop_start = script.index('host.addEventListener("drop", async (e) => {')
+        drop_end = script.index("function render() {", drop_start)
+        drop_block = script[drop_start:drop_end]
+
+        self.assertIn("setSingleStatus(deliverable, targetKey);", drop_block)
+        self.assertNotIn("deliverable.statuses = [targetKey];", drop_block)
+        self.assertNotIn("syncStatusArrays(deliverable);", drop_block)
 
     def test_card_view_drop_reorders_deliverables_within_pinned_column(self):
         script = SCRIPT_JS_PATH.read_text(encoding="utf-8")

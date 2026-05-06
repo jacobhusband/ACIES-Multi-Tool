@@ -1061,8 +1061,30 @@ $updateReportForLisp = ($updateReport -replace '\\', '/')
 
 $updateLsp = Join-Path $ToolDir "update_layers.lsp"
 $updateLspForLisp = ($updateLsp -replace '\\', '/')
-$lispFreezeList = if ($layersToFreeze.Count -gt 0) { ($layersToFreeze | ForEach-Object { "`"$_`"" }) -join " " } else { "" }
-$lispThawList = if ($layersToThaw.Count -gt 0) { ($layersToThaw | ForEach-Object { "`"$_`"" }) -join " " } else { "" }
+
+function ConvertTo-LispStringLiteral {
+  param([AllowNull()][string]$Value)
+
+  $text = if ($null -eq $Value) { "" } else { [string]$Value }
+  $text = $text.Replace('\', '\\').Replace('"', '\"')
+  $text = $text.Replace("`r", " ").Replace("`n", " ")
+  return '"' + $text + '"'
+}
+
+function ConvertTo-LispListItems {
+  param([string[]]$Values)
+
+  $items = @(
+    $Values |
+      Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+      ForEach-Object { ConvertTo-LispStringLiteral $_ }
+  )
+  if ($items.Count -eq 0) { return "" }
+  return ($items -join " ")
+}
+
+$lispFreezeList = ConvertTo-LispListItems $layersToFreeze
+$lispThawList = ConvertTo-LispListItems $layersToThaw
 
 $updateLspContent = @"
 (defun _t (b) (if b "T" "F"))
@@ -1109,6 +1131,28 @@ $updateLspContent = @"
   tmp
 )
 
+(defun _set-layer-frozen (layName shouldFreeze / ent rec flags nextFlags nextRec)
+  (setq ent (tblobjname "LAYER" layName))
+  (if ent
+    (progn
+      (setq rec (entget ent))
+      (setq flags (_flags rec))
+      (setq nextFlags (if shouldFreeze (logior flags 1) (- flags (logand flags 1))))
+      (setq nextRec
+        (if (assoc 70 rec)
+          (subst (cons 70 nextFlags) (assoc 70 rec) rec)
+          (append rec (list (cons 70 nextFlags)))
+        )
+      )
+      (if (entmod nextRec)
+        T
+        nil
+      )
+    )
+    nil
+  )
+)
+
 (defun _freeze-one (f dwg layName freezeSet / rec exists wasCur wasOff wasFroz wasLock action rec2 resFroz)
   (setq rec (tblsearch "LAYER" layName))
   (setq exists (if rec T nil))
@@ -1129,10 +1173,12 @@ $updateLspContent = @"
     )
     (T
       (if wasCur (progn (_ensure-temp-current-layer) (setq action (strcat action "SWITCH_CLAYER;"))))
-      (if wasLock (progn (command "_.-LAYER" "_Unlock" layName "") (setq action (strcat action "UNLOCK;"))))
+      (if wasLock (setq action (strcat action "PRESERVED_LOCK;")))
 
-      (command "_.-LAYER" "_Freeze" layName "")
-      (setq action (strcat action "FREEZE;"))
+      (if (_set-layer-frozen layName T)
+        (setq action (strcat action "FREEZE_DXF;"))
+        (setq action (strcat action "FREEZE_DXF_FAILED;"))
+      )
       (if wasOff (setq action (strcat action "LEFT_OFF;")))
 
       (setq rec2 (tblsearch "LAYER" layName))
@@ -1171,8 +1217,10 @@ $updateLspContent = @"
           (setq resFroz "F")
         )
         (T
-          (command "_.-LAYER" "_Thaw" layName "")
-          (setq action "THAW;")
+          (if (_set-layer-frozen layName nil)
+            (setq action "THAW_DXF;")
+            (setq action "THAW_DXF_FAILED;")
+          )
           (setq rec2 (tblsearch "LAYER" layName))
           (setq resFroz (if (and rec2 (_frozenp rec2)) "T" "F"))
         )
@@ -1267,6 +1315,7 @@ $errLog = Join-Path $ToolDir "update_batch.err.txt"
 $fileIndex = 0
 $MaxUpdateAttemptsPerFile = 2
 $failedFiles = @()
+$failedDetails = @()
 
 foreach ($dwgFile in $files) {
   $fileIndex++
@@ -1311,11 +1360,24 @@ foreach ($dwgFile in $files) {
     Write-Host "    -> FAILED verification: $attemptReason" -ForegroundColor Red
     "FAILED ($attemptReason): $dwgFile" | Out-File $logFile -Append
     $failedFiles += $dwgFile
+    $failedDetails += [pscustomobject]@{
+      Path   = $dwgFile
+      Reason = $attemptReason
+    }
   }
 }
 
 if ($failedFiles.Count -gt 0) {
-  Write-Host "PROGRESS: ERROR: $($failedFiles.Count) of $($files.Count) file(s) failed to verify layer updates."
+  $failureSummary = "$($failedFiles.Count) of $($files.Count) file(s) failed to verify layer updates."
+  $firstFailure = @($failedDetails | Select-Object -First 1)
+  if ($firstFailure.Count -gt 0) {
+    $firstFailureName = [IO.Path]::GetFileName([string]$firstFailure[0].Path)
+    $firstFailureReason = [string]$firstFailure[0].Reason
+    if (-not [string]::IsNullOrWhiteSpace($firstFailureName)) {
+      $failureSummary = "$failureSummary First failure: $firstFailureName :: $firstFailureReason"
+    }
+  }
+  Write-Host "PROGRESS: ERROR: $failureSummary"
 }
 else {
   Write-Host "PROGRESS: Successfully updated $($files.Count) drawing(s)."

@@ -2301,6 +2301,7 @@ class Api:
                     )
 
                 print(f"DEBUG THREAD: Process started, reading output...")
+                last_progress_error = ""
                 for line in iter(process.stdout.readline, ''):
                     line = line.strip()
                     print(f"DEBUG THREAD OUTPUT: {line}")
@@ -2313,6 +2314,9 @@ class Api:
                                 message=message,
                             )
                             continue
+                        if message.startswith("ERROR:"):
+                            last_progress_error = message[len(
+                                "ERROR:"):].strip() or message
                         self._notify_tool_status(
                             tool_id,
                             message,
@@ -2335,7 +2339,12 @@ class Api:
                         activity_id=activity_id,
                     )
                 else:
-                    error_message = f"Script finished with error code {return_code}."
+                    if last_progress_error:
+                        error_message = (
+                            f"{last_progress_error} (exit code {return_code})."
+                        )
+                    else:
+                        error_message = f"Script finished with error code {return_code}."
                     self._notify_tool_status(
                         tool_id,
                         f"ERROR: {error_message}",

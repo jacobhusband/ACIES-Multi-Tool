@@ -164,8 +164,43 @@ class PowerShellCadWrapperTests(unittest.TestCase):
             'Write-Host "PROGRESS: Processing $fileIndex of $($files.Count): $([IO.Path]::GetFileName($dwgFile)) (attempt $attempt of $MaxUpdateAttemptsPerFile)"',
             'Write-Host "PROGRESS: Verification failed for $([IO.Path]::GetFileName($dwgFile)) on attempt $attempt of ${MaxUpdateAttemptsPerFile}: $attemptReason"',
             '"DONE (verified on attempt $attempt, exit code $displayExitCode): $dwgFile" | Out-File $logFile -Append',
-            'Write-Host "PROGRESS: ERROR: $($failedFiles.Count) of $($files.Count) file(s) failed to verify layer updates."',
+            '$failureSummary = "$($failedFiles.Count) of $($files.Count) file(s) failed to verify layer updates."',
+            '$failureSummary = "$failureSummary First failure: $firstFailureName :: $firstFailureReason"',
+            'Write-Host "PROGRESS: ERROR: $failureSummary"',
             'Write-Host "PROGRESS: Successfully updated $($files.Count) drawing(s)."',
+        ):
+            self.assertIn(expected, text)
+
+    def test_manage_layers_script_uses_exact_layer_table_updates(self):
+        text = (REPO_ROOT / "scripts" / "ManageLayersDWGs.ps1").read_text(encoding="utf-8")
+
+        for expected in (
+            "function ConvertTo-LispStringLiteral {",
+            "$lispFreezeList = ConvertTo-LispListItems $layersToFreeze",
+            "$lispThawList = ConvertTo-LispListItems $layersToThaw",
+            "(defun _set-layer-frozen (layName shouldFreeze / ent rec flags nextFlags nextRec)",
+            '(setq ent (tblobjname "LAYER" layName))',
+            "(setq nextFlags (if shouldFreeze (logior flags 1) (- flags (logand flags 1))))",
+            "(subst (cons 70 nextFlags) (assoc 70 rec) rec)",
+            "(entmod nextRec)",
+            'FREEZE_DXF;',
+            'THAW_DXF;',
+        ):
+            self.assertIn(expected, text)
+
+        self.assertNotIn('(command "_.-LAYER" "_Freeze" layName "")', text)
+        self.assertNotIn('(command "_.-LAYER" "_Thaw" layName "")', text)
+        self.assertNotIn('(command "_.-LAYER" "_Unlock" layName "")', text)
+
+    def test_script_runner_preserves_specific_progress_error_on_nonzero_exit(self):
+        text = MAIN_PY_PATH.read_text(encoding="utf-8")
+
+        for expected in (
+            'last_progress_error = ""',
+            'if message.startswith("ERROR:"):',
+            'last_progress_error = message[len(',
+            'f"{last_progress_error} (exit code {return_code})."',
+            'error_message = f"Script finished with error code {return_code}."',
         ):
             self.assertIn(expected, text)
 

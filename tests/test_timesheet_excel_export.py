@@ -401,6 +401,35 @@ class TimesheetExcelExportTests(unittest.TestCase):
         self._assert_merged(worksheet, "B15:C15")
         self._assert_merged(worksheet, "D23:E23")
 
+    def test_custom_expense_without_job_number_exports_blank_job_number(self):
+        projects = [
+            {
+                "source": "custom",
+                "projectName": "Client Lunch Meeting",
+                "projectId": "",
+                "jobNumber": "",
+                "entries": [
+                    {
+                        "date": "2026-03-10",
+                        "description": "Lunch client meeting",
+                        "mileage": 0,
+                        "expense": 42.75,
+                    }
+                ],
+                "images": [],
+            }
+        ]
+
+        workbook_path = self._export_expense_workbook(projects, "custom-expense-no-job")
+        worksheet, template_sheet = self._load_expense_sheet(workbook_path)
+
+        self.assertEqual("PROJECT: Client Lunch Meeting", worksheet["A1"].value)
+        self.assertEqual("JOB #: ", worksheet["A2"].value)
+        self.assertEqual("Lunch client meeting", worksheet["B4"].value)
+        self.assertEqual(42.75, worksheet["E4"].value)
+        self._assert_style_matches(worksheet, "A1", template_sheet, "A1")
+        self._assert_style_matches(worksheet, "E4", template_sheet, "E4")
+
     def test_expense_cells_keep_currency_formatting(self):
         projects = [
             _make_project("Money Job 1", "3500", 2),

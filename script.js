@@ -3027,11 +3027,14 @@ function clearTimesheetDragStyles() {
 async function loadTimesheets() {
   try {
     const data = await window.pywebview.api.get_timesheets();
-    timesheetDb = data || { weeks: {}, lastModified: null };
+    timesheetDb = data || { weeks: {}, expenses: {}, lastModified: null };
+    if (!timesheetDb.expenses || typeof timesheetDb.expenses !== "object") {
+      timesheetDb.expenses = {};
+    }
     return timesheetDb;
   } catch (e) {
     console.warn("Failed to load timesheets:", e);
-    return { weeks: {}, lastModified: null };
+    return { weeks: {}, expenses: {}, lastModified: null };
   }
 }
 
@@ -3742,8 +3745,8 @@ function buildWorkroomCadLaunchContext() {
 const SHARED_TOOL_LAUNCH_REGISTRY = Object.freeze([
   {
     id: "toolCopyProjectLocally",
-    label: "Local Project Manager",
-    menuLabel: "Local Projects",
+    label: "Work Locally",
+    menuLabel: "Work Locally",
     launchType: "project-manager",
     category: "general",
     isReady: true,
@@ -4006,7 +4009,7 @@ async function syncLocalProjectManagerProjectPath(
 async function runLocalProjectManager(launchContext = null) {
   const activityId = beginActivity({
     toolId: "toolCopyProjectLocally",
-    message: "Preparing Local Project Manager...",
+    message: "Preparing Work Locally...",
     progress: 8,
   });
   const resolvedLaunchContext = launchContext || resolveCadLaunchContextForTool();
@@ -4074,7 +4077,7 @@ async function runLocalProjectManager(launchContext = null) {
 
       if (serverSelectedRelativePaths.length) {
         updateActivity(activityId, {
-          message: "Syncing server items to local...",
+          message: "Copying server files to local...",
           progress: 42,
         });
         copyToLocalResult =
@@ -4100,7 +4103,7 @@ async function runLocalProjectManager(launchContext = null) {
 
       if (localSelectedRelativePaths.length) {
         updateActivity(activityId, {
-          message: "Syncing local items to server...",
+          message: "Copying local changes to server...",
           progress: serverSelectedRelativePaths.length ? 68 : 42,
         });
         syncResult = await window.pywebview.api.apply_local_project_manager_sync(
@@ -4182,8 +4185,8 @@ async function runLocalProjectManager(launchContext = null) {
       completeActivity(activityId, {
         status: warningParts.length ? ACTIVITY_STATUS.WARNING : ACTIVITY_STATUS.SUCCESS,
         message: warningParts.length
-          ? `Sync completed with warnings: ${warningParts.join(", ")}.`
-          : `Sync completed (${directionParts.join(", ")}).`,
+          ? `Copy completed with warnings: ${warningParts.join(", ")}.`
+          : `Copy completed (${directionParts.join(", ")}).`,
         openFolderPath: openFolderPreference.path,
         openFolderLabel: openFolderPreference.label,
       });
@@ -4204,7 +4207,8 @@ async function runLocalProjectManager(launchContext = null) {
       managerResult.serverProjectPath || "",
       resolvedLaunchContext,
       selectionPayload.selectedFolderNames,
-      selectionPayload.selectedFolderRequests
+      selectionPayload.selectedFolderRequests,
+      managerResult.replaceExistingLocal === true
     );
 
     if (copyResult?.status !== "success") {
@@ -4246,11 +4250,13 @@ async function runLocalProjectManager(launchContext = null) {
       message:
         hasWarnings || missingFolders.length
           ? `Project copied locally with warnings: ${warningParts.join(", ")}.`
-          : "Project copied locally.",
+          : managerResult.replaceExistingLocal === true
+            ? "Local project replaced from server files."
+            : "Project copied locally.",
       openFolderPath: String(copyResult?.localProjectPath || "").trim(),
     });
   } catch (e) {
-    const message = e?.message || "Failed to run Local Project Manager.";
+    const message = e?.message || "Failed to run Work Locally.";
     failActivity(activityId, { message });
   }
 }
@@ -5325,6 +5331,48 @@ function createExpenseImageId() {
   return "img_" + Math.random().toString(36).substr(2, 9);
 }
 
+function formatDateForInputLocal(date) {
+  const d = new Date(date);
+  if (Number.isNaN(d.getTime())) return "";
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getDefaultCustomExpenseDate() {
+  const today = new Date();
+  const weekStart = getWeekStartDate(currentTimesheetWeek);
+  const weekEnd = new Date(weekStart);
+  weekEnd.setDate(weekStart.getDate() + 6);
+  weekEnd.setHours(23, 59, 59, 999);
+  return today >= weekStart && today <= weekEnd ? formatDateForInputLocal(today) : "";
+}
+
+function isCustomExpenseProject(project) {
+  return String(project?.source || "").trim().toLowerCase() === "custom";
+}
+
+function getExpenseProjectSecondaryLabel(project) {
+  const projectId = String(project?.projectId || "").trim();
+  if (projectId) return `Job #: ${projectId}`;
+  return isCustomExpenseProject(project) ? "Custom expense" : "Job #: --";
+}
+
+function hasDuplicateExpenseProject(projects, projectId, projectName) {
+  const normalizedId = String(projectId || "").trim().toLowerCase();
+  const normalizedName = String(projectName || "").trim().toLowerCase();
+  if (!normalizedId && !normalizedName) return false;
+
+  return (Array.isArray(projects) ? projects : []).some((project) => {
+    const existingId = String(project?.projectId || "").trim().toLowerCase();
+    const existingName = String(project?.projectName || "").trim().toLowerCase();
+    if (normalizedId) return existingId === normalizedId;
+    if (existingId) return false;
+    return existingName === normalizedName;
+  });
+}
+
 function getWeekExpenses(weekKey) {
   return timesheetDb.expenses?.[weekKey]?.projects || [];
 }
@@ -5376,7 +5424,7 @@ function createExpenseProjectSection(project, projectIndex) {
 
   const info = el("div", { className: "expense-project-info" });
   info.appendChild(el("div", { className: "expense-project-name", textContent: project.projectName || "Unnamed Project" }));
-  info.appendChild(el("div", { className: "expense-project-id", textContent: `Job #: ${project.projectId || "--"}` }));
+  info.appendChild(el("div", { className: "expense-project-id", textContent: getExpenseProjectSecondaryLabel(project) }));
   header.appendChild(info);
 
   const actions = el("div", { className: "expense-project-actions" });
@@ -6299,6 +6347,28 @@ function openAddExpenseProjectDialog() {
   showDialog(dlg);
 }
 
+function openAddCustomExpenseDialog() {
+  const dlg = document.getElementById("customExpenseDlg");
+  if (!dlg) return;
+
+  const projectNameInput = document.getElementById("custom_expense_project_name");
+  const jobNumberInput = document.getElementById("custom_expense_job_number");
+  const dateInput = document.getElementById("custom_expense_date");
+  const descriptionInput = document.getElementById("custom_expense_description");
+  const mileageInput = document.getElementById("custom_expense_mileage");
+  const amountInput = document.getElementById("custom_expense_amount");
+
+  if (projectNameInput) projectNameInput.value = "";
+  if (jobNumberInput) jobNumberInput.value = "";
+  if (dateInput) dateInput.value = getDefaultCustomExpenseDate();
+  if (descriptionInput) descriptionInput.value = "";
+  if (mileageInput) mileageInput.value = "";
+  if (amountInput) amountInput.value = "";
+
+  showDialog(dlg);
+  projectNameInput?.focus();
+}
+
 function addExpenseProject(projectId, projectName) {
   const weekKey = formatWeekKey(currentTimesheetWeek);
   const projects = getWeekExpenses(weekKey);
@@ -6310,14 +6380,7 @@ function addExpenseProject(projectId, projectName) {
     toast("Add a project with a name or job number.");
     return;
   }
-  const exists = projects.some((p) => {
-    const existingId = (p.projectId || "").trim();
-    const existingName = (p.projectName || "").trim();
-    if (normalizedId) return existingId === normalizedId;
-    if (existingId) return false;
-    return existingName.toLowerCase() === normalizedName.toLowerCase();
-  });
-  if (exists) {
+  if (hasDuplicateExpenseProject(projects, normalizedId, normalizedName)) {
     toast("Project already added. Add entries to the existing project.");
     return;
   }
@@ -6344,6 +6407,60 @@ function addExpenseProject(projectId, projectName) {
   saveTimesheets();
   renderExpenses();
   toast("Project expense section added.");
+}
+
+function saveCustomExpense() {
+  const projectName = String(
+    document.getElementById("custom_expense_project_name")?.value || ""
+  ).trim();
+  const jobNumber = String(
+    document.getElementById("custom_expense_job_number")?.value || ""
+  ).trim();
+  const date = document.getElementById("custom_expense_date")?.value || "";
+  const description = String(
+    document.getElementById("custom_expense_description")?.value || ""
+  ).trim();
+  const mileage =
+    parseFloat(document.getElementById("custom_expense_mileage")?.value) || 0;
+  const expense =
+    parseFloat(document.getElementById("custom_expense_amount")?.value) || 0;
+
+  if (!projectName) {
+    toast("Enter a client or project name.");
+    document.getElementById("custom_expense_project_name")?.focus();
+    return;
+  }
+
+  const weekKey = formatWeekKey(currentTimesheetWeek);
+  const projects = getWeekExpenses(weekKey);
+  if (hasDuplicateExpenseProject(projects, jobNumber, projectName)) {
+    toast("Expense already added. Add entries to the existing section.");
+    return;
+  }
+
+  projects.push({
+    id: createExpenseProjectId(),
+    source: "custom",
+    projectId: jobNumber,
+    projectName,
+    jobNumber,
+    entries: [
+      {
+        id: createExpenseEntryId(),
+        date,
+        description,
+        mileage,
+        expense
+      }
+    ],
+    images: []
+  });
+
+  setWeekExpenses(weekKey, projects);
+  saveTimesheets();
+  renderExpenses();
+  closeDlg("customExpenseDlg");
+  toast("Custom expense section added.");
 }
 
 function removeExpenseProject(projectIndex) {
@@ -8976,6 +9093,22 @@ function createDefaultLocalProjectManagerSyncState() {
     timestampComparisonLoading: false,
   };
 }
+function createDefaultLocalProjectManagerReplacementReviewState() {
+  return {
+    visible: false,
+    previewLoading: false,
+    previewLoaded: false,
+    previewError: "",
+    newerLocalFiles: [],
+    localOnlyFiles: [],
+    blockedEntries: [],
+    missingServerFolders: [],
+    selectedServerFileCount: 0,
+    localProjectPath: "",
+    serverProjectPath: "",
+    backupRequired: true,
+  };
+}
 const DEFAULT_COPY_PROJECT_LOCALLY_DIALOG_STATE = {
   serverProjectPath: "",
   localProjectPath: "",
@@ -8993,13 +9126,16 @@ const DEFAULT_COPY_PROJECT_LOCALLY_DIALOG_STATE = {
   comparisonLoading: false,
   comparisonBannerMessage: "",
   comparisonBannerTone: "info",
+  syncReviewVisible: false,
   folderOptions: [],
   managedFoldersInitialized: false,
+  replacementReview: createDefaultLocalProjectManagerReplacementReviewState(),
   copyToLocal: createDefaultLocalProjectManagerCopyToLocalState(),
   sync: createDefaultLocalProjectManagerSyncState(),
 };
 let copyProjectLocallyDialogState = {
   ...DEFAULT_COPY_PROJECT_LOCALLY_DIALOG_STATE,
+  replacementReview: createDefaultLocalProjectManagerReplacementReviewState(),
   copyToLocal: createDefaultLocalProjectManagerCopyToLocalState(),
   sync: createDefaultLocalProjectManagerSyncState(),
 };
@@ -9414,7 +9550,7 @@ let aiNoMatchState = {
 };
 
 // Timesheet State
-let timesheetDb = { weeks: {}, lastModified: null };
+let timesheetDb = { weeks: {}, expenses: {}, lastModified: null };
 let currentTimesheetWeek = getWeekStartDate(new Date());
 
 // Templates State
@@ -12412,9 +12548,19 @@ function buildTimesheetsCloudState() {
     timesheetDb?.weeks && typeof timesheetDb.weeks === "object"
       ? deepCloneJson(timesheetDb.weeks, {})
       : {};
-  const knownWeeks = Object.keys(weeks || {}).filter(Boolean).sort();
+  const expenses =
+    timesheetDb?.expenses && typeof timesheetDb.expenses === "object"
+      ? deepCloneJson(timesheetDb.expenses, {})
+      : {};
+  const weekKeys = Object.keys(weeks || {}).filter(Boolean);
+  const expenseWeeks = Object.keys(expenses || {}).filter((weekKey) => {
+    const projects = expenses?.[weekKey]?.projects;
+    return Array.isArray(projects) && projects.length > 0;
+  });
+  const knownWeeks = [...new Set([...weekKeys, ...expenseWeeks])].sort();
   return {
     weeks,
+    expenses,
     knownWeeks,
     updatedAt,
   };
@@ -12422,6 +12568,7 @@ function buildTimesheetsCloudState() {
 
 function normalizeRemoteTimesheetsState(metaDoc = {}, docs = []) {
   const weeks = {};
+  const expenses = {};
   const knownWeeks = [];
   let updatedAt =
     normalizeIsoTimestamp(metaDoc?.updatedAt) ||
@@ -12430,7 +12577,14 @@ function normalizeRemoteTimesheetsState(metaDoc = {}, docs = []) {
     const docId = String(doc?.id || "").trim();
     if (!docId || docId === CLOUD_SYNC_TIMESHEETS_META_DOC_ID) return;
     const payload = doc?.data && typeof doc.data === "object" ? doc.data : {};
-    weeks[docId] = deepCloneJson(payload.data, {}) || {};
+    const weekData = deepCloneJson(payload.data, {}) || {};
+    if (weekData.expenses && typeof weekData.expenses === "object") {
+      expenses[docId] = deepCloneJson(weekData.expenses, { projects: [] }) || {
+        projects: [],
+      };
+      delete weekData.expenses;
+    }
+    weeks[docId] = weekData;
     knownWeeks.push(docId);
     if (isIsoAfter(payload.updatedAt, updatedAt)) {
       updatedAt = normalizeIsoTimestamp(payload.updatedAt);
@@ -12441,13 +12595,20 @@ function normalizeRemoteTimesheetsState(metaDoc = {}, docs = []) {
     : [];
   return {
     weeks,
+    expenses,
     knownWeeks: [...new Set(metaKnownWeeks.length ? metaKnownWeeks : knownWeeks)].sort(),
     updatedAt,
   };
 }
 
 function hasMeaningfulTimesheetsState(state) {
-  return Object.keys(state?.weeks || {}).length > 0;
+  return (
+    Object.keys(state?.weeks || {}).length > 0 ||
+    Object.keys(state?.expenses || {}).some((weekKey) => {
+      const projects = state?.expenses?.[weekKey]?.projects;
+      return Array.isArray(projects) && projects.length > 0;
+    })
+  );
 }
 
 function getLocalCloudDoc(domain) {
@@ -12531,7 +12692,7 @@ async function prepareLocalStateForUserSwitch(nextUid) {
   activeNoteTab = "General";
   notesSearchQuery = "";
   checklistSearchQuery = "";
-  timesheetDb = { weeks: {}, lastModified: null };
+  timesheetDb = { weeks: {}, expenses: {}, lastModified: null };
   templatesDb = {
     templates: [],
     defaultTemplatesInstalled: false,
@@ -12593,16 +12754,21 @@ async function pushCloudTimesheetsState() {
   }
   const refs = getCloudSyncDocRefs(cloudSyncState.firebaseUid);
   const state = buildTimesheetsCloudState();
-  const upserts = state.knownWeeks.map((weekKey) =>
-    refs.timesheets.doc(weekKey).set(
+  const upserts = state.knownWeeks.map((weekKey) => {
+    const data = deepCloneJson(state.weeks[weekKey], {}) || {};
+    const expenseData = state.expenses?.[weekKey];
+    if (expenseData && Array.isArray(expenseData.projects) && expenseData.projects.length) {
+      data.expenses = deepCloneJson(expenseData, { projects: [] });
+    }
+    return refs.timesheets.doc(weekKey).set(
       {
         weekKey,
-        data: deepCloneJson(state.weeks[weekKey], {}),
+        data,
         updatedAt: state.updatedAt,
       },
       { merge: false }
-    )
-  );
+    );
+  });
   const previousKnownWeeks = Array.isArray(cloudSyncRemoteTimesheetMeta.knownWeeks)
     ? cloudSyncRemoteTimesheetMeta.knownWeeks
     : [];
@@ -12920,6 +13086,7 @@ async function pullUserState({ silent = false } = {}) {
       }
       timesheetDb = {
         weeks: deepCloneJson(remoteTimesheets.weeks, {}),
+        expenses: deepCloneJson(remoteTimesheets.expenses, {}),
         lastModified: remoteTimesheets.updatedAt || null,
       };
       cloudSyncRemoteTimesheetMeta = {
@@ -14942,6 +15109,7 @@ async function pinUrgentDeliverables() {
 function resetCopyProjectLocallyDialogState() {
   copyProjectLocallyDialogState = {
     ...DEFAULT_COPY_PROJECT_LOCALLY_DIALOG_STATE,
+    replacementReview: createDefaultLocalProjectManagerReplacementReviewState(),
     copyToLocal: createDefaultLocalProjectManagerCopyToLocalState(),
     sync: createDefaultLocalProjectManagerSyncState(),
     folderOptions: [],
@@ -15489,6 +15657,7 @@ function syncCopyProjectLocallyParentModeFromChildren(option) {
 function handleCopyProjectLocallyParentCheckboxChange(folderId, isChecked) {
   const option = getCopyProjectLocallyFolderOption(folderId);
   if (!option) return;
+  resetLocalProjectManagerReplacementReview();
   setCopyProjectLocallyFolderSelectionMode(option, isChecked ? "all" : "none");
   renderCopyProjectLocallyDialog();
 }
@@ -15499,6 +15668,7 @@ function handleCopyProjectLocallyChildCheckboxChange(folderId, childId, isChecke
     childId
   );
   if (!parentOption || !childOption) return;
+  resetLocalProjectManagerReplacementReview();
   childOption.selected = isChecked === true;
   syncCopyProjectLocallyParentModeFromChildren(parentOption);
   renderCopyProjectLocallyDialog();
@@ -15611,6 +15781,7 @@ async function ensureLocalProjectManagerManagedFoldersLoaded() {
 }
 
 function applyCopyProjectLocallySelectionMode(mode) {
+  resetLocalProjectManagerReplacementReview();
   copyProjectLocallyDialogState.folderOptions.forEach((option) => {
     if (mode === "all") {
       setCopyProjectLocallyFolderSelectionMode(option, "all");
@@ -15629,33 +15800,6 @@ function applyCopyProjectLocallySelectionMode(mode) {
 }
 
 function renderCopyProjectLocallyDialog() {
-  const activeTab =
-    copyProjectLocallyDialogState.activeTab === "sync" ? "sync" : "copy";
-  const copyTabBtn = document.getElementById("localProjectManagerCopyTabBtn");
-  const syncTabBtn = document.getElementById("localProjectManagerSyncTabBtn");
-  const activePanel = document.getElementById("localProjectManagerActivePanel");
-
-  if (copyTabBtn) {
-    const isActive = activeTab === "copy";
-    copyTabBtn.classList.toggle("is-active", isActive);
-    copyTabBtn.setAttribute("aria-selected", isActive ? "true" : "false");
-    copyTabBtn.tabIndex = isActive ? 0 : -1;
-  }
-  if (syncTabBtn) {
-    const isActive = activeTab === "sync";
-    syncTabBtn.classList.toggle("is-active", isActive);
-    syncTabBtn.setAttribute("aria-selected", isActive ? "true" : "false");
-    syncTabBtn.tabIndex = isActive ? 0 : -1;
-  }
-  if (activePanel) {
-    activePanel.setAttribute(
-      "aria-labelledby",
-      activeTab === "copy"
-        ? "localProjectManagerCopyTabBtn"
-        : "localProjectManagerSyncTabBtn"
-    );
-  }
-
   renderLocalProjectManagerComparisonBanner();
   renderLocalProjectManagerActivePane();
   updateLocalProjectManagerFooter();
@@ -15680,8 +15824,6 @@ function renderLocalProjectManagerActivePane() {
   const serverPathFallbackMessageEl = document.getElementById(
     "localProjectManagerServerPathFallbackMessage"
   );
-  const activeTab =
-    copyProjectLocallyDialogState.activeTab === "sync" ? "sync" : "copy";
   const localProjectExists = copyProjectLocallyDialogState.localProjectExists === true;
   const copyPreviewLoaded = copyProjectLocallyDialogState.copyPreviewLoaded === true;
   const hasOptions = copyProjectLocallyDialogState.folderOptions.length > 0;
@@ -15699,9 +15841,7 @@ function renderLocalProjectManagerActivePane() {
   if (serverPathFallbackVisible) {
     renderLocalProjectManagerEmptyState(
       listEl,
-      activeTab === "copy"
-        ? "Select the project folder to load server files."
-        : "Select the project folder before reviewing local-to-server changes."
+      "Select the project folder to load project files."
     );
     renderLocalProjectManagerBlockedEntries(
       blockedListEl,
@@ -15711,21 +15851,48 @@ function renderLocalProjectManagerActivePane() {
     return;
   }
 
+  if (
+    localProjectExists &&
+    copyProjectLocallyDialogState.replacementReview?.visible === true
+  ) {
+    renderLocalProjectManagerReplacementReview(
+      listEl,
+      copyProjectLocallyDialogState.replacementReview
+    );
+    renderLocalProjectManagerBlockedEntries(
+      blockedListEl,
+      copyProjectLocallyDialogState.replacementReview.blockedEntries,
+      "localProjectManagerBlockedSection"
+    );
+    return;
+  }
+
+  if (localProjectExists && copyProjectLocallyDialogState.syncReviewVisible === true) {
+    renderLocalProjectManagerCopyToServerReview(
+      listEl,
+      copyProjectLocallyDialogState.sync
+    );
+    renderLocalProjectManagerBlockedEntries(
+      blockedListEl,
+      copyProjectLocallyDialogState.sync.blockedEntries,
+      "localProjectManagerBlockedSection"
+    );
+    return;
+  }
+
+  if (!copyPreviewLoaded) {
+    renderLocalProjectManagerEmptyState(listEl, "Loading server folders...");
+  } else if (!hasOptions) {
+    renderLocalProjectManagerEmptyState(
+      listEl,
+      localProjectExists
+        ? "No server folders are available to recreate the local project copy."
+        : "No server folders are available to create the local project copy."
+    );
+  } else {
+    renderCopyProjectLocallyFolderList(listEl, copyProjectLocallyDialogState.folderOptions);
+  }
   if (!localProjectExists) {
-    if (activeTab === "copy") {
-      if (!copyPreviewLoaded) {
-        renderLocalProjectManagerEmptyState(listEl, "Loading server folders...");
-      } else if (!hasOptions) {
-        renderLocalProjectManagerEmptyState(
-          listEl,
-          "No server folders are available to create the local project copy."
-        );
-      } else {
-        renderCopyProjectLocallyFolderList(listEl, copyProjectLocallyDialogState.folderOptions);
-      }
-    } else {
-      renderLocalProjectManagerEmptyState(listEl, "No local project copy exists yet.");
-    }
     renderLocalProjectManagerBlockedEntries(
       blockedListEl,
       [],
@@ -15733,21 +15900,9 @@ function renderLocalProjectManagerActivePane() {
     );
     return;
   }
-
-  const direction = activeTab === "copy" ? "to_local" : "to_server";
-  const directionState = getLocalProjectManagerDirectionState(direction);
-  renderLocalProjectManagerDirectionRecommendations(listEl, directionState.candidateFiles, {
-    direction,
-    loadingMessage:
-      direction === "to_local" ? "Loading server files..." : "Loading local files...",
-    emptyMessage:
-      direction === "to_local"
-        ? "No server files are ready to copy."
-        : "No local files are ready to sync.",
-  });
   renderLocalProjectManagerBlockedEntries(
     blockedListEl,
-    directionState.blockedEntries,
+    [],
     "localProjectManagerBlockedSection"
   );
 }
@@ -15755,7 +15910,7 @@ function renderLocalProjectManagerActivePane() {
 async function openCopyProjectLocallyDialog(preview, launchContext = null) {
   const dialog = document.getElementById("copyProjectLocallyDlg");
   if (!dialog) {
-    throw new Error("Local Project Manager dialog is unavailable.");
+    throw new Error("Work Locally dialog is unavailable.");
   }
 
   const previewStatus = String(preview?.status || "").trim().toLowerCase();
@@ -15785,6 +15940,7 @@ async function openCopyProjectLocallyDialog(preview, launchContext = null) {
         )
       : [],
     managedFoldersInitialized: false,
+    replacementReview: createDefaultLocalProjectManagerReplacementReviewState(),
     copyToLocal: createDefaultLocalProjectManagerCopyToLocalState(),
     sync: createDefaultLocalProjectManagerSyncState(),
   };
@@ -15816,6 +15972,10 @@ async function openCopyProjectLocallyDialog(preview, launchContext = null) {
             action: "copy",
             selectionPayload: buildCopyProjectLocallySelectionPayload(),
             serverProjectPath: getLocalProjectManagerServerPathInfo().path || "",
+            replaceExistingLocal:
+              copyProjectLocallyDialogState.localProjectExists === true &&
+              copyProjectLocallyDialogState.replacementReview?.visible === true &&
+              copyProjectLocallyDialogState.replacementReview?.previewLoaded === true,
             launchContext: deepCloneJson(copyProjectLocallyDialogState.launchContext, null),
           };
         }
@@ -15911,32 +16071,32 @@ function buildLocalProjectManagerComparisonBannerMessage(summary = "") {
     case "local-newer":
       return {
         tone: "success",
-        message: "Local managed files are newer. Review the Local tab first.",
+        message: "Local managed files are newer. Use Copy Local Changes to Server to review them.",
       };
     case "server-newer":
       return {
         tone: "warning",
-        message: "Server managed files are newer. Review the Server tab first.",
+        message: "Server managed files are newer. Review the server files before copying locally.",
       };
     case "mixed":
       return {
         tone: "warning",
-        message: "Managed files differ in both directions. Review each tab before syncing.",
+        message: "Managed files differ in both directions. Review server files here, then review local changes before copying to the server.",
       };
     case "local-additions":
       return {
         tone: "info",
-        message: "Only local additions are available.",
+        message: "Local additions are available. Use Copy Local Changes to Server to review them.",
       };
     case "server-additions":
       return {
         tone: "info",
-        message: "Only server additions are available.",
+        message: "Server additions are available to copy locally.",
       };
     case "additions-both":
       return {
         tone: "info",
-        message: "Only additive items were found on both sides.",
+        message: "Additive items were found locally and on the server. Review each direction before copying.",
       };
     case "equal":
       return {
@@ -16245,6 +16405,26 @@ function normalizeLocalProjectManagerBlockedEntry(entry, index = 0) {
     serverPath: normalizeWindowsPath(entry?.serverPath || ""),
     reason: String(entry?.reason || "").trim() || "blocked",
     error: String(entry?.error || "").trim(),
+  };
+}
+
+function normalizeLocalProjectManagerReplacementRiskFile(entry, index = 0) {
+  const sizeBytesValue = Number(entry?.sizeBytes);
+  const relativePath = String(entry?.relativePath || "").trim();
+  return {
+    id: `local-project-manager-replace-risk::${relativePath || index}`,
+    relativePath,
+    localPath: normalizeWindowsPath(entry?.localPath || entry?.path || ""),
+    serverPath: normalizeWindowsPath(entry?.serverPath || ""),
+    reason: String(entry?.reason || "").trim().toLowerCase(),
+    localModifiedAt: String(entry?.localModifiedAt || "").trim(),
+    serverModifiedAt: String(entry?.serverModifiedAt || "").trim(),
+    sizeBytes: Number.isFinite(sizeBytesValue) ? sizeBytesValue : null,
+    sizeLabel:
+      String(entry?.sizeLabel || "").trim() ||
+      (Number.isFinite(sizeBytesValue)
+        ? formatCopyProjectLocallySizeLabel(sizeBytesValue)
+        : "Size unavailable"),
   };
 }
 
@@ -16994,6 +17174,232 @@ function renderLocalProjectManagerDirectionRecommendations(
   );
 }
 
+function getLocalProjectManagerCopyToServerReviewGroups(syncState = null) {
+  const candidateFiles = Array.isArray(syncState?.candidateFiles)
+    ? syncState.candidateFiles
+    : [];
+  return {
+    replaceFiles: candidateFiles.filter(
+      (entry) => String(entry?.changeType || "").trim().toLowerCase() === "newer"
+    ),
+    addFiles: candidateFiles.filter(
+      (entry) => String(entry?.changeType || "").trim().toLowerCase() === "missing"
+    ),
+  };
+}
+
+function createLocalProjectManagerReviewFileRow(candidate, actionLabel = "") {
+  const relativePath = String(candidate?.relativePath || "").trim();
+  const pathParts = splitLocalProjectManagerRelativePath(relativePath);
+  const fileName = pathParts[pathParts.length - 1] || relativePath || "Untitled file";
+  const parentPath = pathParts.slice(0, -1).join("\\");
+  const localModifiedLabel = formatLocalProjectManagerTimestampLabel(
+    candidate?.localModifiedAt || ""
+  );
+  const serverModifiedLabel = formatLocalProjectManagerTimestampLabel(
+    candidate?.serverModifiedAt || ""
+  );
+  const metaParts = [];
+  if (parentPath) metaParts.push(parentPath);
+  if (actionLabel) metaParts.push(actionLabel);
+  if (localModifiedLabel) metaParts.push(`Local ${localModifiedLabel}`);
+  if (serverModifiedLabel) metaParts.push(`Server ${serverModifiedLabel}`);
+
+  return el(
+    "div",
+    {
+      className:
+        "copy-project-locally-row local-project-manager-sync-row local-project-manager-review-row",
+      role: "listitem",
+    },
+    [
+      el("div", { className: "local-project-manager-sync-row-content" }, [
+        el("div", {
+          className: "copy-project-locally-row-title",
+          textContent: fileName,
+        }),
+        el("div", {
+          className: "local-project-manager-sync-row-meta",
+          textContent: metaParts.join(" | "),
+        }),
+      ]),
+      el("div", {
+        className: "copy-project-locally-row-size",
+        textContent: candidate?.sizeLabel || "Size unavailable",
+      }),
+    ]
+  );
+}
+
+function createLocalProjectManagerReviewSection(title, items, emptyMessage, actionLabel) {
+  const section = el("section", {
+    className: "local-project-manager-review-section",
+  });
+  section.appendChild(
+    el("div", {
+      className: "local-project-manager-review-title",
+      textContent: `${title} (${items.length})`,
+    })
+  );
+
+  const list = el("div", {
+    className: "local-project-manager-review-list",
+    role: "list",
+  });
+  if (!items.length) {
+    list.appendChild(
+      el("div", {
+        className: "deliverable-notepad-empty local-project-manager-review-empty",
+        textContent: emptyMessage,
+      })
+    );
+  } else {
+    items.forEach((candidate) =>
+      list.appendChild(createLocalProjectManagerReviewFileRow(candidate, actionLabel))
+    );
+  }
+  section.appendChild(list);
+  return section;
+}
+
+function renderLocalProjectManagerCopyToServerReview(container, syncState = null) {
+  if (!container) return;
+  container.replaceChildren();
+
+  if (syncState?.previewLoading) {
+    renderLocalProjectManagerEmptyState(
+      container,
+      "Reviewing local changes to copy to the server..."
+    );
+    return;
+  }
+
+  if (syncState?.previewError) {
+    renderLocalProjectManagerEmptyState(container, syncState.previewError);
+    return;
+  }
+
+  if (syncState?.previewLoaded !== true) {
+    renderLocalProjectManagerEmptyState(
+      container,
+      "Click Copy Local Changes to Server to review local files."
+    );
+    return;
+  }
+
+  const { replaceFiles, addFiles } =
+    getLocalProjectManagerCopyToServerReviewGroups(syncState);
+  const totalFiles = replaceFiles.length + addFiles.length;
+  if (!totalFiles) {
+    renderLocalProjectManagerEmptyState(
+      container,
+      "No local changes are ready to copy to the server."
+    );
+    return;
+  }
+
+  container.appendChild(
+    el("div", {
+      className: "local-project-manager-review-summary",
+      textContent: `${replaceFiles.length} file${
+        replaceFiles.length === 1 ? "" : "s"
+      } will replace server files. ${addFiles.length} file${
+        addFiles.length === 1 ? "" : "s"
+      } will be added to the server.`,
+    })
+  );
+  container.appendChild(
+    createLocalProjectManagerReviewSection(
+      "Replace on server",
+      replaceFiles,
+      "No server files will be replaced.",
+      "Will replace server file"
+    )
+  );
+  container.appendChild(
+    createLocalProjectManagerReviewSection(
+      "Add to server",
+      addFiles,
+      "No files will be added to the server.",
+      "Will be added to server"
+    )
+  );
+}
+
+function renderLocalProjectManagerReplacementReview(container, reviewState = null) {
+  if (!container) return;
+  container.replaceChildren();
+
+  if (reviewState?.previewLoading) {
+    renderLocalProjectManagerEmptyState(
+      container,
+      "Checking local files before replacing the local project..."
+    );
+    return;
+  }
+
+  if (reviewState?.previewError) {
+    renderLocalProjectManagerEmptyState(container, reviewState.previewError);
+    return;
+  }
+
+  if (reviewState?.previewLoaded !== true) {
+    renderLocalProjectManagerEmptyState(
+      container,
+      "Review the local replacement warning before copying server files locally."
+    );
+    return;
+  }
+
+  const newerLocalFiles = Array.isArray(reviewState?.newerLocalFiles)
+    ? reviewState.newerLocalFiles
+    : [];
+  const localOnlyFiles = Array.isArray(reviewState?.localOnlyFiles)
+    ? reviewState.localOnlyFiles
+    : [];
+  const selectedServerFileCount = Number.isFinite(
+    Number(reviewState?.selectedServerFileCount)
+  )
+    ? Number(reviewState.selectedServerFileCount)
+    : 0;
+
+  container.appendChild(
+    el("div", {
+      className: "local-project-manager-review-summary local-project-manager-replace-warning",
+      textContent:
+        "This will back up and delete the existing local project, then create completely new local files from the selected server folders.",
+    })
+  );
+  container.appendChild(
+    el("div", {
+      className: "local-project-manager-review-summary",
+      textContent: `${selectedServerFileCount} server file${
+        selectedServerFileCount === 1 ? "" : "s"
+      } will be copied into the new local project. ${newerLocalFiles.length} newer local file${
+        newerLocalFiles.length === 1 ? "" : "s"
+      } and ${localOnlyFiles.length} local-only file${
+        localOnlyFiles.length === 1 ? "" : "s"
+      } will be removed from the current local project.`,
+    })
+  );
+  container.appendChild(
+    createLocalProjectManagerReviewSection(
+      "Newer local files",
+      newerLocalFiles,
+      "No newer local files were found.",
+      "Will be deleted before server copy"
+    )
+  );
+  container.appendChild(
+    createLocalProjectManagerReviewSection(
+      "Local-only files",
+      localOnlyFiles,
+      "No local-only files were found.",
+      "Will be deleted before server copy"
+    )
+  );
+}
+
 function renderLocalProjectManagerBlockedEntries(
   container,
   items,
@@ -17044,13 +17450,45 @@ function buildLocalProjectManagerSyncConfirmPayload() {
   };
 }
 
+function buildLocalProjectManagerCopyToServerReviewPayload() {
+  const syncState = copyProjectLocallyDialogState.sync;
+  const serverPathInfo = getLocalProjectManagerServerPathInfo();
+  const reviewedRelativePaths = (Array.isArray(syncState.candidateFiles)
+    ? syncState.candidateFiles
+    : []
+  )
+    .map((entry) => String(entry?.relativePath || "").trim())
+    .filter(Boolean);
+
+  if (
+    copyProjectLocallyDialogState.syncReviewVisible !== true ||
+    syncState.previewLoaded !== true ||
+    !reviewedRelativePaths.length ||
+    !copyProjectLocallyDialogState.localProjectPath
+  ) {
+    return null;
+  }
+
+  return {
+    action: "sync",
+    localProjectPath: copyProjectLocallyDialogState.localProjectPath || "",
+    serverProjectPath:
+      syncState.resolvedServerProjectPath || serverPathInfo.path || "",
+    serverSelectedRelativePaths: [],
+    localSelectedRelativePaths: reviewedRelativePaths,
+    launchContext: deepCloneJson(copyProjectLocallyDialogState.launchContext, null),
+  };
+}
+
 function buildLocalProjectManagerCombinedConfirmPayload() {
   if (copyProjectLocallyDialogState.localProjectExists !== true) {
     return null;
   }
+  if (copyProjectLocallyDialogState.syncReviewVisible === true) {
+    return buildLocalProjectManagerCopyToServerReviewPayload();
+  }
   const copyToLocalPayload = buildLocalProjectManagerCopyToLocalConfirmPayload();
-  const syncPayload = buildLocalProjectManagerSyncConfirmPayload();
-  if (!copyToLocalPayload && !syncPayload) {
+  if (!copyToLocalPayload) {
     return null;
   }
   const serverPathInfo = getLocalProjectManagerServerPathInfo();
@@ -17059,11 +17497,10 @@ function buildLocalProjectManagerCombinedConfirmPayload() {
     localProjectPath: copyProjectLocallyDialogState.localProjectPath || "",
     serverProjectPath:
       copyToLocalPayload?.serverProjectPath ||
-      syncPayload?.serverProjectPath ||
       serverPathInfo.path ||
       "",
     serverSelectedRelativePaths: copyToLocalPayload?.selectedRelativePaths || [],
-    localSelectedRelativePaths: syncPayload?.selectedRelativePaths || [],
+    localSelectedRelativePaths: [],
     launchContext: deepCloneJson(copyProjectLocallyDialogState.launchContext, null),
   };
 }
@@ -17136,7 +17573,7 @@ function updateLocalProjectManagerFooterLegacy() {
     return;
   }
   if (!hasSelection) {
-    summaryEl.textContent = "Select files or folders from either tab to sync.";
+    summaryEl.textContent = "Select files or folders to copy.";
     return;
   }
   summaryEl.textContent = `Server ${selectedServerFiles.length} â€¢ Local ${
@@ -17198,7 +17635,7 @@ function updateLocalProjectManagerFooterLegacyCurrent() {
     return;
   }
   if (!hasSelection) {
-    summaryEl.textContent = "Select files or folders from either tab to sync.";
+    summaryEl.textContent = "Select files or folders to copy.";
     return;
   }
   summaryEl.textContent = `Server ${selectedServerFiles.length} • Local ${
@@ -17209,15 +17646,22 @@ function updateLocalProjectManagerFooterLegacyCurrent() {
 function updateLocalProjectManagerFooter() {
   const summaryEl = document.getElementById("localProjectManagerFooterSummary");
   const syncBtn = document.getElementById("localProjectManagerSyncBtn");
+  const copyToServerBtn = document.getElementById("localProjectManagerCopyToServerBtn");
   const fallbackVisible = shouldShowLocalProjectManagerServerPathFallback();
 
   if (copyProjectLocallyDialogState.localProjectExists !== true) {
     const metrics = getLocalProjectManagerFirstCopySelectionMetrics();
+    if (copyToServerBtn) {
+      copyToServerBtn.hidden = true;
+      copyToServerBtn.disabled = true;
+      copyToServerBtn.textContent = "Copy Local Changes to Server";
+    }
     if (syncBtn) {
       syncBtn.disabled =
         copyProjectLocallyDialogState.copyPreviewLoaded !== true ||
         fallbackVisible ||
         metrics.hasSelection !== true;
+      syncBtn.textContent = "Copy Selected Folders Locally";
     }
     if (!summaryEl) return;
     if (fallbackVisible) {
@@ -17239,33 +17683,135 @@ function updateLocalProjectManagerFooter() {
     return;
   }
 
-  const serverSelection = buildLocalProjectManagerDirectionSelectionPayload("to_local");
-  const localSelection = buildLocalProjectManagerDirectionSelectionPayload("to_server");
-  const selectedServerFiles = copyProjectLocallyDialogState.copyToLocal.candidateFiles.filter(
-    (entry) => entry.selected === true
-  );
-  const selectedLocalFiles = copyProjectLocallyDialogState.sync.candidateFiles.filter(
-    (entry) => entry.selected === true
-  );
-  const totalBytes = [...selectedServerFiles, ...selectedLocalFiles].reduce((sum, entry) => {
-    return sum + (Number.isFinite(entry?.sizeBytes) ? Number(entry.sizeBytes) : 0);
-  }, 0);
-  const hasSelection = serverSelection.hasSelection || localSelection.hasSelection;
+  if (copyProjectLocallyDialogState.replacementReview?.visible === true) {
+    const reviewState = copyProjectLocallyDialogState.replacementReview;
+    const newerLocalFiles = Array.isArray(reviewState.newerLocalFiles)
+      ? reviewState.newerLocalFiles
+      : [];
+    const localOnlyFiles = Array.isArray(reviewState.localOnlyFiles)
+      ? reviewState.localOnlyFiles
+      : [];
+    const blockedEntries = Array.isArray(reviewState.blockedEntries)
+      ? reviewState.blockedEntries
+      : [];
+    if (copyToServerBtn) {
+      copyToServerBtn.hidden = false;
+      copyToServerBtn.disabled = false;
+      copyToServerBtn.textContent = "Back to Folder Selection";
+    }
+    if (syncBtn) {
+      syncBtn.textContent = "Back Up and Replace Local Project";
+      syncBtn.disabled =
+        fallbackVisible ||
+        reviewState.previewLoading === true ||
+        reviewState.previewLoaded !== true ||
+        blockedEntries.length > 0;
+    }
+    if (!summaryEl) return;
+    if (fallbackVisible) {
+      summaryEl.textContent = "Select the project folder to continue.";
+      return;
+    }
+    if (reviewState.previewLoading) {
+      summaryEl.textContent = "Checking local files before replacement...";
+      return;
+    }
+    if (reviewState.previewError) {
+      summaryEl.textContent = reviewState.previewError;
+      return;
+    }
+    if (blockedEntries.length) {
+      summaryEl.textContent = `${blockedEntries.length} file${
+        blockedEntries.length === 1 ? "" : "s"
+      } could not be checked. Resolve blocked entries before replacing the local project.`;
+      return;
+    }
+    if (reviewState.previewLoaded !== true) {
+      summaryEl.textContent = "Review the local replacement warning before continuing.";
+      return;
+    }
+    summaryEl.textContent = `${newerLocalFiles.length} newer local | ${localOnlyFiles.length} local-only`;
+    return;
+  }
+
+  if (copyProjectLocallyDialogState.syncReviewVisible === true) {
+    const syncState = copyProjectLocallyDialogState.sync;
+    const { replaceFiles, addFiles } =
+      getLocalProjectManagerCopyToServerReviewGroups(syncState);
+    const candidateFiles = [...replaceFiles, ...addFiles];
+    const totalBytes = candidateFiles.reduce((sum, entry) => {
+      return sum + (Number.isFinite(entry?.sizeBytes) ? Number(entry.sizeBytes) : 0);
+    }, 0);
+    if (copyToServerBtn) {
+      copyToServerBtn.hidden = false;
+      copyToServerBtn.disabled = false;
+      copyToServerBtn.textContent = "Back to Server Files";
+    }
+    if (syncBtn) {
+      syncBtn.textContent = "Copy Reviewed Changes to Server";
+      syncBtn.disabled =
+        fallbackVisible ||
+        syncState.previewLoading === true ||
+        syncState.previewLoaded !== true ||
+        candidateFiles.length === 0;
+    }
+    if (!summaryEl) return;
+    if (fallbackVisible) {
+      summaryEl.textContent = "Select the project folder to continue.";
+      return;
+    }
+    if (syncState.previewLoading) {
+      summaryEl.textContent = "Reviewing local changes...";
+      return;
+    }
+    if (syncState.previewError) {
+      summaryEl.textContent = syncState.previewError;
+      return;
+    }
+    if (syncState.previewLoaded !== true) {
+      summaryEl.textContent = "Review local changes before copying to the server.";
+      return;
+    }
+    if (!candidateFiles.length) {
+      summaryEl.textContent = "No local changes are ready to copy to the server.";
+      return;
+    }
+    summaryEl.textContent = `${replaceFiles.length} replace | ${addFiles.length} add${
+      totalBytes > 0 ? ` | ${formatCopyProjectLocallySizeLabel(totalBytes)}` : ""
+    }`;
+    return;
+  }
+
+  const metrics = getLocalProjectManagerFirstCopySelectionMetrics();
+  if (copyToServerBtn) {
+    copyToServerBtn.hidden = fallbackVisible;
+    copyToServerBtn.disabled =
+      fallbackVisible || copyProjectLocallyDialogState.sync.previewLoading === true;
+    copyToServerBtn.textContent = "Copy Local Changes to Server";
+  }
   if (syncBtn) {
-    syncBtn.disabled = fallbackVisible || hasSelection !== true;
+    syncBtn.disabled =
+      fallbackVisible ||
+      copyProjectLocallyDialogState.copyPreviewLoaded !== true ||
+      metrics.hasSelection !== true;
+    syncBtn.textContent = "Copy Selected Folders Locally";
   }
   if (!summaryEl) return;
   if (fallbackVisible) {
     summaryEl.textContent = "Select the project folder to continue.";
     return;
   }
-  if (!hasSelection) {
-    summaryEl.textContent = "Select files or folders from either tab to sync.";
+  if (copyProjectLocallyDialogState.copyPreviewLoaded !== true) {
+    summaryEl.textContent = "Loading server folders...";
     return;
   }
-  summaryEl.textContent = `Server ${selectedServerFiles.length} | Local ${
-    selectedLocalFiles.length
-  }${totalBytes > 0 ? ` | ${formatCopyProjectLocallySizeLabel(totalBytes)}` : ""}`;
+  if (!metrics.hasSelection) {
+    summaryEl.textContent = "Select at least one server folder to recreate the local project copy.";
+    return;
+  }
+  summaryEl.textContent = `${metrics.count} folder${
+    metrics.count === 1 ? "" : "s"
+  } selected | existing local project will be replaced`;
 }
 
 function renderLocalProjectManagerSyncSection() {
@@ -17377,6 +17923,8 @@ function applyCopyProjectLocallyPreviewResult(preview, launchContext = null) {
         )
       : [];
   copyProjectLocallyDialogState.managedFoldersInitialized = false;
+  copyProjectLocallyDialogState.syncReviewVisible = false;
+  resetLocalProjectManagerReplacementReview();
   applyLocalProjectManagerFirstCopyFolderDefaults();
   resetLocalProjectManagerDirectionPreview("to_local");
   resetLocalProjectManagerDirectionPreview("to_server");
@@ -17425,6 +17973,7 @@ async function browseLocalProjectManagerServerPath() {
   );
   resetLocalProjectManagerDirectionPreview("to_local");
   resetLocalProjectManagerDirectionPreview("to_server");
+  resetLocalProjectManagerReplacementReview();
   copyProjectLocallyDialogState.copyLoadErrorMessage = "";
   renderCopyProjectLocallyDialog();
 }
@@ -17519,18 +18068,109 @@ async function previewLocalProjectManagerSync(options = {}) {
   });
 }
 
+function resetLocalProjectManagerReplacementReview() {
+  copyProjectLocallyDialogState.replacementReview =
+    createDefaultLocalProjectManagerReplacementReviewState();
+}
+
+async function openLocalProjectManagerReplacementReview() {
+  if (copyProjectLocallyDialogState.localProjectExists !== true) {
+    return true;
+  }
+
+  const serverPathInfo = getLocalProjectManagerServerPathInfo();
+  if (!serverPathInfo.path) {
+    toast("Choose the server project folder before copying locally.", 7000);
+    return false;
+  }
+
+  const selectionPayload = buildCopyProjectLocallySelectionPayload();
+  if (!selectionPayload.hasSelection) {
+    toast("Select at least one server folder to recreate the local project copy.", 7000);
+    updateLocalProjectManagerFooter();
+    return false;
+  }
+
+  const reviewState = createDefaultLocalProjectManagerReplacementReviewState();
+  reviewState.visible = true;
+  reviewState.previewLoading = true;
+  copyProjectLocallyDialogState.replacementReview = reviewState;
+  copyProjectLocallyDialogState.syncReviewVisible = false;
+  renderCopyProjectLocallyDialog();
+
+  try {
+    const result = await window.pywebview.api.preview_copy_project_locally_replacement(
+      serverPathInfo.path,
+      copyProjectLocallyDialogState.launchContext || null,
+      selectionPayload.selectedFolderNames,
+      selectionPayload.selectedFolderRequests
+    );
+    if (result?.status !== "success") {
+      throw new Error(result?.message || "Failed to preview local replacement.");
+    }
+
+    reviewState.previewLoaded = true;
+    reviewState.previewError = "";
+    reviewState.previewLoading = false;
+    reviewState.localProjectPath = normalizeWindowsPath(result?.localProjectPath || "");
+    reviewState.serverProjectPath = normalizeWindowsPath(
+      result?.serverProjectPath || result?.resolvedServerProjectPath || serverPathInfo.path || ""
+    );
+    reviewState.selectedServerFileCount = Number.isFinite(
+      Number(result?.selectedServerFileCount)
+    )
+      ? Number(result.selectedServerFileCount)
+      : 0;
+    reviewState.newerLocalFiles = Array.isArray(result?.newerLocalFiles)
+      ? result.newerLocalFiles.map((entry, index) =>
+          normalizeLocalProjectManagerReplacementRiskFile(entry, index)
+        )
+      : [];
+    reviewState.localOnlyFiles = Array.isArray(result?.localOnlyFiles)
+      ? result.localOnlyFiles.map((entry, index) =>
+          normalizeLocalProjectManagerReplacementRiskFile(entry, index)
+        )
+      : [];
+    reviewState.blockedEntries = Array.isArray(result?.blockedEntries)
+      ? result.blockedEntries.map((entry, index) =>
+          normalizeLocalProjectManagerBlockedEntry(entry, index)
+        )
+      : [];
+    reviewState.missingServerFolders = Array.isArray(result?.missingServerFolders)
+      ? result.missingServerFolders.map((item) => String(item || "").trim()).filter(Boolean)
+      : [];
+    return true;
+  } catch (error) {
+    reviewState.previewLoading = false;
+    reviewState.previewLoaded = false;
+    reviewState.previewError = error?.message || "Failed to preview local replacement.";
+    return false;
+  } finally {
+    renderCopyProjectLocallyDialog();
+  }
+}
+
+async function openLocalProjectManagerCopyToServerReview() {
+  if (copyProjectLocallyDialogState.localProjectExists !== true) {
+    toast("Create the local project copy before copying local changes to the server.", 7000);
+    return;
+  }
+  const serverPathInfo = getLocalProjectManagerServerPathInfo();
+  if (!serverPathInfo.path) {
+    toast("Choose the server project folder before reviewing local changes.", 7000);
+    return;
+  }
+
+  copyProjectLocallyDialogState.syncReviewVisible = true;
+  resetLocalProjectManagerDirectionPreview("to_server");
+  renderCopyProjectLocallyDialog();
+  await previewLocalProjectManagerSync({ force: true });
+}
+
 async function ensureLocalProjectManagerActiveTabPreview({ force = false } = {}) {
   if (copyProjectLocallyDialogState.localProjectExists !== true) {
     return null;
   }
-  if (copyProjectLocallyDialogState.activeTab === "sync") {
-    const syncState = copyProjectLocallyDialogState.sync;
-    if (force || (!syncState.previewLoaded && !syncState.previewLoading)) {
-      return loadLocalProjectManagerDirectionPreview("to_server", { force });
-    }
-    return null;
-  }
-
   const copyToLocalState = copyProjectLocallyDialogState.copyToLocal;
   if (force || (!copyToLocalState.previewLoaded && !copyToLocalState.previewLoading)) {
     return loadLocalProjectManagerDirectionPreview("to_local", { force });
@@ -17566,7 +18206,7 @@ async function refreshLocalProjectManagerCurrentTab() {
     return;
   }
 
-  if (copyProjectLocallyDialogState.activeTab === "sync") {
+  if (copyProjectLocallyDialogState.syncReviewVisible === true) {
     await previewLocalProjectManagerSync();
     return;
   }
@@ -17624,20 +18264,9 @@ async function autoCompareTimestampsAndSelectTab() {
       equalFiles: result?.equalFiles || [],
     };
 
-    if (summary === "local-newer" || summary === "mixed") {
-      copyProjectLocallyDialogState.activeTab = "sync";
-    } else if (summary === "server-newer") {
-      copyProjectLocallyDialogState.activeTab = "copy";
-    } else if (summary === "server-additions") {
-      copyProjectLocallyDialogState.activeTab = "copy";
-    } else if (summary === "local-additions" || summary === "additions-both") {
-      copyProjectLocallyDialogState.activeTab = "sync";
-    } else {
-      copyProjectLocallyDialogState.activeTab = "copy";
-    }
-
+    copyProjectLocallyDialogState.activeTab = "copy";
+    copyProjectLocallyDialogState.syncReviewVisible = false;
     await loadLocalProjectManagerDirectionPreview("to_local", { force: true });
-    await loadLocalProjectManagerDirectionPreview("to_server", { force: true });
   } catch (error) {
     copyProjectLocallyDialogState.comparisonSummary = null;
     copyProjectLocallyDialogState.comparisonBannerMessage =
@@ -31068,6 +31697,68 @@ function setScratchpadStatus(text) {
   const el = document.getElementById("scratchpadStatus");
   if (el) el.textContent = text || "";
 }
+function applyScratchpadTextColor(color) {
+  const editor = document.getElementById("scratchpadEditor");
+  if (!editor) return;
+  const colorValue = String(color || "").trim() || "#2f6fed";
+  restoreScratchpadSelection(editor);
+  document.execCommand("foreColor", false, colorValue);
+  editor.focus();
+  saveScratchpadSelection(editor);
+  queueScratchpadSave(editor);
+  setScratchpadStatus("Color applied");
+}
+function getScratchpadClipboardImageFiles(clipboardData) {
+  if (!clipboardData) return [];
+  const files = Array.from(clipboardData.files || []).filter((file) =>
+    String(file?.type || "").toLowerCase().startsWith("image/")
+  );
+  if (files.length) return files;
+  return Array.from(clipboardData.items || [])
+    .map((item) => item.getAsFile?.())
+    .filter((file) =>
+      String(file?.type || "").toLowerCase().startsWith("image/")
+    );
+}
+function insertScratchpadPlainText(text, editor) {
+  if (!editor) return false;
+  const value = String(text || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  if (!value) return false;
+  const range = getScratchpadSelectionRange(editor) || restoreScratchpadSelection(editor);
+  if (!range) return false;
+  range.deleteContents();
+  const wrapper = document.createElement("span");
+  wrapper.className = "scratchpad-plain-text";
+  const fragment = document.createDocumentFragment();
+  let lastNode = null;
+  value.split("\n").forEach((line, index) => {
+    if (index > 0) {
+      const br = document.createElement("br");
+      fragment.appendChild(br);
+      lastNode = br;
+    }
+    if (line) {
+      const textNode = document.createTextNode(line);
+      fragment.appendChild(textNode);
+      lastNode = textNode;
+    }
+  });
+  if (!lastNode) return false;
+  wrapper.appendChild(fragment);
+  range.insertNode(wrapper);
+  const nextRange = document.createRange();
+  nextRange.setStartAfter(wrapper);
+  nextRange.collapse(true);
+  const selection = window.getSelection?.();
+  if (selection) {
+    selection.removeAllRanges();
+    selection.addRange(nextRange);
+  }
+  scratchpadSelectionRange = cloneScratchpadRange(nextRange);
+  clearScratchpadSelectedImage();
+  queueScratchpadSave(editor);
+  return true;
+}
 function normalizeScratchpadImagePercent(
   value,
   fallback = SCRATCHPAD_IMAGE_DEFAULT_WIDTH_PERCENT
@@ -31461,15 +32152,15 @@ function initScratchpadBindings() {
     await insertScratchpadImages(files);
   });
   editor.addEventListener("paste", async (e) => {
-    const files = Array.from(e.clipboardData?.files || []).filter((file) =>
-      String(file?.type || "").toLowerCase().startsWith("image/")
-    );
-    const itemFiles = Array.from(e.clipboardData?.items || [])
-      .map((item) => item.getAsFile?.())
-      .filter((file) =>
-        String(file?.type || "").toLowerCase().startsWith("image/")
-      );
-    const images = files.length ? files : itemFiles;
+    const clipboardData = e.clipboardData;
+    const plainText = clipboardData?.getData("text/plain") || "";
+    if (plainText) {
+      e.preventDefault();
+      insertScratchpadPlainText(plainText, editor);
+      setScratchpadStatus("Pasted plain text");
+      return;
+    }
+    const images = getScratchpadClipboardImageFiles(clipboardData);
     if (!images.length) return;
     e.preventDefault();
     await insertScratchpadImages(images);
@@ -31481,6 +32172,16 @@ function initScratchpadBindings() {
       editor.focus();
     });
   });
+  const textColorInput = document.getElementById("scratchpadTextColorInput");
+  if (textColorInput) {
+    textColorInput.addEventListener("pointerdown", () =>
+      saveScratchpadSelection(editor)
+    );
+    textColorInput.addEventListener("focus", () => saveScratchpadSelection(editor));
+    textColorInput.addEventListener("input", (e) => {
+      applyScratchpadTextColor(e.target.value);
+    });
+  }
   [
     "scratchpadInsertImageBtn",
     "scratchpadImageSmallerBtn",
@@ -32369,22 +33070,77 @@ function initEventListeners() {
       }
     };
   }
+  const localProjectManagerCopyToServerBtn = document.getElementById(
+    "localProjectManagerCopyToServerBtn"
+  );
+  if (localProjectManagerCopyToServerBtn) {
+    localProjectManagerCopyToServerBtn.onclick = async () => {
+      if (copyProjectLocallyDialogState.replacementReview?.visible === true) {
+        resetLocalProjectManagerReplacementReview();
+        renderCopyProjectLocallyDialog();
+        return;
+      }
+      if (copyProjectLocallyDialogState.syncReviewVisible === true) {
+        copyProjectLocallyDialogState.syncReviewVisible = false;
+        renderCopyProjectLocallyDialog();
+        return;
+      }
+      try {
+        await openLocalProjectManagerCopyToServerReview();
+      } catch (error) {
+        toast(error?.message || "Failed to review local changes.", 7000);
+      }
+    };
+  }
   const localProjectManagerSyncBtn = document.getElementById(
     "localProjectManagerSyncBtn"
   );
   if (localProjectManagerSyncBtn) {
-    localProjectManagerSyncBtn.onclick = () => {
+    localProjectManagerSyncBtn.onclick = async () => {
       const dialog = document.getElementById("copyProjectLocallyDlg");
       if (!dialog) return;
 
       if (copyProjectLocallyDialogState.localProjectExists === true) {
+        if (copyProjectLocallyDialogState.syncReviewVisible !== true) {
+          const reviewState = copyProjectLocallyDialogState.replacementReview;
+          if (reviewState?.visible === true) {
+            const blockedEntries = Array.isArray(reviewState.blockedEntries)
+              ? reviewState.blockedEntries
+              : [];
+            if (reviewState.previewLoaded !== true || blockedEntries.length) {
+              toast(
+                blockedEntries.length
+                  ? "Resolve blocked entries before replacing the local project."
+                  : "Review local replacement details before continuing.",
+                7000
+              );
+              updateLocalProjectManagerFooter();
+              return;
+            }
+            dialog.dataset.localProjectManagerAction = "copy";
+            dialog.close("confirm");
+            return;
+          }
+
+          try {
+            await openLocalProjectManagerReplacementReview();
+          } catch (error) {
+            toast(error?.message || "Failed to check local files before replacement.", 7000);
+          }
+          return;
+        }
+
         const payload = buildLocalProjectManagerCombinedConfirmPayload();
         if (
           !payload ||
           (!payload.serverSelectedRelativePaths.length &&
             !payload.localSelectedRelativePaths.length)
         ) {
-          toast("Select files or folders from either tab to sync.");
+          toast(
+            copyProjectLocallyDialogState.syncReviewVisible === true
+              ? "No local changes are ready to copy to the server."
+              : "Select server files or folders to copy locally."
+          );
           updateLocalProjectManagerFooter();
           return;
         }
@@ -32468,8 +33224,12 @@ function initEventListeners() {
   // Expense sheet event listeners
   document.getElementById("addExpenseProjectBtn").onclick = () =>
     openAddExpenseProjectDialog();
+  document.getElementById("addCustomExpenseBtn").onclick = () =>
+    openAddCustomExpenseDialog();
   document.getElementById("btnSaveExpenseEntry").onclick = () =>
     saveExpenseEntry();
+  document.getElementById("btnSaveCustomExpense").onclick = () =>
+    saveCustomExpense();
   initExpenseImagePreviewDialog();
 
   document.getElementById("checkUpdateBtn").onclick = () =>
@@ -33960,7 +34720,10 @@ async function init() {
     ]);
     db = loadedDb || [];
     notesDb = loadedNotes || {};
-    timesheetDb = loadedTimesheets || { weeks: {}, lastModified: null };
+    timesheetDb = loadedTimesheets || { weeks: {}, expenses: {}, lastModified: null };
+    if (!timesheetDb.expenses || typeof timesheetDb.expenses !== "object") {
+      timesheetDb.expenses = {};
+    }
     templatesDb = loadedTemplates || {
       templates: [],
       defaultTemplatesInstalled: false,

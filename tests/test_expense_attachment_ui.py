@@ -9,6 +9,23 @@ INDEX_HTML_PATH = REPO_ROOT / "index.html"
 
 
 class ExpenseAttachmentUiTests(unittest.TestCase):
+    def test_custom_expense_ui_wiring_exists(self):
+        script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
+        html = INDEX_HTML_PATH.read_text(encoding="utf-8")
+
+        self.assertIn('id="addCustomExpenseBtn"', html)
+        self.assertIn('<dialog id="customExpenseDlg">', html)
+        self.assertIn('id="custom_expense_project_name"', html)
+        self.assertIn('id="custom_expense_job_number"', html)
+        self.assertIn('id="btnSaveCustomExpense"', html)
+        self.assertIn("function openAddCustomExpenseDialog() {", script)
+        self.assertIn("function saveCustomExpense() {", script)
+        self.assertIn('source: "custom"', script)
+        self.assertIn('textContent: getExpenseProjectSecondaryLabel(project)', script)
+        self.assertIn('return isCustomExpenseProject(project) ? "Custom expense" : "Job #: --";', script)
+        self.assertIn('openAddCustomExpenseDialog();', script)
+        self.assertIn('saveCustomExpense();', script)
+
     def test_expense_attachment_preview_script_wiring_exists(self):
         text = SCRIPT_JS_PATH.read_text(encoding="utf-8")
         self.assertIn("const EXPENSE_IMAGE_THUMB_MAX_SIZE = 320;", text)

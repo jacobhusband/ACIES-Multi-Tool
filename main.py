@@ -5424,9 +5424,12 @@ Return ONLY the JSON object.
         """Reads and returns the content of timesheets.json."""
         try:
             with open(TIMESHEETS_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
+                data = json.load(f)
+                if isinstance(data, dict) and not isinstance(data.get('expenses'), dict):
+                    data['expenses'] = {}
+                return data
         except (FileNotFoundError, json.JSONDecodeError):
-            return {'weeks': {}, 'lastModified': None}
+            return {'weeks': {}, 'expenses': {}, 'lastModified': None}
 
     def save_timesheets(self, data):
         """Saves timesheets data to timesheets.json and creates a backup."""
@@ -9636,7 +9639,378 @@ Return ONLY the JSON object.
             logging.error(f"Error previewing child folders for local project copy: {e}")
             return {'status': 'error', 'message': str(e)}
 
-    def copy_project_locally(self, server_project_path=None, launch_context=None, selected_folder_names=None, selected_folder_requests=None):
+    def _build_copy_project_folder_requests(self, settings, selected_folder_names=None, selected_folder_requests=None):
+        if selected_folder_requests is not None:
+            return self._normalize_copy_project_folder_requests(selected_folder_requests)
+        if selected_folder_names is None:
+            return [
+                {
+                    'name': folder_name,
+                    'mode': 'all',
+                    'selectedChildNames': [],
+                    'includeParentRootFiles': False,
+                }
+                for folder_name in self._get_copy_project_default_folder_names(settings)
+            ]
+        return [
+            {
+                'name': folder_name,
+                'mode': 'all',
+                'selectedChildNames': [],
+                'includeParentRootFiles': False,
+            }
+            for folder_name in self._normalize_copy_project_folder_names(selected_folder_names)
+        ]
+
+    def _scan_copy_project_direct_server_files(self, folder_path, relative_prefix):
+        normalized_folder_path = os.path.normpath(str(folder_path or '').strip())
+        normalized_prefix = os.path.normpath(str(relative_prefix or '').strip())
+        files = []
+        scan_errors = []
+
+        try:
+            with os.scandir(self._to_windows_extended_path(normalized_folder_path)) as entries:
+                for entry in entries:
+                    entry_name = str(entry.name or '').strip()
+                    if not entry_name:
+                        continue
+                    relative_path = os.path.normpath(os.path.join(normalized_prefix, entry_name))
+                    try:
+                        entry_stat = entry.stat(follow_symlinks=False)
+                    except Exception as e:
+                        scan_errors.append({
+                            'relativePath': relative_path,
+                            'path': os.path.join(normalized_folder_path, entry_name),
+                            'error': str(e),
+                            'reason': 'scan_error',
+                        })
+                        continue
+
+                    if not self._is_copy_project_entry_file(entry, entry_stat):
+                        continue
+
+                    file_size = max(0, int(getattr(entry_stat, 'st_size', 0) or 0))
+                    file_path = os.path.join(normalized_folder_path, entry_name)
+                    files.append({
+                        'relativePath': relative_path,
+                        'path': file_path,
+                        'sizeBytes': file_size,
+                        'sizeLabel': self._format_copy_project_size_label(file_size),
+                        'modifiedAt': _get_file_modified_iso(file_path),
+                        'modifiedTimestamp': float(getattr(entry_stat, 'st_mtime', 0.0) or 0.0),
+                    })
+        except Exception as e:
+            scan_errors.append({
+                'relativePath': normalized_prefix,
+                'path': normalized_folder_path,
+                'error': str(e),
+                'reason': 'scan_error',
+            })
+
+        return {
+            'files': files,
+            'scanErrors': scan_errors,
+        }
+
+    def _prefix_copy_project_scan_results(self, scan_result, relative_prefix):
+        normalized_prefix = os.path.normpath(str(relative_prefix or '').strip())
+        prefixed_files = []
+        prefixed_errors = []
+
+        for entry in scan_result.get('files', []) or []:
+            entry_relative_path = str(entry.get('relativePath') or '').strip()
+            relative_path = (
+                os.path.normpath(os.path.join(normalized_prefix, entry_relative_path))
+                if entry_relative_path
+                else normalized_prefix
+            )
+            prefixed_files.append({
+                **entry,
+                'relativePath': relative_path,
+            })
+
+        for entry in scan_result.get('scanErrors', []) or []:
+            entry_relative_path = str(entry.get('relativePath') or '').strip()
+            relative_path = (
+                os.path.normpath(os.path.join(normalized_prefix, entry_relative_path))
+                if entry_relative_path
+                else normalized_prefix
+            )
+            prefixed_errors.append({
+                **entry,
+                'relativePath': relative_path,
+            })
+
+        return {
+            'files': prefixed_files,
+            'scanErrors': prefixed_errors,
+        }
+
+    def _scan_copy_project_selected_server_payload(self, server_project_path, folder_requests):
+        normalized_server_path = os.path.normpath(str(server_project_path or '').strip())
+        files = []
+        scan_errors = []
+        missing_server_folders = []
+
+        for folder_request in folder_requests or []:
+            folder_name = str(folder_request.get('name') or '').strip()
+            if not folder_name:
+                continue
+
+            source_folder = os.path.normpath(os.path.join(normalized_server_path, folder_name))
+            if not os.path.isdir(self._to_windows_extended_path(source_folder)):
+                missing_server_folders.append(folder_name)
+                continue
+
+            if str(folder_request.get('mode') or '').strip().lower() == 'subset':
+                if bool(folder_request.get('includeParentRootFiles')):
+                    direct_result = self._scan_copy_project_direct_server_files(
+                        source_folder,
+                        folder_name,
+                    )
+                    files.extend(direct_result.get('files', []))
+                    scan_errors.extend(direct_result.get('scanErrors', []))
+
+                for child_name in self._normalize_copy_project_folder_names(
+                    folder_request.get('selectedChildNames')
+                ):
+                    source_child_folder = os.path.normpath(os.path.join(source_folder, child_name))
+                    relative_prefix = os.path.normpath(os.path.join(folder_name, child_name))
+                    if os.path.isdir(self._to_windows_extended_path(source_child_folder)):
+                        child_scan = self._prefix_copy_project_scan_results(
+                            self._scan_copy_project_files(source_child_folder),
+                            relative_prefix,
+                        )
+                        files.extend(child_scan.get('files', []))
+                        scan_errors.extend(child_scan.get('scanErrors', []))
+                    else:
+                        missing_server_folders.append(relative_prefix)
+                continue
+
+            folder_scan = self._prefix_copy_project_scan_results(
+                self._scan_copy_project_files(source_folder),
+                folder_name,
+            )
+            files.extend(folder_scan.get('files', []))
+            scan_errors.extend(folder_scan.get('scanErrors', []))
+
+        deduped_files = {}
+        for entry in files:
+            relative_path = str(entry.get('relativePath') or '').strip()
+            if not relative_path:
+                continue
+            deduped_files[relative_path.lower()] = entry
+
+        return {
+            'files': sorted(
+                deduped_files.values(),
+                key=lambda item: str(item.get('relativePath') or '').lower(),
+            ),
+            'scanErrors': sorted(
+                scan_errors,
+                key=lambda item: str(item.get('relativePath') or '').lower(),
+            ),
+            'missingServerFolders': missing_server_folders,
+        }
+
+    def _build_copy_project_replacement_risk_file(self, local_file, server_file=None, reason='local_only'):
+        local_file = local_file or {}
+        server_file = server_file or {}
+        local_size = local_file.get('sizeBytes')
+        return {
+            'relativePath': os.path.normpath(str(local_file.get('relativePath') or '').strip()),
+            'localPath': os.path.normpath(str(local_file.get('path') or '').strip()),
+            'serverPath': os.path.normpath(str(server_file.get('path') or '').strip()) if server_file else '',
+            'reason': str(reason or '').strip() or 'local_only',
+            'localModifiedAt': str(local_file.get('modifiedAt') or '').strip(),
+            'serverModifiedAt': str(server_file.get('modifiedAt') or '').strip() if server_file else '',
+            'sizeBytes': local_size,
+            'sizeLabel': (
+                str(local_file.get('sizeLabel') or '').strip()
+                or (
+                    self._format_copy_project_size_label(local_size)
+                    if local_size is not None
+                    else 'Size unavailable'
+                )
+            ),
+        }
+
+    def preview_copy_project_locally_replacement(
+        self,
+        server_project_path=None,
+        launch_context=None,
+        selected_folder_names=None,
+        selected_folder_requests=None,
+    ):
+        """Preview local files that would be deleted before replacing an existing local project."""
+        try:
+            settings = self.get_user_settings()
+            source_resolution = self._resolve_copy_project_source_path(
+                server_project_path, launch_context, settings
+            )
+            if source_resolution.get('status') != 'success':
+                return source_resolution
+
+            normalized_server_path = source_resolution.get('path') or ''
+            resolved_from_workroom = bool(source_resolution.get('resolvedFromWorkroom'))
+            resolution_mode = str(source_resolution.get('resolutionMode') or '').strip()
+            workroom_project_path = str(source_resolution.get('workroomProjectPath') or '').strip()
+
+            if not os.path.isdir(self._to_windows_extended_path(normalized_server_path)):
+                return {'status': 'error', 'message': 'Server project path does not exist.'}
+
+            target_info = self._get_copy_project_target_info(normalized_server_path)
+            if target_info.get('status') != 'success':
+                return target_info
+
+            local_project_path = target_info.get('localProjectPath') or ''
+            local_project_exists = os.path.isdir(self._to_windows_extended_path(local_project_path))
+            folder_requests = self._build_copy_project_folder_requests(
+                settings,
+                selected_folder_names=selected_folder_names,
+                selected_folder_requests=selected_folder_requests,
+            )
+            if not folder_requests:
+                return {
+                    'status': 'error',
+                    'code': 'no_folders_selected',
+                    'message': 'Select at least one folder to copy locally.',
+                }
+
+            selected_server_scan = self._scan_copy_project_selected_server_payload(
+                normalized_server_path,
+                folder_requests,
+            )
+            server_files_by_relative_path = {
+                str(entry.get('relativePath') or '').strip().lower(): entry
+                for entry in selected_server_scan.get('files', []) or []
+                if str(entry.get('relativePath') or '').strip()
+            }
+
+            newer_local_files = []
+            local_only_files = []
+            blocked_entries = []
+            comparison_tolerance_seconds = 60.0
+
+            for scan_error in selected_server_scan.get('scanErrors', []) or []:
+                blocked_entries.append(
+                    self._build_local_project_manager_blocked_entry(
+                        local_project_path,
+                        normalized_server_path,
+                        scan_error.get('relativePath') or '',
+                        'server_scan_error',
+                        server_path=scan_error.get('path') or '',
+                        error=scan_error.get('error') or '',
+                    )
+                )
+
+            if local_project_exists:
+                local_scan = self._scan_copy_project_files(local_project_path)
+                for scan_error in local_scan.get('scanErrors', []) or []:
+                    blocked_entries.append(
+                        self._build_local_project_manager_blocked_entry(
+                            local_project_path,
+                            normalized_server_path,
+                            scan_error.get('relativePath') or '',
+                            'local_scan_error',
+                            local_path=scan_error.get('path') or '',
+                            error=scan_error.get('error') or '',
+                        )
+                    )
+
+                for local_file in local_scan.get('files', []) or []:
+                    relative_path = str(local_file.get('relativePath') or '').strip()
+                    if not relative_path:
+                        continue
+                    server_file = server_files_by_relative_path.get(relative_path.lower())
+                    if not server_file:
+                        local_only_files.append(
+                            self._build_copy_project_replacement_risk_file(
+                                local_file,
+                                None,
+                                reason='local_only',
+                            )
+                        )
+                        continue
+
+                    local_modified_timestamp = float(local_file.get('modifiedTimestamp') or 0.0)
+                    server_modified_timestamp = float(server_file.get('modifiedTimestamp') or 0.0)
+                    if local_modified_timestamp - server_modified_timestamp > comparison_tolerance_seconds:
+                        newer_local_files.append(
+                            self._build_copy_project_replacement_risk_file(
+                                local_file,
+                                server_file,
+                                reason='local_newer',
+                            )
+                        )
+
+            return {
+                'status': 'success',
+                'serverProjectPath': normalized_server_path,
+                'resolvedServerProjectPath': normalized_server_path,
+                'resolvedFromWorkroom': resolved_from_workroom,
+                'resolutionMode': resolution_mode or 'manual_selection',
+                'workroomProjectPath': workroom_project_path,
+                'localProjectPath': local_project_path,
+                'projectName': target_info.get('projectName') or '',
+                'localProjectExists': local_project_exists,
+                'folderRequests': folder_requests,
+                'selectedServerFileCount': len(selected_server_scan.get('files', []) or []),
+                'missingServerFolders': selected_server_scan.get('missingServerFolders', []),
+                'newerLocalFiles': newer_local_files,
+                'newerLocalFileCount': len(newer_local_files),
+                'localOnlyFiles': local_only_files,
+                'localOnlyFileCount': len(local_only_files),
+                'blockedEntries': blocked_entries,
+                'blockedEntryCount': len(blocked_entries),
+                'requiresConfirmation': local_project_exists,
+            }
+        except Exception as e:
+            logging.error(f"Error previewing local project replacement: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def _backup_existing_local_project_before_replace(self, local_project_path):
+        normalized_local_project_path = os.path.normpath(str(local_project_path or '').strip())
+        if not normalized_local_project_path:
+            return {'status': 'error', 'message': 'Local project path is required.'}
+        if not os.path.isdir(self._to_windows_extended_path(normalized_local_project_path)):
+            return {
+                'status': 'success',
+                'backupCreated': False,
+                'backupPath': '',
+                'copiedFileCount': 0,
+                'failedFiles': [],
+                'failedFileCount': 0,
+            }
+
+        project_name = os.path.basename(normalized_local_project_path.rstrip('\\/'))
+        backup_root = os.path.join(
+            _get_windows_documents_dir(),
+            'Local Projects',
+            '0 Archive',
+            project_name,
+        )
+        backup_path = self._reserve_unique_archive_folder(backup_root)
+        copy_result = self._copy_folder_contents(normalized_local_project_path, backup_path)
+        failed_files = list(copy_result.get('failedFiles', []) or [])
+        self._cleanup_old_backups(backup_root, max_backups=5)
+        return {
+            'status': 'success',
+            'backupCreated': True,
+            'backupPath': backup_path,
+            'copiedFileCount': int(copy_result.get('copiedFileCount', 0) or 0),
+            'failedFiles': failed_files,
+            'failedFileCount': len(failed_files),
+        }
+
+    def copy_project_locally(
+        self,
+        server_project_path=None,
+        launch_context=None,
+        selected_folder_names=None,
+        selected_folder_requests=None,
+        replace_existing_local=False,
+    ):
         """Copy key project folders from server to local Documents\\Local Projects."""
         try:
             settings = self.get_user_settings()
@@ -9673,49 +10047,35 @@ Return ONLY the JSON object.
             local_project_path = target_info.get('localProjectPath') or ''
             os.makedirs(self._to_windows_extended_path(local_root), exist_ok=True)
             local_project_copy_path = self._to_windows_extended_path(local_project_path)
+            replace_existing_local = bool(replace_existing_local)
 
             if os.path.exists(local_project_copy_path):
                 if os.path.isdir(local_project_copy_path):
+                    if not replace_existing_local:
+                        return {
+                            'status': 'error',
+                            'code': 'local_project_exists',
+                            'message': f'Local project already exists: {local_project_path}',
+                            'serverProjectPath': normalized_server_path,
+                            'resolvedServerProjectPath': normalized_server_path,
+                            'resolvedFromWorkroom': resolved_from_workroom,
+                            'resolutionMode': resolution_mode or 'manual_selection',
+                            'workroomProjectPath': workroom_project_path,
+                            'localProjectPath': local_project_path,
+                            'projectName': project_name,
+                        }
+                else:
                     return {
                         'status': 'error',
-                        'code': 'local_project_exists',
-                        'message': f'Local project already exists: {local_project_path}',
-                        'serverProjectPath': normalized_server_path,
-                        'resolvedServerProjectPath': normalized_server_path,
-                        'resolvedFromWorkroom': resolved_from_workroom,
-                        'resolutionMode': resolution_mode or 'manual_selection',
-                        'workroomProjectPath': workroom_project_path,
-                        'localProjectPath': local_project_path,
-                        'projectName': project_name,
+                        'message': f'Local project path is unavailable: {local_project_path}'
                     }
-                return {
-                    'status': 'error',
-                    'message': f'Local project path is unavailable: {local_project_path}'
-                }
 
             disciplines = self._get_copy_project_disciplines(settings)
-            if selected_folder_requests is not None:
-                folder_requests = self._normalize_copy_project_folder_requests(selected_folder_requests)
-            elif selected_folder_names is None:
-                folder_requests = [
-                    {
-                        'name': folder_name,
-                        'mode': 'all',
-                        'selectedChildNames': [],
-                        'includeParentRootFiles': False,
-                    }
-                    for folder_name in self._get_copy_project_default_folder_names(settings)
-                ]
-            else:
-                folder_requests = [
-                    {
-                        'name': folder_name,
-                        'mode': 'all',
-                        'selectedChildNames': [],
-                        'includeParentRootFiles': False,
-                    }
-                    for folder_name in self._normalize_copy_project_folder_names(selected_folder_names)
-                ]
+            folder_requests = self._build_copy_project_folder_requests(
+                settings,
+                selected_folder_names=selected_folder_names,
+                selected_folder_requests=selected_folder_requests,
+            )
 
             if not folder_requests:
                 return {
@@ -9723,6 +10083,51 @@ Return ONLY the JSON object.
                     'code': 'no_folders_selected',
                     'message': 'Select at least one folder to copy locally.',
                 }
+
+            backup_result = {
+                'status': 'success',
+                'backupCreated': False,
+                'backupPath': '',
+                'copiedFileCount': 0,
+                'failedFiles': [],
+                'failedFileCount': 0,
+            }
+            if os.path.isdir(local_project_copy_path) and replace_existing_local:
+                backup_result = self._backup_existing_local_project_before_replace(local_project_path)
+                if backup_result.get('status') != 'success':
+                    return backup_result
+                if backup_result.get('failedFiles'):
+                    return {
+                        'status': 'error',
+                        'code': 'local_backup_failed',
+                        'message': 'Failed to back up the existing local project before replacing it.',
+                        'serverProjectPath': normalized_server_path,
+                        'resolvedServerProjectPath': normalized_server_path,
+                        'resolvedFromWorkroom': resolved_from_workroom,
+                        'resolutionMode': resolution_mode or 'manual_selection',
+                        'workroomProjectPath': workroom_project_path,
+                        'localProjectPath': local_project_path,
+                        'projectName': project_name,
+                        'backupResult': backup_result,
+                        'backupPath': backup_result.get('backupPath') or '',
+                    }
+                try:
+                    shutil.rmtree(local_project_copy_path)
+                except Exception as e:
+                    return {
+                        'status': 'error',
+                        'code': 'local_project_delete_failed',
+                        'message': f'Failed to delete existing local project: {e}',
+                        'serverProjectPath': normalized_server_path,
+                        'resolvedServerProjectPath': normalized_server_path,
+                        'resolvedFromWorkroom': resolved_from_workroom,
+                        'resolutionMode': resolution_mode or 'manual_selection',
+                        'workroomProjectPath': workroom_project_path,
+                        'localProjectPath': local_project_path,
+                        'projectName': project_name,
+                        'backupResult': backup_result,
+                        'backupPath': backup_result.get('backupPath') or '',
+                    }
 
             required_folders = [request.get('name') for request in folder_requests]
             os.makedirs(local_project_copy_path, exist_ok=False)
@@ -9786,6 +10191,10 @@ Return ONLY the JSON object.
                 'copiedFileCount': copied_file_count,
                 'failedFileCount': failed_file_count,
                 'failedFiles': failed_files,
+                'replacedExistingLocal': replace_existing_local,
+                'backupCreated': bool(backup_result.get('backupCreated')),
+                'backupPath': str(backup_result.get('backupPath') or '').strip(),
+                'backupResult': backup_result,
             }
         except Exception as e:
             logging.error(f"Error copying project locally: {e}")

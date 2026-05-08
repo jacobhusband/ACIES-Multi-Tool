@@ -14,7 +14,7 @@ class DeliverableToolDropdownUiTests(unittest.TestCase):
         for expected in (
             "const SHARED_TOOL_LAUNCH_REGISTRY = Object.freeze([",
             'id: "toolCopyProjectLocally"',
-            'menuLabel: "Local Projects"',
+            'menuLabel: "Work Locally"',
             'id: "toolPublishDwgs"',
             'menuLabel: "Publish"',
             'id: "toolManageLayers"',

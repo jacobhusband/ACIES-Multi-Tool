@@ -963,11 +963,14 @@
                     <div class="expense-sheet-header">
                         <div>
                             <h4 class="section-title">Project Expense Sheet</h4>
-                            <p class="tiny muted">Track expenses for projects on this week's timesheet</p>
+                            <p class="tiny muted">Track project and custom client expenses for this week</p>
                         </div>
                         <div class="expense-sheet-add-section">
                             <button class="btn" id="addExpenseProjectBtn">
                                 + Add Project Expense
+                            </button>
+                            <button class="btn" id="addCustomExpenseBtn">
+                                + Add Custom Expense
                             </button>
                         </div>
                     </div>
@@ -979,7 +982,7 @@
                     <div id="expenseSheetEmptyState" class="expense-sheet-empty">
                         <div class="empty-icon">💰</div>
                         <h3>No expenses recorded</h3>
-                        <p>Add expenses for projects listed in your timesheet above.</p>
+                        <p>Add expenses for timesheet projects or custom client meetings.</p>
                     </div>
 
                     <div class="expense-sheet-totals-bar" id="expenseTotalsBar" style="display: none;">
@@ -1023,6 +1026,12 @@
                 <button type="button" class="scratchpad-fmt-btn" data-cmd="italic" aria-label="Italic" title="Italic (Ctrl+I)"><em>I</em></button>
                 <button type="button" class="scratchpad-fmt-btn" data-cmd="underline" aria-label="Underline" title="Underline (Ctrl+U)"><u>U</u></button>
                 <button type="button" class="scratchpad-fmt-btn" data-cmd="strikeThrough" aria-label="Strikethrough" title="Strikethrough"><s>S</s></button>
+            </div>
+            <div class="scratchpad-toolbar-group scratchpad-color-tools" aria-label="Text color">
+                <label class="scratchpad-color-picker" title="Text color">
+                    <input type="color" id="scratchpadTextColorInput" value="#2f6fed" aria-label="Text color" />
+                    <span class="scratchpad-color-picker-mark">A</span>
+                </label>
             </div>
             <div class="scratchpad-toolbar-group scratchpad-image-tools" aria-label="Image tools">
                 <button type="button" class="scratchpad-tool-btn" id="scratchpadInsertImageBtn" aria-label="Insert image" title="Insert image">Img</button>
@@ -1079,6 +1088,44 @@
             <div id="expenseProjectList" class="timesheet-project-list"></div>
         </div>
     </dialog>
+    <!-- Custom Expense Dialog -->
+    <dialog id="customExpenseDlg">
+        <div class="modal-header">
+            <div class="title">Add Custom Expense</div>
+            <div class="inline">
+                <button class="btn ghost" onclick="closeDlg('customExpenseDlg')">Cancel</button>
+                <button class="btn-primary" id="btnSaveCustomExpense">Add Expense</button>
+            </div>
+        </div>
+        <div class="modal-body stack">
+            <div class="modal-grid">
+                <div class="col-8">
+                    <label class="label">Client / Project name</label>
+                    <input id="custom_expense_project_name" placeholder="e.g. Client lunch meeting" />
+                </div>
+                <div class="col-4">
+                    <label class="label">Job #</label>
+                    <input id="custom_expense_job_number" placeholder="Optional" />
+                </div>
+                <div class="col-6">
+                    <label class="label">Date</label>
+                    <input id="custom_expense_date" type="date" />
+                </div>
+                <div class="col-6">
+                    <label class="label">Expense Amount ($)</label>
+                    <input id="custom_expense_amount" type="number" step="0.01" min="0" placeholder="0.00" />
+                </div>
+                <div class="col-12">
+                    <label class="label">Description</label>
+                    <input id="custom_expense_description" placeholder="e.g. Lunch client meeting" />
+                </div>
+                <div class="col-6">
+                    <label class="label">Mileage</label>
+                    <input id="custom_expense_mileage" type="number" min="0" placeholder="0" />
+                </div>
+            </div>
+        </div>
+    </dialog>
     <dialog id="deliverableNotepadDlg" class="deliverable-notepad-dialog">
         <div class="modal-header">
             <div>
@@ -1116,23 +1163,15 @@
     <dialog id="copyProjectLocallyDlg" class="deliverable-notepad-dialog copy-project-locally-dialog local-project-manager-dialog">
         <div class="modal-header">
             <div>
-                <div class="title">Local Project Manager</div>
-                <div class="muted tiny">Review managed project files on the server and locally, then sync the items you want to keep.</div>
+                <div class="title">Work Locally</div>
+                <div class="muted tiny">Copy server project folders locally, or review local changes before copying them back to the server.</div>
             </div>
             <button class="btn ghost" type="button" onclick="closeDlg('copyProjectLocallyDlg')">Cancel</button>
         </div>
         <div class="modal-body stack tool-settings-body">
-            <div class="local-project-manager-tabs" role="tablist" aria-label="Local Project Manager sections">
-                <button id="localProjectManagerCopyTabBtn" class="local-project-manager-tab is-active" type="button"
-                    role="tab" aria-selected="true" aria-controls="localProjectManagerActivePanel"
-                    data-local-project-manager-tab="copy">Server</button>
-                <button id="localProjectManagerSyncTabBtn" class="local-project-manager-tab" type="button" role="tab"
-                    aria-selected="false" aria-controls="localProjectManagerActivePanel"
-                    data-local-project-manager-tab="sync">Local</button>
-            </div>
             <div id="localProjectManagerComparisonBanner" class="local-project-manager-banner" hidden></div>
-            <section id="localProjectManagerActivePanel" class="local-project-manager-panel" role="tabpanel"
-                aria-labelledby="localProjectManagerCopyTabBtn">
+            <section id="localProjectManagerActivePanel" class="local-project-manager-panel" role="region"
+                aria-label="Work Locally project files">
                 <section id="localProjectManagerServerPathFallback" class="local-project-manager-server-fallback" hidden>
                     <div id="localProjectManagerServerPathFallbackMessage" class="muted tiny">Saved server project path is unavailable. Select the project folder to continue.</div>
                     <div class="local-project-manager-path-actions">
@@ -1153,8 +1192,10 @@
             <div id="localProjectManagerFooterSummary" class="muted tiny">No items selected.</div>
             <div class="local-project-manager-footer-actions">
                 <button class="btn ghost" type="button" onclick="closeDlg('copyProjectLocallyDlg')">Cancel</button>
+                <button class="btn ghost" id="localProjectManagerCopyToServerBtn" type="button"
+                    hidden>Copy Local Changes to Server</button>
                 <button class="btn-primary" id="localProjectManagerSyncBtn" type="button"
-                    disabled>Sync</button>
+                    disabled>Copy Selected Folders Locally</button>
             </div>
         </div>
     </dialog>

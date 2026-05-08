@@ -4,6 +4,7 @@ import sys
 import tempfile
 import types
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 
@@ -89,6 +90,10 @@ _ensure_pydantic_stub()
 
 import main as main_module
 from main import Api
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SCRIPT_JS_PATH = REPO_ROOT / "script.js"
 
 
 class CloudSyncHelperTests(unittest.TestCase):
@@ -198,6 +203,17 @@ class CloudSyncHelperTests(unittest.TestCase):
             self.assertEqual("remote overwrite", metadata["reason"])
             self.assertEqual("user-123", metadata["metadata"]["firebaseUid"])
             self.assertEqual(3, len(metadata["files"]))
+
+    def test_timesheet_cloud_sync_includes_expense_only_weeks(self):
+        script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
+
+        self.assertIn("const expenses =", script)
+        self.assertIn("const expenseWeeks = Object.keys(expenses || {}).filter((weekKey) => {", script)
+        self.assertIn("const knownWeeks = [...new Set([...weekKeys, ...expenseWeeks])].sort();", script)
+        self.assertIn("expenses[docId] = deepCloneJson(weekData.expenses, { projects: [] })", script)
+        self.assertIn("delete weekData.expenses;", script)
+        self.assertIn("expenses: deepCloneJson(remoteTimesheets.expenses, {}),", script)
+        self.assertIn("data.expenses = deepCloneJson(expenseData, { projects: [] });", script)
 
 
 if __name__ == "__main__":

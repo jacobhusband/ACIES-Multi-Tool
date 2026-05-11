@@ -5818,6 +5818,44 @@ function getExpenseImagePreviewElements() {
   };
 }
 
+function getExpenseImagePreviewStageSize(imageWidth, imageHeight) {
+  const viewportWidth = Math.max(
+    320,
+    window.innerWidth || document.documentElement?.clientWidth || 1024
+  );
+  const viewportHeight = Math.max(
+    320,
+    window.innerHeight || document.documentElement?.clientHeight || 768
+  );
+  const horizontalPadding = viewportWidth < 700 ? 28 : 80;
+  const verticalPadding = viewportHeight < 700 ? 28 : 88;
+  const viewportMaxWidth = Math.max(
+    220,
+    Math.min(1180, viewportWidth - horizontalPadding)
+  );
+  const viewportMaxHeight = Math.max(
+    220,
+    Math.min(860, viewportHeight - verticalPadding)
+  );
+  const naturalWidth = Math.max(1, Number(imageWidth) || 1);
+  const naturalHeight = Math.max(1, Number(imageHeight) || 1);
+  const maxWidth = Math.min(viewportMaxWidth, Math.max(280, naturalWidth));
+  const maxHeight = Math.min(viewportMaxHeight, Math.max(220, naturalHeight));
+  const aspectRatio = Math.max(0.05, Math.min(20, naturalWidth / naturalHeight));
+
+  let width = maxWidth;
+  let height = width / aspectRatio;
+  if (height > maxHeight) {
+    height = maxHeight;
+    width = height * aspectRatio;
+  }
+
+  return {
+    width: Math.max(1, Math.round(width)),
+    height: Math.max(1, Math.round(height)),
+  };
+}
+
 function clampExpenseImagePreviewTranslation(nextX, nextY) {
   const displayedWidth =
     expenseImagePreviewState.baseWidth * expenseImagePreviewState.scale;
@@ -5866,6 +5904,13 @@ function syncExpenseImagePreviewLayout() {
   ) {
     return;
   }
+
+  const stageSize = getExpenseImagePreviewStageSize(
+    expenseImagePreviewState.naturalWidth,
+    expenseImagePreviewState.naturalHeight
+  );
+  stage.style.width = `${stageSize.width}px`;
+  stage.style.height = `${stageSize.height}px`;
 
   expenseImagePreviewState.stageWidth = Math.max(stage.clientWidth, 1);
   expenseImagePreviewState.stageHeight = Math.max(stage.clientHeight, 1);
@@ -6007,6 +6052,8 @@ function resetExpenseImagePreviewDialog() {
 
   if (stage) {
     stage.classList.remove("is-zoomed", "is-dragging");
+    stage.style.removeProperty("width");
+    stage.style.removeProperty("height");
   }
 
   if (img) {
@@ -6725,10 +6772,22 @@ function closeDlg(id) {
 
 const debounce = (fn, delay) => {
   let timeoutId;
-  return (...args) => {
+  let lastArgs;
+  const debounced = (...args) => {
+    lastArgs = args;
     clearTimeout(timeoutId);
-    timeoutId = setTimeout(() => fn(...args), delay);
+    timeoutId = setTimeout(() => {
+      timeoutId = undefined;
+      fn(...lastArgs);
+    }, delay);
   };
+  debounced.flush = () => {
+    if (timeoutId === undefined) return;
+    clearTimeout(timeoutId);
+    timeoutId = undefined;
+    fn(...(lastArgs || []));
+  };
+  return debounced;
 };
 
 function parseDueStr(s) {
@@ -33255,6 +33314,11 @@ function initEventListeners() {
     await populateSettingsModal();
     document.getElementById("settingsDlg").showModal();
   };
+  document.getElementById("settingsDlg").addEventListener("close", () => {
+    if (typeof debouncedSaveUserSettings?.flush === "function") {
+      debouncedSaveUserSettings.flush();
+    }
+  });
   document.getElementById("statsBtn").onclick = () => showStatsModal();
   const scratchpadBtn = document.getElementById("scratchpadBtn");
   if (scratchpadBtn) scratchpadBtn.onclick = () => toggleScratchpad();
@@ -34694,6 +34758,11 @@ function initEventListeners() {
 
 async function init() {
   showAppLoader();
+  window.addEventListener("pagehide", () => {
+    if (typeof debouncedSaveUserSettings?.flush === "function") {
+      debouncedSaveUserSettings.flush();
+    }
+  });
   try {
     if (!window.pywebview)
       await new Promise((r) => window.addEventListener("pywebviewready", r));

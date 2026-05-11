@@ -283,6 +283,9 @@ class PanelScheduleAiBackendTests(unittest.TestCase):
             def close(self):
                 self.closed = True
 
+            def thumbnail(self, size, resampling=None):
+                self.thumbnail_size = size
+
         def fake_open(path):
             opened_paths.append(path)
             image = FakeImage(path)

@@ -149,6 +149,27 @@ def _open_local_pil_image(path):
         ) from exc
 
 
+PANEL_SCHEDULE_MAX_IMAGE_EDGE = 2048
+
+
+def _open_panel_schedule_image(path):
+    img = _open_local_pil_image(path)
+    try:
+        img = ImageOps.exif_transpose(img)
+    except Exception:
+        pass
+    resampling = getattr(
+        getattr(PILImage, 'Resampling', PILImage),
+        'LANCZOS',
+        getattr(PILImage, 'LANCZOS', getattr(PILImage, 'BICUBIC', 3))
+    )
+    img.thumbnail(
+        (PANEL_SCHEDULE_MAX_IMAGE_EDGE, PANEL_SCHEDULE_MAX_IMAGE_EDGE),
+        resampling,
+    )
+    return img
+
+
 _register_heif_support()
 
 # Helper functions for date parsing and status management
@@ -2381,10 +2402,21 @@ class Api:
 
     def get_user_settings(self):
         """Reads and returns user settings from settings.json."""
+        settings = None
         try:
             with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
                 settings = json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
+        except FileNotFoundError:
+            settings = None
+        except json.JSONDecodeError:
+            bak_path = SETTINGS_FILE + '.bak'
+            try:
+                with open(bak_path, 'r', encoding='utf-8') as f:
+                    settings = json.load(f)
+                logging.info(f"Recovered user settings from backup file: {bak_path}")
+            except (FileNotFoundError, json.JSONDecodeError):
+                settings = None
+        if settings is None:
             settings = build_default_user_settings()
 
         settings, sanitized = _sanitize_user_settings_payload(settings)
@@ -10928,6 +10960,11 @@ Return ONLY the JSON object.
                 "invalid api key" in lower):
             return ('Your Google API key is expired/invalid. '
                     'Create a new key in Google AI Studio, update your settings, then try again.')
+        if "deadline" in lower or "unavailable" in lower or "503" in lower:
+            return ('Gemini took too long to respond (the request timed out). '
+                    'This usually means the AI server is under heavy load or the '
+                    'images are very large. Click Rerun to try again, or split the '
+                    'panel into smaller image groups (one breaker section per run).')
         if "model" in lower and ("not found" in lower or "does not exist" in lower):
             return 'AI model not available. The Gemini 3 Flash model may not be accessible with your API key.'
         if "quota" in lower or "rate limit" in lower:
@@ -11058,7 +11095,10 @@ TASK 3: LOAD TYPES
             )
 
         self._ensure_aiohttp()
-        client = genai.Client(api_key=api_key)
+        client = genai.Client(
+            api_key=api_key,
+            http_options=types.HttpOptions(timeout=300000),
+        )
 
         num_breaker_imgs = len(breaker_paths)
         num_dir_imgs = len(directory_paths)
@@ -11071,18 +11111,33 @@ TASK 3: LOAD TYPES
             for path in breaker_paths + directory_paths:
                 if not os.path.exists(path):
                     raise ValueError(f"Image not found: {path}")
-                gemini_images.append(_open_local_pil_image(path))
+                gemini_images.append(_open_panel_schedule_image(path))
 
             cb_enforce_rate_limit()
 
-            response = client.models.generate_content(
-                model="gemini-3-flash-preview",
-                contents=[prompt, *gemini_images],
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    response_schema=PanelData
-                ),
-            )
+            response = None
+            for attempt in range(3):
+                try:
+                    response = client.models.generate_content(
+                        model="gemini-3-flash-preview",
+                        contents=[prompt, *gemini_images],
+                        config=types.GenerateContentConfig(
+                            response_mime_type="application/json",
+                            response_schema=PanelData
+                        ),
+                    )
+                    break
+                except Exception as exc:
+                    msg = str(exc).lower()
+                    transient = (
+                        "unavailable" in msg
+                        or "deadline" in msg
+                        or "503" in msg
+                        or "504" in msg
+                    )
+                    if not transient or attempt == 2:
+                        raise
+                    time.sleep(3 * (3 ** attempt))
         finally:
             for img in gemini_images:
                 try:

@@ -9774,7 +9774,7 @@ dialog::backdrop {
   padding: 0.5rem 0;
 }
 
-.expense-image-preview-dialog {
+.image-preview-dialog {
   position: fixed;
   inset: 50% auto auto 50%;
   transform: translate(-50%, -50%);
@@ -9792,18 +9792,18 @@ dialog::backdrop {
   overflow: visible;
 }
 
-.expense-image-preview-dialog::backdrop {
+.image-preview-dialog::backdrop {
   background: rgba(2, 6, 23, 0.82);
   backdrop-filter: blur(8px);
 }
 
-.expense-image-preview-shell {
+.image-preview-shell {
   position: relative;
   display: flex;
   line-height: 0;
 }
 
-.expense-image-preview-close {
+.image-preview-close {
   position: absolute;
   top: 0;
   right: 0;
@@ -9822,8 +9822,8 @@ dialog::backdrop {
   box-shadow: 0 12px 26px rgba(0, 0, 0, 0.38);
 }
 
-.expense-image-preview-close:hover,
-.expense-image-preview-close:focus-visible {
+.image-preview-close:hover,
+.image-preview-close:focus-visible {
   background: rgba(30, 41, 59, 0.98);
   border-color: rgba(255, 255, 255, 0.34);
   outline: none;
@@ -9832,7 +9832,7 @@ dialog::backdrop {
     0 0 0 3px rgba(16, 185, 129, 0.22);
 }
 
-.expense-image-preview-stage {
+.image-preview-stage {
   width: min(88vw, 960px);
   height: min(82vh, 720px);
   max-width: calc(100vw - 2rem);
@@ -9851,15 +9851,15 @@ dialog::backdrop {
   cursor: zoom-in;
 }
 
-.expense-image-preview-stage.is-zoomed {
+.image-preview-stage.is-zoomed {
   cursor: grab;
 }
 
-.expense-image-preview-stage.is-dragging {
+.image-preview-stage.is-dragging {
   cursor: grabbing;
 }
 
-.expense-image-preview-stage img {
+.image-preview-stage img {
   max-width: none;
   max-height: none;
   display: block;

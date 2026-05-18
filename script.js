@@ -5298,7 +5298,7 @@ const EXPENSE_IMAGE_MODAL_MAX_SIZE = 1800;
 const expenseAttachmentPreviewCache = new Map();
 const expenseAttachmentResolvedPathCache = new Map();
 let activeExpenseImagePreviewRequestId = 0;
-const expenseImagePreviewState = {
+const imagePreviewState = {
   scale: 1,
   minScale: 1,
   maxScale: 6,
@@ -5810,15 +5810,15 @@ async function openExpenseAttachment(image) {
   }
 }
 
-function getExpenseImagePreviewElements() {
+function getImagePreviewElements() {
   return {
-    dialog: document.getElementById("expenseImagePreviewDlg"),
-    stage: document.getElementById("expenseImagePreviewStage"),
-    img: document.getElementById("expenseImagePreviewImg"),
+    dialog: document.getElementById("imagePreviewDlg"),
+    stage: document.getElementById("imagePreviewStage"),
+    img: document.getElementById("imagePreviewImg"),
   };
 }
 
-function getExpenseImagePreviewStageSize(imageWidth, imageHeight) {
+function getImagePreviewStageSize(imageWidth, imageHeight) {
   const viewportWidth = Math.max(
     320,
     window.innerWidth || document.documentElement?.clientWidth || 1024
@@ -5827,16 +5827,10 @@ function getExpenseImagePreviewStageSize(imageWidth, imageHeight) {
     320,
     window.innerHeight || document.documentElement?.clientHeight || 768
   );
-  const horizontalPadding = viewportWidth < 700 ? 28 : 80;
-  const verticalPadding = viewportHeight < 700 ? 28 : 88;
-  const viewportMaxWidth = Math.max(
-    220,
-    Math.min(1180, viewportWidth - horizontalPadding)
-  );
-  const viewportMaxHeight = Math.max(
-    220,
-    Math.min(860, viewportHeight - verticalPadding)
-  );
+  const horizontalPadding = viewportWidth < 700 ? 16 : 32;
+  const verticalPadding = viewportHeight < 700 ? 16 : 32;
+  const viewportMaxWidth = Math.max(220, viewportWidth - horizontalPadding);
+  const viewportMaxHeight = Math.max(220, viewportHeight - verticalPadding);
   const naturalWidth = Math.max(1, Number(imageWidth) || 1);
   const naturalHeight = Math.max(1, Number(imageHeight) || 1);
   const maxWidth = Math.min(viewportMaxWidth, Math.max(280, naturalWidth));
@@ -5856,18 +5850,18 @@ function getExpenseImagePreviewStageSize(imageWidth, imageHeight) {
   };
 }
 
-function clampExpenseImagePreviewTranslation(nextX, nextY) {
+function clampImagePreviewTranslation(nextX, nextY) {
   const displayedWidth =
-    expenseImagePreviewState.baseWidth * expenseImagePreviewState.scale;
+    imagePreviewState.baseWidth * imagePreviewState.scale;
   const displayedHeight =
-    expenseImagePreviewState.baseHeight * expenseImagePreviewState.scale;
+    imagePreviewState.baseHeight * imagePreviewState.scale;
   const maxTranslateX = Math.max(
     0,
-    (displayedWidth - expenseImagePreviewState.stageWidth) / 2
+    (displayedWidth - imagePreviewState.stageWidth) / 2
   );
   const maxTranslateY = Math.max(
     0,
-    (displayedHeight - expenseImagePreviewState.stageHeight) / 2
+    (displayedHeight - imagePreviewState.stageHeight) / 2
   );
 
   return {
@@ -5876,112 +5870,112 @@ function clampExpenseImagePreviewTranslation(nextX, nextY) {
   };
 }
 
-function renderExpenseImagePreviewTransform() {
-  const { stage, img } = getExpenseImagePreviewElements();
+function renderImagePreviewTransform() {
+  const { stage, img } = getImagePreviewElements();
   if (!stage || !img) return;
 
   stage.classList.toggle(
     "is-zoomed",
-    expenseImagePreviewState.scale > expenseImagePreviewState.minScale + 0.001
+    imagePreviewState.scale > imagePreviewState.minScale + 0.001
   );
-  stage.classList.toggle("is-dragging", expenseImagePreviewState.isDragging);
+  stage.classList.toggle("is-dragging", imagePreviewState.isDragging);
 
   if (!img.hidden) {
-    img.style.width = `${expenseImagePreviewState.baseWidth}px`;
-    img.style.height = `${expenseImagePreviewState.baseHeight}px`;
-    img.style.transform = `translate(${expenseImagePreviewState.translateX}px, ${expenseImagePreviewState.translateY}px) scale(${expenseImagePreviewState.scale})`;
+    img.style.width = `${imagePreviewState.baseWidth}px`;
+    img.style.height = `${imagePreviewState.baseHeight}px`;
+    img.style.transform = `translate(${imagePreviewState.translateX}px, ${imagePreviewState.translateY}px) scale(${imagePreviewState.scale})`;
   }
 }
 
-function syncExpenseImagePreviewLayout() {
-  const { stage, img } = getExpenseImagePreviewElements();
+function syncImagePreviewLayout() {
+  const { stage, img } = getImagePreviewElements();
   if (
     !stage ||
     !img ||
     img.hidden ||
-    !expenseImagePreviewState.naturalWidth ||
-    !expenseImagePreviewState.naturalHeight
+    !imagePreviewState.naturalWidth ||
+    !imagePreviewState.naturalHeight
   ) {
     return;
   }
 
-  const stageSize = getExpenseImagePreviewStageSize(
-    expenseImagePreviewState.naturalWidth,
-    expenseImagePreviewState.naturalHeight
+  const stageSize = getImagePreviewStageSize(
+    imagePreviewState.naturalWidth,
+    imagePreviewState.naturalHeight
   );
   stage.style.width = `${stageSize.width}px`;
   stage.style.height = `${stageSize.height}px`;
 
-  expenseImagePreviewState.stageWidth = Math.max(stage.clientWidth, 1);
-  expenseImagePreviewState.stageHeight = Math.max(stage.clientHeight, 1);
+  imagePreviewState.stageWidth = Math.max(stage.clientWidth, 1);
+  imagePreviewState.stageHeight = Math.max(stage.clientHeight, 1);
 
   const fitScale = Math.min(
-    expenseImagePreviewState.stageWidth / expenseImagePreviewState.naturalWidth,
-    expenseImagePreviewState.stageHeight / expenseImagePreviewState.naturalHeight
+    imagePreviewState.stageWidth / imagePreviewState.naturalWidth,
+    imagePreviewState.stageHeight / imagePreviewState.naturalHeight
   );
 
-  expenseImagePreviewState.baseWidth = Math.max(
+  imagePreviewState.baseWidth = Math.max(
     1,
-    expenseImagePreviewState.naturalWidth * fitScale
+    imagePreviewState.naturalWidth * fitScale
   );
-  expenseImagePreviewState.baseHeight = Math.max(
+  imagePreviewState.baseHeight = Math.max(
     1,
-    expenseImagePreviewState.naturalHeight * fitScale
+    imagePreviewState.naturalHeight * fitScale
   );
 
-  if (expenseImagePreviewState.scale <= expenseImagePreviewState.minScale) {
-    expenseImagePreviewState.translateX = 0;
-    expenseImagePreviewState.translateY = 0;
+  if (imagePreviewState.scale <= imagePreviewState.minScale) {
+    imagePreviewState.translateX = 0;
+    imagePreviewState.translateY = 0;
   } else {
-    const clamped = clampExpenseImagePreviewTranslation(
-      expenseImagePreviewState.translateX,
-      expenseImagePreviewState.translateY
+    const clamped = clampImagePreviewTranslation(
+      imagePreviewState.translateX,
+      imagePreviewState.translateY
     );
-    expenseImagePreviewState.translateX = clamped.translateX;
-    expenseImagePreviewState.translateY = clamped.translateY;
+    imagePreviewState.translateX = clamped.translateX;
+    imagePreviewState.translateY = clamped.translateY;
   }
 
-  renderExpenseImagePreviewTransform();
+  renderImagePreviewTransform();
 }
 
-function resetExpenseImagePreviewTransform() {
-  expenseImagePreviewState.scale = expenseImagePreviewState.minScale;
-  expenseImagePreviewState.translateX = 0;
-  expenseImagePreviewState.translateY = 0;
-  syncExpenseImagePreviewLayout();
+function resetImagePreviewTransform() {
+  imagePreviewState.scale = imagePreviewState.minScale;
+  imagePreviewState.translateX = 0;
+  imagePreviewState.translateY = 0;
+  syncImagePreviewLayout();
 }
 
-function applyExpenseImagePreviewPan(deltaX, deltaY) {
-  if (expenseImagePreviewState.scale <= expenseImagePreviewState.minScale) {
-    expenseImagePreviewState.translateX = 0;
-    expenseImagePreviewState.translateY = 0;
-    renderExpenseImagePreviewTransform();
+function applyImagePreviewPan(deltaX, deltaY) {
+  if (imagePreviewState.scale <= imagePreviewState.minScale) {
+    imagePreviewState.translateX = 0;
+    imagePreviewState.translateY = 0;
+    renderImagePreviewTransform();
     return;
   }
 
-  const clamped = clampExpenseImagePreviewTranslation(
-    expenseImagePreviewState.translateX + deltaX,
-    expenseImagePreviewState.translateY + deltaY
+  const clamped = clampImagePreviewTranslation(
+    imagePreviewState.translateX + deltaX,
+    imagePreviewState.translateY + deltaY
   );
-  expenseImagePreviewState.translateX = clamped.translateX;
-  expenseImagePreviewState.translateY = clamped.translateY;
-  renderExpenseImagePreviewTransform();
+  imagePreviewState.translateX = clamped.translateX;
+  imagePreviewState.translateY = clamped.translateY;
+  renderImagePreviewTransform();
 }
 
-function applyExpenseImagePreviewZoom(nextScale, clientX, clientY) {
-  const { stage } = getExpenseImagePreviewElements();
-  if (!stage || !expenseImagePreviewState.baseWidth || !expenseImagePreviewState.baseHeight) {
+function applyImagePreviewZoom(nextScale, clientX, clientY) {
+  const { stage } = getImagePreviewElements();
+  if (!stage || !imagePreviewState.baseWidth || !imagePreviewState.baseHeight) {
     return;
   }
 
   const boundedScale = Math.max(
-    expenseImagePreviewState.minScale,
-    Math.min(expenseImagePreviewState.maxScale, nextScale)
+    imagePreviewState.minScale,
+    Math.min(imagePreviewState.maxScale, nextScale)
   );
-  const previousScale = expenseImagePreviewState.scale;
+  const previousScale = imagePreviewState.scale;
   if (Math.abs(boundedScale - previousScale) < 0.001) return;
 
-  syncExpenseImagePreviewLayout();
+  syncImagePreviewLayout();
 
   const stageRect = stage.getBoundingClientRect();
   const pointerX =
@@ -5990,65 +5984,65 @@ function applyExpenseImagePreviewZoom(nextScale, clientX, clientY) {
   const pointerY =
     Math.max(stageRect.top, Math.min(stageRect.bottom, clientY)) -
     (stageRect.top + stageRect.height / 2);
-  const contentX = (pointerX - expenseImagePreviewState.translateX) / previousScale;
-  const contentY = (pointerY - expenseImagePreviewState.translateY) / previousScale;
+  const contentX = (pointerX - imagePreviewState.translateX) / previousScale;
+  const contentY = (pointerY - imagePreviewState.translateY) / previousScale;
 
-  expenseImagePreviewState.scale = boundedScale;
-  expenseImagePreviewState.translateX = pointerX - contentX * boundedScale;
-  expenseImagePreviewState.translateY = pointerY - contentY * boundedScale;
+  imagePreviewState.scale = boundedScale;
+  imagePreviewState.translateX = pointerX - contentX * boundedScale;
+  imagePreviewState.translateY = pointerY - contentY * boundedScale;
 
-  if (boundedScale <= expenseImagePreviewState.minScale) {
-    expenseImagePreviewState.translateX = 0;
-    expenseImagePreviewState.translateY = 0;
+  if (boundedScale <= imagePreviewState.minScale) {
+    imagePreviewState.translateX = 0;
+    imagePreviewState.translateY = 0;
   } else {
-    const clamped = clampExpenseImagePreviewTranslation(
-      expenseImagePreviewState.translateX,
-      expenseImagePreviewState.translateY
+    const clamped = clampImagePreviewTranslation(
+      imagePreviewState.translateX,
+      imagePreviewState.translateY
     );
-    expenseImagePreviewState.translateX = clamped.translateX;
-    expenseImagePreviewState.translateY = clamped.translateY;
+    imagePreviewState.translateX = clamped.translateX;
+    imagePreviewState.translateY = clamped.translateY;
   }
 
-  renderExpenseImagePreviewTransform();
+  renderImagePreviewTransform();
 }
 
-function stopExpenseImagePreviewDrag(pointerId = null) {
-  const { stage } = getExpenseImagePreviewElements();
+function stopImagePreviewDrag(pointerId = null) {
+  const { stage } = getImagePreviewElements();
   if (
     pointerId !== null &&
-    expenseImagePreviewState.pointerId !== null &&
-    pointerId !== expenseImagePreviewState.pointerId
+    imagePreviewState.pointerId !== null &&
+    pointerId !== imagePreviewState.pointerId
   ) {
     return;
   }
 
   if (
     stage &&
-    expenseImagePreviewState.pointerId !== null &&
-    stage.hasPointerCapture?.(expenseImagePreviewState.pointerId)
+    imagePreviewState.pointerId !== null &&
+    stage.hasPointerCapture?.(imagePreviewState.pointerId)
   ) {
-    stage.releasePointerCapture(expenseImagePreviewState.pointerId);
+    stage.releasePointerCapture(imagePreviewState.pointerId);
   }
 
-  expenseImagePreviewState.isDragging = false;
-  expenseImagePreviewState.pointerId = null;
-  renderExpenseImagePreviewTransform();
+  imagePreviewState.isDragging = false;
+  imagePreviewState.pointerId = null;
+  renderImagePreviewTransform();
 }
 
-function resetExpenseImagePreviewDialog() {
-  const { stage, img } = getExpenseImagePreviewElements();
+function resetImagePreviewDialog() {
+  const { stage, img } = getImagePreviewElements();
   activeExpenseImagePreviewRequestId += 1;
-  stopExpenseImagePreviewDrag();
+  stopImagePreviewDrag();
 
-  expenseImagePreviewState.scale = expenseImagePreviewState.minScale;
-  expenseImagePreviewState.translateX = 0;
-  expenseImagePreviewState.translateY = 0;
-  expenseImagePreviewState.naturalWidth = 0;
-  expenseImagePreviewState.naturalHeight = 0;
-  expenseImagePreviewState.baseWidth = 0;
-  expenseImagePreviewState.baseHeight = 0;
-  expenseImagePreviewState.stageWidth = 0;
-  expenseImagePreviewState.stageHeight = 0;
+  imagePreviewState.scale = imagePreviewState.minScale;
+  imagePreviewState.translateX = 0;
+  imagePreviewState.translateY = 0;
+  imagePreviewState.naturalWidth = 0;
+  imagePreviewState.naturalHeight = 0;
+  imagePreviewState.baseWidth = 0;
+  imagePreviewState.baseHeight = 0;
+  imagePreviewState.stageWidth = 0;
+  imagePreviewState.stageHeight = 0;
 
   if (stage) {
     stage.classList.remove("is-zoomed", "is-dragging");
@@ -6065,35 +6059,35 @@ function resetExpenseImagePreviewDialog() {
   }
 }
 
-function closeExpenseImagePreviewDialog() {
-  const { dialog } = getExpenseImagePreviewElements();
+function closeImagePreviewDialog() {
+  const { dialog } = getImagePreviewElements();
   if (!dialog) return;
 
   if (dialog.open) {
     dialog.close();
   } else {
-    resetExpenseImagePreviewDialog();
+    resetImagePreviewDialog();
   }
 }
 
-function openExpenseImagePreviewDialog({ dataUrl, filename, width, height }) {
-  const { dialog, img } = getExpenseImagePreviewElements();
+function openImagePreviewDialog({ dataUrl, filename, width, height }) {
+  const { dialog, img } = getImagePreviewElements();
   if (!dialog || !img || !dataUrl) return;
 
-  stopExpenseImagePreviewDrag();
-  expenseImagePreviewState.naturalWidth = Math.max(1, Number(width) || 1);
-  expenseImagePreviewState.naturalHeight = Math.max(1, Number(height) || 1);
+  stopImagePreviewDrag();
+  imagePreviewState.naturalWidth = Math.max(1, Number(width) || 1);
+  imagePreviewState.naturalHeight = Math.max(1, Number(height) || 1);
   img.alt = filename || "Expense attachment preview";
   img.src = dataUrl;
   img.hidden = false;
 
   showDialog(dialog);
   requestAnimationFrame(() => {
-    resetExpenseImagePreviewTransform();
+    resetImagePreviewTransform();
   });
 }
 
-function loadExpenseImagePreviewSource(dataUrl) {
+function loadImagePreviewSource(dataUrl) {
   return new Promise((resolve, reject) => {
     const preload = new Image();
     preload.onload = () => {
@@ -6108,16 +6102,16 @@ function loadExpenseImagePreviewSource(dataUrl) {
   });
 }
 
-function initExpenseImagePreviewDialog() {
-  if (expenseImagePreviewState.initialized) return;
+function initImagePreviewDialog() {
+  if (imagePreviewState.initialized) return;
 
-  const { dialog, stage } = getExpenseImagePreviewElements();
+  const { dialog, stage } = getImagePreviewElements();
   if (!dialog || !stage) return;
 
-  expenseImagePreviewState.initialized = true;
+  imagePreviewState.initialized = true;
 
   dialog.addEventListener("close", () => {
-    resetExpenseImagePreviewDialog();
+    resetImagePreviewDialog();
   });
 
   dialog.addEventListener(
@@ -6131,7 +6125,7 @@ function initExpenseImagePreviewDialog() {
 
   dialog.addEventListener("click", (event) => {
     if (event.target === dialog) {
-      closeExpenseImagePreviewDialog();
+      closeImagePreviewDialog();
     }
   });
 
@@ -6141,8 +6135,8 @@ function initExpenseImagePreviewDialog() {
       event.preventDefault();
       event.stopPropagation();
       const zoomFactor = event.deltaY < 0 ? 1.18 : 1 / 1.18;
-      applyExpenseImagePreviewZoom(
-        expenseImagePreviewState.scale * zoomFactor,
+      applyImagePreviewZoom(
+        imagePreviewState.scale * zoomFactor,
         event.clientX,
         event.clientY
       );
@@ -6151,52 +6145,55 @@ function initExpenseImagePreviewDialog() {
   );
 
   stage.addEventListener("pointerdown", (event) => {
-    if (event.button !== 0 || expenseImagePreviewState.scale <= expenseImagePreviewState.minScale) {
+    if (
+      (event.button !== 0 && event.button !== 1) ||
+      imagePreviewState.scale <= imagePreviewState.minScale
+    ) {
       return;
     }
     event.preventDefault();
     event.stopPropagation();
 
-    expenseImagePreviewState.isDragging = true;
-    expenseImagePreviewState.pointerId = event.pointerId;
-    expenseImagePreviewState.dragStartX = event.clientX;
-    expenseImagePreviewState.dragStartY = event.clientY;
-    expenseImagePreviewState.dragOriginX = expenseImagePreviewState.translateX;
-    expenseImagePreviewState.dragOriginY = expenseImagePreviewState.translateY;
+    imagePreviewState.isDragging = true;
+    imagePreviewState.pointerId = event.pointerId;
+    imagePreviewState.dragStartX = event.clientX;
+    imagePreviewState.dragStartY = event.clientY;
+    imagePreviewState.dragOriginX = imagePreviewState.translateX;
+    imagePreviewState.dragOriginY = imagePreviewState.translateY;
     stage.setPointerCapture?.(event.pointerId);
-    renderExpenseImagePreviewTransform();
+    renderImagePreviewTransform();
   });
 
   stage.addEventListener("pointermove", (event) => {
     if (
-      !expenseImagePreviewState.isDragging ||
-      expenseImagePreviewState.pointerId !== event.pointerId
+      !imagePreviewState.isDragging ||
+      imagePreviewState.pointerId !== event.pointerId
     ) {
       return;
     }
 
     event.preventDefault();
-    expenseImagePreviewState.translateX = expenseImagePreviewState.dragOriginX;
-    expenseImagePreviewState.translateY = expenseImagePreviewState.dragOriginY;
-    applyExpenseImagePreviewPan(
-      event.clientX - expenseImagePreviewState.dragStartX,
-      event.clientY - expenseImagePreviewState.dragStartY
+    imagePreviewState.translateX = imagePreviewState.dragOriginX;
+    imagePreviewState.translateY = imagePreviewState.dragOriginY;
+    applyImagePreviewPan(
+      event.clientX - imagePreviewState.dragStartX,
+      event.clientY - imagePreviewState.dragStartY
     );
   });
 
   stage.addEventListener("pointerup", (event) => {
-    stopExpenseImagePreviewDrag(event.pointerId);
+    stopImagePreviewDrag(event.pointerId);
   });
   stage.addEventListener("pointercancel", (event) => {
-    stopExpenseImagePreviewDrag(event.pointerId);
+    stopImagePreviewDrag(event.pointerId);
   });
   stage.addEventListener("lostpointercapture", (event) => {
-    stopExpenseImagePreviewDrag(event.pointerId);
+    stopImagePreviewDrag(event.pointerId);
   });
 
   window.addEventListener("resize", () => {
     if (dialog.open) {
-      syncExpenseImagePreviewLayout();
+      syncImagePreviewLayout();
     }
   });
 }
@@ -6227,10 +6224,10 @@ async function openExpenseImagePreview(image) {
       throw new Error(preview?.message || "Unable to load preview.");
     }
 
-    const loadedPreview = await loadExpenseImagePreviewSource(preview.dataUrl);
+    const loadedPreview = await loadImagePreviewSource(preview.dataUrl);
     if (requestId !== activeExpenseImagePreviewRequestId) return;
 
-    openExpenseImagePreviewDialog({
+    openImagePreviewDialog({
       dataUrl: loadedPreview.dataUrl,
       filename,
       width: loadedPreview.width,
@@ -32051,6 +32048,17 @@ function placeScratchpadCaretAfterNode(editor, node) {
   }
   scratchpadSelectionRange = cloneScratchpadRange(range);
 }
+function openScratchpadImagePreview(img) {
+  if (!(img instanceof HTMLImageElement) || !img.src) return;
+  const width = img.naturalWidth || img.width || 1;
+  const height = img.naturalHeight || img.height || 1;
+  openImagePreviewDialog({
+    dataUrl: img.src,
+    filename: img.alt || "Scratchpad image",
+    width,
+    height,
+  });
+}
 function insertScratchpadImage(dataUrl, altText = "Inserted image") {
   const editor = document.getElementById("scratchpadEditor");
   if (!editor || !dataUrl) return null;
@@ -32185,6 +32193,12 @@ function initScratchpadBindings() {
     }
     clearScratchpadSelectedImage();
     saveScratchpadSelection(editor);
+  });
+  editor.addEventListener("dblclick", (e) => {
+    if (!(e.target instanceof HTMLImageElement)) return;
+    if (!e.target.classList.contains("scratchpad-inline-image")) return;
+    e.preventDefault();
+    openScratchpadImagePreview(e.target);
   });
   editor.addEventListener("dragover", (e) => {
     const hasImageFile = Array.from(e.dataTransfer?.items || []).some(
@@ -33289,7 +33303,7 @@ function initEventListeners() {
     saveExpenseEntry();
   document.getElementById("btnSaveCustomExpense").onclick = () =>
     saveCustomExpense();
-  initExpenseImagePreviewDialog();
+  initImagePreviewDialog();
 
   document.getElementById("checkUpdateBtn").onclick = () =>
     refreshAppUpdateStatus({ manual: true });

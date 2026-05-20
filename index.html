@@ -2458,11 +2458,20 @@
         <div class="circuit-breaker-shell">
             <div class="circuit-breaker-header">
                 <div class="circuit-breaker-title">
-                    <div class="title">Panel Schedule AI</div>
+                    <div class="title-row">
+                        <div class="title">Panel Schedule AI</div>
+                        <span class="ai-badge">
+                            <span class="ai-badge-dot"></span>
+                            AI Powered
+                        </span>
+                    </div>
                     <p class="tiny muted">AI-powered electrical panel analysis and schedule generation.</p>
                 </div>
-                <button class="icon-btn" id="circuitBreakerCloseBtn" aria-label="Close Panel Schedule AI"
-                    title="Close">X</button>
+                <button class="icon-btn" id="circuitBreakerCloseBtn" aria-label="Close Panel Schedule AI" title="Close">
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M13 1L1 13M1 1L13 13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </button>
             </div>
             <div class="circuit-breaker-body">
                 <div class="circuit-breaker-form">
@@ -2471,51 +2480,81 @@
                         <p class="tiny muted">Each tab is one panel. Upload photos for the active panel tab.</p>
                         <div class="cb-panel-tabs-row">
                             <div id="cbPanelTabs" class="cb-panel-tabs" role="tablist" aria-label="Panel tabs"></div>
-                            <button class="cb-panel-add-btn" id="cbAddPanelTabBtn" type="button">Add panel</button>
+                            <button class="cb-panel-add-btn" id="cbAddPanelTabBtn" type="button">
+                                <svg width="12" height="12" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" style="margin-right: 4px; display: inline-block; vertical-align: middle;">
+                                    <path d="M7 1V13M1 7H13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                                </svg>
+                                Add panel
+                            </button>
                         </div>
                     </section>
 
                     <section class="cb-section">
-                        <div class="cb-section-title">1. Upload panel photos</div>
-                        <p class="tiny muted">Upload one or more breaker photos and one or more directory photos for
-                            the active panel tab.</p>
+                        <div class="cb-section-title">1. Panel name</div>
+                        <div class="cb-input-group">
+                            <span class="cb-input-icon">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                    <path d="M19 3H5C3.9 3 3 3.9 3 5V19C3 20.1 3.9 21 5 21H19C20.1 21 21 20.1 21 19V5C21 3.9 20.1 3 19 3ZM19 19H5V5H19V19Z" fill="currentColor"/>
+                                    <path d="M7 7H17V9H7V7ZM7 11H17V13H7V11ZM7 15H13V17H7V15Z" fill="currentColor"/>
+                                </svg>
+                            </span>
+                            <input id="cbPanelName" type="text" placeholder="e.g. Panel A" />
+                        </div>
+                    </section>
+
+                    <section class="cb-section">
+                        <div class="cb-section-title">2. Upload panel photos</div>
+                        <p class="tiny muted">Upload one or more breaker photos and one or more directory photos for the active panel tab depending on input mode selection.</p>
+                        <div class="cb-choice-row" style="margin-bottom: 12px;">
+                            <button class="cb-choice-btn active" id="cbInputModeField" type="button">
+                                Field photos (Breakers &amp; Directory)
+                            </button>
+                            <button class="cb-choice-btn" id="cbInputModeExisting" type="button">
+                                Existing directory document photo
+                            </button>
+                        </div>
                         <div class="cb-upload-grid">
-                            <div class="cb-upload-card">
+                            <div class="cb-upload-card" id="cbBreakerUploadCard">
                                 <div class="cb-upload-title">Circuit breaker photos</div>
-                                <p class="tiny muted">Clear photos of the breaker labels and handles. The same panel
-                                    can be split into upper half, middle, and bottom half photos.</p>
+                                <p class="tiny muted">Clear photos of the breaker labels and handles. The same panel can be split into upper half, middle, and bottom half photos.</p>
                                 <div id="cbBreakerDrop" class="cb-drop-zone" role="button" tabindex="0">
-                                    <div class="cb-drop-icon" aria-hidden="true">&#128247;</div>
+                                    <div class="cb-drop-icon" aria-hidden="true">
+                                        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                            <path d="M23 19C23 20.1 22.1 21 21 21H3C1.9 21 1 20.1 1 19V8C1 6.9 1.9 6 3 6H7.17L9 4H15L16.83 6H21C22.1 6 23 6.9 23 8V19Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+                                            <circle cx="12" cy="13" r="4" stroke="currentColor" stroke-width="2"/>
+                                        </svg>
+                                    </div>
                                     <div class="cb-drop-text">Drag &amp; drop photos or click to select</div>
-                                    <div class="tiny muted">JPG, PNG, HEIC, HEIF supported. New selections replace the
-                                        current set.</div>
+                                    <div class="tiny muted">JPG, PNG, HEIC, HEIF supported. New selections replace the current set.</div>
                                 </div>
                                 <div class="cb-upload-actions">
-                                    <span id="cbBreakerFile" class="cb-file-pill" data-empty="true">No photos
-                                        selected</span>
+                                    <span id="cbBreakerFile" class="cb-file-pill" data-empty="true">No photos selected</span>
                                 </div>
+                                <div id="cbBreakerFileList" class="cb-file-list"></div>
                             </div>
-                            <div class="cb-upload-card">
-                                <div class="cb-upload-title">Circuit directory photos</div>
-                                <p class="tiny muted">Photos of the directory or schedule labels. A field directory may
-                                    be split across photos, such as circuits 1-42 on one image and 43-84 on
-                                    another.</p>
+                            <div class="cb-upload-card" id="cbDirectoryUploadCard">
+                                <div class="cb-upload-title" id="cbDirectoryUploadTitle">Circuit directory photos</div>
+                                <p class="tiny muted" id="cbDirectoryUploadDesc">Photos of the directory or schedule labels. A field directory may be split across photos, such as circuits 1-42 on one image and 43-84 on another.</p>
                                 <div id="cbDirectoryDrop" class="cb-drop-zone" role="button" tabindex="0">
-                                    <div class="cb-drop-icon" aria-hidden="true">&#128194;</div>
-                                    <div class="cb-drop-text">Drag &amp; drop photos or click to select</div>
-                                    <div class="tiny muted">JPG, PNG, HEIC, HEIF supported. New selections replace the
-                                        current set.</div>
+                                    <div class="cb-drop-icon" aria-hidden="true">
+                                        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                            <path d="M22 19C22 20.1 21.1 21 20 21H4C2.9 21 2 20.1 2 19V5C2 3.9 2.9 3 4 3H10L12 5H20C21.1 5 22 5.9 22 7V19Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+                                            <path d="M2 10H22" stroke="currentColor" stroke-width="2"/>
+                                        </svg>
+                                    </div>
+                                    <div class="cb-drop-text" id="cbDirectoryDropText">Drag &amp; drop photos or click to select</div>
+                                    <div class="tiny muted">JPG, PNG, HEIC, HEIF supported. New selections replace the current set.</div>
                                 </div>
                                 <div class="cb-upload-actions">
-                                    <span id="cbDirectoryFile" class="cb-file-pill" data-empty="true">No photos
-                                        selected</span>
+                                    <span id="cbDirectoryFile" class="cb-file-pill" data-empty="true">No photos selected</span>
                                 </div>
+                                <div id="cbDirectoryFileList" class="cb-file-list"></div>
                             </div>
                         </div>
                     </section>
 
                     <section class="cb-section">
-                        <div class="cb-section-title">2. Panel schedule file</div>
+                        <div class="cb-section-title">3. Panel schedule file</div>
                         <p class="tiny muted">Choose one output workbook shared by all panel tabs in this run.</p>
                         <div class="cb-choice-row">
                             <button class="cb-choice-btn" id="cbOutputModeNew" type="button">
@@ -2540,20 +2579,12 @@
                             </div>
                         </div>
                         <div id="cbExistingScheduleRow" class="cb-file-row" hidden>
-                            <span id="cbExistingSchedulePath" class="cb-file-pill" data-empty="true">No file
-                                selected</span>
+                            <span id="cbExistingSchedulePath" class="cb-file-pill" data-empty="true">No file selected</span>
                             <div class="cb-file-actions">
-                                <button class="btn tiny" id="cbBrowseExistingScheduleBtn"
-                                    type="button">Browse...</button>
-                                <button class="btn tiny ghost" id="cbClearExistingScheduleBtn"
-                                    type="button">Clear</button>
+                                <button class="btn tiny" id="cbBrowseExistingScheduleBtn" type="button">Browse...</button>
+                                <button class="btn tiny ghost" id="cbClearExistingScheduleBtn" type="button">Clear</button>
                             </div>
                         </div>
-                    </section>
-
-                    <section class="cb-section">
-                        <div class="cb-section-title">3. Panel name (optional)</div>
-                        <input id="cbPanelName" type="text" placeholder="e.g. Panel A" />
                     </section>
                 </div>
 
@@ -2564,12 +2595,12 @@
                     </button>
                 </div>
                 <div id="cbRunningOverlay" class="cb-running-overlay" hidden>
-                        <div class="cb-running-card">
-                            <div class="spinner">Analyzing photos</div>
-                            <p class="tiny muted">Progress and results appear in the activity tray. Use the tray action to open the output folder after completion.</p>
-                        </div>
+                    <div class="cb-running-card">
+                        <div class="spinner">Analyzing photos</div>
+                        <p class="tiny muted">Progress and results appear in the activity tray. Use the tray action to open the output folder after completion.</p>
                     </div>
                 </div>
+            </div>
         </div>
     </dialog>
 

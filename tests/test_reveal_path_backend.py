@@ -1,7 +1,9 @@
 import sys
 import struct
+import tempfile
 import types
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 
@@ -211,6 +213,122 @@ class RevealPathBackendTests(unittest.TestCase):
         self.assertIn("Path and parent do not exist", response["message"])
         mock_startfile.assert_not_called()
         mock_run.assert_not_called()
+
+    def test_open_project_directory_opens_local_folder_from_project_id_and_name(self):
+        with tempfile.TemporaryDirectory(prefix="acies-project-directory-") as temp_dir:
+            docs_root = Path(temp_dir) / "DocumentsRoot"
+            local_project = (
+                docs_root /
+                "Local Projects" /
+                "250403 BofA, 240 E. Tulare St., Dinuba, CA"
+            )
+            local_project.mkdir(parents=True)
+
+            with patch.object(main_module.sys, "platform", "win32"), \
+                 patch.object(main_module, "_get_windows_documents_dir", return_value=str(docs_root)), \
+                 patch.object(main_module.os, "startfile", create=True) as mock_startfile:
+                response = self.api.open_project_directory(
+                    "local",
+                    {
+                        "id": "250403",
+                        "name": "BofA, 240 E. Tulare St., Dinuba, CA",
+                    },
+                )
+
+        self.assertEqual("success", response["status"])
+        self.assertEqual("local", response["mode"])
+        self.assertEqual(
+            str(local_project),
+            response["path"],
+        )
+        mock_startfile.assert_called_once_with(str(local_project))
+
+    def test_open_project_directory_opens_local_folder_from_server_basename(self):
+        with tempfile.TemporaryDirectory(prefix="acies-project-directory-") as temp_dir:
+            docs_root = Path(temp_dir) / "DocumentsRoot"
+            server_project = Path(temp_dir) / "ServerRoot" / "260243 BofA - Eastport Plaza"
+            local_project = docs_root / "Local Projects" / server_project.name
+            local_project.mkdir(parents=True)
+
+            with patch.object(main_module.sys, "platform", "win32"), \
+                 patch.object(main_module, "_get_windows_documents_dir", return_value=str(docs_root)), \
+                 patch.object(main_module.os, "startfile", create=True) as mock_startfile:
+                response = self.api.open_project_directory(
+                    "local",
+                    {
+                        "id": "260243",
+                        "name": "BofA Eastport",
+                        "path": str(server_project),
+                    },
+                )
+
+        self.assertEqual("success", response["status"])
+        self.assertEqual(str(local_project), response["path"])
+        mock_startfile.assert_called_once_with(str(local_project))
+
+    def test_open_project_directory_prefers_existing_explicit_local_path(self):
+        with tempfile.TemporaryDirectory(prefix="acies-project-directory-") as temp_dir:
+            docs_root = Path(temp_dir) / "DocumentsRoot"
+            explicit_local = Path(temp_dir) / "CustomLocal" / "260243 BofA"
+            explicit_local.mkdir(parents=True)
+            basename_local = docs_root / "Local Projects" / "260243 BofA - Eastport Plaza"
+            basename_local.mkdir(parents=True)
+
+            with patch.object(main_module.sys, "platform", "win32"), \
+                 patch.object(main_module, "_get_windows_documents_dir", return_value=str(docs_root)), \
+                 patch.object(main_module.os, "startfile", create=True) as mock_startfile:
+                response = self.api.open_project_directory(
+                    "local",
+                    {
+                        "id": "260243",
+                        "name": "BofA - Eastport Plaza",
+                        "path": str(Path(temp_dir) / "ServerRoot" / basename_local.name),
+                        "localProjectPath": str(explicit_local),
+                    },
+                )
+
+        self.assertEqual("success", response["status"])
+        self.assertEqual(str(explicit_local), response["path"])
+        mock_startfile.assert_called_once_with(str(explicit_local))
+
+    def test_open_project_directory_errors_when_local_directory_missing(self):
+        with tempfile.TemporaryDirectory(prefix="acies-project-directory-") as temp_dir:
+            docs_root = Path(temp_dir) / "DocumentsRoot"
+            docs_root.mkdir(parents=True)
+
+            with patch.object(main_module.sys, "platform", "win32"), \
+                 patch.object(main_module, "_get_windows_documents_dir", return_value=str(docs_root)), \
+                 patch.object(main_module.os, "startfile", create=True) as mock_startfile:
+                response = self.api.open_project_directory(
+                    "local",
+                    {
+                        "id": "250403",
+                        "name": "BofA, 240 E. Tulare St., Dinuba, CA",
+                    },
+                )
+
+        self.assertEqual("error", response["status"])
+        self.assertEqual("local", response["mode"])
+        self.assertIn("Local project directory does not exist", response["message"])
+        mock_startfile.assert_not_called()
+
+    def test_open_project_directory_does_not_open_parent_for_missing_server_directory(self):
+        with tempfile.TemporaryDirectory(prefix="acies-project-directory-") as temp_dir:
+            parent = Path(temp_dir) / "ServerRoot"
+            parent.mkdir()
+            missing_project = parent / "260243 Missing Project"
+
+            with patch.object(main_module.sys, "platform", "win32"), \
+                 patch.object(main_module.os, "startfile", create=True) as mock_startfile:
+                response = self.api.open_project_directory(
+                    "server",
+                    {"path": str(missing_project)},
+                )
+
+        self.assertEqual("error", response["status"])
+        self.assertEqual("server", response["mode"])
+        self.assertIn("Directory does not exist", response["message"])
+        mock_startfile.assert_not_called()
 
     def test_copy_file_to_clipboard_requires_file_path(self):
         response = self.api.copy_file_to_clipboard("")

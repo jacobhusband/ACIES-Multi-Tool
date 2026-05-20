@@ -140,10 +140,11 @@ class PanelScheduleAiBackendTests(unittest.TestCase):
             captured = {}
             fake_panel_data = types.SimpleNamespace(panel_name="MDP")
 
-            def fake_analyze(panel_name, breaker_paths, directory_paths):
+            def fake_analyze(panel_name, breaker_paths, directory_paths, input_mode="field_photos"):
                 captured["panel_name"] = panel_name
                 captured["breaker_paths"] = list(breaker_paths)
                 captured["directory_paths"] = list(directory_paths)
+                captured["input_mode"] = input_mode
                 return fake_panel_data
 
             with patch.object(
@@ -187,6 +188,7 @@ class PanelScheduleAiBackendTests(unittest.TestCase):
                 ["directory-1-42.jpg", "directory-43-84.jpg"],
                 captured["directory_paths"],
             )
+            self.assertEqual("field_photos", captured["input_mode"])
             update_mock.assert_called_once_with(
                 fake_panel_data,
                 os.path.normpath(str(output_path)),
@@ -213,6 +215,61 @@ class PanelScheduleAiBackendTests(unittest.TestCase):
         self.assertIn(
             "At least one breaker photo and at least one directory photo are required.",
             result["message"],
+        )
+
+    def test_process_panel_schedule_payload_existing_directory_requires_directory_photo(self):
+        with tempfile.TemporaryDirectory(prefix="acies-panel-schedule-") as temp_dir:
+            output_path = Path(temp_dir) / "panel_schedule.xlsx"
+            output_path.write_text("placeholder", encoding="utf-8")
+
+            result = self.api._process_panel_schedule_payload(
+                {
+                    "outputMode": "existing",
+                    "outputPath": str(output_path),
+                    "panelName": "MDP",
+                    "inputMode": "existing_directory",
+                    "breakerPaths": [],
+                    "directoryPaths": [],
+                }
+            )
+
+        self.assertEqual("error", result["status"])
+        self.assertEqual(0, result["successCount"])
+        self.assertEqual(1, result["failureCount"])
+        self.assertIn(
+            "At least one directory photo is required for existing directory mode.",
+            result["message"],
+        )
+
+    def test_process_panel_schedule_payload_existing_directory_success_with_only_directory(self):
+        with tempfile.TemporaryDirectory(prefix="acies-panel-schedule-") as temp_dir:
+            output_path = Path(temp_dir) / "panel_schedule.xlsx"
+            output_path.write_text("placeholder", encoding="utf-8")
+            fake_panel_data = types.SimpleNamespace(panel_name="MDP")
+
+            with patch.object(
+                self.api,
+                "_analyze_panel_schedule_images",
+                return_value=fake_panel_data,
+            ) as analyze_mock, patch.object(
+                self.api,
+                "_update_panel_schedule_workbook",
+                return_value="MDP",
+            ) as update_mock:
+                result = self.api._process_panel_schedule_payload(
+                    {
+                        "outputMode": "existing",
+                        "outputPath": str(output_path),
+                        "panelName": "MDP",
+                        "inputMode": "existing_directory",
+                        "breakerPaths": [],
+                        "directoryPaths": ["directory.jpg"],
+                    }
+                )
+
+        self.assertEqual("success", result["status"])
+        analyze_mock.assert_called_once_with(
+            "MDP", [], ["directory.jpg"], input_mode="existing_directory"
         )
 
     def test_build_panel_schedule_prompt_mentions_split_breakers_and_directories(self):

@@ -24,6 +24,10 @@ a = Analysis(
         (os.path.join(project_root, 'scripts', 'removeXREFPaths.ps1'), 'scripts'),
         (os.path.join(project_root, 'scripts', 'StripRefPaths.dll'), 'scripts'),
         (os.path.join(project_root, 'templates'), 'templates'),
+        (
+            os.path.join(project_root, 'CircuitBreakerAI', 'ElectricalPanels', 'Template.xlsx'),
+            os.path.join('CircuitBreakerAI', 'ElectricalPanels'),
+        ),
         (os.path.join(project_root, 'WireSizerApplication', 'dist'), 'WireSizerApplication\\dist')
     ],
     hiddenimports=['pillow_heif', '_pillow_heif'],

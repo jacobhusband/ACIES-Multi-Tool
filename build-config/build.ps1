@@ -177,6 +177,7 @@ try {
         (Join-Path $bundleInternal "index.html"),
         (Join-Path $bundleInternal "styles.css"),
         (Join-Path $bundleInternal "script.js"),
+        (Join-Path $bundleInternal "CircuitBreakerAI\ElectricalPanels\Template.xlsx"),
         (Join-Path $bundleInternal "WireSizerApplication\dist\index.html")
     )
     foreach ($expectedPath in $expectedBundleFiles) {

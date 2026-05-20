@@ -11087,7 +11087,36 @@ TASK 3: LOAD TYPES
 - LIGHTING -> 'C', RECEPTACLES -> 'G', MOTORS/HVAC -> 'M', KITCHEN -> 'K', DEDICATED -> 'D'
 """.strip()
 
-    def _analyze_panel_schedule_images(self, panel_name, breaker_paths, directory_paths):
+    def _build_existing_directory_prompt(self, panel_name, num_dir_imgs):
+        return f"""
+Analyze these electrical panel schedule directory document photos for Panel: {panel_name}.
+
+You are provided with {num_dir_imgs} images of the existing panel directory document. This document contains all the circuit information (circuit numbers, load descriptions, breaker ratings/amperages, and poles) needed to recreate the panel schedule.
+
+IMAGE INTERPRETATION RULES
+- All directory images belong to the SAME panel directory document.
+- Directory coverage may be split across multiple photos, such as circuits 1-42 on one image and 43-84 on another.
+- Merge partial and overlapping views into one complete understanding of the panel.
+- Reconcile overlapping information by using visible circuit numbers, breaker positions, and the clearest label text.
+
+TASK 1: HEADER
+- Extract Voltage, Bus Rating, Wire, Phase, Mounting, Enclosure from any headers, tables, or title block details.
+
+TASK 2: CIRCUITS & POLES
+- Identify every circuit entry in the directory document.
+- CRITICAL: Determine the 'poles' (1, 2, or 3) for each active circuit breaker.
+    - Look at how descriptions or circuit lines are grouped or span multiple spaces to represent multi-pole breakers.
+    - A 2-pole breaker has tied circuit spaces (e.g., descriptions spanning circuits 1 and 3, or a single breaker amperage serving a 2-circuit load).
+    - Provide the circuit_number as the TOP-most circuit number the breaker occupies.
+- Extract Amperage (e.g. 20A, 30A, 50A) and Load Description for each circuit from the directory table.
+- Resolve ditto marks (") if seen in the directory.
+- If the same circuit appears in overlapping photos, combine the evidence and keep one final record.
+
+TASK 3: LOAD TYPES
+- LIGHTING -> 'C', RECEPTACLES -> 'G', MOTORS/HVAC -> 'M', KITCHEN -> 'K', DEDICATED -> 'D'
+""".strip()
+
+    def _analyze_panel_schedule_images(self, panel_name, breaker_paths, directory_paths, input_mode="field_photos"):
         api_key = self._resolve_panel_schedule_api_key()
         if not api_key:
             raise RuntimeError(
@@ -11097,14 +11126,17 @@ TASK 3: LOAD TYPES
         self._ensure_aiohttp()
         client = genai.Client(
             api_key=api_key,
-            http_options=types.HttpOptions(timeout=300000),
+            http_options=types.HttpOptions(timeout=600000),
         )
 
         num_breaker_imgs = len(breaker_paths)
         num_dir_imgs = len(directory_paths)
-        prompt = self._build_panel_schedule_prompt(
-            panel_name, num_breaker_imgs, num_dir_imgs
-        )
+        if input_mode == "existing_directory":
+            prompt = self._build_existing_directory_prompt(panel_name, num_dir_imgs)
+        else:
+            prompt = self._build_panel_schedule_prompt(
+                panel_name, num_breaker_imgs, num_dir_imgs
+            )
 
         gemini_images = []
         try:
@@ -11119,7 +11151,7 @@ TASK 3: LOAD TYPES
             for attempt in range(3):
                 try:
                     response = client.models.generate_content(
-                        model="gemini-3-flash-preview",
+                        model="gemini-3.5-flash",
                         contents=[prompt, *gemini_images],
                         config=types.GenerateContentConfig(
                             response_mime_type="application/json",
@@ -11137,7 +11169,7 @@ TASK 3: LOAD TYPES
                     )
                     if not transient or attempt == 2:
                         raise
-                    time.sleep(3 * (3 ** attempt))
+                    time.sleep(5 * (3 ** attempt))
         finally:
             for img in gemini_images:
                 try:
@@ -11231,6 +11263,7 @@ TASK 3: LOAD TYPES
                 panel_requests.append({
                     'panel_id': panel_id,
                     'panel_name': panel_name,
+                    'input_mode': str(raw_panel.get('inputMode') or raw_panel.get('input_mode') or 'field_photos').strip().lower(),
                     'breaker_paths': self._normalize_panel_schedule_paths(
                         self._get_panel_schedule_path_value(
                             raw_panel,
@@ -11256,6 +11289,7 @@ TASK 3: LOAD TYPES
             panel_requests.append({
                 'panel_id': 'panel_1',
                 'panel_name': panel_name,
+                'input_mode': str(data.get('inputMode') or data.get('input_mode') or 'field_photos').strip().lower(),
                 'breaker_paths': self._normalize_panel_schedule_paths(
                     self._get_panel_schedule_path_value(
                         data,
@@ -11303,6 +11337,7 @@ TASK 3: LOAD TYPES
         for index, panel_request in enumerate(panel_requests):
             panel_id = str(panel_request.get('panel_id') or f"panel_{index + 1}").strip() or f"panel_{index + 1}"
             panel_name = str(panel_request.get('panel_name') or '').strip() or f"PANEL {index + 1}"
+            input_mode = str(panel_request.get('input_mode') or 'field_photos').strip().lower()
             breaker_paths = list(panel_request.get('breaker_paths') or [])
             directory_paths = list(panel_request.get('directory_paths') or [])
             breaker_uploads = panel_request.get('breaker_uploads') or []
@@ -11327,14 +11362,20 @@ TASK 3: LOAD TYPES
                     directory_paths.extend(uploaded_paths)
                     temp_paths.extend(created)
 
-                if not breaker_paths or not directory_paths:
-                    raise ValueError(
-                        "At least one breaker photo and at least one directory photo are required."
-                    )
+                if input_mode == "existing_directory":
+                    if not directory_paths:
+                        raise ValueError(
+                            "At least one directory photo is required for existing directory mode."
+                        )
+                else:
+                    if not breaker_paths or not directory_paths:
+                        raise ValueError(
+                            "At least one breaker photo and at least one directory photo are required."
+                        )
 
                 try:
                     panel_data = self._analyze_panel_schedule_images(
-                        panel_name, breaker_paths, directory_paths
+                        panel_name, breaker_paths, directory_paths, input_mode=input_mode
                     )
                 except Exception as e:
                     raise RuntimeError(self._format_panel_schedule_ai_error(e)) from e

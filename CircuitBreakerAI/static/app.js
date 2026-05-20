@@ -162,6 +162,30 @@ document.addEventListener('DOMContentLoaded', () => {
         let breakerFiles = [];
         let directoryFiles = [];
 
+        // Input Mode Selection
+        let inputMode = 'field_photos';
+        const modeOptions = pane.querySelectorAll('.mode-option');
+        const directoryTitle = pane.querySelector('.directory-section-title');
+        const directoryDropText = pane.querySelector('.directory-drop-text');
+
+        modeOptions.forEach(opt => {
+            opt.addEventListener('click', () => {
+                modeOptions.forEach(o => o.classList.remove('active'));
+                opt.classList.add('active');
+                inputMode = opt.dataset.value;
+
+                if (inputMode === 'existing_directory') {
+                    pane.classList.add('mode-existing-directory');
+                    if (directoryTitle) directoryTitle.textContent = 'Existing Directory Document';
+                    if (directoryDropText) directoryDropText.textContent = 'Drag & Drop Directory Document';
+                } else {
+                    pane.classList.remove('mode-existing-directory');
+                    if (directoryTitle) directoryTitle.textContent = '2. Circuit Directory Picture';
+                    if (directoryDropText) directoryDropText.textContent = 'Drag & Drop Directory';
+                }
+            });
+        });
+
         // Upload Helper
         const setupUpload = (btnClass, inputClass, dropClass, listClass, isBreaker) => {
             const btn = pane.querySelector(btnClass);
@@ -232,8 +256,15 @@ document.addEventListener('DOMContentLoaded', () => {
         btnDone.addEventListener('click', async () => {
             const finalName = nameInput.value.trim();
             if (!finalName) return alert("Please enter a Panel Name.");
-            if (breakerFiles.length === 0 && directoryFiles.length === 0) {
-                return alert("Please upload at least one image (breaker or directory).");
+            
+            if (inputMode === 'existing_directory') {
+                if (directoryFiles.length === 0) {
+                    return alert("Please upload at least one directory document photo.");
+                }
+            } else {
+                if (breakerFiles.length === 0 || directoryFiles.length === 0) {
+                    return alert("Please upload at least one breaker photo and at least one directory photo.");
+                }
             }
 
             // UI State: Loading
@@ -248,7 +279,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const formData = new FormData();
             formData.append('panel_name', finalName);
-            breakerFiles.forEach(f => formData.append('breaker_images', f));
+            formData.append('input_mode', inputMode);
+            if (inputMode !== 'existing_directory') {
+                breakerFiles.forEach(f => formData.append('breaker_images', f));
+            }
             directoryFiles.forEach(f => formData.append('directory_images', f));
 
             try {

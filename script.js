@@ -9491,6 +9491,9 @@ let minimizeEmptyProjectColumns = true;
 let projectCardColumns = DEFAULT_PROJECT_CARD_COLUMNS.map((c) => ({ ...c }));
 let projectCardWeek = getWeekStartDate(new Date());
 const PROJECTS_CARD_HORIZONTAL_WHEEL_MULTIPLIER = 0.4;
+let projectDirectoryContextMenu = null;
+let projectDirectoryContextMenuProject = null;
+let projectDirectoryContextMenuHandlersReady = false;
 
 function getDefaultProjectCardColumn(key) {
   return PROJECT_CARD_COLUMNS_BY_KEY.get(String(key || "").trim()) || null;
@@ -15172,6 +15175,35 @@ function resetCopyProjectLocallyDialogState() {
   };
 }
 
+window.localProjectChanges = {};
+
+window.onLocalChangesDetected = function(changedProjects) {
+  if (!Array.isArray(changedProjects)) return;
+
+  let totalChanges = 0;
+  let newChangesFound = false;
+
+  changedProjects.forEach(proj => {
+    const existing = window.localProjectChanges[proj.projectId];
+    const prevCount = existing ? existing.changes.length : 0;
+    
+    window.localProjectChanges[proj.projectId] = proj;
+    totalChanges += proj.changes.length;
+
+    if (proj.changes.length > prevCount) {
+      newChangesFound = true;
+    }
+  });
+
+  if (typeof renderProjectsPreservingExpandedDeliverables === "function") {
+    renderProjectsPreservingExpandedDeliverables();
+  }
+
+  if (newChangesFound && totalChanges > 0) {
+    toast(`Local project changes detected. Click yellow badge to sync.`);
+  }
+};
+
 function getLocalProjectManagerManagedRootNames() {
   const names = new Set(["xrefs"]);
   normalizeDisciplineList(userSettings?.discipline).forEach((discipline) => {
@@ -15909,6 +15941,19 @@ function renderLocalProjectManagerActivePane() {
 
   if (
     localProjectExists &&
+    copyProjectLocallyDialogState.comparisonSummary?.conflictCandidateCount > 0
+  ) {
+    renderLocalProjectManagerConflictResolutionView(listEl);
+    renderLocalProjectManagerBlockedEntries(
+      blockedListEl,
+      copyProjectLocallyDialogState.comparisonSummary.localToServerBlockedEntries || [],
+      "localProjectManagerBlockedSection"
+    );
+    return;
+  }
+
+  if (
+    localProjectExists &&
     copyProjectLocallyDialogState.replacementReview?.visible === true
   ) {
     renderLocalProjectManagerReplacementReview(
@@ -16153,6 +16198,11 @@ function buildLocalProjectManagerComparisonBannerMessage(summary = "") {
       return {
         tone: "info",
         message: "Additive items were found locally and on the server. Review each direction before copying.",
+      };
+    case "conflict":
+      return {
+        tone: "danger",
+        message: "File conflicts detected. Select Keep Local or Keep Server to resolve them.",
       };
     case "equal":
       return {
@@ -17382,6 +17432,137 @@ function renderLocalProjectManagerCopyToServerReview(container, syncState = null
   );
 }
 
+function renderLocalProjectManagerConflictResolutionView(container) {
+  if (!container) return;
+  container.replaceChildren();
+
+  const summary = copyProjectLocallyDialogState.comparisonSummary;
+  const conflicts = summary?.conflictCandidates || [];
+
+  if (conflicts.length === 0) {
+    container.appendChild(
+      el("div", {
+        className: "deliverable-notepad-empty",
+        textContent: "All conflicts have been resolved.",
+      })
+    );
+    return;
+  }
+
+  const titleEl = el("div", {
+    className: "local-project-manager-review-summary",
+    style: "margin-bottom: 12px; color: var(--danger-color, #d9534f); font-weight: bold;",
+    textContent: `${conflicts.length} conflicting file${conflicts.length === 1 ? "" : "s"} detected. Select a resolution strategy for each:`,
+  });
+  container.appendChild(titleEl);
+
+  const listContainer = el("div", {
+    className: "local-project-manager-review-list",
+    style: "display: flex; flex-direction: column; gap: 16px;",
+    role: "list"
+  });
+
+  conflicts.forEach((conflict) => {
+    const relativePath = conflict.relativePath;
+    const pathParts = relativePath.split(/[\\/]+/);
+    const fileName = pathParts[pathParts.length - 1] || relativePath;
+    const parentPath = pathParts.slice(0, -1).join("\\");
+
+    const localTime = formatLocalProjectManagerTimestampLabel(new Date(conflict.localMtime * 1000).toISOString());
+    const serverTime = formatLocalProjectManagerTimestampLabel(new Date(conflict.serverMtime * 1000).toISOString());
+
+    const localSize = formatCopyProjectLocallySizeLabel(conflict.localSize);
+    const serverSize = formatCopyProjectLocallySizeLabel(conflict.serverSize);
+
+    const row = el("div", {
+      className: "copy-project-locally-row",
+      style: "display: flex; flex-direction: column; padding: 12px; border: 1px solid var(--border-color, #ccc); border-radius: 6px; background-color: rgba(255,0,0,0.02); gap: 8px;",
+    });
+
+    // File header
+    const header = el("div", { style: "display: flex; justify-content: space-between; font-weight: bold;" }, [
+      el("span", { textContent: fileName, className: "copy-project-locally-row-title" }),
+      el("span", { textContent: parentPath, style: "font-size: 0.8rem; opacity: 0.7;" })
+    ]);
+
+    // Side-by-side Info Card
+    const infoContainer = el("div", { style: "display: flex; gap: 16px; width: 100%;" }, [
+      // Local info
+      el("div", { style: "flex: 1; padding: 8px; border-radius: 4px; background: rgba(0,0,0,0.02); font-size: 0.85rem;" }, [
+        el("div", { style: "font-weight: bold; margin-bottom: 4px;", textContent: "Local Copy" }),
+        el("div", { textContent: `Modified: ${localTime}` }),
+        el("div", { textContent: `Size: ${localSize}` })
+      ]),
+      // Server info
+      el("div", { style: "flex: 1; padding: 8px; border-radius: 4px; background: rgba(0,0,0,0.02); font-size: 0.85rem;" }, [
+        el("div", { style: "font-weight: bold; margin-bottom: 4px;", textContent: "Server (Remote) Copy" }),
+        el("div", { textContent: `Modified: ${serverTime}` }),
+        el("div", { textContent: `Size: ${serverSize}` })
+      ])
+    ]);
+
+    // Action buttons
+    const actions = el("div", { style: "display: flex; gap: 12px; justify-content: flex-end;" });
+
+    const keepLocalBtn = el("button", {
+      className: "btn btn-accent",
+      style: "padding: 6px 12px;",
+      textContent: "Keep Local (Upload)",
+      onclick: async () => {
+        keepLocalBtn.disabled = true;
+        keepServerBtn.disabled = true;
+        await resolveConflict(conflict.relativePath, "keep_local");
+      }
+    });
+
+    const keepServerBtn = el("button", {
+      className: "btn btn-secondary",
+      style: "padding: 6px 12px;",
+      textContent: "Keep Server (Download)",
+      onclick: async () => {
+        keepLocalBtn.disabled = true;
+        keepServerBtn.disabled = true;
+        await resolveConflict(conflict.relativePath, "keep_server");
+      }
+    });
+
+    actions.append(keepLocalBtn, keepServerBtn);
+    row.append(header, infoContainer, actions);
+    listContainer.appendChild(row);
+  });
+
+  container.appendChild(listContainer);
+}
+
+async function resolveConflict(relativePath, strategy) {
+  const localProjectPath = copyProjectLocallyDialogState.localProjectPath;
+  const serverPathInfo = getLocalProjectManagerServerPathInfo();
+  
+  if (!localProjectPath || !serverPathInfo.path) {
+    toast("Project paths are unavailable.");
+    return;
+  }
+
+  try {
+    toast("Resolving conflict...");
+    const result = await window.pywebview.api.resolve_local_project_manager_conflict(
+      localProjectPath,
+      serverPathInfo.path,
+      relativePath,
+      strategy
+    );
+
+    if (result?.status === "success") {
+      toast(`Resolved: ${strategy === 'keep_local' ? 'Kept Local' : 'Kept Server'}`);
+      await autoCompareTimestampsAndSelectTab();
+    } else {
+      toast(`Resolution failed: ${result?.message || 'unknown error'}`);
+    }
+  } catch (error) {
+    toast(`Error: ${error.message}`);
+  }
+}
+
 function renderLocalProjectManagerReplacementReview(container, reviewState = null) {
   if (!container) return;
   container.replaceChildren();
@@ -17736,6 +17917,21 @@ function updateLocalProjectManagerFooter() {
     summaryEl.textContent = `${metrics.count} folder${
       metrics.count === 1 ? "" : "s"
     } selected${metrics.totalBytes > 0 ? ` | ${formatCopyProjectLocallySizeLabel(metrics.totalBytes)}` : ""}`;
+    return;
+  }
+
+  if (copyProjectLocallyDialogState.localProjectExists === true && copyProjectLocallyDialogState.comparisonSummary?.conflictCandidateCount > 0) {
+    if (copyToServerBtn) {
+      copyToServerBtn.hidden = true;
+      copyToServerBtn.disabled = true;
+    }
+    if (syncBtn) {
+      syncBtn.disabled = true;
+      syncBtn.textContent = "Resolve Conflicts to Continue";
+    }
+    if (summaryEl) {
+      summaryEl.textContent = `${copyProjectLocallyDialogState.comparisonSummary.conflictCandidateCount} unresolved conflict${copyProjectLocallyDialogState.comparisonSummary.conflictCandidateCount === 1 ? '' : 's'} must be resolved.`;
+    }
     return;
   }
 
@@ -24082,6 +24278,140 @@ function createSavedPathButton(project, deliverable = null) {
   return button;
 }
 
+function buildProjectDirectoryPayload(project) {
+  return {
+    id: String(project?.id || "").trim(),
+    name: String(project?.name || "").trim(),
+    path: convertPath(String(project?.path || "").trim()),
+    localProjectPath: convertPath(String(project?.localProjectPath || "").trim()),
+  };
+}
+
+async function openProjectDirectory(project, kind) {
+  const kindKey = kind === "local" ? "local" : "server";
+  const label = kindKey === "local" ? "local" : "server";
+  if (!window.pywebview?.api?.open_project_directory) {
+    toast("Project directory opener is unavailable.");
+    return;
+  }
+
+  try {
+    const result = await window.pywebview.api.open_project_directory(
+      kindKey,
+      buildProjectDirectoryPayload(project)
+    );
+    if (result?.status !== "success") {
+      throw new Error(result?.message || `Unable to open ${label} directory.`);
+    }
+    toast(`Opening ${label} directory...`);
+  } catch (error) {
+    toast(error?.message || `Unable to open ${label} directory.`);
+  }
+}
+
+function hideProjectDirectoryContextMenu() {
+  if (!projectDirectoryContextMenu) return;
+  projectDirectoryContextMenu.hidden = true;
+  projectDirectoryContextMenuProject = null;
+}
+
+function ensureProjectDirectoryContextMenu() {
+  if (projectDirectoryContextMenu) return projectDirectoryContextMenu;
+
+  const menu = el("div", {
+    className: "project-directory-context-menu",
+    role: "menu",
+  });
+  menu.hidden = true;
+
+  const serverItem = el("button", {
+    className: "project-directory-context-menu__item",
+    type: "button",
+    role: "menuitem",
+    textContent: "Open Server Directory",
+    "data-project-directory-action": "server",
+  });
+  const localItem = el("button", {
+    className: "project-directory-context-menu__item",
+    type: "button",
+    role: "menuitem",
+    textContent: "Open Local Directory",
+    "data-project-directory-action": "local",
+  });
+  menu.append(serverItem, localItem);
+
+  menu.addEventListener("click", async (event) => {
+    const item = event.target.closest("button[data-project-directory-action]");
+    if (!item) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const project = projectDirectoryContextMenuProject;
+    const action = item.dataset.projectDirectoryAction;
+    hideProjectDirectoryContextMenu();
+    if (project) await openProjectDirectory(project, action);
+  });
+
+  document.body.appendChild(menu);
+  projectDirectoryContextMenu = menu;
+
+  if (!projectDirectoryContextMenuHandlersReady) {
+    document.addEventListener("click", (event) => {
+      if (
+        projectDirectoryContextMenu &&
+        !projectDirectoryContextMenu.hidden &&
+        !projectDirectoryContextMenu.contains(event.target)
+      ) {
+        hideProjectDirectoryContextMenu();
+      }
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") hideProjectDirectoryContextMenu();
+    });
+    window.addEventListener("resize", hideProjectDirectoryContextMenu);
+    document.addEventListener("scroll", hideProjectDirectoryContextMenu, true);
+    projectDirectoryContextMenuHandlersReady = true;
+  }
+
+  return menu;
+}
+
+function showProjectDirectoryContextMenu(event, project) {
+  if (!project) return;
+  event.preventDefault();
+  event.stopPropagation();
+
+  const menu = ensureProjectDirectoryContextMenu();
+  projectDirectoryContextMenuProject = project;
+  menu.hidden = false;
+  menu.style.visibility = "hidden";
+  menu.style.left = "0px";
+  menu.style.top = "0px";
+
+  const viewportPadding = 8;
+  const rect = menu.getBoundingClientRect();
+  const left = Math.min(
+    Math.max(viewportPadding, event.clientX),
+    Math.max(viewportPadding, window.innerWidth - rect.width - viewportPadding)
+  );
+  const top = Math.min(
+    Math.max(viewportPadding, event.clientY),
+    Math.max(viewportPadding, window.innerHeight - rect.height - viewportPadding)
+  );
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+  menu.style.visibility = "";
+  menu.querySelector("button[data-project-directory-action]")?.focus();
+}
+
+function attachProjectDirectoryContextMenu(target, project) {
+  if (!target) return target;
+  target.dataset.projectDirectoryMenu = "true";
+  target.addEventListener("contextmenu", (event) => {
+    showProjectDirectoryContextMenu(event, project);
+  });
+  return target;
+}
+
 function createProjectActionButtons(
   projectIndex,
   className = "actions-stack",
@@ -24149,14 +24479,15 @@ function buildProjectTableRow(project, projectIndex, rowTemplate) {
           toast("Failed to open path.");
         }
       };
+      attachProjectDirectoryContextMenu(link, project);
       projectDetailsMain.appendChild(link);
     } else {
-      projectDetailsMain.appendChild(
-        el("span", {
-          className: "project-title-text",
-          textContent: project?.name || "--",
-        })
-      );
+      const titleText = el("span", {
+        className: "project-title-text",
+        textContent: project?.name || "--",
+      });
+      attachProjectDirectoryContextMenu(titleText, project);
+      projectDetailsMain.appendChild(titleText);
     }
 
     const account = extractAccountFromPath(project?.path);
@@ -24170,6 +24501,35 @@ function buildProjectTableRow(project, projectIndex, rowTemplate) {
       projectDetailsMain.append(
         el("small", { className: "muted", textContent: ` (${project.nick})` })
       );
+    }
+
+    const changedInfo = window.localProjectChanges && window.localProjectChanges[project?.id];
+    if (changedInfo && changedInfo.changes && changedInfo.changes.length > 0) {
+      const syncBadge = el("span", {
+        className: "badge badge-warning sync-pending-badge",
+        textContent: `${changedInfo.changes.length} pending change${changedInfo.changes.length === 1 ? '' : 's'}`,
+        title: "Click to sync local changes to server"
+      });
+      syncBadge.style.cursor = "pointer";
+      syncBadge.style.marginLeft = "8px";
+      syncBadge.style.fontSize = "0.75rem";
+      syncBadge.style.padding = "2px 6px";
+      syncBadge.style.borderRadius = "4px";
+      syncBadge.style.backgroundColor = "var(--warning-color, #f0ad4e)";
+      syncBadge.style.color = "#000";
+      syncBadge.style.fontWeight = "bold";
+      syncBadge.onclick = (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        runLocalProjectManager({
+          source: 'workroom',
+          projectPath: project.path,
+          rootProjectPath: project.path,
+          projectName: project.name,
+          localProjectPath: project.localProjectPath
+        });
+      };
+      projectDetailsMain.appendChild(syncBadge);
     }
 
     projectDetailsHeader.append(projectDetailsMain);
@@ -24584,13 +24944,13 @@ function buildCardProjectMeta(project, projectIndex, deliverable) {
   }
   const nameText = String(project?.name || "").trim();
   if (nameText) {
-    identity.appendChild(
-      el("span", {
-        className: "kanban-card-project-name",
-        textContent: nameText,
-        title: nameText,
-      })
-    );
+    const nameEl = el("span", {
+      className: "kanban-card-project-name",
+      textContent: nameText,
+      title: nameText,
+    });
+    attachProjectDirectoryContextMenu(nameEl, project);
+    identity.appendChild(nameEl);
   }
   if (identity.childNodes.length) meta.appendChild(identity);
   return meta.childNodes.length ? meta : null;
@@ -28818,6 +29178,7 @@ function createCircuitBreakerPanel() {
     id: generateCircuitBreakerPanelId(),
     label: `Panel ${number}`,
     panelName: "",
+    inputMode: "field_photos",
     breakerPaths: [],
     directoryPaths: [],
     breakerFiles: [],
@@ -28910,6 +29271,9 @@ function getCircuitBreakerPanelDisplayName(panel) {
 
 function isCircuitBreakerPanelReady(panel) {
   if (!panel) return false;
+  if (panel.inputMode === "existing_directory") {
+    return Boolean(hasCircuitBreakerPhotoSelection(panel.directoryPaths, panel.directoryFiles));
+  }
   return Boolean(
     hasCircuitBreakerPhotoSelection(panel.breakerPaths, panel.breakerFiles) &&
     hasCircuitBreakerPhotoSelection(panel.directoryPaths, panel.directoryFiles)
@@ -29071,7 +29435,6 @@ function renderCircuitBreakerPanelTabs() {
     const removeBtn = el("button", {
       className: "cb-panel-tab-remove",
       type: "button",
-      textContent: "x",
       title: `Remove ${panel.label || "panel"}`,
       disabled: !canRemove,
       onclick: (event) => {
@@ -29079,10 +29442,118 @@ function renderCircuitBreakerPanelTabs() {
         removeCircuitBreakerPanel(panel.id);
       },
     });
+    removeBtn.innerHTML = `
+      <svg width="10" height="10" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M13 1L1 13M1 1L13 13" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    `;
 
     tab.appendChild(tabBtn);
     tab.appendChild(removeBtn);
     tabsContainer.appendChild(tab);
+  });
+}
+
+function removeCircuitBreakerPhoto(panelId, kind, index) {
+  if (circuitBreakerState.running) return;
+  const panel = circuitBreakerState.panels.find((p) => p.id === panelId);
+  if (!panel) return;
+  if (kind === "breaker") {
+    if (panel.breakerPaths && panel.breakerPaths.length > 0) {
+      panel.breakerPaths.splice(index, 1);
+    } else if (panel.breakerFiles && panel.breakerFiles.length > 0) {
+      panel.breakerFiles.splice(index, 1);
+    }
+  } else {
+    if (panel.directoryPaths && panel.directoryPaths.length > 0) {
+      panel.directoryPaths.splice(index, 1);
+    } else if (panel.directoryFiles && panel.directoryFiles.length > 0) {
+      panel.directoryFiles.splice(index, 1);
+    }
+  }
+  updateCircuitBreakerUi();
+}
+
+function formatCircuitBreakerBytes(bytes) {
+  if (bytes === 0) return "0 Bytes";
+  const k = 1024;
+  const sizes = ["Bytes", "KB", "MB", "GB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
+}
+
+function renderCircuitBreakerFileList(containerId, paths, files, kind, panelId) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  container.innerHTML = "";
+
+  const items = [];
+  if (paths && paths.length > 0) {
+    paths.forEach((path, index) => {
+      const parts = path.split(/[\\/]/);
+      const name = parts[parts.length - 1];
+      items.push({ name, index, isPath: true });
+    });
+  } else if (files && files.length > 0) {
+    files.forEach((file, index) => {
+      items.push({ name: file.name, size: file.size, index, isPath: false });
+    });
+  }
+
+  if (items.length === 0) {
+    return;
+  }
+
+  items.forEach((item) => {
+    const fileItem = document.createElement("div");
+    fileItem.className = "cb-file-item";
+
+    const info = document.createElement("div");
+    info.className = "cb-file-item-info";
+
+    const iconSpan = document.createElement("span");
+    iconSpan.className = "cb-file-item-icon";
+    iconSpan.innerHTML = `
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M19 3H5C3.9 3 3 3.9 3 5V19C3 20.1 3.9 21 5 21H19C20.1 21 21 20.1 21 19V5C21 3.9 20.1 3 19 3Z" stroke="currentColor" stroke-width="2"/>
+        <path d="M8.5 10C9.32843 10 10 9.32843 10 8.5C10 7.67157 9.32843 7 8.5 7C7.67157 7 7 7.67157 7 8.5C7 9.32843 7.67157 10 8.5 10Z" fill="currentColor"/>
+        <path d="M21 15L16 10L5 21" stroke="currentColor" stroke-width="2"/>
+      </svg>
+    `;
+
+    const nameSpan = document.createElement("span");
+    nameSpan.className = "cb-file-item-name";
+    nameSpan.textContent = item.name;
+    nameSpan.title = item.name;
+
+    info.appendChild(iconSpan);
+    info.appendChild(nameSpan);
+
+    if (item.size !== undefined) {
+      const sizeSpan = document.createElement("span");
+      sizeSpan.className = "cb-file-item-size";
+      sizeSpan.textContent = formatCircuitBreakerBytes(item.size);
+      info.appendChild(sizeSpan);
+    }
+
+    const removeBtn = document.createElement("button");
+    removeBtn.className = "cb-file-item-remove";
+    removeBtn.type = "button";
+    removeBtn.title = "Remove photo";
+    removeBtn.innerHTML = `
+      <svg width="12" height="12" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M13 1L1 13M1 1L13 13" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    `;
+    removeBtn.disabled = circuitBreakerState.running;
+    removeBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      removeCircuitBreakerPhoto(panelId, kind, item.index);
+    });
+
+    fileItem.appendChild(info);
+    fileItem.appendChild(removeBtn);
+    container.appendChild(fileItem);
   });
 }
 
@@ -29208,6 +29679,48 @@ function updateCircuitBreakerUi() {
       circuitBreakerState.running || !circuitBreakerState.existingOutputPath;
   }
 
+  // Input Mode Buttons
+  const inputModeField = document.getElementById("cbInputModeField");
+  const inputModeExisting = document.getElementById("cbInputModeExisting");
+  if (inputModeField) {
+    const isActive = (activePanel?.inputMode || "field_photos") === "field_photos";
+    inputModeField.classList.toggle("is-active", isActive);
+    inputModeField.setAttribute("aria-pressed", isActive ? "true" : "false");
+    inputModeField.disabled = circuitBreakerState.running || !activePanel;
+  }
+  if (inputModeExisting) {
+    const isActive = (activePanel?.inputMode || "field_photos") === "existing_directory";
+    inputModeExisting.classList.toggle("is-active", isActive);
+    inputModeExisting.setAttribute("aria-pressed", isActive ? "true" : "false");
+    inputModeExisting.disabled = circuitBreakerState.running || !activePanel;
+  }
+
+  // Conditional Card and Label Changes
+  const breakerCard = document.getElementById("cbBreakerUploadCard");
+  const directoryTitle = document.getElementById("cbDirectoryUploadTitle");
+  const directoryDesc = document.getElementById("cbDirectoryUploadDesc");
+  const directoryDropText = document.getElementById("cbDirectoryDropText");
+  const isExistingDir = (activePanel?.inputMode === "existing_directory");
+
+  if (breakerCard) {
+    breakerCard.hidden = isExistingDir;
+  }
+  if (directoryTitle) {
+    directoryTitle.textContent = isExistingDir 
+      ? "Existing directory document" 
+      : "Circuit directory photos";
+  }
+  if (directoryDesc) {
+    directoryDesc.textContent = isExistingDir
+      ? "Clear photo of the completed directory sheet or schedule document."
+      : "Photos of the directory or schedule labels. A field directory may be split across photos, such as circuits 1-42 on one image and 43-84 on another.";
+  }
+  if (directoryDropText) {
+    directoryDropText.textContent = isExistingDir
+      ? "Drag & drop directory document or click to select"
+      : "Drag & drop photos or click to select";
+  }
+
   if (breakerDrop) {
     breakerDrop.dataset.hasFile =
       activePanel &&
@@ -29239,6 +29752,28 @@ function updateCircuitBreakerUi() {
     runningOverlay.hidden = !circuitBreakerState.running;
   }
 
+  if (activePanel) {
+    renderCircuitBreakerFileList(
+      "cbBreakerFileList",
+      activePanel.breakerPaths,
+      activePanel.breakerFiles,
+      "breaker",
+      activePanel.id
+    );
+    renderCircuitBreakerFileList(
+      "cbDirectoryFileList",
+      activePanel.directoryPaths,
+      activePanel.directoryFiles,
+      "directory",
+      activePanel.id
+    );
+  } else {
+    const list1 = document.getElementById("cbBreakerFileList");
+    if (list1) list1.innerHTML = "";
+    const list2 = document.getElementById("cbDirectoryFileList");
+    if (list2) list2.innerHTML = "";
+  }
+
   if (circuitBreakerState.running) {
     setCircuitBreakerStatus(
       `Running ${counts.total} panel${counts.total === 1 ? "" : "s"} in the background...`
@@ -29251,7 +29786,7 @@ function updateCircuitBreakerUi() {
     );
   } else {
     setCircuitBreakerStatus(
-      `${counts.ready}/${counts.total} panel${counts.total === 1 ? "" : "s"} ready. Each panel needs at least one breaker photo and at least one directory photo.`
+      `${counts.ready}/${counts.total} panel${counts.total === 1 ? "" : "s"} ready. Complete the required photos for each panel tab.`
     );
   }
 }
@@ -29612,13 +30147,13 @@ async function runCircuitBreakerInBackground() {
   if (pendingPanels.length) {
     if (pendingPanels.length === 1) {
       toast(
-        `Complete breaker and directory photos for ${getCircuitBreakerPanelDisplayName(
+        `Complete required photos for ${getCircuitBreakerPanelDisplayName(
           pendingPanels[0]
         )}.`
       );
     } else {
       toast(
-        `Complete breaker and directory photos for ${pendingPanels.length} panels before running.`
+        `Complete required photos for ${pendingPanels.length} panels before running.`
       );
     }
     return;
@@ -29638,6 +30173,7 @@ async function runCircuitBreakerInBackground() {
     panels.push({
       panelId: panel.id,
       panelName: panel.panelName?.trim() || panel.label || "PANEL",
+      inputMode: panel.inputMode || "field_photos",
       breakerPaths: [...normalizeCircuitBreakerPaths(panel.breakerPaths)],
       directoryPaths: [...normalizeCircuitBreakerPaths(panel.directoryPaths)],
       breakerUploads,
@@ -29656,6 +30192,7 @@ async function runCircuitBreakerInBackground() {
           )
         : "",
     panels,
+    inputMode: firstPanel.inputMode || "field_photos",
     breakerPaths: firstPanel.breakerPaths || [],
     directoryPaths: firstPanel.directoryPaths || [],
     breakerUploads: firstPanel.breakerUploads || [],
@@ -34004,6 +34541,26 @@ function initEventListeners() {
   if (cbOutputModeExisting) {
     cbOutputModeExisting.addEventListener("click", () => {
       circuitBreakerState.outputMode = "existing";
+      updateCircuitBreakerUi();
+    });
+  }
+
+  const cbInputModeField = document.getElementById("cbInputModeField");
+  if (cbInputModeField) {
+    cbInputModeField.addEventListener("click", () => {
+      const panel = getActiveCircuitBreakerPanel();
+      if (!panel) return;
+      panel.inputMode = "field_photos";
+      updateCircuitBreakerUi();
+    });
+  }
+
+  const cbInputModeExisting = document.getElementById("cbInputModeExisting");
+  if (cbInputModeExisting) {
+    cbInputModeExisting.addEventListener("click", () => {
+      const panel = getActiveCircuitBreakerPanel();
+      if (!panel) return;
+      panel.inputMode = "existing_directory";
       updateCircuitBreakerUi();
     });
   }

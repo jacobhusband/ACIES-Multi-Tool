@@ -60,7 +60,10 @@ COL_R_NOTE = "R"
 
 
 # Initialize Gemini client
-client = genai.Client(api_key=API_KEY)
+client = genai.Client(
+    api_key=API_KEY,
+    http_options=types.HttpOptions(timeout=600000),
+)
 
 # Serve static files
 app.mount("/static", StaticFiles(directory=str(_SERVER_DIR / "static")), name="static")
@@ -313,6 +316,7 @@ async def read_index():
 @app.post("/api/analyze-panel")
 async def analyze_panel_endpoint(
     panel_name: str = Form(...),
+    input_mode: str = Form("field_photos"),
     breaker_images: List[UploadFile] = File(default=[]),
     directory_images: List[UploadFile] = File(default=[])
 ):
@@ -334,9 +338,13 @@ async def analyze_panel_endpoint(
         saved_breaker_paths = save_uploads(breaker_images)
         saved_directory_paths = save_uploads(directory_images)
 
-        # Combine checks
-        if not saved_breaker_paths and not saved_directory_paths:
-             raise HTTPException(status_code=400, detail="No images provided.")
+        # Validation based on input mode
+        if input_mode == "existing_directory":
+            if not saved_directory_paths:
+                raise HTTPException(status_code=400, detail="At least one directory photo is required for existing directory mode.")
+        else:
+            if not saved_breaker_paths or not saved_directory_paths:
+                raise HTTPException(status_code=400, detail="At least one breaker photo and at least one directory photo are required.")
 
         # Prepare images for Gemini
         gemini_images = []
@@ -349,34 +357,76 @@ async def analyze_panel_endpoint(
         num_dir_imgs = len(saved_directory_paths)
 
         # Gemini Prompt
-        prompt = f"""
-        Analyze these electrical panel photos for Panel: {panel_name}.
+        if input_mode == "existing_directory":
+            prompt = f"""
+            Analyze these electrical panel schedule directory document photos for Panel: {panel_name}.
 
-        You are provided with {num_breaker_imgs} images of the CIRCUIT BREAKERS (first {num_breaker_imgs} images)
-        and {num_dir_imgs} images of the CIRCUIT DIRECTORY (last {num_dir_imgs} images).
+            You are provided with {num_dir_imgs} images of the existing panel directory document. This document contains all the circuit information (circuit numbers, load descriptions, breaker ratings/amperages, and poles) needed to recreate the panel schedule.
 
-        TASK 1: HEADER
-        - Extract Voltage, Bus Rating, Wire, Phase, Mounting, Enclosure.
-        - Look at the directory images or labels on the panel.
+            IMAGE INTERPRETATION RULES
+            - All directory images belong to the SAME panel directory document.
+            - Directory coverage may be split across multiple photos, such as circuits 1-42 on one image and 43-84 on another.
+            - Merge partial and overlapping views into one complete understanding of the panel.
+            - Reconcile overlapping information by using visible circuit numbers, breaker positions, and the clearest label text.
 
-        TASK 2: CIRCUITS & POLES
-        - Identify every breaker visible in the Breaker Images.
-        - CRITICAL: Determine the 'poles' (1, 2, or 3).
-            - A 1-pole breaker takes up 1 circuit space.
-            - A 2-pole breaker has a tied handle and takes up 2 vertical circuit spaces (e.g. 1 & 3).
-            - A 3-pole breaker has a tied handle and takes up 3 vertical circuit spaces (e.g. 1, 3, & 5).
-        - Provide the circuit_number as the TOP-most circuit number the breaker occupies.
-        - Extract Amperage and Load Description from the labels (Breaker Images) or circuit directory (Directory Images).
-        - Resolve ditto marks (") if seen in the directory.
+            TASK 1: HEADER
+            - Extract Voltage, Bus Rating, Wire, Phase, Mounting, Enclosure from any headers, tables, or title block details.
 
-        TASK 3: LOAD TYPES
-        - LIGHTING -> 'C', RECEPTACLES -> 'G', MOTORS/HVAC -> 'M', KITCHEN -> 'K', DEDICATED -> 'D'
-        """
+            TASK 2: CIRCUITS & POLES
+            - Identify every circuit entry in the directory document.
+            - CRITICAL: Determine the 'poles' (1, 2, or 3) for each active circuit breaker.
+                - Look at how descriptions or circuit lines are grouped or span multiple spaces to represent multi-pole breakers.
+                - A 2-pole breaker has tied circuit spaces (e.g., descriptions spanning circuits 1 and 3, or a single breaker amperage serving a 2-circuit load).
+                - Provide the circuit_number as the TOP-most circuit number the breaker occupies.
+            - Extract Amperage (e.g. 20A, 30A, 50A) and Load Description for each circuit from the directory table.
+            - Resolve ditto marks (") if seen in the directory.
+            - If the same circuit appears in overlapping photos, combine the evidence and keep one final record.
+
+            TASK 3: LOAD TYPES
+            - LIGHTING -> 'C', RECEPTACLES -> 'G', MOTORS/HVAC -> 'M', KITCHEN -> 'K', DEDICATED -> 'D'
+            """.strip()
+        else:
+            prompt = f"""
+            Analyze these electrical panel photos for Panel: {panel_name}.
+
+            You are provided with {num_breaker_imgs} images of the CIRCUIT BREAKERS (first {num_breaker_imgs} images)
+            and {num_dir_imgs} images of the CIRCUIT DIRECTORY (last {num_dir_imgs} images).
+
+            IMAGE INTERPRETATION RULES
+            - All breaker images belong to the SAME panel.
+            - All directory images belong to the SAME panel.
+            - Breaker coverage may be split across multiple photos of the same panel, such as upper half, middle, and bottom half images.
+            - Directory coverage may be split across multiple photos, such as circuits 1-42 on one image and 43-84 on another.
+            - Merge partial and overlapping views into one complete understanding of the panel.
+            - Do not treat split photos as separate panels.
+            - Reconcile overlapping information by using visible circuit numbers, breaker positions, and the clearest label text.
+            - Breaker images come first. Directory images come last.
+            - Do not assume each image shows the entire panel or a complete directory by itself.
+
+            TASK 1: HEADER
+            - Extract Voltage, Bus Rating, Wire, Phase, Mounting, Enclosure.
+            - Look at the directory images or labels on the panel across all images.
+
+            TASK 2: CIRCUITS & POLES
+            - Identify every breaker visible across the Breaker Images.
+            - Use visible breaker positions and circuit numbering to merge split sections from multiple photos.
+            - CRITICAL: Determine the 'poles' (1, 2, or 3).
+                - A 1-pole breaker takes up 1 circuit space.
+                - A 2-pole breaker has a tied handle and takes up 2 vertical circuit spaces (e.g. 1 & 3).
+                - A 3-pole breaker has a tied handle and takes up 3 vertical circuit spaces (e.g. 1, 3, & 5).
+            - Provide the circuit_number as the TOP-most circuit number the breaker occupies.
+            - Extract Amperage and Load Description from the labels (Breaker Images) or circuit directory (Directory Images).
+            - Resolve ditto marks (") if seen in the directory.
+            - If the same circuit appears in overlapping photos, combine the evidence and keep one final record.
+
+            TASK 3: LOAD TYPES
+            - LIGHTING -> 'C', RECEPTACLES -> 'G', MOTORS/HVAC -> 'M', KITCHEN -> 'K', DEDICATED -> 'D'
+            """.strip()
 
         enforce_rate_limit()
 
         response = client.models.generate_content(
-            model="gemini-3-flash-preview",
+            model="gemini-3.5-flash",
             contents=[prompt, *gemini_images],
             config=types.GenerateContentConfig(
                 response_mime_type="application/json", response_schema=PanelData),
@@ -394,6 +444,8 @@ async def analyze_panel_endpoint(
             "data": panel_data.model_dump()
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -402,6 +454,7 @@ async def analyze_panel_endpoint(
 @app.post("/api/analyze-panel-stream")
 async def analyze_panel_stream_endpoint(
     panel_name: str = Form(...),
+    input_mode: str = Form("field_photos"),
     breaker_images: List[UploadFile] = File(default=[]),
     directory_images: List[UploadFile] = File(default=[])
 ):
@@ -425,9 +478,15 @@ async def analyze_panel_stream_endpoint(
             saved_breaker_paths = save_uploads(breaker_images)
             saved_directory_paths = save_uploads(directory_images)
 
-            if not saved_breaker_paths and not saved_directory_paths:
-                yield f"data: {json.dumps({'event': 'error', 'detail': 'No images provided.'})}\n\n"
-                return
+            # Validation based on input mode
+            if input_mode == "existing_directory":
+                if not saved_directory_paths:
+                    yield f"data: {json.dumps({'event': 'error', 'detail': 'At least one directory photo is required for existing directory mode.'})}\n\n"
+                    return
+            else:
+                if not saved_breaker_paths or not saved_directory_paths:
+                    yield f"data: {json.dumps({'event': 'error', 'detail': 'At least one breaker photo and at least one directory photo are required.'})}\n\n"
+                    return
 
             # Prepare images for Gemini
             gemini_images = []
@@ -442,34 +501,77 @@ async def analyze_panel_stream_endpoint(
             # Signal Gemini analysis starting
             yield f"data: {json.dumps({'event': 'gemini_started', 'total_images': num_breaker_imgs + num_dir_imgs})}\n\n"
 
-            prompt = f"""
-            Analyze these electrical panel photos for Panel: {panel_name}.
+            # Gemini Prompt
+            if input_mode == "existing_directory":
+                prompt = f"""
+                Analyze these electrical panel schedule directory document photos for Panel: {panel_name}.
 
-            You are provided with {num_breaker_imgs} images of the CIRCUIT BREAKERS (first {num_breaker_imgs} images)
-            and {num_dir_imgs} images of the CIRCUIT DIRECTORY (last {num_dir_imgs} images).
+                You are provided with {num_dir_imgs} images of the existing panel directory document. This document contains all the circuit information (circuit numbers, load descriptions, breaker ratings/amperages, and poles) needed to recreate the panel schedule.
 
-            TASK 1: HEADER
-            - Extract Voltage, Bus Rating, Wire, Phase, Mounting, Enclosure.
-            - Look at the directory images or labels on the panel.
+                IMAGE INTERPRETATION RULES
+                - All directory images belong to the SAME panel directory document.
+                - Directory coverage may be split across multiple photos, such as circuits 1-42 on one image and 43-84 on another.
+                - Merge partial and overlapping views into one complete understanding of the panel.
+                - Reconcile overlapping information by using visible circuit numbers, breaker positions, and the clearest label text.
 
-            TASK 2: CIRCUITS & POLES
-            - Identify every breaker visible in the Breaker Images.
-            - CRITICAL: Determine the 'poles' (1, 2, or 3).
-                - A 1-pole breaker takes up 1 circuit space.
-                - A 2-pole breaker has a tied handle and takes up 2 vertical circuit spaces (e.g. 1 & 3).
-                - A 3-pole breaker has a tied handle and takes up 3 vertical circuit spaces (e.g. 1, 3, & 5).
-            - Provide the circuit_number as the TOP-most circuit number the breaker occupies.
-            - Extract Amperage and Load Description from the labels (Breaker Images) or circuit directory (Directory Images).
-            - Resolve ditto marks (") if seen in the directory.
+                TASK 1: HEADER
+                - Extract Voltage, Bus Rating, Wire, Phase, Mounting, Enclosure from any headers, tables, or title block details.
 
-            TASK 3: LOAD TYPES
-            - LIGHTING -> 'C', RECEPTACLES -> 'G', MOTORS/HVAC -> 'M', KITCHEN -> 'K', DEDICATED -> 'D'
-            """
+                TASK 2: CIRCUITS & POLES
+                - Identify every circuit entry in the directory document.
+                - CRITICAL: Determine the 'poles' (1, 2, or 3) for each active circuit breaker.
+                    - Look at how descriptions or circuit lines are grouped or span multiple spaces to represent multi-pole breakers.
+                    - A 2-pole breaker has tied circuit spaces (e.g., descriptions spanning circuits 1 and 3, or a single breaker amperage serving a 2-circuit load).
+                    - Provide the circuit_number as the TOP-most circuit number the breaker occupies.
+                - Extract Amperage (e.g. 20A, 30A, 50A) and Load Description for each circuit from the directory table.
+                - Resolve ditto marks (") if seen in the directory.
+                - If the same circuit appears in overlapping photos, combine the evidence and keep one final record.
+
+                TASK 3: LOAD TYPES
+                - LIGHTING -> 'C', RECEPTACLES -> 'G', MOTORS/HVAC -> 'M', KITCHEN -> 'K', DEDICATED -> 'D'
+                """.strip()
+            else:
+                prompt = f"""
+                Analyze these electrical panel photos for Panel: {panel_name}.
+
+                You are provided with {num_breaker_imgs} images of the CIRCUIT BREAKERS (first {num_breaker_imgs} images)
+                and {num_dir_imgs} images of the CIRCUIT DIRECTORY (last {num_dir_imgs} images).
+
+                IMAGE INTERPRETATION RULES
+                - All breaker images belong to the SAME panel.
+                - All directory images belong to the SAME panel.
+                - Breaker coverage may be split across multiple photos of the same panel, such as upper half, middle, and bottom half images.
+                - Directory coverage may be split across multiple photos, such as circuits 1-42 on one image and 43-84 on another.
+                - Merge partial and overlapping views into one complete understanding of the panel.
+                - Do not treat split photos as separate panels.
+                - Reconcile overlapping information by using visible circuit numbers, breaker positions, and the clearest label text.
+                - Breaker images come first. Directory images come last.
+                - Do not assume each image shows the entire panel or a complete directory by itself.
+
+                TASK 1: HEADER
+                - Extract Voltage, Bus Rating, Wire, Phase, Mounting, Enclosure.
+                - Look at the directory images or labels on the panel across all images.
+
+                TASK 2: CIRCUITS & POLES
+                - Identify every breaker visible across the Breaker Images.
+                - Use visible breaker positions and circuit numbering to merge split sections from multiple photos.
+                - CRITICAL: Determine the 'poles' (1, 2, or 3).
+                    - A 1-pole breaker takes up 1 circuit space.
+                    - A 2-pole breaker has a tied handle and takes up 2 vertical circuit spaces (e.g. 1 & 3).
+                    - A 3-pole breaker has a tied handle and takes up 3 vertical circuit spaces (e.g. 1, 3, & 5).
+                - Provide the circuit_number as the TOP-most circuit number the breaker occupies.
+                - Extract Amperage and Load Description from the labels (Breaker Images) or circuit directory (Directory Images).
+                - Resolve ditto marks (") if seen in the directory.
+                - If the same circuit appears in overlapping photos, combine the evidence and keep one final record.
+
+                TASK 3: LOAD TYPES
+                - LIGHTING -> 'C', RECEPTACLES -> 'G', MOTORS/HVAC -> 'M', KITCHEN -> 'K', DEDICATED -> 'D'
+                """.strip()
 
             enforce_rate_limit()
 
             response = client.models.generate_content(
-                model="gemini-3-flash-preview",
+                model="gemini-3.5-flash",
                 contents=[prompt, *gemini_images],
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json", response_schema=PanelData),

@@ -2,6 +2,7 @@ param(
   [string]$AcadCore,
   [string]$DisciplineShort,
   [string]$FilesListPath = "",
+  [string]$SourceManifestPath = "",
   [string]$DefaultDirectory = "",
   [int]$StripXrefs = 1,
   [int]$SetByLayer = 1,
@@ -58,6 +59,7 @@ if ([System.Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') {
   if ($AcadCore) { $argsList += @("-AcadCore", "`"$AcadCore`"") }
   if ($DisciplineShort) { $argsList += @("-DisciplineShort", "`"$DisciplineShort`"") }
   if ($FilesListPath) { $argsList += @("-FilesListPath", "`"$FilesListPath`"") }
+  if ($SourceManifestPath) { $argsList += @("-SourceManifestPath", "`"$SourceManifestPath`"") }
   if ($DefaultDirectory) { $argsList += @("-DefaultDirectory", "`"$DefaultDirectory`"") }
   if ($PSBoundParameters.ContainsKey('StripXrefs')) { $argsList += @("-StripXrefs", $StripXrefs) }
   if ($PSBoundParameters.ContainsKey('SetByLayer')) { $argsList += @("-SetByLayer", $SetByLayer) }
@@ -196,6 +198,190 @@ function Show-DwgFileDialog {
   return $null
 }
 
+function New-FileSourceItem {
+  param([Parameter(Mandatory = $true)][string]$Path)
+
+  return [pscustomobject]@{
+    Kind = "file"
+    Path = [IO.Path]::GetFullPath($Path)
+    ZipPath = ""
+    EntryName = ""
+    ProjectRoot = ""
+    DisplayPath = [IO.Path]::GetFullPath($Path)
+  }
+}
+
+function Get-SourceItemDisplayPath {
+  param([Parameter(Mandatory = $true)]$SourceItem)
+
+  if ($SourceItem.DisplayPath) { return [string]$SourceItem.DisplayPath }
+  if ($SourceItem.Kind -eq "zipEntry") {
+    return "{0}::{1}" -f $SourceItem.ZipPath, $SourceItem.EntryName
+  }
+  return [string]$SourceItem.Path
+}
+
+function Get-ProjectRootFromArchPath {
+  param([string]$Path)
+
+  $parts = ([IO.Path]::GetFullPath($Path)) -split '[\\/]'
+  $archIndex = Find-FolderIndex $parts 'Arch'
+  if ($archIndex -lt 0) { return "" }
+  if ($archIndex -le 0) { return $parts[0] }
+  return Join-PathParts $parts[0..($archIndex - 1)]
+}
+
+function Read-SourceManifest {
+  param([string]$ManifestPath)
+
+  if ([string]::IsNullOrWhiteSpace($ManifestPath) -or -not (Test-Path -LiteralPath $ManifestPath)) {
+    return @()
+  }
+
+  $rawJson = Get-Content -LiteralPath $ManifestPath -Raw -Encoding UTF8
+  if ([string]::IsNullOrWhiteSpace($rawJson)) { return @() }
+  $entries = $rawJson | ConvertFrom-Json
+  $items = @()
+  foreach ($entry in @($entries)) {
+    $kind = if ($entry.kind) { [string]$entry.kind } else { "file" }
+    if ($kind -eq "zipEntry") {
+      $zipPath = [string]$entry.zipPath
+      $entryName = ([string]$entry.entryName) -replace '\\', '/'
+      if (
+        [string]::IsNullOrWhiteSpace($zipPath) -or
+        [string]::IsNullOrWhiteSpace($entryName) -or
+        -not (Test-Path -LiteralPath $zipPath) -or
+        ([IO.Path]::GetExtension($entryName) -ine ".dwg")
+      ) {
+        continue
+      }
+      $displayPath = if ($entry.displayPath) { [string]$entry.displayPath } else { "{0}::{1}" -f $zipPath, $entryName }
+      $items += [pscustomobject]@{
+        Kind = "zipEntry"
+        Path = ""
+        ZipPath = [IO.Path]::GetFullPath($zipPath)
+        EntryName = $entryName
+        ProjectRoot = if ($entry.projectRoot) { [IO.Path]::GetFullPath([string]$entry.projectRoot) } else { "" }
+        DisplayPath = $displayPath
+      }
+      continue
+    }
+
+    $path = [string]$entry.path
+    if (
+      [string]::IsNullOrWhiteSpace($path) -or
+      -not (Test-Path -LiteralPath $path) -or
+      ([IO.Path]::GetExtension($path) -ine ".dwg")
+    ) {
+      continue
+    }
+    $item = New-FileSourceItem -Path $path
+    if ($entry.projectRoot) {
+      $item.ProjectRoot = [IO.Path]::GetFullPath([string]$entry.projectRoot)
+    }
+    if ($entry.displayPath) {
+      $item.DisplayPath = [string]$entry.displayPath
+    }
+    $items += $item
+  }
+  return @($items)
+}
+
+function Resolve-SourceItemToWorkingSource {
+  param(
+    [Parameter(Mandatory = $true)]$SourceItem,
+    [Parameter(Mandatory = $true)][string]$TempRoot
+  )
+
+  if ($SourceItem.Kind -eq "zipEntry") {
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [System.IO.Compression.ZipFile]::OpenRead($SourceItem.ZipPath)
+    try {
+      $entry = $zip.Entries | Where-Object {
+        ($_.FullName -replace '\\', '/') -ieq $SourceItem.EntryName
+      } | Select-Object -First 1
+      if (-not $entry) {
+        throw "ZIP entry not found: $($SourceItem.EntryName)"
+      }
+      $extractDir = Join-Path $TempRoot ([guid]::NewGuid().ToString("N"))
+      New-Item -Path $extractDir -ItemType Directory -Force | Out-Null
+      $extractPath = Join-Path $extractDir ([IO.Path]::GetFileName($SourceItem.EntryName))
+      [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $extractPath, $true)
+      return [pscustomobject]@{
+        SourcePath = [IO.Path]::GetFullPath($extractPath)
+        SourceLabel = "Arch ZIP source"
+        ProjectRoot = if ($SourceItem.ProjectRoot) { [string]$SourceItem.ProjectRoot } else { Get-ProjectRootFromArchPath -Path $SourceItem.ZipPath }
+        ForceXrefsTarget = $true
+        ArchiveSelectedSource = $false
+      }
+    }
+    finally {
+      $zip.Dispose()
+    }
+  }
+
+  return [pscustomobject]@{
+    SourcePath = [IO.Path]::GetFullPath([string]$SourceItem.Path)
+    SourceLabel = ""
+    ProjectRoot = if ($SourceItem.ProjectRoot) { [string]$SourceItem.ProjectRoot } else { "" }
+    ForceXrefsTarget = $false
+    ArchiveSelectedSource = $false
+  }
+}
+
+function Invoke-AcadCoreScript {
+  param(
+    [Parameter(Mandatory = $true)][string]$AcadCorePath,
+    [Parameter(Mandatory = $true)][string]$DwgPath,
+    [Parameter(Mandatory = $true)][string]$ScriptPath
+  )
+
+  # The 2>&1 redirects stderr to stdout, so the Python wrapper can catch errors.
+  # accoreconsole emits UTF-16 output; strip embedded NULs so pattern matching works.
+  $output = @(
+    & $AcadCorePath /i "$DwgPath" /s "$ScriptPath" 2>&1 |
+      ForEach-Object { ([string]$_) -replace "`0", '' }
+  )
+  $exitCode = $LASTEXITCODE
+  foreach ($line in $output) { Write-Host $line }
+  return [pscustomobject]@{
+    ExitCode = $exitCode
+    Output = $output
+  }
+}
+
+function Get-AuditErrorCount {
+  param([string[]]$OutputLines)
+
+  # Returns the error count from the last AUDIT summary line, or $null if none seen.
+  $count = $null
+  foreach ($line in @($OutputLines)) {
+    $match = [regex]::Match($line, '(?i)Total errors found(?: during audit)?\s+(\d+)')
+    if ($match.Success) { $count = [int]$match.Groups[1].Value }
+  }
+  return $count
+}
+
+function Get-AcadOutputFailureSignal {
+  param([string[]]$OutputLines)
+
+  # A zero exit code from accoreconsole does not guarantee every command ran;
+  # scan the output for signals that NETLOAD/STRIPREFPATHS or another step failed.
+  $patterns = @(
+    'Unknown command',
+    'Unable to load',
+    'Cannot load assembly',
+    'FATAL ERROR',
+    'INTERNAL ERROR'
+  )
+  foreach ($line in @($OutputLines)) {
+    foreach ($pattern in $patterns) {
+      if ($line -match [regex]::Escape($pattern)) { return $line.Trim() }
+    }
+  }
+  return $null
+}
+
 Write-Host "PROGRESS: Staging cleanup commands..."
 # Stage AutoLISP CLEANUP command so each drawing is tidied after ref paths are stripped
 $lisp = Join-Path $env:TEMP "cleanup_tmp.lsp"
@@ -217,28 +403,24 @@ if ($HatchColor) {
   ;; Change color of non-nested modelspace hatches to 9 (excluding WALL layers)
   ;; This runs AFTER SETBYLAYER so the color override is preserved
   ;; ssget "X" with filter: HATCH entities in modelspace (410 = "Model")
-  (setq ss (ssget "X" '((0 . "HATCH") (410 . "Model"))))
+  ;; Recolor through CHPROP rather than entmod: hand-edited HATCH entity
+  ;; lists can leave malformed data that trips AUDIT/recovery on reopen.
+  (setq ss (ssget "_X" '((0 . "HATCH") (410 . "Model"))))
   (if ss
     (progn
+      (setq target (ssadd))
       (setq i 0)
       (repeat (sslength ss)
         (setq ent (ssname ss i))
-        (setq entData (entget ent))
-        (setq layerName (cdr (assoc 8 entData)))
+        (setq layerName (cdr (assoc 8 (entget ent))))
         ;; Check if layer name does NOT contain "WALL" (case-insensitive)
         (if (not (wcmatch (strcase layerName) "*WALL*"))
-          (progn
-            ;; Change color to 9 by modifying entity data
-            (if (assoc 62 entData)
-              ;; Color property exists, replace it
-              (setq entData (subst (cons 62 9) (assoc 62 entData) entData))
-              ;; Color property doesn't exist, add it
-              (setq entData (append entData (list (cons 62 9))))
-            )
-            (entmod entData)
-          )
+          (ssadd ent target)
         )
         (setq i (1+ i))
+      )
+      (if (> (sslength target) 0)
+        (command "_.CHPROP" target "" "_Color" "9" "")
       )
     )
   )
@@ -265,24 +447,22 @@ if ($Audit) {
 }
 
 $lispContent = @"
-(defun c:CLEANUP (/ oldCMDECHO oldTab ss i ent entData layerName)
+(defun c:CLEANUP (/ oldCMDECHO oldTab ss target i ent layerName)
   ;; Remember current command echo setting, then turn it off:
   (setq oldCMDECHO (getvar "CMDECHO")
         oldTab     (getvar "CTAB"))
   (setvar "CMDECHO" 0)
 
-  ;; Ensure commands run from Model space
+  ;; Ensure commands run from Model space (setvar avoids layout-switch
+  ;; command quirks in accoreconsole)
   (if (/= oldTab "Model")
-    (command "_.MODEL")
+    (setvar "CTAB" "Model")
   )
 
 $setByLayerBlock$hatchBlock$purgeBlock$auditBlock
   ;; Restore layout/model state if it changed
   (if (/= oldTab (getvar "CTAB"))
-    (if (= oldTab "Model")
-      (command "_.MODEL")
-      (command "_.LAYOUT" "Set" oldTab)
-    )
+    (setvar "CTAB" oldTab)
   )
 
   ;; Restore command echo setting
@@ -317,10 +497,35 @@ $scriptLines += "QUIT"
 $scriptContent = $scriptLines -join "`r`n"
 Set-Content -Encoding ASCII -Path $script -Value $scriptContent
 
-# Resolve files: prefer preselected list, otherwise open the DWG picker.
-$files = @()
-if (-not [string]::IsNullOrWhiteSpace($FilesListPath) -and (Test-Path $FilesListPath)) {
-  $files = @(
+# Audit-only script used to verify each processed drawing reopens cleanly.
+# "N" answers "Fix any errors detected?" so verification never mutates the file.
+$verifyScript = Join-Path $env:TEMP "verify_AUDIT.scr"
+$verifyContent = @(
+  "CMDECHO 1",
+  "FILEDIA 0",
+  "_.AUDIT",
+  "N",
+  "QUIT"
+) -join "`r`n"
+Set-Content -Encoding ASCII -Path $verifyScript -Value $verifyContent
+
+# Resolve files: prefer workflow source manifest, then preselected list, otherwise open the DWG picker.
+$sourceItems = @()
+if (-not [string]::IsNullOrWhiteSpace($SourceManifestPath) -and (Test-Path -LiteralPath $SourceManifestPath)) {
+  $sourceItems = @(Read-SourceManifest -ManifestPath $SourceManifestPath)
+  if ($sourceItems.Count -gt 0) {
+    Write-Host "PROGRESS: Using $($sourceItems.Count) DWG source(s) from workflow selection."
+  }
+  else {
+    Write-Host "PROGRESS: Provided source manifest was empty. Opening DWG file picker..."
+  }
+}
+elseif (-not [string]::IsNullOrWhiteSpace($SourceManifestPath)) {
+  Write-Host "PROGRESS: Provided source manifest path not found. Opening DWG file picker..."
+}
+
+if (($sourceItems.Count -eq 0) -and -not [string]::IsNullOrWhiteSpace($FilesListPath) -and (Test-Path -LiteralPath $FilesListPath)) {
+  $filesFromList = @(
     Get-Content -Path $FilesListPath -Encoding UTF8 |
       Where-Object {
         $_ -and
@@ -331,18 +536,19 @@ if (-not [string]::IsNullOrWhiteSpace($FilesListPath) -and (Test-Path $FilesList
       ForEach-Object { [IO.Path]::GetFullPath($_.Trim()) } |
       Select-Object -Unique
   )
-  if ($files.Count -gt 0) {
-    Write-Host "PROGRESS: Using $($files.Count) DWG file(s) from auto-selected project folder."
+  $sourceItems = @($filesFromList | ForEach-Object { New-FileSourceItem -Path $_ })
+  if ($sourceItems.Count -gt 0) {
+    Write-Host "PROGRESS: Using $($sourceItems.Count) DWG file(s) from auto-selected project folder."
   }
   else {
     Write-Host "PROGRESS: Provided files list was empty. Opening DWG file picker..."
   }
 }
-elseif (-not [string]::IsNullOrWhiteSpace($FilesListPath)) {
+elseif (($sourceItems.Count -eq 0) -and -not [string]::IsNullOrWhiteSpace($FilesListPath)) {
   Write-Host "PROGRESS: Provided files list path not found. Opening DWG file picker..."
 }
 
-if (-not $files -or $files.Count -eq 0) {
+if ($sourceItems.Count -eq 0) {
   Write-Host "PROGRESS: Opening DWG file picker..."
   $sourceSelections = Show-DwgFileDialog -InitialDirectory $DefaultDirectory
   if (-not $sourceSelections -or @($sourceSelections).Count -eq 0) {
@@ -350,7 +556,7 @@ if (-not $files -or $files.Count -eq 0) {
     return
   }
 
-  $files = @(
+  $filesFromDialog = @(
     @($sourceSelections) |
       ForEach-Object { $_.ToString().Trim() } |
       Where-Object {
@@ -361,147 +567,216 @@ if (-not $files -or $files.Count -eq 0) {
       ForEach-Object { [IO.Path]::GetFullPath($_) } |
       Select-Object -Unique
   )
+  $sourceItems = @($filesFromDialog | ForEach-Object { New-FileSourceItem -Path $_ })
 }
 
-if (-not $files -or $files.Count -eq 0) {
+if ($sourceItems.Count -eq 0) {
   Write-Host "PROGRESS: Cancelled. No DWG files selected."
   return
 }
 
-# Normalize to string array for single-file selection consistency.
-$files = @($files)
+$files = @($sourceItems | ForEach-Object { Get-SourceItemDisplayPath -SourceItem $_ })
 $inputFolder = ""
-if ($files.Count -gt 0) {
-  $inputFolder = Split-Path -Path ([string]$files[0]) -Parent
+if ($sourceItems.Count -gt 0) {
+  $firstItem = $sourceItems[0]
+  if ($firstItem.Kind -eq "zipEntry") {
+    $inputFolder = Split-Path -Path ([string]$firstItem.ZipPath) -Parent
+  }
+  else {
+    $inputFolder = Split-Path -Path ([string]$firstItem.Path) -Parent
+  }
 }
 if (-not [string]::IsNullOrWhiteSpace($inputFolder)) {
   Write-Host "PROGRESS: INPUT_FOLDER: $inputFolder"
 }
-Write-Host "PROGRESS: Processing $($files.Count) file(s)..."
+Write-Host "PROGRESS: Processing $($sourceItems.Count) file(s)..."
 
 $disciplineShort = Get-DisciplineShort $DisciplineShort
 $failed = @()
+$processed = @()
 $i = 0
-foreach ($dwg in $files) {
-  $i++
-  $name = [IO.Path]::GetFileName($dwg)
-  Write-Host "PROGRESS: Preparing $i of $($files.Count): $name"
+$sourceTempRoot = Join-Path $env:TEMP ("acies-clean-xrefs-sources-" + [guid]::NewGuid().ToString("N"))
+New-Item -Path $sourceTempRoot -ItemType Directory -Force | Out-Null
+$outputFolder = ""
+try {
+  foreach ($sourceItem in $sourceItems) {
+    $i++
+    $displayPath = Get-SourceItemDisplayPath -SourceItem $sourceItem
+    $name = if ($sourceItem.Kind -eq "zipEntry") { [IO.Path]::GetFileName([string]$sourceItem.EntryName) } else { [IO.Path]::GetFileName([string]$sourceItem.Path) }
+    Write-Host "PROGRESS: Preparing $i of $($sourceItems.Count): $name"
 
-  try {
-    $fullPath = [IO.Path]::GetFullPath($dwg)
-    $parts = $fullPath -split '[\\/]'
+    try {
+      $resolvedSource = Resolve-SourceItemToWorkingSource -SourceItem $sourceItem -TempRoot $sourceTempRoot
+      $fullPath = [IO.Path]::GetFullPath([string]$resolvedSource.SourcePath)
+      $parts = $fullPath -split '[\\/]'
 
-    $sourcePath = $fullPath
-    $workingPath = $fullPath
-    $targetDir = Split-Path -Parent $fullPath
-    $stagedInXrefs = $false
-    $archiveSelectedSource = $false
-    $stageLabel = ""
+      $sourcePath = $fullPath
+      $workingPath = $fullPath
+      $targetDir = Split-Path -Parent $fullPath
+      $stagedInXrefs = $false
+      $archiveSelectedSource = [bool]$resolvedSource.ArchiveSelectedSource
+      $stageLabel = [string]$resolvedSource.SourceLabel
 
-    $xrefIndex = Find-FolderIndex $parts 'Xrefs'
-    if ($xrefIndex -lt 0) { $xrefIndex = Find-FolderIndex $parts 'Xref' }
-    $archIndex = Find-FolderIndex $parts 'Arch'
-
-    if ($xrefIndex -ge 0) {
-      $relativeXrefParts = @()
-      if (($xrefIndex + 1) -le ($parts.Count - 2)) {
-        $relativeXrefParts = @($parts[($xrefIndex + 1)..($parts.Count - 2)])
-      }
-      if (@($relativeXrefParts | Where-Object { $_ -ieq 'Archive' }).Count -gt 0) {
-        throw "Selected DWG is already inside the Xrefs\Archive folder. Choose a DWG from Arch or the active Xrefs folder instead."
-      }
-
-      $targetDir = Join-PathParts $parts[0..$xrefIndex]
-      $stagedInXrefs = $true
-      $archiveSelectedSource = $true
-      $stageLabel = "Xrefs source"
-      Write-Host "PROGRESS: Preparing Xrefs source for Xrefs cleanup: $name"
-    }
-    elseif ($archIndex -ge 0) {
-      # In Arch folder - copy to Xrefs folder (directly, no subfolders)
-      if ($archIndex -le 0) {
-        $projectRoot = $parts[0]
+      if ($resolvedSource.ForceXrefsTarget) {
+        $projectRoot = [string]$resolvedSource.ProjectRoot
+        if ([string]::IsNullOrWhiteSpace($projectRoot)) {
+          throw "Project root is required for ZIP XREF source: $displayPath"
+        }
+        $targetDir = Join-Path -Path $projectRoot -ChildPath "Xrefs"
+        if (-not (Test-Path -LiteralPath $targetDir)) {
+          New-Item -Path $targetDir -ItemType Directory -Force | Out-Null
+          Write-Host "PROGRESS: Created Xrefs folder at $targetDir"
+        }
+        $stagedInXrefs = $true
+        if ([string]::IsNullOrWhiteSpace($stageLabel)) { $stageLabel = "Arch source" }
+        Write-Host "PROGRESS: Preparing Arch ZIP source for Xrefs transfer: $name"
       }
       else {
-        $projectRoot = Join-PathParts $parts[0..($archIndex - 1)]
+        $xrefIndex = Find-FolderIndex $parts 'Xrefs'
+        if ($xrefIndex -lt 0) { $xrefIndex = Find-FolderIndex $parts 'Xref' }
+        $archIndex = Find-FolderIndex $parts 'Arch'
+
+        if ($xrefIndex -ge 0) {
+          $relativeXrefParts = @()
+          if (($xrefIndex + 1) -le ($parts.Count - 2)) {
+            $relativeXrefParts = @($parts[($xrefIndex + 1)..($parts.Count - 2)])
+          }
+          if (@($relativeXrefParts | Where-Object { $_ -ieq 'Archive' }).Count -gt 0) {
+            throw "Selected DWG is already inside the Xrefs\Archive folder. Choose a DWG from Arch or the active Xrefs folder instead."
+          }
+
+          $targetDir = Join-PathParts $parts[0..$xrefIndex]
+          $stagedInXrefs = $true
+          $archiveSelectedSource = $true
+          $stageLabel = "Xrefs source"
+          Write-Host "PROGRESS: Preparing Xrefs source for Xrefs cleanup: $name"
+        }
+        elseif ($archIndex -ge 0) {
+          if ($archIndex -le 0) {
+            $projectRoot = $parts[0]
+          }
+          else {
+            $projectRoot = Join-PathParts $parts[0..($archIndex - 1)]
+          }
+          $targetDir = Join-Path -Path $projectRoot -ChildPath "Xrefs"
+          if (-not (Test-Path -LiteralPath $targetDir)) {
+            New-Item -Path $targetDir -ItemType Directory -Force | Out-Null
+            Write-Host "PROGRESS: Created Xrefs folder at $targetDir"
+          }
+          $stagedInXrefs = $true
+          $stageLabel = "Arch source"
+          Write-Host "PROGRESS: Preparing Arch source for Xrefs transfer: $name"
+        }
       }
-      # Put files directly in Xrefs folder (no subfolder preservation)
-      $targetDir = Join-Path -Path $projectRoot -ChildPath "Xrefs"
-      if (-not (Test-Path $targetDir)) {
-        # Only create if it doesn't exist
-        New-Item -Path $targetDir -ItemType Directory -Force | Out-Null
-        Write-Host "PROGRESS: Created Xrefs folder at $targetDir"
+
+      $baseName = [IO.Path]::GetFileNameWithoutExtension($sourcePath)
+      $sheetId = Get-SheetIdFromName $baseName
+      if ($sheetId) {
+        $targetBase = Get-CleanFileName $sheetId
       }
-      $stagedInXrefs = $true
-      $stageLabel = "Arch source"
-      Write-Host "PROGRESS: Preparing Arch source for Xrefs transfer: $name"
+      else {
+        $targetBase = Get-CleanFileName $baseName
+      }
+      $targetName = "{0} ({1})" -f $targetBase, $disciplineShort
+      $targetPath = Join-Path -Path $targetDir -ChildPath "$targetName.dwg"
+
+      if ($stagedInXrefs) {
+        $workingPath = New-IncomingWorkingCopy -SourcePath $sourcePath -TargetDir $targetDir -SourceLabel $stageLabel
+        if ($archiveSelectedSource) {
+          [void](Move-FileToArchive -FilePath $sourcePath -ArchiveRoot $targetDir -Message "Archived selected Xrefs source to")
+        }
+        Write-Host "PROGRESS: Final target in Xrefs: $([IO.Path]::GetFileName($targetPath))"
+      }
+
+      $existing = Get-ChildItem -LiteralPath $targetDir -File |
+        Where-Object { $_.BaseName -ieq $targetName }
+      Write-Host "PROGRESS: Checking exact target-name collisions for '$targetName' in $targetDir"
+      foreach ($item in $existing) {
+        if ($item.FullName -ne $workingPath) {
+          [void](Move-FileToArchive -FilePath $item.FullName -ArchiveRoot $targetDir -Message "Archived existing file to")
+        }
+      }
+
+      if ($workingPath -ne $targetPath) {
+        Move-Item -LiteralPath $workingPath -Destination $targetPath -Force
+        $workingPath = $targetPath
+      }
+      if ([string]::IsNullOrWhiteSpace($outputFolder)) {
+        $outputFolder = Split-Path -Parent ([IO.Path]::GetFullPath($workingPath))
+      }
+    }
+    catch {
+      Write-Host "PROGRESS: ERROR: Failed to prepare $name - $_"
+      $failed += $displayPath
+      continue
     }
 
-    $baseName = [IO.Path]::GetFileNameWithoutExtension($sourcePath)
-    $sheetId = Get-SheetIdFromName $baseName
-    if ($sheetId) {
-      $targetBase = Get-CleanFileName $sheetId
+    Write-Host "PROGRESS: Processing $i of $($sourceItems.Count): $([IO.Path]::GetFileName($workingPath))"
+
+    if ($SkipAcad) {
+      Write-Host "PROGRESS: SkipAcad enabled. Skipping accoreconsole execution for $([IO.Path]::GetFileName($workingPath))."
+      continue
+    }
+
+    # IMPORTANT: no /ld here; we NETLOAD via the .scr
+    $acadRun = Invoke-AcadCoreScript -AcadCorePath $acadCore -DwgPath $workingPath -ScriptPath $script
+    $workingName = [IO.Path]::GetFileName($workingPath)
+    $auditErrors = Get-AuditErrorCount -OutputLines $acadRun.Output
+    if ($null -ne $auditErrors -and $auditErrors -gt 0) {
+      Write-Host "PROGRESS: WARNING: AUDIT found and fixed $auditErrors error(s) in $workingName."
+    }
+    $failureSignal = Get-AcadOutputFailureSignal -OutputLines $acadRun.Output
+    if ($acadRun.ExitCode -ne 0) {
+      Write-Host "PROGRESS: ERROR: AutoCAD Core Console exited with code $($acadRun.ExitCode) for $workingName."
+      $failed += $workingPath
+    }
+    elseif ($failureSignal) {
+      Write-Host "PROGRESS: ERROR: AutoCAD reported a problem while processing $workingName - $failureSignal"
+      $failed += $workingPath
     }
     else {
-      $targetBase = Get-CleanFileName $baseName
-    }
-    $targetName = "{0} ({1})" -f $targetBase, $disciplineShort
-    $targetPath = Join-Path -Path $targetDir -ChildPath "$targetName.dwg"
-
-    if ($stagedInXrefs) {
-      $workingPath = New-IncomingWorkingCopy -SourcePath $sourcePath -TargetDir $targetDir -SourceLabel $stageLabel
-      if ($archiveSelectedSource) {
-        [void](Move-FileToArchive -FilePath $sourcePath -ArchiveRoot $targetDir -Message "Archived selected Xrefs source to")
-      }
-      Write-Host "PROGRESS: Final target in Xrefs: $([IO.Path]::GetFileName($targetPath))"
-    }
-
-    $existing = Get-ChildItem -LiteralPath $targetDir -File |
-      Where-Object { $_.BaseName -ieq $targetName }
-    Write-Host "PROGRESS: Checking exact target-name collisions for '$targetName' in $targetDir"
-    foreach ($item in $existing) {
-      if ($item.FullName -ne $workingPath) {
-        [void](Move-FileToArchive -FilePath $item.FullName -ArchiveRoot $targetDir -Message "Archived existing file to")
-      }
-    }
-
-    if ($workingPath -ne $targetPath) {
-      Move-Item -LiteralPath $workingPath -Destination $targetPath -Force
-      $workingPath = $targetPath
+      $processed += $workingPath
     }
   }
-  catch {
-    Write-Host "PROGRESS: ERROR: Failed to prepare $name - $_"
-    $failed += $dwg
-    continue
+}
+finally {
+  Remove-Item -LiteralPath $sourceTempRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# Reopen each processed drawing and run a read-only AUDIT so corruption that
+# would only surface when the user reopens the file is caught right away.
+if (-not $SkipAcad -and $processed.Count -gt 0) {
+  Write-Host "PROGRESS: Verifying $($processed.Count) drawing(s) reopen cleanly..."
+  foreach ($dwg in $processed) {
+    $name = [IO.Path]::GetFileName($dwg)
+    $verifyRun = Invoke-AcadCoreScript -AcadCorePath $acadCore -DwgPath $dwg -ScriptPath $verifyScript
+    $verifyErrors = Get-AuditErrorCount -OutputLines $verifyRun.Output
+    if ($verifyRun.ExitCode -ne 0) {
+      Write-Host "PROGRESS: ERROR: $name failed to reopen for verification (exit code $($verifyRun.ExitCode))."
+      $failed += $dwg
+    }
+    elseif ($null -eq $verifyErrors) {
+      Write-Host "PROGRESS: WARNING: Could not read AUDIT results while verifying $name."
+    }
+    elseif ($verifyErrors -gt 0) {
+      Write-Host "PROGRESS: ERROR: $name still reports $verifyErrors AUDIT error(s) on reopen."
+      $failed += $dwg
+    }
+    else {
+      Write-Host "PROGRESS: Verified clean on reopen: $name"
+    }
   }
-
-  Write-Host "PROGRESS: Processing $i of $($files.Count): $([IO.Path]::GetFileName($workingPath))"
-
-  if ($SkipAcad) {
-    Write-Host "PROGRESS: SkipAcad enabled. Skipping accoreconsole execution for $([IO.Path]::GetFileName($workingPath))."
-    continue
-  }
-
-  # IMPORTANT: no /ld here; we NETLOAD via the .scr
-  # The 2>&1 redirects stderr to stdout, so the Python wrapper can catch errors.
-  & $acadCore /i "$workingPath" /s "$script" 2>&1
-  $code = $LASTEXITCODE
-  if ($code -ne 0) { $failed += $workingPath }
 }
 
 Write-Progress -Activity "Processing DWGs" -Completed
 
 if ($failed.Count) {
-  Write-Host "PROGRESS: ERROR: $($failed.Count) of $($files.Count) file(s) failed to process."
+  Write-Host "PROGRESS: ERROR: $($failed.Count) of $($sourceItems.Count) file(s) failed to process."
 }
 else {
-  Write-Host "PROGRESS: Successfully processed $($files.Count) drawing(s)."
+  Write-Host "PROGRESS: Successfully processed $($sourceItems.Count) drawing(s)."
 }
 
-if ($files.Count -gt 0) {
-  $outputFolder = Split-Path -Parent ([IO.Path]::GetFullPath($files[0]))
-  if (-not [string]::IsNullOrWhiteSpace($outputFolder)) {
-    Write-Host "PROGRESS: OUTPUT_FOLDER: $outputFolder"
-  }
+if (-not [string]::IsNullOrWhiteSpace($outputFolder)) {
+  Write-Host "PROGRESS: OUTPUT_FOLDER: $outputFolder"
 }

@@ -53,7 +53,10 @@ class OutlookScanUiTests(unittest.TestCase):
         self.assertIn("function failEmailIntakeActivity(", script)
         self.assertIn('label: "Email Intake"', script)
         self.assertIn('message: "Processing with AI..."', script)
+        self.assertIn("function buildEmailIntakeProjectContext() {", script)
         self.assertIn("async function processEmailIntakePaste() {", script)
+        self.assertIn("const projectContext = buildEmailIntakeProjectContext();", script)
+        self.assertIn("getActiveDisciplineList(),\n      projectContext", script)
         self.assertIn('closeDlg("outlookScanDlg");', script)
         self.assertIn("handleAiProjectResult(res.data || {});", script)
         self.assertIn('outlookScanBtn.onclick = () => openOutlookScanDialog();', script)
@@ -68,6 +71,24 @@ class OutlookScanUiTests(unittest.TestCase):
         self.assertNotIn("handleMicrosoftSignOut", script)
         self.assertNotIn('closeDlg("emailDlg")', script)
         self.assertNotIn("No summary available.", script)
+
+    def test_email_intake_project_context_builder_is_compact_identity_only(self):
+        script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
+
+        self.assertIn("const EMAIL_INTAKE_PROJECT_CONTEXT_MAX_PROJECTS = 200;", script)
+        self.assertIn("const EMAIL_INTAKE_PROJECT_CONTEXT_MAX_CHARS = 25000;", script)
+
+        start = script.index("function buildEmailIntakeProjectContext() {")
+        end = script.index("async function processEmailIntakePaste()", start)
+        body = script[start:end]
+
+        self.assertIn('id: String(project.id || "").trim(),', body)
+        self.assertIn('name: String(project.name || "").trim(),', body)
+        self.assertIn('nick: String(project.nick || "").trim(),', body)
+        self.assertIn("pathLeaf: getWindowsPathLeaf(path),", body)
+        self.assertIn("JSON.stringify(candidate)", body)
+        self.assertNotIn("deliverables", body)
+        self.assertNotIn("tasks", body)
 
     def test_email_intake_styles_exist(self):
         css = STYLES_CSS_PATH.read_text(encoding="utf-8")

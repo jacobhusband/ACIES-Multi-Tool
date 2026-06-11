@@ -92,6 +92,19 @@ class PowerShellCadWrapperTests(unittest.TestCase):
                 )
                 self.assertIn('Write-Host "PROGRESS: INPUT_FOLDER: $inputFolder"', text)
                 if script_path.name == "PlotDWGs.ps1":
+                    self.assertIn('[string]$StripPdfLayers = "true"', text)
+                    self.assertIn('$StripPdfLayers = Convert-ToBool $StripPdfLayers $true', text)
+                    self.assertIn('$stripPdfLayersScriptPath = Join-Path $scriptRoot "strip_pdf_layers.py"', text)
+                    self.assertIn('@("-StripPdfLayers", $StripPdfLayers)', text)
+                    self.assertIn('Write-Host "PROGRESS: ERROR: \'strip_pdf_layers.py\' not found."', text)
+                    self.assertIn('Write-Host "PROGRESS: Removing PDF layers from combined PDF..."', text)
+                    self.assertIn('"PDF layer cleanup completed." | Out-File $logFile -Append', text)
+                    self.assertIn('Write-Host "PROGRESS: ERROR: PDF layer cleanup failed."', text)
+                    self.assertIn('Write-Host "PROGRESS: ERROR: Publish failed because PDF layer cleanup did not complete."', text)
+                    self.assertIn('$pdfMergeFailed = $false', text)
+                    self.assertIn('Write-Host "PROGRESS: ERROR: PDF merging failed: $mergeErrorSummary"', text)
+                    self.assertIn('Write-Host "PROGRESS: ERROR: Publish failed because PDF merge did not complete."', text)
+                    self.assertIn('if ($failed.Count -or $pdfLayerCleanupFailed -or $pdfMergeFailed) {', text)
                     self.assertIn('$form.StartPosition = "Manual"', text)
                     self.assertIn('$form.TopMost = $true', text)
                     self.assertIn('$form.ShowInTaskbar = $true', text)
@@ -150,9 +163,51 @@ class PowerShellCadWrapperTests(unittest.TestCase):
 
     def test_clean_xrefs_script_reports_output_folder_marker(self):
         text = CLEAN_XREF_SCRIPT_PATH.read_text(encoding="utf-8")
-        self.assertIn('Write-Host "PROGRESS: Processing $i of $($files.Count):', text)
+        self.assertIn('Write-Host "PROGRESS: Processing $i of $($sourceItems.Count):', text)
         self.assertIn('Write-Host "PROGRESS: INPUT_FOLDER: $inputFolder"', text)
         self.assertIn('Write-Host "PROGRESS: OUTPUT_FOLDER: $outputFolder"', text)
+
+    def test_publish_combined_pdf_name_uses_first_dwg_folder_context(self):
+        text = (REPO_ROOT / "scripts" / "PlotDWGs.ps1").read_text(encoding="utf-8")
+
+        self.assertNotIn('$combinedPdfName = "combined.pdf"', text)
+        for expected in (
+            "function Resolve-CombinedPdfName {",
+            "function Convert-ToSafePdfFileName {",
+            "function Get-MaxPdfFileNameLengthForDirectory {",
+            "function Get-ToolOutputSummary {",
+            "[System.IO.Path]::GetInvalidFileNameChars()",
+            '$MaxCombinedPdfFullPathLength = 240',
+            '[int]$MaxFileNameLength = 0',
+            '[string]$PreserveSuffix = ""',
+            '$ellipsis = "..."',
+            "$parentDir = $dwgItem.Directory",
+            "$projectDir = $parentDir.Parent",
+            r"$projectName = ($projectDir.Name -replace '^\s*\d{5,}\s*[-_.]*\s*', '').Trim()",
+            '$rawName = "$projectName - $($parentDir.Name)"',
+            "$maxFileNameLength = Get-MaxPdfFileNameLengthForDirectory -OutputDirectory $OutputDirectory -MaxFullPathLength $MaxFullPathLength",
+            "-PreserveSuffix $parentDir.Name",
+            "$combinedPdfName = Resolve-CombinedPdfName -DwgPath ([string]$files[0]) -OutputDirectory $batchOutputDir -MaxFullPathLength $MaxCombinedPdfFullPathLength",
+            '"Combined PDF Name: $combinedPdfName" | Out-File $logFile -Append',
+            '$pythonArgs = @($combinedPdfPath) + @($allGeneratedPdfs | ForEach-Object { [string]$_ })',
+            '$mergeOutput = & $pythonExecutable $pythonScriptPath @pythonArgs 2>&1',
+            '$stripOutput = & $pythonExecutable $stripPdfLayersScriptPath $combinedPdfPath 2>&1',
+            '$shrinkOutput = & $pythonExecutable $shrinkScriptPath $combinedPdfPath $shrunkPath $shrinkPercentInt 2>&1',
+        ):
+            self.assertIn(expected, text)
+
+        self.assertNotIn('`"$combinedPdfPath`"', text)
+        self.assertNotIn('`"$shrunkPath`"', text)
+        self.assertNotIn('$shrunkName = "combined-shrunk-$shrinkPercentInt-percent.pdf"', text)
+        self.assertIn(
+            '$shrunkName = "$combinedPdfBaseName-shrunk-$shrinkPercentInt-percent.tmp.pdf"',
+            text,
+        )
+        self.assertIn(
+            "Move-Item -LiteralPath $shrunkPath -Destination $combinedPdfPath -Force",
+            text,
+        )
+        self.assertIn('"Shrunk PDF applied to final output: $combinedPdfName"', text)
 
     def test_manage_layers_script_retries_until_report_rows_verify(self):
         text = (REPO_ROOT / "scripts" / "ManageLayersDWGs.ps1").read_text(encoding="utf-8")

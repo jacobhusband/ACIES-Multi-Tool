@@ -7,31 +7,37 @@ SCRIPT_JS_PATH = REPO_ROOT / "script.js"
 
 
 class ProjectDeliverableTaskInputUiTests(unittest.TestCase):
-    def test_projects_task_input_blur_submission_wiring_exists(self):
-        script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
+    @staticmethod
+    def _block(text: str, start_marker: str, end_marker: str) -> str:
+        start = text.index(start_marker)
+        end = text.index(end_marker, start)
+        return text[start:end]
 
-        self.assertIn(
-            "const commitPendingTask = async ({ refocus = false } = {}) => {",
+    def test_projects_note_icon_input_commit_and_cancel_wiring_exists(self):
+        script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
+        notes_block = self._block(
             script,
+            "function createNotesSection(deliverable, card, project = null) {",
+            "function createTasksPreview(deliverable, card, project = null) {",
         )
-        self.assertIn("if (!taskText || isCommittingTask) return false;", script)
-        self.assertIn('taskInput.value = "";', script)
-        self.assertIn(
-            "deliverable.tasks.push({",
-            script,
-        )
-        self.assertIn("pinned: false,", script)
-        self.assertIn("attachments: [],", script)
-        self.assertIn("updateStatsDisplay();", script)
-        self.assertIn("await save();", script)
-        self.assertIn("renderTaskList();", script)
-        self.assertIn("await commitPendingTask({ refocus: true });", script)
-        self.assertIn('taskInput.addEventListener("blur", () => {', script)
-        self.assertIn("if (!taskInput.value.trim()) return;", script)
-        self.assertIn("setTimeout(() => {", script)
-        self.assertIn("void commitPendingTask({ refocus: false });", script)
-        self.assertIn("createWorkItemAttachmentControls({", script)
-        self.assertIn("actions.append(attachments, pinBtn, deleteBtn);", script)
+
+        for expected in (
+            'className: "deliverable-note-add-btn"',
+            'addNoteBtn.addEventListener("click", (e) => {',
+            "isAddingNote = true;",
+            'className: "deliverable-note-add-input"',
+            'noteInput.addEventListener("keydown", (e) => {',
+            'void finishAddingNote("commit");',
+            'void finishAddingNote("cancel");',
+            'noteInput.addEventListener("blur", () => {',
+            "deliverable.noteItems.push({",
+            "notesExpanded = true;",
+            "await save();",
+        ):
+            self.assertIn(expected, notes_block)
+
+        self.assertNotIn("deliverable.tasks.push({", notes_block)
+        self.assertNotIn("commitPendingTask", notes_block)
 
 
 if __name__ == "__main__":

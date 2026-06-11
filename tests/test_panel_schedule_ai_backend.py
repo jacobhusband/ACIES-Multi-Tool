@@ -133,6 +133,29 @@ class PanelScheduleAiBackendTests(unittest.TestCase):
     def setUp(self):
         self.api = Api.__new__(Api)
 
+    def _create_panel_schedule_workbook(self, path):
+        if not hasattr(main.openpyxl, "Workbook"):
+            self.skipTest("openpyxl Workbook is not available")
+        workbook = main.openpyxl.Workbook()
+        worksheet = workbook.active
+        worksheet.title = "TEMPLATE"
+        worksheet["N3"] = "EXISTING"
+        workbook.save(path)
+        workbook.close()
+
+    def _panel_data(self, circuits):
+        return types.SimpleNamespace(
+            panel_name="MDP",
+            voltage="120/208V",
+            bus_rating="100A",
+            aic_rating="",
+            phase="3",
+            wire="4",
+            mounting="SURFACE",
+            enclosure="NEMA 1",
+            circuits=circuits,
+        )
+
     def test_process_panel_schedule_payload_uses_plural_path_lists(self):
         with tempfile.TemporaryDirectory(prefix="acies-panel-schedule-") as temp_dir:
             output_path = Path(temp_dir) / "panel_schedule.xlsx"
@@ -192,6 +215,7 @@ class PanelScheduleAiBackendTests(unittest.TestCase):
             update_mock.assert_called_once_with(
                 fake_panel_data,
                 os.path.normpath(str(output_path)),
+                use_extracted_kva=False,
             )
 
     def test_process_panel_schedule_payload_requires_at_least_one_breaker_and_directory_photo(self):
@@ -271,6 +295,11 @@ class PanelScheduleAiBackendTests(unittest.TestCase):
         analyze_mock.assert_called_once_with(
             "MDP", [], ["directory.jpg"], input_mode="existing_directory"
         )
+        update_mock.assert_called_once_with(
+            fake_panel_data,
+            os.path.normpath(str(output_path)),
+            use_extracted_kva=True,
+        )
 
     def test_build_panel_schedule_prompt_mentions_split_breakers_and_directories(self):
         prompt = self.api._build_panel_schedule_prompt("MDP", 3, 2)
@@ -282,6 +311,225 @@ class PanelScheduleAiBackendTests(unittest.TestCase):
             "Use visible breaker positions and circuit numbering to merge split sections",
             prompt,
         )
+        self.assertIn('JSON field "aic_rating"', prompt)
+        self.assertIn("Do not confuse AIC rating with Bus Rating", prompt)
+
+    def test_build_existing_directory_prompt_requires_visible_kva_extraction(self):
+        prompt = self.api._build_existing_directory_prompt("MDP", 2)
+
+        self.assertIn('JSON field "kva"', prompt)
+        self.assertIn('JSON field "phase_kva"', prompt)
+        self.assertIn("visible kVA decimal", prompt)
+        self.assertIn("Do not add, total, or sum phase loads together", prompt)
+        self.assertIn("Do not repeat a 2-pole or 3-pole total", prompt)
+        self.assertIn("Do not estimate kVA", prompt)
+        self.assertIn("do not infer it from breaker amperage", prompt)
+        self.assertIn('JSON field "aic_rating"', prompt)
+        self.assertIn("Do not confuse AIC rating with Bus Rating", prompt)
+
+    def test_workbook_writes_extracted_aic_rating_to_header(self):
+        with tempfile.TemporaryDirectory(prefix="acies-panel-schedule-") as temp_dir:
+            workbook_path = Path(temp_dir) / "panel_schedule.xlsx"
+            self._create_panel_schedule_workbook(workbook_path)
+            panel_data = self._panel_data([])
+            panel_data.aic_rating = "22,000 AIC"
+
+            sheet_name = main.cb_update_excel_workbook(
+                panel_data,
+                str(workbook_path),
+                use_extracted_kva=True,
+            )
+
+            workbook = main.openpyxl.load_workbook(workbook_path)
+            try:
+                worksheet = workbook[sheet_name]
+                self.assertEqual("22,000 AIC", worksheet["N3"].value)
+            finally:
+                workbook.close()
+
+    def test_workbook_preserves_template_aic_rating_when_extraction_blank(self):
+        with tempfile.TemporaryDirectory(prefix="acies-panel-schedule-") as temp_dir:
+            workbook_path = Path(temp_dir) / "panel_schedule.xlsx"
+            self._create_panel_schedule_workbook(workbook_path)
+            panel_data = self._panel_data([])
+            panel_data.aic_rating = ""
+
+            sheet_name = main.cb_update_excel_workbook(
+                panel_data,
+                str(workbook_path),
+                use_extracted_kva=True,
+            )
+
+            workbook = main.openpyxl.load_workbook(workbook_path)
+            try:
+                worksheet = workbook[sheet_name]
+                self.assertEqual("EXISTING", worksheet["N3"].value)
+            finally:
+                workbook.close()
+
+    def test_existing_directory_workbook_uses_phase_kva_without_estimator(self):
+        with tempfile.TemporaryDirectory(prefix="acies-panel-schedule-") as temp_dir:
+            workbook_path = Path(temp_dir) / "panel_schedule.xlsx"
+            self._create_panel_schedule_workbook(workbook_path)
+            panel_data = self._panel_data([
+                types.SimpleNamespace(
+                    circuit_number=1,
+                    description="LIGHTING",
+                    breaker_amps="20",
+                    poles=2,
+                    load_type="C",
+                    kva="2.30 kVA",
+                    phase_kva=["1.20 kVA", "1.10 kVA"],
+                )
+            ])
+
+            with patch(
+                "main.cb_calculate_estimated_load",
+                side_effect=AssertionError("estimator should not run"),
+            ):
+                sheet_name = main.cb_update_excel_workbook(
+                    panel_data,
+                    str(workbook_path),
+                    use_extracted_kva=True,
+                )
+
+            workbook = main.openpyxl.load_workbook(workbook_path)
+            try:
+                worksheet = workbook[sheet_name]
+                self.assertEqual(1.2, worksheet["I8"].value)
+                self.assertEqual(1.1, worksheet["I9"].value)
+            finally:
+                workbook.close()
+
+    def test_existing_directory_workbook_writes_three_pole_phase_kva(self):
+        with tempfile.TemporaryDirectory(prefix="acies-panel-schedule-") as temp_dir:
+            workbook_path = Path(temp_dir) / "panel_schedule.xlsx"
+            self._create_panel_schedule_workbook(workbook_path)
+            panel_data = self._panel_data([
+                types.SimpleNamespace(
+                    circuit_number=1,
+                    description="RTU",
+                    breaker_amps="60",
+                    poles=3,
+                    load_type="M",
+                    kva="3.30 kVA",
+                    phase_kva=["0.90", "1.10", "1.30"],
+                )
+            ])
+
+            with patch(
+                "main.cb_calculate_estimated_load",
+                side_effect=AssertionError("estimator should not run"),
+            ):
+                sheet_name = main.cb_update_excel_workbook(
+                    panel_data,
+                    str(workbook_path),
+                    use_extracted_kva=True,
+                )
+
+            workbook = main.openpyxl.load_workbook(workbook_path)
+            try:
+                worksheet = workbook[sheet_name]
+                self.assertEqual(0.9, worksheet["I8"].value)
+                self.assertEqual(1.1, worksheet["I9"].value)
+                self.assertEqual(1.3, worksheet["I10"].value)
+            finally:
+                workbook.close()
+
+    def test_existing_directory_workbook_legacy_kva_fallback_only_top_row(self):
+        with tempfile.TemporaryDirectory(prefix="acies-panel-schedule-") as temp_dir:
+            workbook_path = Path(temp_dir) / "panel_schedule.xlsx"
+            self._create_panel_schedule_workbook(workbook_path)
+            panel_data = self._panel_data([
+                types.SimpleNamespace(
+                    circuit_number=1,
+                    description="PUMP",
+                    breaker_amps="30",
+                    poles=2,
+                    load_type="M",
+                    kva="1.50 kVA",
+                )
+            ])
+
+            with patch(
+                "main.cb_calculate_estimated_load",
+                side_effect=AssertionError("estimator should not run"),
+            ):
+                sheet_name = main.cb_update_excel_workbook(
+                    panel_data,
+                    str(workbook_path),
+                    use_extracted_kva=True,
+                )
+
+            workbook = main.openpyxl.load_workbook(workbook_path)
+            try:
+                worksheet = workbook[sheet_name]
+                self.assertEqual(1.5, worksheet["I8"].value)
+                self.assertIn(worksheet["I9"].value, ("", None))
+            finally:
+                workbook.close()
+
+    def test_existing_directory_workbook_leaves_missing_extracted_kva_blank(self):
+        with tempfile.TemporaryDirectory(prefix="acies-panel-schedule-") as temp_dir:
+            workbook_path = Path(temp_dir) / "panel_schedule.xlsx"
+            self._create_panel_schedule_workbook(workbook_path)
+            panel_data = self._panel_data([
+                types.SimpleNamespace(
+                    circuit_number=2,
+                    description="RECEPTACLES",
+                    breaker_amps="20",
+                    poles=1,
+                    load_type="G",
+                    kva="",
+                )
+            ])
+
+            with patch(
+                "main.cb_calculate_estimated_load",
+                side_effect=AssertionError("estimator should not run"),
+            ):
+                sheet_name = main.cb_update_excel_workbook(
+                    panel_data,
+                    str(workbook_path),
+                    use_extracted_kva=True,
+                )
+
+            workbook = main.openpyxl.load_workbook(workbook_path)
+            try:
+                worksheet = workbook[sheet_name]
+                self.assertIn(worksheet["K8"].value, ("", None))
+            finally:
+                workbook.close()
+
+    def test_field_photo_workbook_still_uses_estimator(self):
+        with tempfile.TemporaryDirectory(prefix="acies-panel-schedule-") as temp_dir:
+            workbook_path = Path(temp_dir) / "panel_schedule.xlsx"
+            self._create_panel_schedule_workbook(workbook_path)
+            panel_data = self._panel_data([
+                types.SimpleNamespace(
+                    circuit_number=1,
+                    description="LIGHTING",
+                    breaker_amps="20",
+                    poles=1,
+                    load_type="C",
+                    kva="9.99",
+                )
+            ])
+
+            with patch("main.cb_calculate_estimated_load", return_value=0.42) as estimator:
+                sheet_name = main.cb_update_excel_workbook(
+                    panel_data,
+                    str(workbook_path),
+                    use_extracted_kva=False,
+                )
+
+            estimator.assert_called_once_with("20", "LIGHTING", "C")
+            workbook = main.openpyxl.load_workbook(workbook_path)
+            try:
+                worksheet = workbook[sheet_name]
+                self.assertEqual(0.42, worksheet["I8"].value)
+            finally:
+                workbook.close()
 
     def test_register_heif_support_calls_register_opener_when_available(self):
         calls = []

@@ -178,5 +178,82 @@ class LocalProjectSyncConflictTests(unittest.TestCase):
         # Verify server file is deleted
         self.assertFalse(os.path.exists(server_test_file))
 
+class LocalProjectManagerComparisonScopeTests(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.local_dir = os.path.join(self.temp_dir, "local")
+        self.server_dir = os.path.join(self.temp_dir, "server")
+        os.makedirs(self.local_dir)
+        os.makedirs(self.server_dir)
+
+        self.api = Api.__new__(Api)
+        self.api.get_user_settings = MagicMock(return_value={})
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir)
+
+    def _write(self, root, rel_path, content, mtime=None):
+        full_path = os.path.join(root, rel_path)
+        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+        with open(full_path, "w") as f:
+            f.write(content)
+        if mtime is not None:
+            os.utime(full_path, (mtime, mtime))
+        return full_path
+
+    def test_newer_file_outside_managed_folder_is_detected(self):
+        # "Reports" is not a discipline folder or Xrefs -> additive_only scope.
+        rel_path = "Reports/notes.txt"
+        server_file = self._write(self.server_dir, rel_path, "server version")
+        base_mtime = os.path.getmtime(server_file)
+        # Make the local copy clearly newer than the server copy.
+        self._write(self.local_dir, rel_path, "local version", mtime=base_mtime + 600.0)
+        os.utime(server_file, (base_mtime, base_mtime))
+
+        comparison = self.api._compare_local_project_manager_files(
+            self.local_dir, self.server_dir
+        )
+        self.assertEqual(comparison["status"], "success")
+        newer = [
+            item
+            for item in comparison.get("localToServerCandidates", [])
+            if str(item.get("changeType") or "").lower() == "newer"
+        ]
+        self.assertEqual(len(newer), 1)
+        self.assertEqual(
+            os.path.normpath(newer[0]["relativePath"]), os.path.normpath(rel_path)
+        )
+        self.assertEqual(newer[0]["scopeType"], "additive_only")
+        self.assertTrue(newer[0]["selectedByDefault"])
+
+
+class CopyProjectSourcePathResolutionTests(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.api = Api.__new__(Api)
+        self.api.get_user_settings = MagicMock(return_value={})
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir)
+
+    def test_workroom_uses_saved_path_without_six_digit_id(self):
+        # A real project folder that does not follow the 6-digit-ID naming convention.
+        project_dir = os.path.join(self.temp_dir, "Maple Street Renovation")
+        os.makedirs(project_dir)
+        launch_context = {
+            "source": "workroom",
+            "projectPath": project_dir,
+            "rootProjectPath": project_dir,
+        }
+
+        resolution = self.api._resolve_copy_project_source_path(
+            None, launch_context, {}
+        )
+        self.assertEqual(resolution["status"], "success")
+        self.assertEqual(
+            os.path.normpath(resolution["path"]), os.path.normpath(project_dir)
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

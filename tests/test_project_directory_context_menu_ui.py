@@ -23,6 +23,11 @@ class ProjectDirectoryContextMenuUiTests(unittest.TestCase):
             "function attachProjectDirectoryContextMenu(target, project) {",
             'target.addEventListener("contextmenu", (event) => {',
             "showProjectDirectoryContextMenu(event, project);",
+            "function attachCardProjectPathOpen(target, project) {",
+            'target.dataset.projectPathOpen = "true";',
+            'target.addEventListener("click", openPath);',
+            'target.addEventListener("keydown", (event) => {',
+            "window.pywebview.api.open_path(convertPath(path));",
         ):
             self.assertIn(expected, script)
 
@@ -40,6 +45,7 @@ class ProjectDirectoryContextMenuUiTests(unittest.TestCase):
         self.assertIn("attachProjectDirectoryContextMenu(link, project);", table_block)
         self.assertIn("attachProjectDirectoryContextMenu(titleText, project);", table_block)
         self.assertIn("attachProjectDirectoryContextMenu(nameEl, project);", card_block)
+        self.assertIn("attachCardProjectPathOpen(nameEl, project);", card_block)
 
     def test_project_directory_context_menu_styles_exist(self):
         css = STYLES_CSS_PATH.read_text(encoding="utf-8")

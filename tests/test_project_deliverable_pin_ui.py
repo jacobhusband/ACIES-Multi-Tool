@@ -41,10 +41,21 @@ class ProjectDeliverablePinUiTests(unittest.TestCase):
             self.assertIn(expected, pin_button_block)
 
         self.assertIn(
-            "const actionsDropdown = createDeliverableActionsDropdown(deliverable, project, card);",
+            "const pinBtn = createDeliverablePinButton(deliverable);",
             script,
         )
-        self.assertIn("actions.append(actionsDropdown);", script)
+        self.assertIn(
+            '"deliverable-card-pin-action"',
+            script,
+        )
+        self.assertIn(
+            "const actionRow = createDeliverableCardTopActions(deliverable, project, card);",
+            script,
+        )
+        self.assertIn(
+            "card.append(actionRow, header, statusSection, notesSection);",
+            script,
+        )
         self.assertIn("isDeliverablePinned(deliverable) ? \"is-pinned-deliverable\" : \"\"", script)
         self.assertIn("if (pinnedShown && isPinnedDeliverable) {", card_view_block)
         self.assertNotIn("pinnedShown && project.pinned", card_view_block)

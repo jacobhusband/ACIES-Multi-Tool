@@ -100,7 +100,11 @@ const CHECKLIST_ICON_PATH =
   "M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM7 10h2v7H7zm4-3h2v10h-2zm4 6h2v4h-2z";
 const CHECK_ICON_PATH =
   "M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z";
+const COORDINATION_ICON_PATH =
+  "M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z";
 const MAX_DELIVERABLE_EMAIL_REFS = 3;
+const EMAIL_INTAKE_PROJECT_CONTEXT_MAX_PROJECTS = 200;
+const EMAIL_INTAKE_PROJECT_CONTEXT_MAX_CHARS = 25000;
 
 // Checklists Data
 let checklistsDb = {
@@ -1434,12 +1438,11 @@ function getChecklistTemplateByKey(templateKey) {
 
 function getChecklistTemplatesForCurrentDisciplines() {
   const selectedDisciplines = new Set(
-    normalizeDisciplineList(userSettings?.discipline).map((discipline) =>
+    getActiveDisciplineList().map((discipline) =>
       String(discipline || "").trim().toLowerCase()
     )
   );
   return CHECKLIST_TEMPLATES.filter((template) => {
-    if (template?.alwaysVisible === true) return true;
     return selectedDisciplines.has(String(template.discipline || "").toLowerCase());
   })
     .map((template) => getChecklistTemplateByKey(template.key))
@@ -1658,11 +1661,7 @@ function isChecklistSubheader(item) {
   return normalizeChecklistRowType(item?.type) === CHECKLIST_ROW_TYPES.SUBHEADER;
 }
 
-function getChecklistCheckableItems(items = []) {
-  return (Array.isArray(items) ? items : []).filter(
-    (item) => !isChecklistSubheader(item)
-  );
-}
+
 
 function getChecklistItemNumberLookup(items = []) {
   const lookup = new Map();
@@ -1707,33 +1706,7 @@ function getChecklistSections(items = []) {
   return sections;
 }
 
-function getChecklistSectionBounds(items = [], index) {
-  if (!Array.isArray(items) || !items.length || index < 0 || index >= items.length) {
-    return null;
-  }
 
-  let start = index;
-  if (!isChecklistSubheader(items[index])) {
-    start = -1;
-    for (let i = index; i >= 0; i -= 1) {
-      if (isChecklistSubheader(items[i])) {
-        start = i;
-        break;
-      }
-    }
-    if (start < 0) start = 0;
-  }
-
-  let end = items.length - 1;
-  for (let i = start + 1; i < items.length; i += 1) {
-    if (isChecklistSubheader(items[i])) {
-      end = i - 1;
-      break;
-    }
-  }
-
-  return { start, end };
-}
 
 function getChecklistDragDescriptor(checklist, itemId) {
   const items = Array.isArray(checklist?.items) ? checklist.items : [];
@@ -2065,11 +2038,7 @@ function findChecklistByTemplateKey(templateKey) {
   );
 }
 
-function getOrCreateChecklistByTemplateKey(templateKey) {
-  const existing = findChecklistByTemplateKey(templateKey);
-  if (existing) return existing;
-  return createChecklistFromTemplate(templateKey);
-}
+
 
 function isAciesElectricalChecklist(checklist) {
   return (
@@ -2089,25 +2058,9 @@ function getProjectAciesElectricalChecklistProfile(project) {
   return profiles?.[ACIES_ELECTRICAL_SCOPE_PROFILE_KEY] || null;
 }
 
-function ensureDeliverableChecklistContext(deliverable) {
-  if (!deliverable) return null;
-  deliverable.checklistContext = normalizeChecklistContext(deliverable.checklistContext);
-  return deliverable.checklistContext;
-}
 
-function getAppliedChecklistEntryByTemplateKey(deliverable, templateKey) {
-  if (!deliverable || !Array.isArray(deliverable.appliedChecklists)) return null;
-  for (let instanceIndex = 0; instanceIndex < deliverable.appliedChecklists.length; instanceIndex += 1) {
-    const instance = deliverable.appliedChecklists[instanceIndex];
-    const checklist = getChecklistById(instance?.checklistId);
-    if (!checklist) continue;
-    if (String(checklist.templateKey || "").trim() !== String(templateKey || "").trim()) {
-      continue;
-    }
-    return { instance, checklist, instanceIndex };
-  }
-  return null;
-}
+
+
 
 function buildChecklistScopeAnswerState(project, deliverable) {
   const projectProfile = getProjectAciesElectricalChecklistProfile(project);
@@ -2275,78 +2228,7 @@ function evaluateChecklistItemApplicability(item, context, overrides = {}) {
   };
 }
 
-function buildWorkroomChecklistViewModel(project, deliverable, instance, checklist) {
-  const sections = getChecklistSections(Array.isArray(checklist?.items) ? checklist.items : []);
-  const completedSet = new Set(
-    Array.isArray(instance?.completedItems) ? instance.completedItems : []
-  );
-  const hasFiltering = isAciesElectricalChecklist(checklist);
-  const answerState = hasFiltering
-    ? buildChecklistScopeAnswerState(project, deliverable)
-    : null;
-  const context = hasFiltering
-    ? {
-        answerState,
-        answerTokens: buildChecklistScopeTokenSet(answerState),
-      }
-    : null;
-  const overrides =
-    instance && typeof instance === "object" ? instance.applicabilityOverrides || {} : {};
 
-  const summary = {
-    visibleTotal: 0,
-    visibleCompletedTotal: 0,
-    filteredTotal: 0,
-    unresolvedTotal: 0,
-    applicableTotal: 0,
-  };
-
-  const viewSections = sections.map((section) => {
-    const visibleItems = [];
-    const filteredItems = [];
-    (Array.isArray(section.items) ? section.items : []).forEach((entry) => {
-      const evaluation = hasFiltering
-        ? evaluateChecklistItemApplicability(entry.item, context, overrides)
-        : {
-            visibility: "applicable",
-            manualOverride: "",
-            badge: "",
-            reason: "",
-          };
-      const nextEntry = {
-        ...entry,
-        evaluation,
-        isCompleted: completedSet.has(entry.item.id),
-      };
-      if (evaluation.visibility === "filtered") {
-        filteredItems.push(nextEntry);
-        summary.filteredTotal += 1;
-        return;
-      }
-      visibleItems.push(nextEntry);
-      summary.visibleTotal += 1;
-      if (nextEntry.isCompleted) summary.visibleCompletedTotal += 1;
-      if (evaluation.visibility === "unresolved") {
-        summary.unresolvedTotal += 1;
-      } else {
-        summary.applicableTotal += 1;
-      }
-    });
-
-    return {
-      header: section.header,
-      visibleItems,
-      filteredItems,
-    };
-  });
-
-  return {
-    hasFiltering,
-    context,
-    sections: viewSections,
-    summary,
-  };
-}
 
 function createChecklist(name, options = {}) {
   const template =
@@ -2573,6 +2455,20 @@ const WORKROOM_PRE_DESIGN_PAGES = [
   },
 ];
 const WORKROOM_CAD_DISCIPLINES = ["Electrical", "Mechanical", "Plumbing"];
+const COORDINATION_PARTIES = [
+  "Project Manager",
+  "Mechanical",
+  "Plumbing",
+  "Architect",
+  "Landlord",
+  "Client",
+];
+const COORDINATION_OTHER_PARTY_VALUE = "__other__";
+const HEADER_DISCIPLINE_TOGGLE_OPTIONS = [
+  { discipline: "Mechanical", shortLabel: "M", label: "Mechanical" },
+  { discipline: "Electrical", shortLabel: "E", label: "Electrical" },
+  { discipline: "Plumbing", shortLabel: "P", label: "Plumbing" },
+];
 const WORKROOM_AUTO_SELECT_CAD_TOOL_IDS = new Set([
   "toolPublishDwgs",
   "toolManageLayers",
@@ -2721,38 +2617,64 @@ function normalizeDisciplineList(value) {
   return ["Electrical"];
 }
 
-function getWorkroomConfiguredDisciplines() {
-  const resolved = [];
+function normalizeConfiguredDisciplineList(value) {
   const seen = new Set();
-  normalizeDisciplineList(userSettings.discipline).forEach((discipline) => {
+  const configured = [];
+  normalizeDisciplineList(value).forEach((discipline) => {
     const normalized = normalizeWorkroomCadDiscipline(discipline, "");
-    if (!normalized || !WORKROOM_CAD_DISCIPLINES.includes(normalized)) return;
-    if (seen.has(normalized)) return;
+    if (!normalized || seen.has(normalized)) return;
     seen.add(normalized);
-    resolved.push(normalized);
+    configured.push(normalized);
   });
-  return resolved;
+  return configured.length ? configured : ["Electrical"];
 }
 
+function normalizeActiveDiscipline(value, configuredValue = userSettings?.discipline) {
+  const normalized = normalizeWorkroomCadDiscipline(value, "");
+  if (normalized) return normalized;
+  const configured = normalizeConfiguredDisciplineList(configuredValue);
+  return configured[0] || "Electrical";
+}
+
+function syncActiveDisciplineWithConfigured() {
+  const nextActive = normalizeActiveDiscipline(
+    userSettings?.activeDiscipline,
+    userSettings?.discipline
+  );
+  const changed = userSettings.activeDiscipline !== nextActive;
+  userSettings.activeDiscipline = nextActive;
+  return changed;
+}
+
+function getConfiguredDisciplines() {
+  return normalizeConfiguredDisciplineList(userSettings?.discipline);
+}
+
+function getActiveDiscipline() {
+  syncActiveDisciplineWithConfigured();
+  return userSettings.activeDiscipline || "Electrical";
+}
+
+function getActiveDisciplineList() {
+  return [getActiveDiscipline()];
+}
+
+function getActiveDisciplineCategoryKey() {
+  return getActiveDiscipline().toLowerCase();
+}
+
+function getActiveWorkroomDiscipline() {
+  return normalizeWorkroomCadDiscipline(getActiveDiscipline(), "Electrical") || "Electrical";
+}
+
+
+
 function getWorkroomAvailableDisciplines() {
-  const configured = getWorkroomConfiguredDisciplines();
-  if (!configured.length) return [...WORKROOM_CAD_DISCIPLINES];
-  if (configured.length === 1) {
-    const primary = configured[0];
-    return [
-      primary,
-      ...WORKROOM_CAD_DISCIPLINES.filter((discipline) => discipline !== primary),
-    ];
-  }
-  return configured;
+  return [getActiveWorkroomDiscipline()];
 }
 
 function getDisciplineFunction() {
-  const disciplines = normalizeDisciplineList(userSettings.discipline);
-  const funcs = disciplines
-    .map((d) => DISCIPLINE_TO_FUNCTION[d] || "")
-    .filter(Boolean);
-  return funcs.join("/") || "E";
+  return DISCIPLINE_TO_FUNCTION[getActiveDiscipline()] || "E";
 }
 
 function getDefaultPmInitials() {
@@ -3146,21 +3068,20 @@ function renderTemplates() {
 
   container.innerHTML = '';
 
-  // Get user disciplines for highlighting
-  const userDisciplines = normalizeDisciplineList(userSettings.discipline);
+  // Get active discipline for filtering and highlighting
+  const activeDiscipline = getActiveDiscipline();
+  const visibleDisciplines = ["General", activeDiscipline];
 
-  // Render General first, then user's disciplines, then others
-  const disciplineOrder = ['General', ...userDisciplines.filter(d => d !== 'General')];
-  const remainingDisciplines = DISCIPLINE_OPTIONS.filter(
-    d => !disciplineOrder.includes(d) && grouped[d]?.length
+  // Render General first, then the active discipline.
+  const orderedDisciplines = visibleDisciplines.filter(
+    (discipline, index, list) => list.indexOf(discipline) === index
   );
-  const orderedDisciplines = [...disciplineOrder, ...remainingDisciplines];
 
   orderedDisciplines.forEach(discipline => {
     const disciplineTemplates = grouped[discipline];
     if (!disciplineTemplates?.length) return;
 
-    const isUserDiscipline = discipline === 'General' || userDisciplines.includes(discipline);
+    const isUserDiscipline = discipline === 'General' || discipline === activeDiscipline;
     const section = createTemplateSection(discipline, disciplineTemplates, isUserDiscipline);
     container.appendChild(section);
   });
@@ -3351,8 +3272,7 @@ function getTemplateByKey(key) {
 }
 
 function getPrimaryDisciplineLabel() {
-  const disciplines = normalizeDisciplineList(userSettings.discipline);
-  return disciplines[0] || "General";
+  return getActiveDiscipline() || "General";
 }
 
 function joinPath(base, child) {
@@ -3716,12 +3636,7 @@ function ensureWorkroomCadDiscipline(deliverable, disciplines = []) {
   const existing = normalizeWorkroomCadDiscipline(deliverable.workroomCadDiscipline, "");
   if (existing && options.includes(existing)) return existing;
 
-  const fallbackDiscipline = options[0];
-  if (deliverable.workroomCadDiscipline !== fallbackDiscipline) {
-    deliverable.workroomCadDiscipline = fallbackDiscipline;
-    debouncedSave();
-  }
-  return fallbackDiscipline;
+  return options[0];
 }
 
 function buildWorkroomCadLaunchContext() {
@@ -3737,6 +3652,7 @@ function buildWorkroomCadLaunchContext() {
     rootProjectPath,
     discipline: activeDiscipline || disciplines[0] || "Electrical",
     cadFilePaths: [],
+    projectId: String(project?.id || "").trim(),
     projectName: String(project?.name || project?.nick || project?.id || "").trim(),
     deliverableName: String(deliverable?.name || "").trim(),
   };
@@ -3860,6 +3776,10 @@ function getDeliverableToolMenuEntries() {
   const readyEntryMap = new Map(
     getReadySharedToolLaunchEntries()
       .filter((entry) => entry.includeInDeliverableMenu !== false)
+      .filter((entry) => {
+        const category = String(entry?.category || "general").trim().toLowerCase();
+        return ["general", "templates", getActiveDisciplineCategoryKey()].includes(category);
+      })
       .map((entry) => [String(entry.id || "").trim(), entry])
   );
   return deliverableMenuOrder
@@ -3890,7 +3810,10 @@ function getLaunchContextProjectRoot(launchContext = null) {
   if (!launchContext || typeof launchContext !== "object") return "";
   const source = String(launchContext?.source || "").trim().toLowerCase();
   const rawPath = String(
-    launchContext?.rootProjectPath || launchContext?.projectPath || ""
+    launchContext?.rootProjectPath ||
+      launchContext?.projectPath ||
+      launchContext?.project_path ||
+      ""
   ).trim();
   if (!rawPath) return "";
   if (source === "workroom") {
@@ -3903,6 +3826,11 @@ function hasLaunchContextProjectPath(launchContext = null) {
   return Boolean(getLaunchContextProjectRoot(launchContext));
 }
 
+function getLaunchContextProjectId(launchContext = null) {
+  if (!launchContext || typeof launchContext !== "object") return "";
+  return String(launchContext.projectId || "").trim();
+}
+
 function buildProjectsTabToolLaunchContext(project, deliverable) {
   const projectPath = normalizeProjectPath(project?.path || "");
   return {
@@ -3910,6 +3838,7 @@ function buildProjectsTabToolLaunchContext(project, deliverable) {
     projectPath,
     rootProjectPath: projectPath,
     cadFilePaths: [],
+    projectId: String(project?.id || "").trim(),
     projectName: String(project?.name || project?.nick || project?.id || "").trim(),
     deliverableName: String(deliverable?.name || "").trim(),
   };
@@ -5216,6 +5145,11 @@ function openAddTimesheetProjectDialog() {
   }
 
   showDialog(dlg);
+
+  if (search) {
+    // Focus the search field once the dialog is open so the user can type immediately.
+    requestAnimationFrame(() => search.focus());
+  }
 }
 
 function navigateTimesheetWeek(direction) {
@@ -6625,34 +6559,7 @@ function removeExpenseImage(projectIndex, imageIndex) {
   renderExpenses();
 }
 
-async function exportExpenseSheetToExcel() {
-  const weekKey = formatWeekKey(currentTimesheetWeek);
-  const projects = getWeekExpenses(weekKey);
 
-  if (!projects.length) {
-    toast("No expense entries to export.");
-    return;
-  }
-
-  try {
-    const result = await window.pywebview.api.export_expense_sheet_excel({
-      weekKey,
-      weekDisplay: formatWeekDisplay(currentTimesheetWeek),
-      userName: userSettings.userName || "Employee",
-      projects,
-      mileageRate: MILEAGE_RATE
-    });
-
-    if (result.status === "success") {
-      toast("Expense sheet exported successfully.");
-    } else {
-      throw new Error(result.message);
-    }
-  } catch (e) {
-    console.error("Export failed:", e);
-    toast("Failed to export expense sheet: " + e.message);
-  }
-}
 
 function createIcon(path, size = 16) {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -7685,22 +7592,9 @@ function syncAttachmentOwnerEmailRefs(owner) {
   return owner.emailRefs || [];
 }
 
-function syncDeliverableEmailRefs(deliverable) {
-  syncDeliverableAttachmentFields(deliverable);
-  return deliverable?.emailRefs || [];
-}
 
-function syncAttachmentOwnerLinks(owner, legacyLinkPath = "") {
-  if (!owner || typeof owner !== "object") return [];
-  const includeEmailRefs = "emailRefs" in owner || "emailRef" in owner;
-  syncAttachmentOwnerCompatFields(owner, {
-    includeEmailRefs,
-    legacyLinks: normalizeDeliverableLinks(owner.links, legacyLinkPath),
-    legacyEmailRefs: owner?.emailRefs,
-    legacyEmailRef: owner?.emailRef,
-  });
-  return owner.links || [];
-}
+
+
 
 function getAttachmentOwnerKindLabel(kind = "deliverable") {
   if (kind === "project") return "Project";
@@ -7908,19 +7802,7 @@ function buildAttachmentOwnerEmailContext(descriptor = {}, scope = "projects-tab
   return context;
 }
 
-function buildDeliverableEmailContext(deliverable, project, scope = "projects-tab") {
-  return {
-    ...buildAttachmentOwnerEmailContext(
-      {
-        kind: "deliverable",
-        owner: deliverable,
-        deliverable,
-        project,
-      },
-      scope
-    ),
-  };
-}
+
 
 async function saveDroppedEmailFile(file, context = {}) {
   if (!isSupportedEmailFile(file)) {
@@ -8216,11 +8098,15 @@ function getActivityTrayElements() {
 
 function getToolActivityLabel(toolId, fallback = "") {
   const normalizedToolId = String(toolId || "").trim();
+  const normalizedFallback = String(fallback || "").trim();
+  if (normalizedToolId === "toolWorkflow" && normalizedFallback) {
+    return normalizedFallback;
+  }
   if (normalizedToolId && typeof getSharedToolLaunchEntry === "function") {
     const entry = getSharedToolLaunchEntry(normalizedToolId);
     if (entry?.label) return entry.label;
   }
-  return String(fallback || normalizedToolId || "Activity").trim();
+  return normalizedFallback || normalizedToolId || "Activity";
 }
 
 function isRerunnableToolId(toolId) {
@@ -8347,6 +8233,11 @@ function renderActivityTray() {
 
   items.forEach((item) => {
     const status = String(item.status || ACTIVITY_STATUS.RUNNING).trim().toLowerCase();
+    const workflowTitle = String(item.workflowTitle || "").trim();
+    const activityTitle =
+      String(item.toolId || "").trim() === "toolWorkflow" && workflowTitle
+        ? `Workflow: ${workflowTitle}`
+        : item.label || "Activity";
     const iconText =
       status === ACTIVITY_STATUS.SUCCESS
         ? "✓"
@@ -8370,7 +8261,8 @@ function renderActivityTray() {
     header.append(
       el("div", {
         className: "activity-card-title",
-        textContent: item.label || "Activity",
+        textContent: activityTitle,
+        title: activityTitle,
       }),
       el("div", {
         className: "activity-card-percent",
@@ -8669,6 +8561,9 @@ function upsertActivity(nextItem, { autoExpandReason = "update" } = {}) {
     combinedPdfPath: String(
       incoming.combinedPdfPath || existing?.combinedPdfPath || ""
     ).trim(),
+    workflowTitle: String(
+      incoming.workflowTitle || existing?.workflowTitle || ""
+    ).trim(),
     rerunDefaultPath: String(
       incoming.rerunDefaultPath || existing?.rerunDefaultPath || ""
     ).trim(),
@@ -8723,6 +8618,7 @@ function beginActivity({
   combinedPdfPath = "",
   rerunDefaultPath = "",
   rerunLaunchContext = null,
+  workflowTitle = "",
   canRerun,
 } = {}) {
   const resolvedId = String(activityId || createActivityId(toolId || kind)).trim();
@@ -8740,6 +8636,7 @@ function beginActivity({
       combinedPdfPath,
       rerunDefaultPath,
       rerunLaunchContext,
+      workflowTitle,
       canRerun,
     },
     { autoExpandReason: activityTrayState.items.length ? "update" : "first" }
@@ -8834,6 +8731,19 @@ function normalizeActivityStatusFromPayload(payload = {}, message = "", fallback
   return String(fallback || ACTIVITY_STATUS.RUNNING).trim().toLowerCase();
 }
 
+function getActivityLabelFromPayload(toolId, payload = {}, existing = null) {
+  const normalizedToolId = String(toolId || "").trim();
+  const workflowTitle = String(payload?.workflowTitle || existing?.workflowTitle || "").trim();
+  const payloadLabel = String(payload?.label || "").trim();
+  if (normalizedToolId === "toolWorkflow" && workflowTitle) {
+    return getToolActivityLabel(
+      normalizedToolId,
+      payloadLabel || `Workflow: ${workflowTitle}`
+    );
+  }
+  return getToolActivityLabel(normalizedToolId, payloadLabel || existing?.label || "");
+}
+
 function deriveToolActivityProgress(toolId, message, currentProgress = 5) {
   const normalizedToolId = String(toolId || "").trim();
   const text = String(message || "").trim();
@@ -8913,6 +8823,10 @@ function updateActivityStatusFromPayload(payload = {}) {
   )
     ? payload.rerunLaunchContext
     : existing?.rerunLaunchContext || null;
+  const workflowTitle = String(
+    payload?.workflowTitle || existing?.workflowTitle || ""
+  ).trim();
+  const activityLabel = getActivityLabelFromPayload(toolId, payload, existing);
 
   if (rawMessage.startsWith("OUTPUT_FOLDER:")) {
     openFolderPath = rawMessage.substring("OUTPUT_FOLDER:".length).trim();
@@ -8956,7 +8870,7 @@ function updateActivityStatusFromPayload(payload = {}) {
     beginActivity({
       activityId,
       toolId,
-      label: getToolActivityLabel(toolId, payload?.label || ""),
+      label: activityLabel,
       message: nextMessage || "Starting...",
       progress: nextProgress,
       openFolderPath,
@@ -8964,13 +8878,14 @@ function updateActivityStatusFromPayload(payload = {}) {
       combinedPdfPath,
       rerunDefaultPath,
       rerunLaunchContext,
+      workflowTitle,
       canRerun: payload?.canRerun,
-      kind: payload?.kind || "tool",
+      kind: payload?.kind || (toolId === "toolWorkflow" ? "workflow" : "tool"),
     });
   }
 
   const commonPatch = {
-    label: getToolActivityLabel(toolId, payload?.label || existing?.label || ""),
+    label: activityLabel,
     message:
       nextMessage ||
       existing?.message ||
@@ -8983,6 +8898,7 @@ function updateActivityStatusFromPayload(payload = {}) {
     combinedPdfPath,
     rerunDefaultPath,
     rerunLaunchContext,
+    workflowTitle,
     canRerun: payload?.canRerun,
     panelCount: payload?.panelCount,
     completedCount: payload?.completedCount,
@@ -9206,10 +9122,52 @@ const DEFAULT_CLEAN_DWG_OPTIONS = {
 const DEFAULT_PUBLISH_DWG_OPTIONS = {
   autoDetectPaperSize: true,
   shrinkPercent: 100,
+  stripPdfLayers: true,
 };
 const DEFAULT_MANAGE_LAYERS_OPTIONS = {
   scanAllLayers: true,
+  freezePatterns: [],
+  thawPatterns: [],
 };
+const DEFAULT_WORKFLOW_CAD_DEFAULTS = {
+  manageLayersDwgSource: "electricalTopLevel",
+  cleanXrefsDwgSource: "electricalXrefsToNewestArch",
+  cleanXrefsSearchZipArchives: true,
+};
+
+function parseLayerPatternInput(value) {
+  if (value == null) return [];
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => String(item || "").trim())
+      .filter((item) => item.length > 0);
+  }
+  return String(value)
+    .split(/[;,\n]/)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
+function formatLayerPatternsForInput(patterns) {
+  return parseLayerPatternInput(patterns).join(", ");
+}
+
+function normalizeWorkflowCadDefaults(value = {}) {
+  const source = value && typeof value === "object" ? value : {};
+  const manageLayersDwgSource =
+    source.manageLayersDwgSource === "manual"
+      ? "manual"
+      : DEFAULT_WORKFLOW_CAD_DEFAULTS.manageLayersDwgSource;
+  const cleanXrefsDwgSource =
+    source.cleanXrefsDwgSource === "manual"
+      ? "manual"
+      : DEFAULT_WORKFLOW_CAD_DEFAULTS.cleanXrefsDwgSource;
+  return {
+    manageLayersDwgSource,
+    cleanXrefsDwgSource,
+    cleanXrefsSearchZipArchives: source.cleanXrefsSearchZipArchives !== false,
+  };
+}
 const DEFAULT_CLOUD_SYNC_SETTINGS = {
   enabled: false,
   firebaseUid: "",
@@ -9247,6 +9205,7 @@ const PROJECT_CARD_COLUMNS_BY_KEY = new Map(
 let userSettings = {
   userName: "",
   discipline: ["Electrical"],
+  activeDiscipline: "Electrical",
   apiKey: "",
   autocadPath: "",
   showSetupHelp: true,
@@ -9258,11 +9217,13 @@ let userSettings = {
   projectsViewMode: "list",
   projectsWideLayout: true,
   minimizeEmptyProjectColumns: true,
+  hideEmptyProjectColumns: false,
   projectCardColumns: DEFAULT_PROJECT_CARD_COLUMNS.map((c) => ({ ...c })),
   defaultPmInitials: "",
   cleanDwgOptions: { ...DEFAULT_CLEAN_DWG_OPTIONS },
   publishDwgOptions: { ...DEFAULT_PUBLISH_DWG_OPTIONS },
   manageLayersOptions: { ...DEFAULT_MANAGE_LAYERS_OPTIONS },
+  workflowCadDefaults: { ...DEFAULT_WORKFLOW_CAD_DEFAULTS },
   workroomAutoSelectCadFiles: true,
   enableUnderConstructionTools: false,
   googleAuth: null,
@@ -9488,6 +9449,7 @@ let groupDeliverablesByProject = false;
 let projectsViewMode = "list";
 let projectsWideLayout = true;
 let minimizeEmptyProjectColumns = true;
+let hideEmptyProjectColumns = false;
 let projectCardColumns = DEFAULT_PROJECT_CARD_COLUMNS.map((c) => ({ ...c }));
 let projectCardWeek = getWeekStartDate(new Date());
 const PROJECTS_CARD_HORIZONTAL_WHEEL_MULTIPLIER = 0.4;
@@ -9564,16 +9526,17 @@ function syncProjectViewPreferencesFromSettings() {
     userSettings.separateDeliverableCompletionGroups !== false;
   groupDeliverablesByProject =
     userSettings.groupDeliverablesByProject === true;
-  projectsViewMode =
-    userSettings.projectsViewMode === "card" ? "card" : "list";
+  projectsViewMode = normalizeProjectsViewMode(userSettings.projectsViewMode);
   projectsWideLayout = userSettings.projectsWideLayout !== false;
   minimizeEmptyProjectColumns =
     userSettings.minimizeEmptyProjectColumns !== false;
+  hideEmptyProjectColumns = userSettings.hideEmptyProjectColumns === true;
   projectCardColumns = normalizeProjectCardColumns(
     userSettings.projectCardColumns
   );
   userSettings.projectsWideLayout = projectsWideLayout;
   userSettings.minimizeEmptyProjectColumns = minimizeEmptyProjectColumns;
+  userSettings.hideEmptyProjectColumns = hideEmptyProjectColumns;
   userSettings.projectCardColumns = projectCardColumns.map((c) => ({ ...c }));
   updateProjectsLayoutWidthUi();
   updateProjectsEmptyColumnUi();
@@ -9832,6 +9795,108 @@ function toggleHeaderAccountPopover() {
   setHeaderAccountPopoverOpen(!headerAccountPopoverOpen);
 }
 
+function renderHeaderDisciplineSwitcher() {
+  const switcher = document.getElementById("headerDisciplineSwitcher");
+  if (!switcher) return;
+
+  const active = getActiveDiscipline();
+  switcher.dataset.activeDiscipline = active;
+
+  HEADER_DISCIPLINE_TOGGLE_OPTIONS.forEach(({ discipline, label }) => {
+    const button = switcher.querySelector(
+      `.header-discipline-toggle[data-discipline="${discipline}"]`
+    );
+    if (!button) return;
+    const isActive = active === discipline;
+    button.disabled = false;
+    button.setAttribute("aria-disabled", "false");
+    button.setAttribute("aria-checked", String(isActive));
+    button.tabIndex = isActive ? 0 : -1;
+    button.title = isActive
+      ? `${label} is the active discipline`
+      : `Switch to ${label} discipline`;
+  });
+}
+
+function syncToolVisibilityForActiveDiscipline() {
+  const activeCategory = getActiveDisciplineCategoryKey();
+  document.querySelectorAll("[data-discipline-section]").forEach((section) => {
+    const sectionCategory = String(section.dataset.disciplineSection || "")
+      .trim()
+      .toLowerCase();
+    section.hidden = !!sectionCategory && sectionCategory !== activeCategory;
+  });
+}
+
+function refreshActiveDisciplineDependentUi() {
+  renderHeaderDisciplineSwitcher();
+  syncToolVisibilityForActiveDiscipline();
+
+  const activeTab =
+    document.body?.dataset.activeTab ||
+    document.querySelector(".main-tab-btn.active")?.dataset.tab ||
+    "projects";
+  if (activeTab === "checklists") {
+    renderChecklistsView();
+  } else if (activeTab === "timesheets") {
+    renderTimesheets();
+  } else if (activeTab === "templates") {
+    renderTemplates();
+  }
+}
+
+function setActiveDiscipline(discipline) {
+  const nextActive = normalizeWorkroomCadDiscipline(discipline, "");
+  if (!nextActive) return;
+
+  const changed = userSettings.activeDiscipline !== nextActive;
+  userSettings.activeDiscipline = nextActive;
+  refreshActiveDisciplineDependentUi();
+  if (changed) {
+    debouncedSaveUserSettings();
+    toast(`Active discipline set to ${nextActive}.`);
+  }
+}
+
+function handleHeaderDisciplineSwitcherKeydown(e) {
+  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
+  const selectableOptions = HEADER_DISCIPLINE_TOGGLE_OPTIONS;
+  if (!selectableOptions.length) return;
+
+  e.preventDefault();
+  const active = getActiveDiscipline();
+  const currentIndex = Math.max(
+    0,
+    selectableOptions.findIndex(({ discipline }) => discipline === active)
+  );
+  let nextIndex = currentIndex;
+  if (e.key === "Home") nextIndex = 0;
+  if (e.key === "End") nextIndex = selectableOptions.length - 1;
+  if (e.key === "ArrowLeft") {
+    nextIndex = (currentIndex - 1 + selectableOptions.length) % selectableOptions.length;
+  }
+  if (e.key === "ArrowRight") {
+    nextIndex = (currentIndex + 1) % selectableOptions.length;
+  }
+
+  const nextDiscipline = selectableOptions[nextIndex].discipline;
+  setActiveDiscipline(nextDiscipline);
+  document
+    .querySelector(`.header-discipline-toggle[data-discipline="${nextDiscipline}"]`)
+    ?.focus();
+}
+
+function initializeHeaderDisciplineSwitcher() {
+  const switcher = document.getElementById("headerDisciplineSwitcher");
+  if (!switcher) return;
+
+  switcher.querySelectorAll(".header-discipline-toggle").forEach((button) => {
+    button.onclick = () => setActiveDiscipline(button.dataset.discipline);
+  });
+  switcher.addEventListener("keydown", handleHeaderDisciplineSwitcherKeydown);
+  renderHeaderDisciplineSwitcher();
+}
+
 function renderGoogleAuthUi() {
   const headerBtn = document.getElementById("headerGoogleAuthBtn");
   const headerLabel = document.getElementById("headerGoogleAuthLabel");
@@ -9953,6 +10018,7 @@ function renderGoogleAuthUi() {
     headerAccountPopoverOpen = false;
   }
   updateHeaderAccountPopoverVisibility();
+  renderHeaderDisciplineSwitcher();
   renderCloudSyncUi();
 }
 
@@ -10106,12 +10172,7 @@ function getOutlookScanSourceLabel(source = "") {
   return "Outlook";
 }
 
-function getOutlookScanVisibleSuggestions() {
-  const dismissed = new Set(outlookScanState.dismissedKeys || []);
-  return (outlookScanState.suggestions || []).filter(
-    (suggestion) => suggestion && !dismissed.has(suggestion.key)
-  );
-}
+
 
 function setOutlookScanProgress(
   payload = {},
@@ -10148,17 +10209,7 @@ function formatOutlookScanTimeframeLabel(timeframe = "") {
     : "This week";
 }
 
-function formatOutlookScanSelectedDayLabel(scanDate = "", timeframe = "") {
-  const normalized = normalizeOutlookScanDateInput(scanDate || "");
-  if (normalized) {
-    return parseOutlookScanDateValue(normalized).toLocaleDateString([], {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-    });
-  }
-  return formatOutlookScanTimeframeLabel(timeframe);
-}
+
 
 function formatOutlookScanStageLabel(stage = "") {
   const key = String(stage || "").trim().toLowerCase();
@@ -10256,93 +10307,7 @@ function formatOutlookScanLogTime(value = "") {
   });
 }
 
-function buildOutlookScanReportModel() {
-  const progress = normalizeOutlookScanProgress(outlookScanState.progress || {});
-  const log = Array.isArray(outlookScanState.progressLog)
-    ? outlookScanState.progressLog.map((entry) =>
-        normalizeOutlookScanProgress(
-          entry || {},
-          createEmptyOutlookScanProgress()
-        )
-      )
-    : [];
-  const stats =
-    outlookScanState.reportStats && typeof outlookScanState.reportStats === "object"
-      ? outlookScanState.reportStats
-      : {};
-  const lastResult =
-    outlookScanState.lastResult && typeof outlookScanState.lastResult === "object"
-      ? outlookScanState.lastResult
-      : null;
-  return {
-    source:
-      String(stats.source || lastResult?.source || progress.source || "").trim(),
-    scanDate: normalizeOutlookScanDateInput(
-      stats.scanDate ||
-        lastResult?.scanDate ||
-        progress.scanDate ||
-        outlookScanState.scanDate ||
-        ""
-    ),
-    timeframe: String(
-      stats.timeframe ||
-        lastResult?.timeframe ||
-        progress.timeframe ||
-        (outlookScanState.scanDate ? "" : "week") ||
-        "week"
-    )
-      .trim()
-      .toLowerCase(),
-    fallbackUsed: log.some((entry) => entry.stage === "fallback"),
-    totalEmails:
-      normalizeOutlookScanCount(progress.totalEmails) ??
-      normalizeOutlookScanCount(lastResult?.scannedCount),
-    processedEmails:
-      normalizeOutlookScanCount(progress.processedEmails) ??
-      normalizeOutlookScanCount(lastResult?.scannedCount),
-    includedEmails:
-      normalizeOutlookScanCount(progress.includedEmails) ??
-      normalizeOutlookScanCount(lastResult?.emailsIncludedCount),
-    skippedEmails:
-      normalizeOutlookScanCount(progress.skippedEmails) ??
-      normalizeOutlookScanCount(stats.skippedCount) ??
-      normalizeOutlookScanCount(
-        Array.isArray(lastResult?.skippedMessages)
-          ? lastResult.skippedMessages.length
-          : null
-      ),
-    deliverablesInPeriod:
-      normalizeOutlookScanCount(progress.deliverablesInPeriod) ??
-      normalizeOutlookScanCount(stats.deliverablesInPeriod) ??
-      normalizeOutlookScanCount(lastResult?.deliverablesIncludedCount),
-    relevantEmails:
-      normalizeOutlookScanCount(progress.relevantEmails) ??
-      normalizeOutlookScanCount(lastResult?.relevantEmailCount),
-    threadsDetected:
-      normalizeOutlookScanCount(progress.threadsDetected) ??
-      normalizeOutlookScanCount(stats.threadsDetected) ??
-      normalizeOutlookScanCount(lastResult?.threadsDetected),
-    dedupedEmailCount:
-      normalizeOutlookScanCount(progress.dedupedEmailCount) ??
-      normalizeOutlookScanCount(stats.dedupedEmailCount) ??
-      normalizeOutlookScanCount(lastResult?.dedupedEmailCount),
-    dedupeSkippedEmailCount:
-      normalizeOutlookScanCount(progress.dedupeSkippedEmailCount) ??
-      normalizeOutlookScanCount(stats.dedupeSkippedEmailCount) ??
-      normalizeOutlookScanCount(lastResult?.dedupeSkippedEmailCount),
-    promptTruncated: !!(lastResult?.promptTruncated || stats.promptTruncated),
-    suggestionCount:
-      normalizeOutlookScanCount(stats.suggestionCount) ??
-      normalizeOutlookScanCount(
-        Array.isArray(lastResult?.suggestions) ? lastResult.suggestions.length : 0
-      ) ??
-      0,
-    errorMessage: String(
-      stats.errorMessage || lastResult?.message || ""
-    ).trim(),
-    log,
-  };
-}
+
 
 window.updateOutlookScanProgress = function (payload = {}) {
   setOutlookScanProgress(payload, { appendLog: true });
@@ -10763,15 +10728,7 @@ async function loadOutlookScanCapability({ silent = false } = {}) {
   return outlookScanCapabilityState;
 }
 
-function resetOutlookScanState() {
-  outlookScanState = {
-    ...DEFAULT_OUTLOOK_SCAN_STATE,
-    mode: normalizeEmailIntakeMode(outlookScanState.mode),
-    scanDate:
-      normalizeOutlookScanDateInput(outlookScanState.scanDate) ||
-      DEFAULT_OUTLOOK_SCAN_STATE.scanDate,
-  };
-}
+
 
 function setEmailIntakeMode(mode = "paste") {
   outlookScanState.mode = normalizeEmailIntakeMode(mode);
@@ -10821,6 +10778,53 @@ function failEmailIntakeActivity(message = "AI email processing failed.") {
   emailIntakeActivityId = "";
 }
 
+function buildEmailIntakeProjectContext() {
+  const candidates = db
+    .map((rawProject) => normalizeProject(rawProject))
+    .filter(Boolean)
+    .map((project) => {
+      const path = String(project.path || "").trim();
+      return {
+        id: String(project.id || "").trim(),
+        name: String(project.name || "").trim(),
+        nick: String(project.nick || "").trim(),
+        path,
+        pathLeaf: getWindowsPathLeaf(path),
+      };
+    })
+    .filter((project) => Object.values(project).some((value) => !!String(value || "").trim()))
+    .sort((left, right) =>
+      [
+        left.id,
+        left.name,
+        left.nick,
+        left.path,
+        left.pathLeaf,
+      ].join("|").localeCompare(
+        [
+          right.id,
+          right.name,
+          right.nick,
+          right.path,
+          right.pathLeaf,
+        ].join("|")
+      )
+    );
+
+  const context = [];
+  let serializedChars = 2;
+  for (const candidate of candidates) {
+    if (context.length >= EMAIL_INTAKE_PROJECT_CONTEXT_MAX_PROJECTS) break;
+    const serialized = JSON.stringify(candidate);
+    const nextChars = serializedChars + serialized.length + (context.length ? 1 : 0);
+    if (context.length && nextChars > EMAIL_INTAKE_PROJECT_CONTEXT_MAX_CHARS) break;
+    if (!context.length && nextChars > EMAIL_INTAKE_PROJECT_CONTEXT_MAX_CHARS) continue;
+    context.push(candidate);
+    serializedChars = nextChars;
+  }
+  return context;
+}
+
 async function processEmailIntakePaste() {
   if (emailIntakeBusy || !window.pywebview?.api?.process_email_with_ai) {
     return;
@@ -10837,11 +10841,13 @@ async function processEmailIntakePaste() {
   beginEmailIntakeActivity();
   renderOutlookScanUi();
   try {
+    const projectContext = buildEmailIntakeProjectContext();
     const aiRequest = window.pywebview.api.process_email_with_ai(
       txt,
       userSettings.apiKey,
       userSettings.userName,
-      userSettings.discipline
+      getActiveDisciplineList(),
+      projectContext
     );
     updateEmailIntakeActivity("Waiting for AI response...", 35);
     const timeoutPromise = new Promise((_, reject) => {
@@ -10879,10 +10885,7 @@ async function processEmailIntakePaste() {
   }
 }
 
-function setOutlookScanDate(value = "") {
-  outlookScanState.scanDate = normalizeOutlookScanDateInput(value);
-  renderOutlookScanUi();
-}
+
 
 function getOutlookMessageKey(message = {}) {
   const source = String(message.source || "").trim().toLowerCase();
@@ -11273,7 +11276,7 @@ async function runOutlookInboxScan() {
       },
       userSettings.apiKey,
       userSettings.userName,
-      userSettings.discipline
+      getActiveDisciplineList()
     );
     const derived = buildOutlookScanDerivedState(response);
     outlookScanState.lastResult = response;
@@ -11961,6 +11964,7 @@ function getDefaultSyncableSettings() {
   return {
     userName: "",
     discipline: ["Electrical"],
+    activeDiscipline: "Electrical",
     showSetupHelp: true,
     theme: "dark",
     lightingTemplates: [],
@@ -11970,11 +11974,13 @@ function getDefaultSyncableSettings() {
     projectsViewMode: "list",
     projectsWideLayout: true,
     minimizeEmptyProjectColumns: true,
+    hideEmptyProjectColumns: false,
     projectCardColumns: DEFAULT_PROJECT_CARD_COLUMNS.map((c) => ({ ...c })),
     defaultPmInitials: "",
     cleanDwgOptions: { ...DEFAULT_CLEAN_DWG_OPTIONS },
     publishDwgOptions: { ...DEFAULT_PUBLISH_DWG_OPTIONS },
     manageLayersOptions: { ...DEFAULT_MANAGE_LAYERS_OPTIONS },
+    workflowCadDefaults: { ...DEFAULT_WORKFLOW_CAD_DEFAULTS },
     workroomAutoSelectCadFiles: true,
     enableUnderConstructionTools: false,
   };
@@ -11988,6 +11994,10 @@ function sanitizeSettingsForCloud(settings = userSettings) {
     ...getDefaultSyncableSettings(),
     userName: String(source.userName || "").trim(),
     discipline: normalizeDisciplineList(source.discipline),
+    activeDiscipline: normalizeActiveDiscipline(
+      source.activeDiscipline,
+      source.discipline
+    ),
     showSetupHelp: source.showSetupHelp !== false,
     theme: source.theme === "light" ? "light" : "dark",
     lightingTemplates: Array.isArray(source.lightingTemplates)
@@ -11997,9 +12007,10 @@ function sanitizeSettingsForCloud(settings = userSettings) {
     separateDeliverableCompletionGroups:
       source.separateDeliverableCompletionGroups !== false,
     groupDeliverablesByProject: source.groupDeliverablesByProject === true,
-    projectsViewMode: source.projectsViewMode === "card" ? "card" : "list",
+    projectsViewMode: normalizeProjectsViewMode(source.projectsViewMode),
     projectsWideLayout: source.projectsWideLayout !== false,
     minimizeEmptyProjectColumns: source.minimizeEmptyProjectColumns !== false,
+    hideEmptyProjectColumns: source.hideEmptyProjectColumns === true,
     projectCardColumns: normalizeProjectCardColumns(source.projectCardColumns),
     defaultPmInitials: String(source.defaultPmInitials || "")
       .trim()
@@ -12016,6 +12027,7 @@ function sanitizeSettingsForCloud(settings = userSettings) {
       ...DEFAULT_MANAGE_LAYERS_OPTIONS,
       ...(source.manageLayersOptions || {}),
     },
+    workflowCadDefaults: normalizeWorkflowCadDefaults(source.workflowCadDefaults),
     workroomAutoSelectCadFiles: source.workroomAutoSelectCadFiles !== false,
     enableUnderConstructionTools: source.enableUnderConstructionTools === true,
     updatedAt,
@@ -12029,6 +12041,10 @@ function normalizeCloudSettingsDoc(raw = {}) {
     ...defaults,
     userName: String(source.userName || "").trim(),
     discipline: normalizeDisciplineList(source.discipline),
+    activeDiscipline: normalizeActiveDiscipline(
+      source.activeDiscipline,
+      source.discipline
+    ),
     showSetupHelp: source.showSetupHelp !== false,
     theme: source.theme === "light" ? "light" : "dark",
     lightingTemplates: Array.isArray(source.lightingTemplates)
@@ -12038,9 +12054,10 @@ function normalizeCloudSettingsDoc(raw = {}) {
     separateDeliverableCompletionGroups:
       source.separateDeliverableCompletionGroups !== false,
     groupDeliverablesByProject: source.groupDeliverablesByProject === true,
-    projectsViewMode: source.projectsViewMode === "card" ? "card" : "list",
+    projectsViewMode: normalizeProjectsViewMode(source.projectsViewMode),
     projectsWideLayout: source.projectsWideLayout !== false,
     minimizeEmptyProjectColumns: source.minimizeEmptyProjectColumns !== false,
+    hideEmptyProjectColumns: source.hideEmptyProjectColumns === true,
     projectCardColumns: normalizeProjectCardColumns(source.projectCardColumns),
     defaultPmInitials: String(source.defaultPmInitials || "")
       .trim()
@@ -12057,6 +12074,7 @@ function normalizeCloudSettingsDoc(raw = {}) {
       ...DEFAULT_MANAGE_LAYERS_OPTIONS,
       ...(source.manageLayersOptions || {}),
     },
+    workflowCadDefaults: normalizeWorkflowCadDefaults(source.workflowCadDefaults),
     workroomAutoSelectCadFiles: source.workroomAutoSelectCadFiles !== false,
     enableUnderConstructionTools: source.enableUnderConstructionTools === true,
     updatedAt:
@@ -12852,10 +12870,7 @@ async function pushCloudTimesheetsState() {
   return state.updatedAt;
 }
 
-async function pushTimesheetWeek(weekKey) {
-  if (!weekKey) return "";
-  return pushCloudTimesheetsState();
-}
+
 
 async function pushUserState(domains = null) {
   if (!cloudSyncState.enabled || isCloudSyncApplying()) return "";
@@ -12976,6 +12991,8 @@ async function applyRemoteCloudDoc(domain, remoteDoc) {
         googleAuth: userSettings.googleAuth,
         cloudSync: currentCloudSync,
       };
+      userSettings.discipline = normalizeConfiguredDisciplineList(userSettings.discipline);
+      syncActiveDisciplineWithConfigured();
       touchLocalSyncTimestamp("settings", cloudSettings.updatedAt);
       await persistUserSettingsLocally({
         skipCloud: true,
@@ -12985,6 +13002,7 @@ async function applyRemoteCloudDoc(domain, remoteDoc) {
       syncProjectViewPreferencesFromSettings();
       applyTheme(userSettings.theme);
       syncUnderConstructionToolsAvailability();
+      refreshActiveDisciplineDependentUi();
       render();
       return cloudSettings.updatedAt;
     }
@@ -13639,7 +13657,8 @@ async function loadUserSettings() {
         ? userSettings.googleAuth
         : null;
     delete userSettings.microsoftAuth;
-    userSettings.discipline = normalizeDisciplineList(userSettings.discipline);
+    userSettings.discipline = normalizeConfiguredDisciplineList(userSettings.discipline);
+    syncActiveDisciplineWithConfigured();
     userSettings.cleanDwgOptions = {
       ...DEFAULT_CLEAN_DWG_OPTIONS,
       ...(userSettings.cleanDwgOptions || {}),
@@ -13673,6 +13692,9 @@ async function loadUserSettings() {
       ...(legacyManageOpts || {}),
       ...(migratedScanAll !== undefined ? { scanAllLayers: !!migratedScanAll } : {}),
     };
+    userSettings.workflowCadDefaults = normalizeWorkflowCadDefaults(
+      userSettings.workflowCadDefaults
+    );
     delete userSettings.freezeLayerOptions;
     delete userSettings.thawLayerOptions;
     userSettings.workroomAutoSelectCadFiles =
@@ -13686,6 +13708,8 @@ async function loadUserSettings() {
     userSettings.projectsWideLayout = userSettings.projectsWideLayout !== false;
     userSettings.minimizeEmptyProjectColumns =
       userSettings.minimizeEmptyProjectColumns !== false;
+    userSettings.hideEmptyProjectColumns =
+      userSettings.hideEmptyProjectColumns === true;
     userSettings.cloudSync = normalizeCloudSyncSettings(userSettings.cloudSync);
     syncProjectViewPreferencesFromSettings();
     updateCloudSyncState({
@@ -13695,7 +13719,14 @@ async function loadUserSettings() {
     });
     syncCloudComparableFingerprint("settings");
     syncUnderConstructionToolsAvailability();
+    refreshActiveDisciplineDependentUi();
     renderGoogleAuthUi();
+    if (!Array.isArray(userSettings.workflows)) {
+      userSettings.workflows = [];
+    }
+    if (typeof renderWorkflowCards === "function") {
+      renderWorkflowCards();
+    }
   } catch (e) {
     console.error("Failed to load settings:", e);
   }
@@ -13742,6 +13773,14 @@ function syncPublishOptionsInputs() {
     "publish_modal_autoDetectPaperSize",
     publishOptions.autoDetectPaperSize
   );
+  setCheckboxValue(
+    "settings_publish_stripPdfLayers",
+    publishOptions.stripPdfLayers !== false
+  );
+  setCheckboxValue(
+    "publish_modal_stripPdfLayers",
+    publishOptions.stripPdfLayers !== false
+  );
   const percent = Number(publishOptions.shrinkPercent ?? 100);
   const normalized = Number.isFinite(percent) ? percent : 100;
   setRangeValue("settings_publish_shrinkPercent", normalized);
@@ -13760,6 +13799,16 @@ function syncManageLayersOptionsInputs() {
     "manageLayers_modal_scanAllLayers",
     manageOptions.scanAllLayers
   );
+  const freezeText = formatLayerPatternsForInput(manageOptions.freezePatterns);
+  const thawText = formatLayerPatternsForInput(manageOptions.thawPatterns);
+  ["manageLayers_modal_freezePatterns", "settings_manageLayers_freezePatterns"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el && document.activeElement !== el) el.value = freezeText;
+  });
+  ["manageLayers_modal_thawPatterns", "settings_manageLayers_thawPatterns"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el && document.activeElement !== el) el.value = thawText;
+  });
 }
 
 function syncWorkroomCadRoutingInputs() {
@@ -13767,6 +13816,25 @@ function syncWorkroomCadRoutingInputs() {
   setCheckboxValue(
     "settings_workroomAutoSelectCadFiles",
     enabled
+  );
+}
+
+function syncWorkflowCadDefaultInputs() {
+  userSettings.workflowCadDefaults = normalizeWorkflowCadDefaults(
+    userSettings.workflowCadDefaults
+  );
+  const defaults = userSettings.workflowCadDefaults;
+  setCheckboxValue(
+    "settings_workflowCad_manageLayersElectricalTopLevel",
+    defaults.manageLayersDwgSource === "electricalTopLevel"
+  );
+  setCheckboxValue(
+    "settings_workflowCad_cleanXrefsElectricalXrefsToNewestArch",
+    defaults.cleanXrefsDwgSource === "electricalXrefsToNewestArch"
+  );
+  setCheckboxValue(
+    "settings_workflowCad_cleanXrefsSearchZipArchives",
+    defaults.cleanXrefsSearchZipArchives
   );
 }
 
@@ -13801,6 +13869,9 @@ function syncUnderConstructionToolsAvailability() {
   }
 }
 
+let settingsAutocadControlsPopulated = false;
+let settingsAutocadPathExplicitlyChanged = false;
+
 async function populateSettingsModal() {
   document.getElementById("settings_userName").value =
     userSettings.userName || "";
@@ -13809,7 +13880,8 @@ async function populateSettingsModal() {
     userSettings.defaultPmInitials || "";
   document.getElementById("settings_autocadPath").value =
     userSettings.autocadPath || "";
-  const disciplines = normalizeDisciplineList(userSettings.discipline);
+  settingsAutocadControlsPopulated = true;
+  const disciplines = getConfiguredDisciplines();
   document
     .querySelectorAll('input[name="settings_discipline_checkbox"]')
     .forEach((checkbox) => {
@@ -13831,6 +13903,7 @@ async function populateSettingsModal() {
   syncPublishOptionsInputs();
   syncManageLayersOptionsInputs();
   syncWorkroomCadRoutingInputs();
+  syncWorkflowCadDefaultInputs();
   syncUnderConstructionToolsInputs();
   syncUnderConstructionToolsAvailability();
   renderGoogleAuthUi();
@@ -13854,6 +13927,7 @@ async function populateSettingsModal() {
         });
         radio.onchange = () => {
           userSettings.autocadPath = radio.value;
+          settingsAutocadPathExplicitlyChanged = true;
           debouncedSaveUserSettings();
         };
         const label = el("label", { className: "radio-label" }, [
@@ -13911,22 +13985,40 @@ async function populateAutocadSelectModal() {
   }
 }
 
+async function ensureAutocadPathLoaded() {
+  if (String(userSettings.autocadPath || "").trim()) return true;
+  try {
+    const storedSettings = await window.pywebview.api.get_user_settings();
+    const storedPath = String(storedSettings?.autocadPath || "").trim();
+    if (!storedPath) return false;
+    userSettings.autocadPath = storedPath;
+    const settingsPathInput = document.getElementById("settings_autocadPath");
+    if (settingsPathInput) settingsPathInput.value = storedPath;
+    const selectPathInput = document.getElementById("autocad_select_custom");
+    if (selectPathInput) selectPathInput.value = storedPath;
+    return true;
+  } catch (e) {
+    console.warn("Failed to refresh AutoCAD path from persisted settings:", e);
+    return false;
+  }
+}
+
 async function showAutocadSelectModal() {
   await populateAutocadSelectModal();
   document.getElementById("autocadSelectDlg").showModal();
 }
 
 async function saveUserSettings() {
-  // Update autocadPath from UI
-  const selectedRadio = document.querySelector(
-    'input[name="autocad_version_radio"]:checked'
-  );
-  if (selectedRadio) {
-    userSettings.autocadPath = selectedRadio.value;
-  } else {
-    userSettings.autocadPath = document
-      .getElementById("settings_autocadPath")
-      .value.trim();
+  if (settingsAutocadControlsPopulated || settingsAutocadPathExplicitlyChanged) {
+    const selectedRadio = document.querySelector(
+      'input[name="autocad_version_radio"]:checked'
+    );
+    if (selectedRadio) {
+      userSettings.autocadPath = selectedRadio.value;
+    } else {
+      const settingsAutocadInput = document.getElementById("settings_autocadPath");
+      userSettings.autocadPath = String(settingsAutocadInput?.value || "").trim();
+    }
   }
   const autoPrimaryCheck = document.getElementById("settings_autoPrimary");
   if (autoPrimaryCheck) userSettings.autoPrimary = autoPrimaryCheck.checked;
@@ -13943,6 +14035,8 @@ async function saveUserSettings() {
   if (groupByProjectCheck) {
     userSettings.groupDeliverablesByProject = groupByProjectCheck.checked;
   }
+  userSettings.discipline = normalizeConfiguredDisciplineList(userSettings.discipline);
+  syncActiveDisciplineWithConfigured();
   syncProjectViewPreferencesFromSettings();
   await persistUserSettingsLocally();
 }
@@ -13955,9 +14049,7 @@ function createId(prefix = "dlv") {
     .slice(2, 8)}`;
 }
 
-function normalizeTaskLinks(links) {
-  return normalizeDeliverableLinks(links);
-}
+
 
 function normalizeTask(task) {
   const out =
@@ -13991,10 +14083,11 @@ function normalizeTask(task) {
 function normalizeDeliverableNoteItem(noteItem) {
   const out =
     typeof noteItem === "string"
-      ? { text: noteItem, pinned: false, attachments: [] }
+      ? { text: noteItem, pinned: false, dueDate: "", attachments: [] }
       : {
           text: noteItem?.text || "",
           pinned: !!noteItem?.pinned,
+          dueDate: normalizeDeliverableNoteDueDate(noteItem?.dueDate),
           attachments: normalizeAttachments(noteItem?.attachments, {
             legacyLinks: noteItem?.links,
             legacyEmailRefs: noteItem?.emailRefs,
@@ -14007,7 +14100,14 @@ function normalizeDeliverableNoteItem(noteItem) {
     ...out,
     text: out.text || "",
     pinned: !!out.pinned,
+    dueDate: normalizeDeliverableNoteDueDate(out.dueDate),
   };
+}
+
+function normalizeDeliverableNoteDueDate(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  return parseDueStr(raw) ? raw : "";
 }
 
 function normalizeDeliverableNoteItems(noteItems = [], legacyNotes = "") {
@@ -14029,6 +14129,77 @@ function normalizeDeliverableNoteItems(noteItems = [], legacyNotes = "") {
   }
 
   return normalized;
+}
+
+function normalizeCoordinationItem(item) {
+  return {
+    party: String(item?.party || "").trim(),
+    note: String(item?.note || "").trim(),
+    done: item?.done === true,
+    dueDate: normalizeDeliverableNoteDueDate(item?.dueDate),
+    createdAt: normalizeIsoTimestamp(item?.createdAt),
+  };
+}
+
+function normalizeCoordinationItems(items = []) {
+  if (!Array.isArray(items)) return [];
+  const normalized = [];
+  items.forEach((item) => {
+    const normalizedItem = normalizeCoordinationItem(item);
+    if (!normalizedItem.party && !normalizedItem.note) return;
+    normalized.push(normalizedItem);
+  });
+  return normalized;
+}
+
+function getProjectCoordinationItems(project) {
+  return Array.isArray(project?.coordinationItems)
+    ? project.coordinationItems
+    : [];
+}
+
+function getProjectOpenCoordinationCount(project) {
+  return getProjectCoordinationItems(project).filter((item) => !item?.done)
+    .length;
+}
+
+function migrateDeliverableTasksToNotes(deliverable) {
+  if (!deliverable || typeof deliverable !== "object") return deliverable;
+  if (deliverable.tasksMigratedToNotes === true) return deliverable;
+
+  const tasks = Array.isArray(deliverable.tasks) ? deliverable.tasks : [];
+  if (!tasks.length) return deliverable;
+
+  const noteItems = normalizeDeliverableNoteItems(
+    deliverable.noteItems,
+    deliverable.notes
+  );
+  const existingNoteTexts = new Set(
+    noteItems
+      .map((noteItem) => String(noteItem?.text || "").trim())
+      .filter(Boolean)
+  );
+
+  tasks.forEach((task) => {
+    const normalizedTask = normalizeTask(task);
+    const text = String(normalizedTask.text || "").trim();
+    if (!text || existingNoteTexts.has(text)) return;
+
+    noteItems.push(
+      normalizeDeliverableNoteItem({
+        text,
+        pinned: !!normalizedTask.pinned,
+        attachments: normalizedTask.attachments,
+        links: normalizedTask.links,
+        emailRefs: normalizedTask.emailRefs,
+      })
+    );
+    existingNoteTexts.add(text);
+  });
+
+  deliverable.noteItems = noteItems;
+  deliverable.tasksMigratedToNotes = true;
+  return deliverable;
 }
 
 function buildDeliverableNotesText(noteItems = [], fallback = "") {
@@ -14086,6 +14257,7 @@ function syncDeliverableWorkItemFields(deliverable) {
     if (noteItem && typeof noteItem === "object" && !Array.isArray(noteItem)) {
       noteItem.text = normalizedNoteItem.text;
       noteItem.pinned = normalizedNoteItem.pinned;
+      noteItem.dueDate = normalizedNoteItem.dueDate;
       noteItem.attachments = normalizedNoteItem.attachments;
       noteItem.links = normalizedNoteItem.links;
       noteItem.emailRefs = normalizedNoteItem.emailRefs;
@@ -14096,6 +14268,7 @@ function syncDeliverableWorkItemFields(deliverable) {
     nextNoteItems.push(normalizedNoteItem);
   });
   deliverable.noteItems = nextNoteItems;
+  migrateDeliverableTasksToNotes(deliverable);
   return syncDeliverableNoteFields(deliverable);
 }
 
@@ -14122,38 +14295,29 @@ function getPinnedDeliverableNoteEntries(deliverable) {
   );
 }
 
+function getDeliverableNoteSortEntries(noteItems = []) {
+  return (Array.isArray(noteItems) ? noteItems : [])
+    .map((item, index) => ({ item: normalizeDeliverableNoteItem(item), index }))
+    .filter(({ item }) => String(item?.text || "").trim())
+    .sort((left, right) => {
+      if (!!left.item?.pinned !== !!right.item?.pinned) {
+        return left.item?.pinned ? -1 : 1;
+      }
+      const leftDue = parseDueStr(left.item?.dueDate);
+      const rightDue = parseDueStr(right.item?.dueDate);
+      if (leftDue && rightDue && leftDue.getTime() !== rightDue.getTime()) {
+        return leftDue - rightDue;
+      }
+      if (!!leftDue !== !!rightDue) {
+        return leftDue ? -1 : 1;
+      }
+      return left.index - right.index;
+    });
+}
+
 function getPinnedDeliverablePreviewItems(deliverable) {
-  return [
-    ...getPinnedDeliverableTaskEntries(deliverable)
-      .filter(({ item }) => item.pinned)
-      .map(({ item, index }) => ({
-        type: "task",
-        text: item.text,
-        done: !!item.done,
-        pinned: true,
-        attachments: normalizeAttachments(item.attachments, {
-          legacyLinks: item.links,
-          legacyEmailRefs: item.emailRefs,
-        }),
-        links: normalizeTaskLinks(item.links),
-        emailRefs: normalizeEmailRefs(item.emailRefs),
-        index,
-      })),
-    ...getPinnedDeliverableNoteEntries(deliverable)
-      .filter(({ item }) => item.pinned)
-      .map(({ item, index }) => ({
-        type: "note",
-        text: item.text,
-        pinned: true,
-        attachments: normalizeAttachments(item.attachments, {
-          legacyLinks: item.links,
-          legacyEmailRefs: item.emailRefs,
-        }),
-        links: normalizeDeliverableLinks(item.links),
-        emailRefs: normalizeEmailRefs(item.emailRefs),
-        index,
-      })),
-  ];
+  syncDeliverableWorkItemFields(deliverable);
+  return [];
 }
 
 function normalizePinnedProjectOrder(value) {
@@ -14168,28 +14332,7 @@ function normalizePinnedDeliverableOrder(value) {
   return normalizePinnedProjectOrder(value);
 }
 
-function compareProjectsByStableIdentity(a, b) {
-  const idDiff = String(a?.id || "").localeCompare(String(b?.id || ""), undefined, {
-    numeric: true,
-    sensitivity: "base",
-  });
-  if (idDiff) return idDiff;
 
-  const nameDiff = String(a?.name || "").localeCompare(
-    String(b?.name || ""),
-    undefined,
-    {
-      numeric: true,
-      sensitivity: "base",
-    }
-  );
-  if (nameDiff) return nameDiff;
-
-  return String(a?.nick || "").localeCompare(String(b?.nick || ""), undefined, {
-    numeric: true,
-    sensitivity: "base",
-  });
-}
 
 function buildLegacyPinnedProjectSortContextMap(items = []) {
   return new Map(
@@ -14561,6 +14704,7 @@ function normalizeDeliverable(deliverable = {}) {
     tasks: Array.isArray(deliverable.tasks)
       ? deliverable.tasks.map(normalizeTask)
       : [],
+    tasksMigratedToNotes: deliverable.tasksMigratedToNotes === true,
     statuses: Array.isArray(deliverable.statuses)
       ? [...deliverable.statuses]
       : [],
@@ -14617,6 +14761,7 @@ function createDeliverable(seed = {}) {
     notes: seed.notes || "",
     noteItems: seed.noteItems || [],
     tasks: seed.tasks || [],
+    tasksMigratedToNotes: seed.tasksMigratedToNotes === true,
     statuses: seed.statuses || [],
     statusTags: seed.statusTags || [],
     status: seed.status || "",
@@ -14670,10 +14815,7 @@ function hasStatus(p, s) {
 function isFinished(p) {
   return hasStatus(p, "Complete") || hasStatus(p, "Delivered");
 }
-function applyPrimaryStatus(p) {
-  const primary = STATUS_PRIORITY.find((status) => hasStatus(p, status));
-  p.status = primary || "";
-}
+
 function setSingleStatus(p, label) {
   if (!p) return;
   const canonical = label && STATUS_CANON.includes(label) ? label : "";
@@ -14718,29 +14860,7 @@ function migrateStatuses(arr) {
     }
   }
 }
-function getStatusTags(p) {
-  let tags = Array.isArray(p.statusTags) ? [...p.statusTags] : [];
-  const s = (p.status || "").toLowerCase();
-  if (s) {
-    if (s.includes("complete") && !tags.includes("complete"))
-      tags.push("complete");
-    if (s.includes("waiting") && !tags.includes("waiting"))
-      tags.push("waiting");
-    if (
-      (s.includes("on hold") || s.includes("onhold") || s.includes("paused")) &&
-      !tags.includes("onHold")
-    )
-      tags.push("onHold");
-    if (
-      (s.includes("pending review") || s === "pending") &&
-      !tags.includes("pendingReview")
-    )
-      tags.push("pendingReview");
-    if (s.includes("deliver") && !tags.includes("delivered"))
-      tags.push("delivered");
-  }
-  return [...new Set(tags)];
-}
+
 
 function normalizeRef(link) {
   if (!link) return null;
@@ -14923,6 +15043,7 @@ function normalizeProject(project) {
     deliverables: Array.isArray(project.deliverables)
       ? project.deliverables.map(normalizeDeliverable)
       : [],
+    coordinationItems: normalizeCoordinationItems(project.coordinationItems),
     checklistProfiles: normalizeProjectChecklistProfiles(
       project.checklistProfiles || { [ACIES_ELECTRICAL_SCOPE_PROFILE_KEY]: project.checklistProfile }
     ),
@@ -15622,96 +15743,7 @@ function renderCopyProjectLocallyFolderList(container, items) {
   items.forEach((item) => container.appendChild(createCopyProjectLocallyFolderListItem(item)));
 }
 
-function updateCopyProjectLocallyDialogSummary() {
-  const summaryEl = document.getElementById("copyProjectLocallySummary");
-  const confirmBtn = document.getElementById("copyProjectLocallyConfirmBtn");
-  const localProjectExists = copyProjectLocallyDialogState.localProjectExists === true;
-  if (localProjectExists) {
-    const selectionPayload = buildLocalProjectManagerDirectionSelectionPayload("to_local");
-    const copyToLocalState = copyProjectLocallyDialogState.copyToLocal;
-    if (confirmBtn) {
-      confirmBtn.disabled =
-        copyToLocalState.previewLoaded !== true || selectionPayload.hasSelection !== true;
-      confirmBtn.textContent = "Copy Selected Files to Local";
-    }
 
-    if (!summaryEl) return;
-    if (copyToLocalState.previewLoading) {
-      summaryEl.textContent = "Loading server recommendations...";
-      return;
-    }
-    if (copyToLocalState.previewError) {
-      summaryEl.textContent = copyToLocalState.previewError;
-      return;
-    }
-    if (copyToLocalState.previewLoaded !== true) {
-      summaryEl.textContent = "Review server files that should overwrite the local project.";
-      return;
-    }
-    if (!copyToLocalState.candidateFiles.length) {
-      summaryEl.textContent = copyToLocalState.blockedEntries.length
-        ? "No copy-to-local recommendations. Review blocked entries below."
-        : "No newer server files were found.";
-      return;
-    }
-
-    const selectedFiles = copyToLocalState.candidateFiles.filter(
-      (entry) => entry.selected === true
-    );
-    const totalBytes = selectedFiles.reduce((sum, entry) => {
-      return sum + (Number.isFinite(entry?.sizeBytes) ? Number(entry.sizeBytes) : 0);
-    }, 0);
-    summaryEl.textContent = `${selectedFiles.length} file${
-      selectedFiles.length === 1 ? "" : "s"
-    } selected - ${formatCopyProjectLocallySizeLabel(totalBytes)}`;
-    return;
-  }
-
-  const selectionPayload = buildCopyProjectLocallySelectionPayload();
-  const copyReady =
-    copyProjectLocallyDialogState.copyPreviewLoaded === true &&
-    copyProjectLocallyDialogState.folderOptions.length > 0;
-  if (confirmBtn) {
-    confirmBtn.disabled = !copyReady || !selectionPayload.hasSelection;
-    confirmBtn.textContent = "Copy Selected Folders";
-  }
-
-  if (!summaryEl) return;
-  if (copyProjectLocallyDialogState.copyPreviewLoaded !== true) {
-    summaryEl.textContent = shouldShowLocalProjectManagerServerPathFallback()
-      ? "Choose the server project folder to start."
-      : "Review the server project before copying locally.";
-    return;
-  }
-  if (!copyProjectLocallyDialogState.folderOptions.length) {
-    summaryEl.textContent = "No subfolders available to copy.";
-    return;
-  }
-  if (!selectionPayload.hasSelection) {
-    summaryEl.textContent = "No folders selected.";
-    return;
-  }
-
-  const selectedOptions = copyProjectLocallyDialogState.folderOptions.filter(
-    (option) => option.selectionMode !== "none"
-  );
-  let totalBytes = 0;
-  let partialCount = 0;
-  selectedOptions.forEach((option) => {
-    const sizeInfo = getCopyProjectLocallyFolderDisplaySize(option);
-    if (sizeInfo.sizeStatus === "partial" || sizeInfo.sizeStatus === "unavailable") {
-      partialCount += 1;
-    }
-    if (Number.isFinite(sizeInfo.sizeBytes) && Number(sizeInfo.sizeBytes) >= 0) {
-      totalBytes += Number(sizeInfo.sizeBytes);
-    }
-  });
-
-  const folderLabel = selectedOptions.length === 1 ? "folder" : "folders";
-  summaryEl.textContent = `${selectedOptions.length} ${folderLabel} selected - ${formatCopyProjectLocallySizeLabel(
-    totalBytes
-  )}${partialCount ? " (partial)" : ""}`;
-}
 
 function setCopyProjectLocallyFolderSelectionMode(option, mode) {
   if (!option) return;
@@ -15868,24 +15900,7 @@ async function ensureLocalProjectManagerManagedFoldersLoaded() {
   renderCopyProjectLocallyDialog();
 }
 
-function applyCopyProjectLocallySelectionMode(mode) {
-  resetLocalProjectManagerReplacementReview();
-  copyProjectLocallyDialogState.folderOptions.forEach((option) => {
-    if (mode === "all") {
-      setCopyProjectLocallyFolderSelectionMode(option, "all");
-      return;
-    }
-    if (mode === "none") {
-      setCopyProjectLocallyFolderSelectionMode(option, "none");
-      return;
-    }
-    setCopyProjectLocallyFolderSelectionMode(
-      option,
-      option.selectedByDefault ? "all" : "none"
-    );
-  });
-  renderCopyProjectLocallyDialog();
-}
+
 
 function renderCopyProjectLocallyDialog() {
   renderLocalProjectManagerComparisonBanner();
@@ -16462,46 +16477,9 @@ function buildLocalProjectManagerProjectEntry(rawEntry, sortedProjects, index = 
   };
 }
 
-function compareLocalProjectManagerProjectEntries(a, b) {
-  const aMatched = Number.isInteger(a?.matchedProjectIndex) && a.matchedProjectIndex >= 0;
-  const bMatched = Number.isInteger(b?.matchedProjectIndex) && b.matchedProjectIndex >= 0;
-  if (aMatched !== bMatched) return aMatched ? -1 : 1;
-  if (aMatched && bMatched) {
-    const matchedDiff = compareLocalProjectManagerProjects(
-      a.matchedProject,
-      b.matchedProject
-    );
-    if (matchedDiff) return matchedDiff;
-  }
-  return String(a?.name || a?.localProjectPath || "").localeCompare(
-    String(b?.name || b?.localProjectPath || ""),
-    undefined,
-    { numeric: true, sensitivity: "base" }
-  );
-}
 
-function normalizeLocalProjectManagerSyncCandidateFile(candidate, index = 0) {
-  const sizeBytesValue = Number(candidate?.sizeBytes);
-  return {
-    id: `local-project-manager-sync::${candidate?.relativePath || index}`,
-    relativePath: String(candidate?.relativePath || "").trim(),
-    localPath: normalizeWindowsPath(candidate?.localPath || ""),
-    serverPath: normalizeWindowsPath(candidate?.serverPath || ""),
-    reason:
-      String(candidate?.reason || "").trim().toLowerCase() === "server_missing"
-        ? "server_missing"
-        : "local_newer",
-    localModifiedAt: String(candidate?.localModifiedAt || "").trim(),
-    serverModifiedAt: String(candidate?.serverModifiedAt || "").trim(),
-    sizeBytes: Number.isFinite(sizeBytesValue) ? sizeBytesValue : null,
-    sizeLabel:
-      String(candidate?.sizeLabel || "").trim() ||
-      (Number.isFinite(sizeBytesValue)
-        ? formatCopyProjectLocallySizeLabel(sizeBytesValue)
-        : "Size unavailable"),
-    selected: candidate?.selectedByDefault === true,
-  };
-}
+
+
 
 function normalizeLocalProjectManagerBlockedEntry(entry, index = 0) {
   return {
@@ -16548,91 +16526,13 @@ function resetLocalProjectManagerSyncPreview({ keepManualServerPath = true } = {
   }
 }
 
-function getFilteredLocalProjectManagerProjectEntries() {
-  const syncState = copyProjectLocallyDialogState.sync;
-  const query = normalizeLocalProjectManagerText(syncState.searchQuery || "");
-  const items = Array.isArray(syncState.projectEntries) ? syncState.projectEntries : [];
-  if (!query) return items;
-  const queryTokens = query.split(/\s+/).filter(Boolean);
-  return items.filter((entry) =>
-    queryTokens.every((token) => String(entry?.searchText || "").includes(token))
-  );
-}
 
-function selectLocalProjectManagerProjectEntry(entry) {
-  if (!entry) return;
-  const syncState = copyProjectLocallyDialogState.sync;
-  syncState.selectedLocalProjectPath = entry.localProjectPath || "";
-  syncState.localProjectPath = entry.localProjectPath || "";
-  syncState.localProjectName = entry.displayName || entry.name || "Local Project";
-  syncState.manualLocalProjectPath = entry.localProjectPath || "";
-  syncState.matchedProjectIndex = Number.isInteger(entry.matchedProjectIndex)
-    ? entry.matchedProjectIndex
-    : -1;
-  syncState.matchedProjectId = entry.matchedProjectId || "";
-  syncState.matchedProjectName = entry.matchedProjectName || "";
-  syncState.matchedProjectNick = entry.matchedProjectNick || "";
-  resetLocalProjectManagerSyncPreview({ keepManualServerPath: false });
-  renderCopyProjectLocallyDialog();
-}
 
-function createManualLocalProjectManagerProjectEntry(pathValue = "") {
-  const normalizedPath = normalizeWindowsPath(pathValue);
-  const sortedProjects = getLocalProjectManagerSortedProjects();
-  return buildLocalProjectManagerProjectEntry(
-    {
-      name: getWindowsPathLeaf(normalizedPath) || normalizedPath,
-      localProjectPath: normalizedPath,
-      lastModifiedAt: "",
-      lastModifiedLabel: "",
-    },
-    sortedProjects,
-    Date.now()
-  );
-}
 
-function getLocalProjectManagerSyncServerPathInfo() {
-  const syncState = copyProjectLocallyDialogState.sync;
-  const manualServerPath = normalizeWindowsPath(syncState.manualServerProjectPath || "");
-  if (manualServerPath) {
-    return { path: manualServerPath, source: "manual" };
-  }
 
-  const launchSource = String(copyProjectLocallyDialogState.launchContext?.source || "")
-    .trim()
-    .toLowerCase();
-  const launchProjectPath = getLaunchContextProjectRoot(
-    copyProjectLocallyDialogState.launchContext
-  );
-  if (launchSource === "workroom") {
-    const activeProject = db[activeChecklistProject] || null;
-    const workroomPath =
-      getWorkroomServerProjectPath(activeProject) ||
-      normalizeProjectPath(
-        copyProjectLocallyDialogState.launchContext?.rootProjectPath ||
-          copyProjectLocallyDialogState.launchContext?.projectPath ||
-          ""
-      );
-    if (workroomPath) return { path: workroomPath, source: "workroom" };
-  }
-  if (launchProjectPath) {
-    return { path: launchProjectPath, source: launchSource || "launch_context" };
-  }
 
-  const matchedProject =
-    Number.isInteger(syncState.matchedProjectIndex) &&
-    syncState.matchedProjectIndex >= 0
-      ? db[syncState.matchedProjectIndex] || null
-      : null;
-  if (matchedProject) {
-    const matchedPath =
-      getWorkroomServerProjectPath(matchedProject) ||
-      normalizeProjectPath(matchedProject?.path || "");
-    if (matchedPath) return { path: matchedPath, source: "matched_project" };
-  }
 
-  return { path: "", source: "" };
-}
+
 
 function createLocalProjectManagerProjectRow(entry) {
   const syncState = copyProjectLocallyDialogState.sync;
@@ -16663,183 +16563,11 @@ function createLocalProjectManagerProjectRow(entry) {
   return row;
 }
 
-function renderLocalProjectManagerSyncProjectList(container, items) {
-  if (!container) return;
-  container.replaceChildren();
 
-  const syncState = copyProjectLocallyDialogState.sync;
-  if (syncState.loadingProjects) {
-    container.appendChild(
-      el("div", {
-        className: "deliverable-notepad-empty",
-        textContent: "Loading local projects...",
-      })
-    );
-    return;
-  }
 
-  if (syncState.projectsError) {
-    container.appendChild(
-      el("div", {
-        className: "deliverable-notepad-empty",
-        textContent: syncState.projectsError,
-      })
-    );
-    return;
-  }
 
-  if (!items.length) {
-    container.appendChild(
-      el("div", {
-        className: "deliverable-notepad-empty",
-        textContent: "No local projects matched the current search.",
-      })
-    );
-    return;
-  }
 
-  items.forEach((entry) => container.appendChild(createLocalProjectManagerProjectRow(entry)));
-}
 
-function createLocalProjectManagerDirectionCandidateRowLegacy(
-  candidate,
-  direction = "to_server"
-) {
-  const directionKey = direction === "to_local" ? "to_local" : "to_server";
-  const relativePath = String(candidate?.relativePath || "").trim();
-  const pathParts = String(relativePath || "")
-    .split(/[\\/]+/)
-    .map((part) => String(part || "").trim())
-    .filter(Boolean);
-  const fileName = pathParts[pathParts.length - 1] || relativePath || "Untitled file";
-  const parentPath = pathParts.slice(0, -1).join("\\");
-  const localModifiedLabel = formatLocalProjectManagerTimestampLabel(
-    candidate.localModifiedAt || ""
-  );
-  const serverModifiedLabel = formatLocalProjectManagerTimestampLabel(
-    candidate.serverModifiedAt || ""
-  );
-  const metaParts = [];
-  if (parentPath) metaParts.push(parentPath);
-  metaParts.push(candidate.directionLabel || "Action required");
-  metaParts.push(candidate.scopeType === "managed" ? "Managed sync" : "Additive only");
-  if (localModifiedLabel) metaParts.push(`Local ${localModifiedLabel}`);
-  if (serverModifiedLabel) metaParts.push(`Server ${serverModifiedLabel}`);
-
-  const row = el(
-    "label",
-    {
-      className: "copy-project-locally-row local-project-manager-sync-row",
-      role: "listitem",
-    },
-    [
-        el("span", { className: "custom-check copy-project-locally-checkbox" }, [
-          el("input", {
-            className: "copy-project-locally-checkbox-input",
-            type: "checkbox",
-            checked: candidate.selected === true,
-            "data-local-project-manager-direction-checkbox": directionKey,
-            "data-relative-path": candidate.relativePath || "",
-            "aria-label":
-              directionKey === "to_local"
-                ? `Copy ${candidate.relativePath || "file"} to local`
-                : `Sync ${candidate.relativePath || "file"} to server`,
-          }),
-          el("span", {
-            className: "checkmark",
-            "aria-hidden": "true",
-          }),
-      ]),
-      el("div", { className: "local-project-manager-sync-row-content" }, [
-        el("div", {
-          className: "copy-project-locally-row-title",
-          textContent: fileName,
-        }),
-        el("div", {
-          className: "local-project-manager-sync-row-meta",
-          textContent: metaParts.join(" • "),
-        }),
-      ]),
-      el("div", {
-        className: "copy-project-locally-row-size",
-        textContent: candidate.sizeLabel || "Size unavailable",
-      }),
-    ]
-  );
-
-  syncCopyProjectLocallyRowSelectionState(row, candidate.selected === true, "sync");
-  return row;
-}
-
-function createLocalProjectManagerDirectionCandidateRowLegacyCurrent(
-  candidate,
-  direction = "to_server"
-) {
-  const directionKey = direction === "to_local" ? "to_local" : "to_server";
-  const relativePath = String(candidate?.relativePath || "").trim();
-  const pathParts = String(relativePath || "")
-    .split(/[\\/]+/)
-    .map((part) => String(part || "").trim())
-    .filter(Boolean);
-  const fileName = pathParts[pathParts.length - 1] || relativePath || "Untitled file";
-  const parentPath = pathParts.slice(0, -1).join("\\");
-  const localModifiedLabel = formatLocalProjectManagerTimestampLabel(
-    candidate.localModifiedAt || ""
-  );
-  const serverModifiedLabel = formatLocalProjectManagerTimestampLabel(
-    candidate.serverModifiedAt || ""
-  );
-  const metaParts = [];
-  if (parentPath) metaParts.push(parentPath);
-  metaParts.push(candidate.directionLabel || "Action required");
-  metaParts.push(candidate.scopeType === "managed" ? "Managed sync" : "Additive only");
-  if (localModifiedLabel) metaParts.push(`Local ${localModifiedLabel}`);
-  if (serverModifiedLabel) metaParts.push(`Server ${serverModifiedLabel}`);
-
-  const row = el(
-    "label",
-    {
-      className: "copy-project-locally-row local-project-manager-sync-row",
-      role: "listitem",
-    },
-    [
-      el("span", { className: "custom-check copy-project-locally-checkbox" }, [
-        el("input", {
-          className: "copy-project-locally-checkbox-input",
-          type: "checkbox",
-          checked: candidate.selected === true,
-          "data-local-project-manager-direction-checkbox": directionKey,
-          "data-relative-path": candidate.relativePath || "",
-          "aria-label":
-            directionKey === "to_local"
-              ? `Copy ${candidate.relativePath || "file"} to local`
-              : `Sync ${candidate.relativePath || "file"} to server`,
-        }),
-        el("span", {
-          className: "checkmark",
-          "aria-hidden": "true",
-        }),
-      ]),
-      el("div", { className: "local-project-manager-sync-row-content" }, [
-        el("div", {
-          className: "copy-project-locally-row-title",
-          textContent: fileName,
-        }),
-        el("div", {
-          className: "local-project-manager-sync-row-meta",
-          textContent: metaParts.join(" • "),
-        }),
-      ]),
-      el("div", {
-        className: "copy-project-locally-row-size",
-        textContent: candidate.sizeLabel || "Size unavailable",
-      }),
-    ]
-  );
-
-  syncCopyProjectLocallyRowSelectionState(row, candidate.selected === true, "sync");
-  return row;
-}
 
 function createLocalProjectManagerDirectionCandidateRow(
   candidate,
@@ -17666,26 +17394,7 @@ function buildLocalProjectManagerSyncSelectionPayload() {
   return buildLocalProjectManagerDirectionSelectionPayload("to_server");
 }
 
-function buildLocalProjectManagerSyncConfirmPayload() {
-  const syncState = copyProjectLocallyDialogState.sync;
-  const selectionPayload = buildLocalProjectManagerSyncSelectionPayload();
-  const serverPathInfo = getLocalProjectManagerServerPathInfo();
-  if (
-    syncState.previewLoaded !== true ||
-    !selectionPayload.hasSelection ||
-    !copyProjectLocallyDialogState.localProjectPath
-  ) {
-    return null;
-  }
-  return {
-    action: "sync",
-    localProjectPath: copyProjectLocallyDialogState.localProjectPath || "",
-    serverProjectPath:
-      syncState.resolvedServerProjectPath || serverPathInfo.path || "",
-    selectedRelativePaths: selectionPayload.selectedRelativePaths,
-    launchContext: deepCloneJson(copyProjectLocallyDialogState.launchContext, null),
-  };
-}
+
 
 function buildLocalProjectManagerCopyToServerReviewPayload() {
   const syncState = copyProjectLocallyDialogState.sync;
@@ -17757,128 +17466,9 @@ function getLocalProjectManagerFirstCopySelectionMetrics() {
   };
 }
 
-function updateLocalProjectManagerFooterLegacy() {
-  const summaryEl = document.getElementById("localProjectManagerFooterSummary");
-  const syncBtn = document.getElementById("localProjectManagerSyncBtn");
-  const fallbackVisible = shouldShowLocalProjectManagerServerPathFallback();
 
-  if (copyProjectLocallyDialogState.localProjectExists !== true) {
-    const metrics = getLocalProjectManagerFirstCopySelectionMetrics();
-    if (syncBtn) {
-      syncBtn.disabled =
-        copyProjectLocallyDialogState.copyPreviewLoaded !== true ||
-        fallbackVisible ||
-        metrics.hasSelection !== true;
-    }
-    if (!summaryEl) return;
-    if (fallbackVisible) {
-      summaryEl.textContent = "Select the project folder to continue.";
-      return;
-    }
-    if (copyProjectLocallyDialogState.copyPreviewLoaded !== true) {
-      summaryEl.textContent = "Loading server folders...";
-      return;
-    }
-    if (!metrics.hasSelection) {
-      summaryEl.textContent = "Select at least one server folder to create the local project copy.";
-      return;
-    }
-    summaryEl.textContent = `${metrics.count} folder${
-      metrics.count === 1 ? "" : "s"
-    } selected${metrics.totalBytes > 0 ? ` â€¢ ${formatCopyProjectLocallySizeLabel(metrics.totalBytes)}` : ""}`;
-    return;
-  }
 
-  const serverSelection = buildLocalProjectManagerDirectionSelectionPayload("to_local");
-  const localSelection = buildLocalProjectManagerDirectionSelectionPayload("to_server");
-  const selectedServerFiles = copyProjectLocallyDialogState.copyToLocal.candidateFiles.filter(
-    (entry) => entry.selected === true
-  );
-  const selectedLocalFiles = copyProjectLocallyDialogState.sync.candidateFiles.filter(
-    (entry) => entry.selected === true
-  );
-  const totalBytes = [...selectedServerFiles, ...selectedLocalFiles].reduce((sum, entry) => {
-    return sum + (Number.isFinite(entry?.sizeBytes) ? Number(entry.sizeBytes) : 0);
-  }, 0);
-  const hasSelection = serverSelection.hasSelection || localSelection.hasSelection;
-  if (syncBtn) {
-    syncBtn.disabled = fallbackVisible || hasSelection !== true;
-  }
-  if (!summaryEl) return;
-  if (fallbackVisible) {
-    summaryEl.textContent = "Select the project folder to continue.";
-    return;
-  }
-  if (!hasSelection) {
-    summaryEl.textContent = "Select files or folders to copy.";
-    return;
-  }
-  summaryEl.textContent = `Server ${selectedServerFiles.length} â€¢ Local ${
-    selectedLocalFiles.length
-  }${totalBytes > 0 ? ` â€¢ ${formatCopyProjectLocallySizeLabel(totalBytes)}` : ""}`;
-}
 
-function updateLocalProjectManagerFooterLegacyCurrent() {
-  const summaryEl = document.getElementById("localProjectManagerFooterSummary");
-  const syncBtn = document.getElementById("localProjectManagerSyncBtn");
-  const fallbackVisible = shouldShowLocalProjectManagerServerPathFallback();
-
-  if (copyProjectLocallyDialogState.localProjectExists !== true) {
-    const metrics = getLocalProjectManagerFirstCopySelectionMetrics();
-    if (syncBtn) {
-      syncBtn.disabled =
-        copyProjectLocallyDialogState.copyPreviewLoaded !== true ||
-        fallbackVisible ||
-        metrics.hasSelection !== true;
-    }
-    if (!summaryEl) return;
-    if (fallbackVisible) {
-      summaryEl.textContent = "Select the project folder to continue.";
-      return;
-    }
-    if (copyProjectLocallyDialogState.copyPreviewLoaded !== true) {
-      summaryEl.textContent = "Loading server folders...";
-      return;
-    }
-    if (!metrics.hasSelection) {
-      summaryEl.textContent =
-        "Select at least one server folder to create the local project copy.";
-      return;
-    }
-    summaryEl.textContent = `${metrics.count} folder${
-      metrics.count === 1 ? "" : "s"
-    } selected${metrics.totalBytes > 0 ? ` • ${formatCopyProjectLocallySizeLabel(metrics.totalBytes)}` : ""}`;
-    return;
-  }
-
-  const serverSelection = buildLocalProjectManagerDirectionSelectionPayload("to_local");
-  const localSelection = buildLocalProjectManagerDirectionSelectionPayload("to_server");
-  const selectedServerFiles = copyProjectLocallyDialogState.copyToLocal.candidateFiles.filter(
-    (entry) => entry.selected === true
-  );
-  const selectedLocalFiles = copyProjectLocallyDialogState.sync.candidateFiles.filter(
-    (entry) => entry.selected === true
-  );
-  const totalBytes = [...selectedServerFiles, ...selectedLocalFiles].reduce((sum, entry) => {
-    return sum + (Number.isFinite(entry?.sizeBytes) ? Number(entry.sizeBytes) : 0);
-  }, 0);
-  const hasSelection = serverSelection.hasSelection || localSelection.hasSelection;
-  if (syncBtn) {
-    syncBtn.disabled = fallbackVisible || hasSelection !== true;
-  }
-  if (!summaryEl) return;
-  if (fallbackVisible) {
-    summaryEl.textContent = "Select the project folder to continue.";
-    return;
-  }
-  if (!hasSelection) {
-    summaryEl.textContent = "Select files or folders to copy.";
-    return;
-  }
-  summaryEl.textContent = `Server ${selectedServerFiles.length} • Local ${
-    selectedLocalFiles.length
-  }${totalBytes > 0 ? ` • ${formatCopyProjectLocallySizeLabel(totalBytes)}` : ""}`;
-}
 
 function updateLocalProjectManagerFooter() {
   const summaryEl = document.getElementById("localProjectManagerFooterSummary");
@@ -18066,68 +17656,9 @@ function updateLocalProjectManagerFooter() {
   } selected | existing local project will be replaced`;
 }
 
-function renderLocalProjectManagerSyncSection() {
-  const syncState = copyProjectLocallyDialogState.sync;
-  const recommendationListEl = document.getElementById(
-    "localProjectManagerSyncRecommendationList"
-  );
-  const blockedListEl = document.getElementById("localProjectManagerSyncBlockedList");
-  const noticeEl = document.getElementById("localProjectManagerLocalNotice");
 
-  if (noticeEl) {
-    if (copyProjectLocallyDialogState.localProjectExists !== true) {
-      noticeEl.textContent = "No local project copy exists yet.";
-    } else if (syncState.previewError) {
-      noticeEl.textContent = syncState.previewError;
-    } else {
-      noticeEl.textContent =
-        "Local managed files can replace server files. Other folders only add missing content.";
-    }
-  }
 
-  renderLocalProjectManagerDirectionRecommendations(
-    recommendationListEl,
-    syncState.candidateFiles,
-    {
-      direction: "to_server",
-      loadingMessage: "Loading local items...",
-      emptyMessage:
-        copyProjectLocallyDialogState.localProjectExists !== true
-          ? "No local project copy exists yet."
-          : "No local items are available to sync.",
-    }
-  );
-  renderLocalProjectManagerBlockedEntries(
-    blockedListEl,
-    syncState.blockedEntries,
-    "localProjectManagerSyncBlockedSection"
-  );
-}
 
-function renderLocalProjectManagerCopyToLocalSection() {
-  const recommendationListEl = document.getElementById(
-    "localProjectManagerCopyToLocalRecommendationList"
-  );
-  const blockedListEl = document.getElementById(
-    "localProjectManagerCopyToLocalBlockedList"
-  );
-  const copyToLocalState = copyProjectLocallyDialogState.copyToLocal;
-
-  renderLocalProjectManagerDirectionRecommendations(
-    recommendationListEl,
-    copyToLocalState.candidateFiles,
-    {
-      direction: "to_local",
-      loadingMessage: "Loading server items...",
-      emptyMessage: "No server items are available to copy.",
-    }
-  );
-  renderLocalProjectManagerBlockedEntries(
-    blockedListEl,
-    copyToLocalState.blockedEntries,
-    "localProjectManagerCopyToLocalBlockedSection"
-  );
-}
 
 function resetLocalProjectManagerDirectionPreview(direction = "to_server") {
   const directionState = getLocalProjectManagerDirectionState(direction);
@@ -18210,25 +17741,7 @@ async function chooseAndPreviewCopyProjectLocallyServerFolder() {
   await autoCompareTimestampsAndSelectTab();
 }
 
-async function browseLocalProjectManagerServerPath() {
-  const selection = await window.pywebview.api.select_folder(
-    getLaunchContextProjectRoot(copyProjectLocallyDialogState.launchContext) || null
-  );
-  if (selection?.status === "error") {
-    throw new Error(selection.message || "Failed to choose a server project folder.");
-  }
-  if (!selection || selection.status === "cancelled" || !selection.path) {
-    return;
-  }
-  copyProjectLocallyDialogState.manualServerProjectPath = normalizeWindowsPath(
-    selection.path || ""
-  );
-  resetLocalProjectManagerDirectionPreview("to_local");
-  resetLocalProjectManagerDirectionPreview("to_server");
-  resetLocalProjectManagerReplacementReview();
-  copyProjectLocallyDialogState.copyLoadErrorMessage = "";
-  renderCopyProjectLocallyDialog();
-}
+
 
 async function loadLocalProjectManagerDirectionPreview(
   direction = "to_server",
@@ -18430,42 +17943,7 @@ async function ensureLocalProjectManagerActiveTabPreview({ force = false } = {})
   return null;
 }
 
-async function refreshLocalProjectManagerCurrentTab() {
-  const serverPathInfo = getLocalProjectManagerServerPathInfo();
-  if (!serverPathInfo.path) {
-    toast("Choose the server project folder before loading recommendations.", 7000);
-    return;
-  }
 
-  if (copyProjectLocallyDialogState.localProjectExists !== true) {
-    const preview = await window.pywebview.api.preview_copy_project_locally(
-      serverPathInfo.path,
-      copyProjectLocallyDialogState.launchContext || null
-    );
-    if (preview?.status !== "success") {
-      throw new Error(preview?.message || "Failed to load project folders.");
-    }
-    applyCopyProjectLocallyPreviewResult(
-      preview,
-      copyProjectLocallyDialogState.launchContext || null
-    );
-    renderCopyProjectLocallyDialog();
-    return;
-  }
-
-  if (copyProjectLocallyDialogState.manualServerProjectPath) {
-    await autoCompareTimestampsAndSelectTab();
-    return;
-  }
-
-  if (copyProjectLocallyDialogState.syncReviewVisible === true) {
-    await previewLocalProjectManagerSync();
-    return;
-  }
-  if (copyProjectLocallyDialogState.localProjectExists === true) {
-    await previewLocalProjectManagerCopyToLocal();
-  }
-}
 
 async function autoCompareTimestampsAndSelectTab() {
   const localProjectPath = copyProjectLocallyDialogState.localProjectPath || "";
@@ -18823,21 +18301,7 @@ async function exportSelectedDeliverablesToExcel() {
   }
 }
 
-function openDeliverablesExcelDialog() {
-  const dialog = document.getElementById("deliverableNotepadDlg");
-  if (!dialog) return;
 
-  deliverableNotepadEntries = buildDeliverableNotepadEntries(db);
-  deliverableNotepadSelectedEntryIds = [];
-
-  if (!deliverableNotepadEntries.length) {
-    toast("No deliverables found on projects.");
-    return;
-  }
-
-  renderDeliverableNotepadDialog();
-  dialog.showModal();
-}
 
 function compareDeliverablesByDue(a, b) {
   const da = parseDueStr(a?.due);
@@ -18877,20 +18341,9 @@ function getEarliestIncompleteDeliverable(project) {
   return deliverables[0];
 }
 
-function getPriorityDeliverable(project) {
-  const deliverables = getProjectDeliverables(project);
-  if (!deliverables.length) return null;
-  const priorityId = project?.overviewDeliverableId;
-  if (priorityId) {
-    const priority = deliverables.find((d) => d.id === priorityId);
-    if (priority) return priority;
-  }
-  return getEarliestIncompleteDeliverable(project) || deliverables[0];
-}
 
-function getPrimaryDeliverable(project) {
-  return getActiveAnchorDeliverable(project);
-}
+
+
 
 function getProjectListPriorityMeta(project) {
   const activeAnchorDeliverable = getActiveAnchorDeliverable(project);
@@ -19236,92 +18689,7 @@ function moveProjectsFilterOptionFocus(dropdown, currentOption, direction) {
   options[nextIndex]?.focus();
 }
 
-// ===================== RENDER LOGIC =====================
-function buildTasksNotesGrid(deliverable) {
-  const tasksNotesWrap = el("div", { className: "tasks-notes-grid" });
 
-  const tasksCol = el("div", { className: "tn-col tasks-col" });
-  tasksCol.appendChild(
-    el("div", { className: "tn-heading", textContent: "Tasks" })
-  );
-  const tasksBody = el("div", { className: "tn-body tasks-body" });
-  if (deliverable.tasks && deliverable.tasks.length) {
-    const renderTasks = (expanded) => {
-      tasksBody.innerHTML = "";
-      const tasksToShow = expanded
-        ? deliverable.tasks.map((task, index) => ({ task, index }))
-        : deliverable.tasks
-          .slice(0, 2)
-          .map((task, index) => ({ task, index }));
-      tasksToShow.forEach(({ task, index }) => {
-        const taskObj =
-          typeof task === "string"
-            ? { text: task, done: false, links: [] }
-            : task;
-        if (task !== taskObj) deliverable.tasks[index] = taskObj;
-        const taskChip = el("div", {
-          className: `task-chip ${taskObj.done ? "done" : ""}`,
-          textContent: taskObj.text || "Task",
-          role: "button",
-          tabIndex: 0,
-          "aria-pressed": String(!!taskObj.done),
-        });
-        const toggleTask = () => {
-          taskObj.done = !taskObj.done;
-          taskChip.classList.toggle("done", taskObj.done);
-          taskChip.setAttribute("aria-pressed", String(!!taskObj.done));
-          save();
-        };
-        taskChip.onclick = (e) => {
-          e.stopPropagation();
-          toggleTask();
-        };
-        taskChip.onkeydown = (e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            toggleTask();
-          }
-        };
-        tasksBody.appendChild(taskChip);
-      });
-      if (deliverable.tasks.length > 2) {
-        const moreBtn = el("button", {
-          className: "btn-more-tasks",
-          textContent: expanded
-            ? "Show Less"
-            : `+${deliverable.tasks.length - 2} more`,
-          onclick: (e) => {
-            e.stopPropagation();
-            renderTasks(!expanded);
-          },
-        });
-        tasksBody.appendChild(moreBtn);
-      }
-    };
-    renderTasks(false);
-  } else {
-    tasksBody.textContent = "--";
-  }
-  tasksCol.appendChild(tasksBody);
-
-  const notesCol = el("div", { className: "tn-col notes-col" });
-  notesCol.appendChild(
-    el("div", { className: "tn-heading", textContent: "Notes" })
-  );
-  const notesBody = el("div", { className: "tn-body notes-body" });
-  const notesText = (deliverable.notes || "").trim();
-  if (notesText) {
-    notesBody.appendChild(
-      el("div", { className: "note-snippet", textContent: notesText })
-    );
-  } else {
-    notesBody.textContent = "--";
-  }
-  notesCol.appendChild(notesBody);
-
-  tasksNotesWrap.append(tasksCol, notesCol);
-  return tasksNotesWrap;
-}
 
 // ===================== CARD-BASED DELIVERABLE RENDERING =====================
 
@@ -19587,12 +18955,7 @@ async function applyAttachmentOwnerEmailRefAtIndex(owner, slotIndex, nextRef, op
   return true;
 }
 
-async function applyDeliverableEmailRefAtIndex(deliverable, slotIndex, nextRef, options = {}) {
-  return applyAttachmentOwnerEmailRefAtIndex(deliverable, slotIndex, nextRef, {
-    ...options,
-    syncModalCard: true,
-  });
-}
+
 
 async function removeAttachmentOwnerEmailRefAtIndex(owner, slotIndex, options = {}) {
   const {
@@ -19633,12 +18996,7 @@ async function clearAttachmentOwnerEmailRefs(owner, options = {}) {
   return true;
 }
 
-async function removeDeliverableEmailRefAtIndex(deliverable, slotIndex, options = {}) {
-  return removeAttachmentOwnerEmailRefAtIndex(deliverable, slotIndex, {
-    ...options,
-    syncModalCard: true,
-  });
-}
+
 
 function renderAttachmentOwnerEmailSlots(container, descriptor = {}, options = {}) {
   if (!container || !descriptor?.owner) return;
@@ -19780,19 +19138,7 @@ function renderAttachmentOwnerEmailSlots(container, descriptor = {}, options = {
   }
 }
 
-function renderDeliverableEmailSlots(container, deliverable, options = {}) {
-  const { project = null, ...rest } = options;
-  return renderAttachmentOwnerEmailSlots(
-    container,
-    {
-      kind: "deliverable",
-      owner: deliverable,
-      deliverable,
-      project,
-    },
-    rest
-  );
-}
+
 
 let openDeliverableLinksContext = null;
 let deliverableLinksPanelElements = null;
@@ -20572,21 +19918,7 @@ function createAttachmentLinksControl(descriptor = {}, options = {}) {
   return control;
 }
 
-function createDeliverableLinksControl(deliverable, options = {}) {
-  const { project = null, ...rest } = options;
-  return createAttachmentLinksControl(
-    {
-      kind: "deliverable",
-      owner: deliverable,
-      deliverable,
-      project,
-    },
-    {
-      ...rest,
-      allowProjectScope: true,
-    }
-  );
-}
+
 
 function sameAttachmentList(a, b) {
   const left = normalizeAttachments(a);
@@ -21444,7 +20776,9 @@ function positionDropdownMenuInCardView(dropdown, isOpen) {
   const viewportH = window.innerHeight;
   const gap = 6;
   const margin = 8;
-  const isLeftAligned = menu.classList.contains("deliverable-status-menu");
+  const isLeftAligned =
+    menu.classList.contains("deliverable-status-menu") ||
+    dropdown.classList.contains("deliverable-card-tool-action");
 
   let left = isLeftAligned
     ? triggerRect.left
@@ -21656,6 +20990,7 @@ function createDeliverableToolDropdown(deliverable, project, card) {
 
     closeOpenDeliverableToolDropdown({ except: dropdown });
     closeOpenDeliverableStatusDropdowns();
+    closeOpenDeliverableActionsDropdown();
     if (openAttachmentPanelContext) {
       void requestAttachmentPanelClose();
     }
@@ -21687,6 +21022,426 @@ function createDeliverablePinButton(deliverable) {
     e.stopPropagation();
   });
   return button;
+}
+
+function closeDeliverableCardActionOverlays() {
+  closeOpenDeliverableToolDropdown();
+  closeOpenDeliverableStatusDropdowns();
+  closeOpenDeliverableActionsDropdown();
+  if (openAttachmentPanelContext) {
+    void requestAttachmentPanelClose();
+  }
+}
+
+function createDeliverableCardActionButton({
+  className = "",
+  title = "",
+  ariaLabel = "",
+  iconPath = "",
+  danger = false,
+  disabled = false,
+  onClick = null,
+} = {}) {
+  const button = el("button", {
+    className: `deliverable-card-action-btn ${className} ${
+      danger ? "danger" : ""
+    }`.trim(),
+    type: "button",
+    title,
+    "aria-label": ariaLabel || title,
+  });
+  if (disabled) button.disabled = true;
+  if (iconPath) button.appendChild(createIcon(iconPath, 14));
+  button.draggable = false;
+  button.addEventListener("dragstart", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  });
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (button.disabled) return;
+    const result = onClick?.(event);
+    if (result && typeof result.catch === "function") {
+      result.catch((error) => {
+        console.warn("Failed to run deliverable card action:", error);
+      });
+    }
+  });
+  return button;
+}
+
+function updateCoordinationTriggerState(button, project) {
+  if (!button) return;
+  const items = getProjectCoordinationItems(project);
+  const openCount = getProjectOpenCoordinationCount(project);
+  const countValue = button.querySelector(".deliverable-coordination-count");
+  if (countValue) countValue.textContent = String(openCount);
+  button.classList.toggle("has-open-coordination", openCount > 0);
+  button.classList.toggle("is-coordination-clear", openCount === 0);
+  const summaryLabel =
+    openCount > 0
+      ? `${openCount} open coordination item${openCount === 1 ? "" : "s"}`
+      : items.length
+        ? "All coordination items resolved"
+        : "No coordination items";
+  button.title = summaryLabel;
+  button.setAttribute("aria-label", summaryLabel);
+}
+
+function updateProjectCoordinationUi(project) {
+  if (!project) return;
+  const deliverableIds = new Set(
+    getProjectDeliverables(project)
+      .map((deliverable) => String(deliverable?.id || "").trim())
+      .filter(Boolean)
+  );
+  document
+    .querySelectorAll(".deliverable-card-new[data-deliverable-id]")
+    .forEach((card) => {
+      if (!deliverableIds.has(card.dataset.deliverableId)) return;
+      const button = card.querySelector(".deliverable-card-coordination-action");
+      if (button) updateCoordinationTriggerState(button, project);
+    });
+  if (projectsViewMode === "coordination") renderCoordinationView();
+}
+
+function createDeliverableCoordinationAction(deliverable, project, card) {
+  const button = createDeliverableCardActionButton({
+    className: "deliverable-card-coordination-action",
+    title: "Coordination items",
+    ariaLabel: "Coordination items",
+    iconPath: COORDINATION_ICON_PATH,
+    onClick: () => {
+      closeDeliverableCardActionOverlays();
+      openCoordinationDialog(project);
+    },
+  });
+  button.setAttribute("aria-haspopup", "dialog");
+  button.appendChild(
+    el("span", { className: "deliverable-coordination-count" })
+  );
+  updateCoordinationTriggerState(button, project);
+  return button;
+}
+
+let coordinationDialogProject = null;
+
+function populateCoordinationPartySelect() {
+  const select = document.getElementById("coordinationPartySelect");
+  if (!select) return;
+  select.innerHTML = "";
+  COORDINATION_PARTIES.forEach((party) => {
+    select.appendChild(el("option", { value: party, textContent: party }));
+  });
+  select.appendChild(
+    el("option", {
+      value: COORDINATION_OTHER_PARTY_VALUE,
+      textContent: "Other…",
+    })
+  );
+}
+
+function updateCoordinationCustomPartyVisibility() {
+  const select = document.getElementById("coordinationPartySelect");
+  const customField = document.getElementById("coordinationCustomPartyField");
+  if (!select || !customField) return;
+  customField.hidden = select.value !== COORDINATION_OTHER_PARTY_VALUE;
+}
+
+function resolveCoordinationPartyValue() {
+  const select = document.getElementById("coordinationPartySelect");
+  const customInput = document.getElementById("coordinationCustomPartyInput");
+  const selected = String(select?.value || "");
+  if (selected === COORDINATION_OTHER_PARTY_VALUE) {
+    return String(customInput?.value || "").trim();
+  }
+  return selected;
+}
+
+function getCoordinationPartyHue(party) {
+  const raw = String(party || "").trim().toLowerCase();
+  if (!raw) return 210;
+  let hash = 0;
+  for (let i = 0; i < raw.length; i++) {
+    hash = (hash * 31 + raw.charCodeAt(i)) % 360;
+  }
+  return hash;
+}
+
+function openCoordinationDialog(project) {
+  const dlg = document.getElementById("coordinationDlg");
+  if (!dlg || !project) return;
+  coordinationDialogProject = project;
+  if (!Array.isArray(project.coordinationItems)) {
+    project.coordinationItems = [];
+  }
+  const select = document.getElementById("coordinationPartySelect");
+  if (select && !select.options.length) populateCoordinationPartySelect();
+  if (select) select.value = COORDINATION_PARTIES[0];
+  const customInput = document.getElementById("coordinationCustomPartyInput");
+  if (customInput) customInput.value = "";
+  updateCoordinationCustomPartyVisibility();
+  const noteInput = document.getElementById("coordinationNoteInput");
+  if (noteInput) noteInput.value = "";
+  const dueInput = document.getElementById("coordinationDueInput");
+  if (dueInput) dueInput.value = "";
+  renderCoordinationItemList();
+  showDialog(dlg);
+  noteInput?.focus();
+}
+
+function renderCoordinationItemList() {
+  const list = document.getElementById("coordinationItemList");
+  if (!list) return;
+  list.innerHTML = "";
+  const project = coordinationDialogProject;
+  const items = getProjectCoordinationItems(project);
+  const openCount = getProjectOpenCoordinationCount(project);
+  const summary = document.getElementById("coordinationDlgSummary");
+  if (summary) {
+    summary.textContent = `${openCount} open / ${items.length} total`;
+  }
+  if (!items.length) {
+    list.appendChild(
+      el("div", {
+        className: "coordination-item-empty muted tiny",
+        textContent: "No coordination items yet.",
+      })
+    );
+    return;
+  }
+  items.forEach((item, index) => {
+    const row = el("div", {
+      className: `coordination-item-row ${item.done ? "is-done" : ""}`.trim(),
+    });
+    row.setAttribute("role", "listitem");
+    const checkbox = createWorkItemDoneCheckbox({
+      checked: item.done,
+      ariaLabel: "Mark coordination item resolved",
+      onToggle: async (nextDone) => {
+        item.done = nextDone === true;
+        renderCoordinationItemList();
+        updateProjectCoordinationUi(project);
+        await save();
+      },
+    });
+    const partyChip = el("span", {
+      className: "coordination-item-party",
+      textContent: item.party || "Unassigned",
+    });
+    partyChip.style.setProperty(
+      "--coordination-party-hue",
+      String(getCoordinationPartyHue(item.party))
+    );
+    const noteText = createInlineWorkItemTextControl({
+      textClassName: "coordination-item-note",
+      value: item.note || "",
+      fallbackText: "Coordination item",
+      title: "Click to edit coordination note",
+      ariaLabel: "Edit coordination note",
+      onCommit: async (nextText) => {
+        item.note = nextText;
+        renderCoordinationItemList();
+        updateProjectCoordinationUi(project);
+        await save();
+      },
+    });
+    const dueControl = createNoteDueDateControl({
+      value: item.dueDate || "",
+      allowAdd: !item.done,
+      onCommit: async (nextDueDate) => {
+        item.dueDate = nextDueDate;
+        renderCoordinationItemList();
+        await save();
+      },
+    });
+    dueControl.classList.add("coordination-item-due");
+    const deleteBtn = el("button", {
+      className: "coordination-item-delete-btn",
+      type: "button",
+      title: "Remove coordination item",
+      "aria-label": "Remove coordination item",
+      textContent: "x",
+    });
+    deleteBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      project.coordinationItems.splice(index, 1);
+      renderCoordinationItemList();
+      updateProjectCoordinationUi(project);
+      await save();
+    });
+    row.append(checkbox, partyChip, noteText, dueControl, deleteBtn);
+    list.appendChild(row);
+  });
+}
+
+async function addCoordinationItemFromDialog() {
+  const project = coordinationDialogProject;
+  if (!project) return;
+  const noteInput = document.getElementById("coordinationNoteInput");
+  const note = String(noteInput?.value || "").trim();
+  if (!note) {
+    toast("Enter a coordination note.");
+    noteInput?.focus();
+    return;
+  }
+  const party = resolveCoordinationPartyValue();
+  const dueInput = document.getElementById("coordinationDueInput");
+  if (dueInput) autoFormatDateInput(dueInput);
+  const dueDate = normalizeDeliverableNoteDueDate(dueInput?.value);
+  if (!Array.isArray(project.coordinationItems)) {
+    project.coordinationItems = [];
+  }
+  project.coordinationItems.push({
+    party,
+    note,
+    done: false,
+    dueDate,
+    createdAt: new Date().toISOString(),
+  });
+  if (noteInput) noteInput.value = "";
+  if (dueInput) dueInput.value = "";
+  noteInput?.focus();
+  renderCoordinationItemList();
+  updateProjectCoordinationUi(project);
+  await save();
+}
+
+function createDeliverableAttachmentAction(deliverable, project, card) {
+  ensureAttachmentPanel();
+
+  const attachmentDescriptor = {
+    kind: "deliverable",
+    owner: deliverable,
+    deliverable,
+    project,
+    scope: "projects-tab",
+  };
+  const getAttachments = () => getAttachmentOwnerAttachments(attachmentDescriptor);
+  let attachmentContext = null;
+  const button = createDeliverableCardActionButton({
+    className: "deliverable-card-attachment-action",
+    title: "Manage attachments",
+    ariaLabel: "Manage attachments",
+    iconPath: ATTACHMENT_ICON_PATH,
+    onClick: () => {
+      closeOpenDeliverableToolDropdown();
+      closeOpenDeliverableStatusDropdowns();
+      closeOpenDeliverableActionsDropdown();
+      openAttachmentPanel(attachmentContext);
+    },
+  });
+  button.setAttribute("aria-haspopup", "dialog");
+  button.setAttribute("aria-expanded", "false");
+
+  const setAttachments = async (nextAttachments) => {
+    const normalized = await setAttachmentOwnerAttachments(
+      attachmentDescriptor,
+      nextAttachments,
+      {
+        persistNow: true,
+        onChange: () => updateDeliverableWorkItemUi(card, deliverable),
+      }
+    );
+    updateAttachmentTriggerState(button, normalized);
+    return normalized;
+  };
+  attachmentContext = {
+    ...attachmentDescriptor,
+    trigger: button,
+    getAttachments,
+    setAttachments,
+  };
+
+  button.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    button.classList.add("is-dragover");
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+  });
+  button.addEventListener("dragleave", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    button.classList.remove("is-dragover");
+  });
+  button.addEventListener("drop", async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    button.classList.remove("is-dragover");
+    try {
+      await handleDeliverableActionsDrop(attachmentContext, event);
+    } catch (error) {
+      console.warn("Failed to process dropped files:", error);
+      toast(error?.message || "Unable to process dropped files.");
+    }
+  });
+
+  updateAttachmentTriggerState(button, getAttachments());
+  return button;
+}
+
+function createDeliverableCardTopActions(deliverable, project, card) {
+  const actions = el("div", {
+    className: "deliverable-card-action-row",
+  });
+  const leftActions = el("div", {
+    className: "deliverable-card-action-group deliverable-card-action-group-left",
+  });
+  const rightActions = el("div", {
+    className: "deliverable-card-action-group deliverable-card-action-group-right",
+  });
+
+  const statusDropdown = createStatusDropdown(deliverable, project, card);
+  statusDropdown.classList.add("deliverable-card-status-action");
+
+  const toolDropdown = createDeliverableToolDropdown(deliverable, project, card);
+  toolDropdown.classList.add("deliverable-card-tool-action");
+
+  const pinBtn = createDeliverablePinButton(deliverable);
+  pinBtn.classList.add(
+    "deliverable-card-action-btn",
+    "deliverable-card-pin-action"
+  );
+
+  const attachmentBtn = createDeliverableAttachmentAction(deliverable, project, card);
+  const coordinationBtn = createDeliverableCoordinationAction(
+    deliverable,
+    project,
+    card
+  );
+  leftActions.append(pinBtn, statusDropdown, toolDropdown);
+
+  const projectIndex = Array.isArray(db) ? db.indexOf(project) : -1;
+  if (project && projectIndex >= 0) {
+    rightActions.append(
+      createDeliverableCardActionButton({
+        className: "deliverable-card-delete-action",
+        title: "Delete project",
+        ariaLabel: "Delete project",
+        iconPath: TRASH_ICON_PATH,
+        danger: true,
+        onClick: () => {
+          closeDeliverableCardActionOverlays();
+          removeProject(projectIndex);
+        },
+      }),
+      createDeliverableCardActionButton({
+        className: "deliverable-card-edit-action",
+        title: "Edit project",
+        ariaLabel: "Edit project",
+        iconPath: PENCIL_ICON_PATH,
+        onClick: () => {
+          closeDeliverableCardActionOverlays();
+          openEdit(projectIndex);
+        },
+      })
+    );
+  }
+  rightActions.append(coordinationBtn, attachmentBtn);
+  actions.append(leftActions, rightActions);
+
+  return actions;
 }
 
 let openDeliverableActionsDropdown = null;
@@ -21800,14 +21555,7 @@ function ensureDeliverableActionsGlobalHandlers() {
   });
 }
 
-function setDeliverableActionsItemLabel(item, label) {
-  const labelEl = item?.querySelector?.(":scope > .deliverable-actions-item-label");
-  if (labelEl) {
-    labelEl.textContent = label;
-  } else if (item) {
-    item.textContent = label;
-  }
-}
+
 
 function buildDeliverableActionsItem({
   label,
@@ -22041,21 +21789,6 @@ function createDeliverableActionsDropdown(deliverable, project, card) {
     },
   });
   menu.appendChild(pinItem);
-
-  const expandItem = buildDeliverableActionsItem({
-    label: card?.classList.contains("details-collapsed") ? "Expand details" : "Collapse details",
-    iconPath: EXPAND_ICON_PATH,
-    onClick: () => {
-      setDeliverableActionsDropdownState(dropdown, false);
-      const nextCollapsed = !card.classList.contains("details-collapsed");
-      setDeliverableDetailsCollapsed(card, nextCollapsed);
-      setDeliverableActionsItemLabel(
-        expandItem,
-        nextCollapsed ? "Expand details" : "Collapse details"
-      );
-    },
-  });
-  menu.appendChild(expandItem);
 
   const statusSubmenu = buildDeliverableActionsSubmenu("Status", (submenu) => {
     const availableStatuses = [
@@ -22310,8 +22043,6 @@ function createCardHeader(deliverable, isPrimary, card, project) {
   title.appendChild(nameSpan);
 
   leftSection.appendChild(title);
-  const taskCountBadge = createDeliverableTaskCountBadge(deliverable);
-  leftSection.appendChild(taskCountBadge);
 
   // Due date badge - now on the left after title
   if (deliverable.due) {
@@ -22347,19 +22078,15 @@ function createCardHeader(deliverable, isPrimary, card, project) {
 
   header.appendChild(leftSection);
 
-  // Right section: single consolidated actions dropdown
-  const actions = el("div", { className: "deliverable-header-actions" });
-  const actionsDropdown = createDeliverableActionsDropdown(deliverable, project, card);
-  actions.append(actionsDropdown);
-  header.appendChild(actions);
-
   return header;
 }
 
 function createExpandToggle(card) {
   const btn = el("button", {
     className: "deliverable-expand-toggle",
-    title: "Expand/collapse details"
+    type: "button",
+    title: "Expand details",
+    "aria-label": "Expand details",
   });
 
   // Create expand icon (outward arrows)
@@ -22384,14 +22111,25 @@ function createExpandToggle(card) {
 
   btn.append(expandSvg, contractSvg);
 
+  const syncLabel = () => {
+    const isCollapsed = card.classList.contains("details-collapsed");
+    const label = isCollapsed ? "Expand details" : "Collapse details";
+    btn.title = label;
+    btn.setAttribute("aria-label", label);
+  };
+
   btn.onclick = (e) => {
+    e.preventDefault();
     e.stopPropagation();
+    closeDeliverableCardActionOverlays();
     setDeliverableDetailsCollapsed(
       card,
       !card.classList.contains("details-collapsed")
     );
+    syncLabel();
   };
 
+  syncLabel();
   return btn;
 }
 
@@ -22487,7 +22225,6 @@ function createStatusDropdown(deliverable, project, card) {
   ];
   const dropdown = el("div", { className: "deliverable-status-dropdown" });
 
-  // Trigger button - compact ellipsis icon
   const trigger = el("button", {
     className: "deliverable-status-trigger",
     type: "button",
@@ -22495,13 +22232,9 @@ function createStatusDropdown(deliverable, project, card) {
     "aria-label": "Status options",
     "aria-expanded": "false"
   });
-
-  const dotsSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  dotsSvg.setAttribute("viewBox", "0 0 24 24");
-  dotsSvg.setAttribute("fill", "currentColor");
-  dotsSvg.innerHTML = '<circle cx="6" cy="12" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="18" cy="12" r="1.6"></circle>';
-
-  trigger.appendChild(dotsSvg);
+  const statusIcon = createIcon(STATUS_ICON_PATH, 14);
+  statusIcon.classList.add("deliverable-status-trigger-icon");
+  trigger.appendChild(statusIcon);
 
   // Dropdown menu - status options only (no Show details)
   const menu = el("div", { className: "deliverable-status-menu" });
@@ -22552,6 +22285,7 @@ function createStatusDropdown(deliverable, project, card) {
 
     closeOpenDeliverableStatusDropdowns(dropdown);
     closeOpenDeliverableToolDropdown();
+    closeOpenDeliverableActionsDropdown();
     if (openAttachmentPanelContext) {
       void requestAttachmentPanelClose();
     }
@@ -22570,6 +22304,15 @@ function createStatusDropdown(deliverable, project, card) {
   return dropdown;
 }
 
+function updateDeliverableStatusRowVisibility(statusSection) {
+  if (!statusSection) return;
+  const hasStatusBadges = !!statusSection.querySelector(".deliverable-status-badge");
+  const pinnedHost = statusSection.querySelector(".deliverable-pinned-inline-group");
+  const hasPinnedPreview =
+    !!pinnedHost && !pinnedHost.hidden && pinnedHost.childElementCount > 0;
+  statusSection.hidden = !hasStatusBadges && !hasPinnedPreview;
+}
+
 function createDeliverableStatusSection(deliverable, project, card) {
   const statusSection = el("div", { className: "deliverable-status-row" });
   const statusBadges = createStatusBadges(deliverable);
@@ -22580,11 +22323,11 @@ function createDeliverableStatusSection(deliverable, project, card) {
     className: "deliverable-pinned-inline-group",
     hidden: true,
   });
-  const statusDropdown = createStatusDropdown(deliverable, project, card);
 
   renderDeliverablePinnedPreview(pinnedHost, deliverable);
-  statusInlineGroup.append(pinnedHost, statusDropdown);
+  statusInlineGroup.append(pinnedHost);
   statusSection.append(statusBadges, statusInlineGroup);
+  updateDeliverableStatusRowVisibility(statusSection);
   return statusSection;
 }
 
@@ -22851,6 +22594,7 @@ function renderDeliverableCardLegacy(deliverable, isPrimary, project) {
   card.dataset.deliverableId = deliverableId;
 
   // Header: name + due badge + expand toggle (pass card for toggle)
+  const actionRow = createDeliverableCardTopActions(deliverable, project, card);
   const header = createCardHeader(deliverable, isPrimary, card, project);
 
   // Progress: bar + percentage text
@@ -22869,7 +22613,7 @@ function renderDeliverableCardLegacy(deliverable, isPrimary, project) {
   // Notes section (always visible when expanded, no toggle)
   const notesSection = createNotesSectionLegacy(deliverable, project);
 
-  card.append(header, progress, statusSection, tasksPreview, notesSection);
+  card.append(actionRow, header, progress, statusSection, tasksPreview, notesSection);
   updateDeliverableTaskStats(card, deliverable);
   return card;
 }
@@ -22914,6 +22658,9 @@ function updateDeliverableWorkItemUi(card, deliverable) {
   renderDeliverablePinnedPreview(
     card?.querySelector(".deliverable-pinned-inline-group"),
     deliverable
+  );
+  updateDeliverableStatusRowVisibility(
+    card?.querySelector(".deliverable-status-row")
   );
 }
 
@@ -23047,32 +22794,51 @@ function createInlineWorkItemTextControl({
   return wrapper;
 }
 
+
+
 function createNotesSection(deliverable, card, project = null) {
-  syncDeliverableNoteFields(deliverable);
-  const section = el("div", { className: "deliverable-notes-section" });
-  const header = el("div", { className: "deliverable-notes-header-simple" });
-  const titleText = el("span", {
-    className: "deliverable-notes-label",
-    textContent: "Notes",
-  });
-  header.appendChild(titleText);
-
+  syncDeliverableWorkItemFields(deliverable);
+  const section = el("div", { className: "deliverable-notes-footer" });
   const list = el("div", { className: "deliverable-notes-list-edit" });
+  const controls = el("div", { className: "deliverable-notes-footer-controls" });
+  const addNoteBtn = el("button", {
+    className: "deliverable-note-add-btn",
+    type: "button",
+    title: "Add note",
+    "aria-label": "Add note",
+  });
+  addNoteBtn.appendChild(createIcon(NOTE_ICON_PATH, 14));
+  const toggleBtn = el("button", {
+    className: "deliverable-notes-toggle",
+    type: "button",
+  });
+  controls.append(addNoteBtn, toggleBtn);
 
-  const renderNoteList = () => {
+  let notesExpanded = false;
+  let isAddingNote = false;
+
+  const getNoteEntries = () => {
+    syncDeliverableWorkItemFields(deliverable);
+    const noteItems = Array.isArray(deliverable.noteItems)
+      ? deliverable.noteItems
+      : [];
+    return getDeliverableNoteSortEntries(noteItems).map(({ index }) => {
+      noteItems[index] = normalizeDeliverableNoteItem(noteItems[index]);
+      return { note: noteItems[index], index };
+    });
+  };
+
+  const renderNoteList = ({ focusInput = false } = {}) => {
     list.innerHTML = "";
 
-    getPinnedDeliverableNoteEntries(deliverable).forEach(({ item: noteItem, index }) => {
-      deliverable.noteItems[index] = normalizeDeliverableNoteItem(
-        deliverable.noteItems[index]
-      );
-      const liveNote = deliverable.noteItems[index];
-      const row = el("div", { className: "deliverable-note-item" });
-      const icon = el("span", {
-        className: "note-icon",
-        "aria-hidden": "true",
+    const noteEntries = getNoteEntries();
+    const visibleEntries = notesExpanded ? noteEntries : noteEntries.slice(0, 2);
+
+    visibleEntries.forEach(({ note: liveNote, index }) => {
+      const row = el("div", {
+        className: "deliverable-note-row",
+        tabindex: "0",
       });
-      icon.appendChild(createIcon(NOTE_ICON_PATH, 12));
       const content = el("div", { className: "work-item-content" });
       const textControl = createInlineWorkItemTextControl({
         textClassName: "note-text",
@@ -23088,44 +22854,13 @@ function createNotesSection(deliverable, card, project = null) {
           await save();
         },
       });
-      const attachments = createWorkItemAttachmentControls({
-        kind: "note",
-        owner: liveNote,
-        deliverable,
-        project,
-        persistNow: true,
-        scope: "projects-tab",
-        onChange: () => {
-          updateDeliverableWorkItemUi(card, deliverable);
-        },
-      });
-      const pinBtn = createWorkItemPinButton({
-        pinned: !!liveNote.pinned,
-        titlePinned: "Unpin note",
-        titleUnpinned: "Pin note",
-        onToggle: async (nextPinned) => {
-          liveNote.pinned = nextPinned;
-          if (
-            deliverable.noteItems[index] &&
-            typeof deliverable.noteItems[index] === "object" &&
-            !Array.isArray(deliverable.noteItems[index])
-          ) {
-            deliverable.noteItems[index].pinned = nextPinned;
-          }
-          syncDeliverableWorkItemFields(deliverable);
-          renderNoteList();
-          updateDeliverableWorkItemUi(card, deliverable);
-          await save();
-          return nextPinned;
-        },
-      });
       const deleteBtn = el("button", {
-        className: "task-delete-btn",
+        className: "deliverable-note-delete-btn",
         type: "button",
         title: "Remove note",
-        textContent: "×",
+        "aria-label": "Remove note",
+        textContent: "x",
       });
-      const actions = el("div", { className: "work-item-actions" });
       deleteBtn.addEventListener("click", async (e) => {
         e.stopPropagation();
         await clearAttachmentOwnerEmailRefs(liveNote);
@@ -23135,81 +22870,116 @@ function createNotesSection(deliverable, card, project = null) {
         renderNoteList();
         await save();
       });
-      actions.append(attachments, pinBtn, deleteBtn);
+      const dueControl = createNoteDueDateControl({
+        value: liveNote.dueDate || "",
+        allowAdd: true,
+        onCommit: async (nextDueDate) => {
+          liveNote.dueDate = nextDueDate;
+          syncDeliverableNoteFields(deliverable);
+          updateDeliverableWorkItemUi(card, deliverable);
+          renderNoteList();
+          await save();
+        },
+      });
       content.append(textControl);
-      row.append(icon, content, actions);
+      row.append(content, dueControl, deleteBtn);
       list.appendChild(row);
     });
 
-    const addNoteRow = el("div", { className: "task-add-row" });
-    const noteBullet = el("span", {
-      className: "note-icon note-add-bullet",
-      "aria-hidden": "true",
-    });
-    noteBullet.appendChild(createIcon(NOTE_ICON_PATH, 12));
-    const noteInput = el("input", {
-      className: "task-add-input note-add-input",
-      type: "text",
-      placeholder: "Add a note...",
-    });
+    if (isAddingNote) {
+      const addNoteRow = el("div", { className: "deliverable-note-add-row" });
+      const noteInput = el("input", {
+        className: "deliverable-note-add-input",
+        type: "text",
+        placeholder: "Add a note...",
+      });
 
-    let isCommittingNote = false;
-    const commitPendingNote = async ({ refocus = false } = {}) => {
-      const noteText = noteInput.value.trim();
-      if (!noteText || isCommittingNote) return false;
+      let isCommittingNote = false;
+      const finishAddingNote = async (mode = "commit") => {
+        if (isCommittingNote) return false;
+        const noteText = noteInput.value.trim();
+        if (mode === "cancel" || !noteText) {
+          isAddingNote = false;
+          renderNoteList();
+          return false;
+        }
 
-      isCommittingNote = true;
+        isCommittingNote = true;
         noteInput.value = "";
-      try {
         deliverable.noteItems.push({
           text: noteText,
           pinned: false,
+          dueDate: "",
           attachments: [],
         });
+        notesExpanded = true;
+        isAddingNote = false;
         syncDeliverableNoteFields(deliverable);
         updateDeliverableWorkItemUi(card, deliverable);
         await save();
         renderNoteList();
-
-        if (refocus) {
-          setTimeout(() => {
-            const newNoteInput = list.querySelector(".note-add-input");
-            if (newNoteInput) {
-              newNoteInput.focus();
-              newNoteInput.select();
-            }
-          }, 0);
-        }
         return true;
-      } finally {
-        isCommittingNote = false;
+      };
+
+      noteInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          e.stopPropagation();
+          void finishAddingNote("commit");
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          e.stopPropagation();
+          void finishAddingNote("cancel");
+        }
+      });
+
+      noteInput.addEventListener("blur", () => {
+        setTimeout(() => {
+          void finishAddingNote("commit");
+        }, 0);
+      });
+
+      noteInput.addEventListener("click", (e) => {
+        e.stopPropagation();
+      });
+
+      addNoteRow.append(noteInput);
+      list.appendChild(addNoteRow);
+
+      if (focusInput) {
+        setTimeout(() => {
+          noteInput.focus();
+          noteInput.select();
+        }, 0);
       }
-    };
+    }
 
-    noteInput.addEventListener("keydown", async (e) => {
-      if (e.key !== "Enter") return;
-      e.preventDefault();
-      e.stopPropagation();
-      await commitPendingNote({ refocus: true });
-    });
-
-    noteInput.addEventListener("blur", () => {
-      if (!noteInput.value.trim()) return;
-      setTimeout(() => {
-        void commitPendingNote({ refocus: false });
-      }, 0);
-    });
-
-    noteInput.addEventListener("click", (e) => {
-      e.stopPropagation();
-    });
-
-    addNoteRow.append(noteBullet, noteInput);
-    list.appendChild(addNoteRow);
+    const hasOverflow = noteEntries.length > 2;
+    toggleBtn.hidden = !hasOverflow;
+    toggleBtn.textContent = notesExpanded ? "Hide notes" : "Show all notes";
+    toggleBtn.setAttribute("aria-expanded", String(notesExpanded));
+    toggleBtn.setAttribute(
+      "aria-label",
+      notesExpanded ? "Hide notes" : "Show all notes"
+    );
   };
 
+  addNoteBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    isAddingNote = true;
+    renderNoteList({ focusInput: true });
+  });
+
+  toggleBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    notesExpanded = !notesExpanded;
+    renderNoteList();
+  });
+
   renderNoteList();
-  section.append(header, list);
+  section.append(list, controls);
   return section;
 }
 
@@ -23394,12 +23164,12 @@ function renderDeliverableCard(deliverable, isPrimary, project) {
   const card = el("div", {
     className: `deliverable-card-new ${isPrimary ? "is-primary" : ""} ${
       isDeliverablePinned(deliverable) ? "is-pinned-deliverable" : ""
-    } details-collapsed`,
+    }`,
   });
   card.dataset.deliverableId = deliverableId;
 
+  const actionRow = createDeliverableCardTopActions(deliverable, project, card);
   const header = createCardHeader(deliverable, isPrimary, card, project);
-  const progress = createProgressSection(deliverable);
 
   const statusSection = createDeliverableStatusSection(
     deliverable,
@@ -23407,10 +23177,9 @@ function renderDeliverableCard(deliverable, isPrimary, project) {
     card
   );
 
-  const tasksPreview = createTasksPreview(deliverable, card, project);
   const notesSection = createNotesSection(deliverable, card, project);
 
-  card.append(header, progress, statusSection, tasksPreview, notesSection);
+  card.append(actionRow, header, statusSection, notesSection);
   updateDeliverableWorkItemUi(card, deliverable);
   return card;
 }
@@ -23924,19 +23693,7 @@ function sortProjectsByCurrent(items, projectListContextMap = null) {
   });
 }
 
-function sortProjectsByDueDesc(items, projectListContextMap = null) {
-  items.sort((a, b) => {
-    const dir = currentSort.dir === "asc" ? 1 : -1;
-    const bucketDiff = compareProjectListSortBuckets(a, b, projectListContextMap);
-    if (bucketDiff) return bucketDiff;
-    const da = getProjectSortKey(a, projectListContextMap?.get(a));
-    const dbb = getProjectSortKey(b, projectListContextMap?.get(b));
-    if (!da && !dbb) return 0;
-    if (!da) return 1;
-    if (!dbb) return -1;
-    return (da - dbb) * dir;
-  });
-}
+
 
 function compareDueDateValues(aDate, bDate, direction = "asc") {
   if (!aDate && !bDate) return 0;
@@ -24246,37 +24003,7 @@ function getDeliverableCardSavedPath(project, deliverable) {
   return deliverablePath || String(project?.path || "").trim();
 }
 
-function createSavedPathButton(project, deliverable = null) {
-  const savedPath = getDeliverableCardSavedPath(project, deliverable);
-  const button = createIconButton({
-    className: "btn icon-only",
-    title: savedPath ? "Open saved file path" : "No saved file path",
-    ariaLabel: savedPath ? "Open saved file path" : "No saved file path",
-    path: FOLDER_ICON_PATH,
-    onClick: async () => {
-      if (!savedPath) {
-        toast("No saved file path.");
-        return;
-      }
-      if (!window.pywebview?.api?.open_path) {
-        toast("Open path is unavailable.");
-        return;
-      }
-      try {
-        const result = await window.pywebview.api.open_path(convertPath(savedPath));
-        if (result?.status && result.status !== "success") {
-          throw new Error(result.message || "Unable to open saved file path.");
-        }
-        toast("Opening path...");
-      } catch (error) {
-        toast(error?.message || "Unable to open saved file path.");
-      }
-    },
-  });
-  button.draggable = false;
-  button.disabled = !savedPath;
-  return button;
-}
+
 
 function buildProjectDirectoryPayload(project) {
   return {
@@ -24412,37 +24139,42 @@ function attachProjectDirectoryContextMenu(target, project) {
   return target;
 }
 
-function createProjectActionButtons(
-  projectIndex,
-  className = "actions-stack",
-  { includeFolderButton = false, project = null, deliverable = null } = {}
-) {
-  const actionsStack = el("div", { className });
-  if (includeFolderButton) {
-    actionsStack.appendChild(createSavedPathButton(project, deliverable));
+function attachCardProjectPathOpen(target, project) {
+  if (!target) return target;
+  target.dataset.projectPathOpen = "true";
+  target.setAttribute("role", "button");
+  target.setAttribute("tabindex", "0");
+  const path = String(project?.path || "").trim();
+  if (path) {
+    target.title = `Open: ${path}`;
   }
-  const editButton = createIconButton({
-    className: "btn icon-only",
-    title: "Edit",
-    ariaLabel: "Edit project",
-    path: PENCIL_ICON_PATH,
-    onClick: () => openEdit(projectIndex),
-  });
-  const deleteButton = createIconButton({
-    className: "btn btn-danger icon-only",
-    title: "Delete",
-    ariaLabel: "Delete project",
-    path: TRASH_ICON_PATH,
-    onClick: () => removeProject(projectIndex),
-  });
-  editButton.draggable = false;
-  deleteButton.draggable = false;
-  actionsStack.append(editButton, deleteButton);
-  actionsStack.addEventListener("dragstart", (event) => {
+  const openPath = async (event) => {
     event.preventDefault();
     event.stopPropagation();
+    if (!path) {
+      toast("No project path saved.");
+      return;
+    }
+    if (!window.pywebview?.api?.open_path) {
+      toast("Open path is unavailable.");
+      return;
+    }
+    try {
+      const result = await window.pywebview.api.open_path(convertPath(path));
+      if (result?.status && result.status !== "success") {
+        throw new Error(result.message || "Unable to open folder.");
+      }
+      toast("Opening folder...");
+    } catch (error) {
+      toast(error?.message || "Failed to open path.");
+    }
+  };
+  target.addEventListener("click", openPath);
+  target.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    void openPath(event);
   });
-  return actionsStack;
+  return target;
 }
 
 function buildProjectTableRow(project, projectIndex, rowTemplate) {
@@ -24544,12 +24276,6 @@ function buildProjectTableRow(project, projectIndex, rowTemplate) {
         })
       );
     }
-  }
-
-  const actionsCell = tr.querySelector(".cell-actions");
-  if (actionsCell) {
-    actionsCell.innerHTML = "";
-    actionsCell.append(createProjectActionButtons(projectIndex));
   }
 
   return tr;
@@ -24760,7 +24486,7 @@ function createContextSnippet(text, q, contextChars = 60) {
 
 function buildMatchContextRow(q, project, context) {
   const tr = el("tr", { className: "search-context-row" });
-  const td = el("td", { colSpan: 6 });
+  const td = el("td", { colSpan: 5 });
   const container = el("div", { className: "search-context" });
 
   if (context.projectFields.includes("notes") && project.notes) {
@@ -24792,14 +24518,6 @@ function buildMatchContextRow(q, project, context) {
       container.appendChild(item);
     });
 
-    dCtx.matchingTasks.forEach((taskText) => {
-      const item = el("div", { className: "search-context-item" });
-      item.append(
-        el("span", { className: "search-context-label", textContent: d.name + " Task: " })
-      );
-      item.appendChild(highlightText(taskText, q));
-      container.appendChild(item);
-    });
   });
 
   if (!container.children.length) return null;
@@ -24834,31 +24552,190 @@ function formatProjectWeekLabel(weekStart) {
     : `${startMonth} ${startDay} – ${endMonth} ${endDay}, ${year}`;
 }
 
+function getProjectsWithCoordinationItems() {
+  return db.filter(
+    (project) => getProjectCoordinationItems(project).length > 0
+  );
+}
+
+function getEarliestOpenCoordinationDueMs(project) {
+  let earliest = Infinity;
+  getProjectCoordinationItems(project).forEach((item) => {
+    if (item?.done) return;
+    const due = parseDueStr(item?.dueDate);
+    if (due && due.getTime() < earliest) earliest = due.getTime();
+  });
+  return earliest;
+}
+
+function sortCoordinationItemsForDisplay(items) {
+  return items.slice().sort((a, b) => {
+    if ((a?.done === true) !== (b?.done === true)) return a?.done ? 1 : -1;
+    const aMs = parseDueStr(a?.dueDate)?.getTime() ?? Infinity;
+    const bMs = parseDueStr(b?.dueDate)?.getTime() ?? Infinity;
+    return aMs - bMs;
+  });
+}
+
+function renderCoordinationProjectPanel(project) {
+  const panel = el("section", { className: "coordination-project-panel" });
+
+  const header = el("button", {
+    className: "coordination-project-header",
+    type: "button",
+    title: "Open coordination items",
+  });
+  const heading = el("div", { className: "coordination-project-heading" });
+  const title = el("div", {
+    className: "coordination-project-title",
+    textContent: project.nick || project.name || "Untitled project",
+  });
+  const meta = el("div", {
+    className: "coordination-project-meta muted tiny",
+    textContent: [project.id, project.nick ? project.name : ""]
+      .filter(Boolean)
+      .join(" — "),
+  });
+  heading.append(title);
+  if (meta.textContent) heading.append(meta);
+  const openCount = getProjectOpenCoordinationCount(project);
+  const countBadge = el("span", {
+    className: `coordination-project-count ${openCount ? "" : "is-clear"}`.trim(),
+    textContent: openCount
+      ? `${openCount} open`
+      : "All resolved",
+  });
+  header.append(heading, countBadge);
+  header.addEventListener("click", () => openCoordinationDialog(project));
+
+  const list = el("div", { className: "coordination-item-list stack" });
+  list.setAttribute("role", "list");
+  sortCoordinationItemsForDisplay(getProjectCoordinationItems(project)).forEach(
+    (item) => {
+      const row = el("div", {
+        className: `coordination-item-row ${item.done ? "is-done" : ""}`.trim(),
+      });
+      row.setAttribute("role", "listitem");
+      const checkbox = createWorkItemDoneCheckbox({
+        checked: item.done,
+        ariaLabel: "Mark coordination item resolved",
+        onToggle: async (nextDone) => {
+          item.done = nextDone === true;
+          updateProjectCoordinationUi(project);
+          await save();
+        },
+      });
+      const partyChip = el("span", {
+        className: "coordination-item-party",
+        textContent: item.party || "Unassigned",
+      });
+      partyChip.style.setProperty(
+        "--coordination-party-hue",
+        String(getCoordinationPartyHue(item.party))
+      );
+      const noteText = createInlineWorkItemTextControl({
+        textClassName: "coordination-item-note",
+        value: item.note || "",
+        fallbackText: "Coordination item",
+        title: "Click to edit coordination note",
+        ariaLabel: "Edit coordination note",
+        onCommit: async (nextText) => {
+          item.note = nextText;
+          updateProjectCoordinationUi(project);
+          await save();
+        },
+      });
+      const dueControl = createNoteDueDateControl({
+        value: item.dueDate || "",
+        allowAdd: !item.done,
+        onCommit: async (nextDueDate) => {
+          item.dueDate = nextDueDate;
+          updateProjectCoordinationUi(project);
+          await save();
+        },
+      });
+      dueControl.classList.add("coordination-item-due");
+      const deleteBtn = el("button", {
+        className: "coordination-item-delete-btn",
+        type: "button",
+        title: "Remove coordination item",
+        "aria-label": "Remove coordination item",
+        textContent: "x",
+      });
+      deleteBtn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const liveIndex = project.coordinationItems.indexOf(item);
+        if (liveIndex >= 0) project.coordinationItems.splice(liveIndex, 1);
+        updateProjectCoordinationUi(project);
+        await save();
+      });
+      row.append(checkbox, partyChip, noteText, dueControl, deleteBtn);
+      list.appendChild(row);
+    }
+  );
+
+  panel.append(header, list);
+  return panel;
+}
+
+function renderCoordinationView() {
+  const host = document.getElementById("projectsCoordinationView");
+  if (!host) return;
+  host.innerHTML = "";
+  const projects = getProjectsWithCoordinationItems();
+  if (!projects.length) {
+    host.appendChild(
+      el("div", {
+        className: "coordination-view-empty muted",
+        textContent:
+          "No coordination items yet. Add them from any deliverable card's coordination button.",
+      })
+    );
+    return;
+  }
+  projects.sort(
+    (a, b) =>
+      getEarliestOpenCoordinationDueMs(a) - getEarliestOpenCoordinationDueMs(b)
+  );
+  projects.forEach((project) =>
+    host.appendChild(renderCoordinationProjectPanel(project))
+  );
+}
+
 function updateProjectsViewModeUi() {
   const listBtn = document.getElementById("viewToggleList");
   const cardBtn = document.getElementById("viewToggleCard");
+  const coordinationBtn = document.getElementById("viewToggleCoordination");
   const isCard = projectsViewMode === "card";
+  const isCoordination = projectsViewMode === "coordination";
+  const isList = !isCard && !isCoordination;
   if (listBtn) {
-    listBtn.classList.toggle("is-active", !isCard);
-    listBtn.setAttribute("aria-pressed", String(!isCard));
+    listBtn.classList.toggle("is-active", isList);
+    listBtn.setAttribute("aria-pressed", String(isList));
   }
   if (cardBtn) {
     cardBtn.classList.toggle("is-active", isCard);
     cardBtn.setAttribute("aria-pressed", String(isCard));
   }
+  if (coordinationBtn) {
+    coordinationBtn.classList.toggle("is-active", isCoordination);
+    coordinationBtn.setAttribute("aria-pressed", String(isCoordination));
+  }
   if (document.body) {
-    document.body.dataset.projectsViewMode = isCard ? "card" : "list";
+    document.body.dataset.projectsViewMode = projectsViewMode;
   }
   const table = document.querySelector("#projects-panel .projects-table");
   const cardView = document.getElementById("projectsCardView");
   const cardControls = document.getElementById("projectsCardControls");
+  const coordinationView = document.getElementById("projectsCoordinationView");
   const emptyState = document.getElementById("emptyState");
   const filterControls = document.getElementById("projectsFilterControls");
-  if (table) table.hidden = isCard;
+  if (table) table.hidden = !isList;
   if (cardView) cardView.hidden = !isCard;
   if (cardControls) cardControls.hidden = !isCard;
-  if (filterControls) filterControls.hidden = isCard;
-  if (emptyState && isCard) emptyState.style.display = "none";
+  if (coordinationView) coordinationView.hidden = !isCoordination;
+  if (filterControls) filterControls.hidden = !isList;
+  if (emptyState && !isList) emptyState.style.display = "none";
 }
 
 function updateProjectsLayoutWidthUi() {
@@ -24884,23 +24761,35 @@ function updateProjectsLayoutWidthUi() {
 
 function updateProjectsEmptyColumnUi() {
   const enabled = minimizeEmptyProjectColumns !== false;
+  const hideEnabled = hideEmptyProjectColumns === true;
   if (document.body) {
     document.body.dataset.minimizeEmptyProjectColumns = enabled ? "true" : "false";
+    document.body.dataset.hideEmptyProjectColumns = hideEnabled ? "true" : "false";
   }
 
   const cardView = document.getElementById("projectsCardView");
   if (cardView) {
     cardView.classList.toggle("minimize-empty-columns", enabled);
+    cardView.classList.toggle("hide-empty-columns", hideEnabled);
   }
 
   const toggleBtn = document.getElementById("projectsEmptyColumnsToggle");
-  if (!toggleBtn) return;
+  if (toggleBtn) {
+    const stateLabel = enabled ? "Minimize empty columns" : "Use full-width empty columns";
+    toggleBtn.classList.toggle("is-active", enabled);
+    toggleBtn.setAttribute("aria-pressed", String(enabled));
+    toggleBtn.setAttribute("aria-label", stateLabel);
+    toggleBtn.title = stateLabel;
+  }
 
-  const stateLabel = enabled ? "Minimize empty columns" : "Use full-width empty columns";
-  toggleBtn.classList.toggle("is-active", enabled);
-  toggleBtn.setAttribute("aria-pressed", String(enabled));
-  toggleBtn.setAttribute("aria-label", stateLabel);
-  toggleBtn.title = stateLabel;
+  const hideToggleBtn = document.getElementById("projectsHideEmptyColumnsToggle");
+  if (hideToggleBtn) {
+    const title = hideEnabled ? "Show empty columns" : "Hide empty columns";
+    hideToggleBtn.classList.toggle("is-active", hideEnabled);
+    hideToggleBtn.setAttribute("aria-pressed", String(hideEnabled));
+    hideToggleBtn.setAttribute("aria-label", "Hide empty columns");
+    hideToggleBtn.title = title;
+  }
 }
 
 function updateWeekNavLabel() {
@@ -24950,6 +24839,7 @@ function buildCardProjectMeta(project, projectIndex, deliverable) {
       title: nameText,
     });
     attachProjectDirectoryContextMenu(nameEl, project);
+    attachCardProjectPathOpen(nameEl, project);
     identity.appendChild(nameEl);
   }
   if (identity.childNodes.length) meta.appendChild(identity);
@@ -25019,7 +24909,25 @@ function renderCardView(items = db, projectListContextMap = null) {
     }
   }
 
-  for (const col of visibleColumns) {
+  const renderColumns =
+    hideEmptyProjectColumns === true
+      ? visibleColumns.filter(
+          (column) => (buckets.get(column.key) || []).length > 0
+        )
+      : visibleColumns;
+
+  if (!renderColumns.length) {
+    host.appendChild(
+      el("div", {
+        className: "projects-card-view__empty-board",
+        textContent: "No deliverables in visible columns.",
+      })
+    );
+    attachKanbanDragHandlers(host);
+    return;
+  }
+
+  for (const col of renderColumns) {
     const bucketRows = buckets.get(col.key);
     sortCardViewBucketRows(col.key, bucketRows);
 
@@ -25059,7 +24967,10 @@ function renderCardView(items = db, projectListContextMap = null) {
         const card = renderDeliverableCard(deliverable, isPrimary, project);
         card.draggable = true;
         const projectMeta = buildCardProjectMeta(project, db.indexOf(project), deliverable);
-        if (projectMeta) card.insertBefore(projectMeta, card.firstChild);
+        if (projectMeta) {
+          const actionRow = card.querySelector(":scope > .deliverable-card-action-row");
+          card.insertBefore(projectMeta, actionRow?.nextSibling || card.firstChild);
+        }
         cardsHost.appendChild(card);
       }
     }
@@ -25070,10 +24981,22 @@ function renderCardView(items = db, projectListContextMap = null) {
   attachKanbanDragHandlers(host);
 }
 
+function clearProjectSearchInput() {
+  const searchInput = document.getElementById("search");
+  if (!searchInput || !searchInput.value) return false;
+  searchInput.value = "";
+  return true;
+}
+
+function normalizeProjectsViewMode(value) {
+  return value === "card" || value === "coordination" ? value : "list";
+}
+
 function setProjectsViewMode(mode, options = {}) {
-  const next = mode === "card" ? "card" : "list";
+  const next = normalizeProjectsViewMode(mode);
   const shouldPersist = options.persist !== false;
   const didChange = projectsViewMode !== next;
+  const didClearProjectSearch = next !== "list" && clearProjectSearchInput();
   projectsViewMode = next;
   if (shouldPersist && userSettings.projectsViewMode !== next) {
     userSettings.projectsViewMode = next;
@@ -25083,6 +25006,7 @@ function setProjectsViewMode(mode, options = {}) {
   }
   if (!didChange) {
     updateProjectsViewModeUi();
+    if (didClearProjectSearch) render();
     return;
   }
   render();
@@ -25109,6 +25033,24 @@ function setMinimizeEmptyProjectColumns(enabled, options = {}) {
 
   if (shouldPersist && typeof debouncedSaveUserSettings === "function") {
     debouncedSaveUserSettings();
+  }
+}
+
+function setHideEmptyProjectColumns(enabled, options = {}) {
+  const next = enabled === true;
+  const shouldPersist = options.persist !== false;
+  hideEmptyProjectColumns = next;
+  userSettings.hideEmptyProjectColumns = next;
+  updateProjectsEmptyColumnUi();
+
+  if (shouldPersist && typeof debouncedSaveUserSettings === "function") {
+    debouncedSaveUserSettings();
+  }
+
+  if (typeof renderProjectsPreservingExpandedDeliverables === "function") {
+    renderProjectsPreservingExpandedDeliverables();
+  } else {
+    render();
   }
 }
 
@@ -25178,10 +25120,19 @@ function bindProjectsCardViewWheelScroll() {
 function setupProjectsViewModeControls() {
   const listBtn = document.getElementById("viewToggleList");
   const cardBtn = document.getElementById("viewToggleCard");
+  const coordinationBtn = document.getElementById("viewToggleCoordination");
   const widthBtn = document.getElementById("projectsWidthToggle");
   const emptyColumnsBtn = document.getElementById("projectsEmptyColumnsToggle");
+  const hideEmptyColumnsBtn = document.getElementById(
+    "projectsHideEmptyColumnsToggle"
+  );
   if (listBtn) listBtn.addEventListener("click", () => setProjectsViewMode("list"));
   if (cardBtn) cardBtn.addEventListener("click", () => setProjectsViewMode("card"));
+  if (coordinationBtn) {
+    coordinationBtn.addEventListener("click", () =>
+      setProjectsViewMode("coordination")
+    );
+  }
   if (widthBtn) {
     widthBtn.addEventListener("click", () =>
       setProjectsWideLayout(!projectsWideLayout)
@@ -25190,6 +25141,11 @@ function setupProjectsViewModeControls() {
   if (emptyColumnsBtn) {
     emptyColumnsBtn.addEventListener("click", () =>
       setMinimizeEmptyProjectColumns(!minimizeEmptyProjectColumns)
+    );
+  }
+  if (hideEmptyColumnsBtn) {
+    hideEmptyColumnsBtn.addEventListener("click", () =>
+      setHideEmptyProjectColumns(!hideEmptyProjectColumns)
     );
   }
   bindProjectsCardViewWheelScroll();
@@ -25592,6 +25548,13 @@ function render() {
   const matchContextMap = new Map();
   const projectListContextMap = new Map();
   const isCardView = projectsViewMode === "card";
+  const isCoordinationView = projectsViewMode === "coordination";
+
+  if (isCoordinationView) {
+    emptyState.style.display = "none";
+    renderCoordinationView();
+    return;
+  }
 
   let items = db.filter((p) => {
     if (q) {
@@ -25683,7 +25646,7 @@ function render() {
 
   const appendSectionSeparator = (label) => {
     const sep = el("tr", { className: "week-separator-row" });
-    sep.appendChild(el("td", { colSpan: 6 }, [
+    sep.appendChild(el("td", { colSpan: 5 }, [
       el("div", { className: "week-separator" }, [
         el("span", { className: "week-separator-label", textContent: label })
       ])
@@ -25755,11 +25718,10 @@ function getMatchContext(q, p) {
   if (str(p.notes).includes(q)) { context.projectFields.push("notes"); hasMatch = true; }
 
   getProjectDeliverables(p).forEach((d) => {
-    syncDeliverableNoteFields(d);
+    syncDeliverableWorkItemFields(d);
     const dCtx = {
       deliverable: d,
       fields: [],
-      matchingTasks: [],
       matchingNotes: [],
     };
     if (str(d.name).includes(q)) dCtx.fields.push("name");
@@ -25767,13 +25729,9 @@ function getMatchContext(q, p) {
     (d.noteItems || []).forEach((noteItem) => {
       if (str(noteItem?.text).includes(q)) dCtx.matchingNotes.push(noteItem.text);
     });
-    (d.tasks || []).forEach((t) => {
-      if (str(t.text).includes(q)) dCtx.matchingTasks.push(t.text);
-    });
     const hasStatusMatch = (d.statuses || []).some((s) => str(s).includes(q));
     if (
       dCtx.fields.length ||
-      dCtx.matchingTasks.length ||
       dCtx.matchingNotes.length ||
       hasStatusMatch
     ) {
@@ -25934,7 +25892,6 @@ function onSaveProject() {
     return;
   }
 
-  flushPendingModalDeliverableTasks();
   flushPendingModalDeliverableNotes();
   const data = readForm();
   autoSetPrimary(data);
@@ -25965,12 +25922,10 @@ function fillForm(project) {
   const deliverableList = document.getElementById("deliverableList");
   deliverableList.innerHTML = "";
   setModalProjectDraft(p);
-  const sortedDeliverables = p.deliverables.slice();
+  const sortedDeliverables = p.deliverables
+    .slice()
+    .sort(compareDeliverablesByDueDesc);
   const activeAnchorDeliverable = getActiveAnchorDeliverable(p);
-  sortDeliverablesByPrimaryThenDueDesc(
-    sortedDeliverables,
-    activeAnchorDeliverable?.id
-  );
   sortedDeliverables.forEach((deliverable) =>
     addDeliverableCard(deliverable, activeAnchorDeliverable?.id, {
       projectDraft: p,
@@ -26959,6 +26914,91 @@ function flushPendingModalDeliverableTasks() {
   });
 }
 
+function createNoteDueDateControl({ value = "", allowAdd = true, onCommit } = {}) {
+  const wrap = el("span", { className: "note-due-wrap" });
+  const currentValue = normalizeDeliverableNoteDueDate(value);
+  const commitValue = (nextValue) => {
+    if (typeof onCommit === "function") onCommit(nextValue);
+  };
+
+  const renderEditor = () => {
+    wrap.innerHTML = "";
+    const input = el("input", {
+      className: "note-due-input",
+      type: "text",
+      placeholder: "MM/DD/YYYY",
+      value: currentValue,
+    });
+    input.setAttribute("aria-label", "Note due date");
+    let cancelled = false;
+    input.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      if (e.key === "Enter") {
+        e.preventDefault();
+        input.blur();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        cancelled = true;
+        input.blur();
+      }
+    });
+    input.addEventListener("blur", () => {
+      setTimeout(() => {
+        // Calendar picker click also blurs the input; let its callback commit.
+        if (document.getElementById("inlineCalendarPicker")) return;
+        if (cancelled) {
+          commitValue(currentValue);
+          return;
+        }
+        autoFormatDateInput(input);
+        commitValue(normalizeDeliverableNoteDueDate(input.value));
+      }, 0);
+    });
+    input.addEventListener("click", (e) => {
+      e.stopPropagation();
+      showCalendarForInput(input, () => {
+        commitValue(normalizeDeliverableNoteDueDate(input.value));
+      });
+    });
+    wrap.appendChild(input);
+    setTimeout(() => {
+      input.focus();
+      input.select();
+    }, 0);
+  };
+
+  if (currentValue) {
+    const ds = dueState(currentValue);
+    const badge = el("button", {
+      className: `note-due-badge ${ds === "overdue" ? "overdue" : ds === "dueSoon" ? "due-soon" : "ok"}`,
+      type: "button",
+      title: "Click to edit due date",
+      textContent: humanDate(currentValue),
+    });
+    badge.setAttribute("aria-label", "Edit note due date");
+    badge.addEventListener("click", (e) => {
+      e.stopPropagation();
+      renderEditor();
+    });
+    wrap.appendChild(badge);
+  } else if (allowAdd) {
+    const addBtn = el("button", {
+      className: "note-due-add-btn",
+      type: "button",
+      title: "Add due date",
+      textContent: "+ due",
+    });
+    addBtn.setAttribute("aria-label", "Add note due date");
+    addBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      renderEditor();
+    });
+    wrap.appendChild(addBtn);
+  }
+
+  return wrap;
+}
+
 function renderModalDeliverableNoteList(card, container, options = {}) {
   if (!card || !container) return;
   const { focusInput = false, ensureInputVisible = false } = options;
@@ -26966,7 +27006,7 @@ function renderModalDeliverableNoteList(card, container, options = {}) {
   const modalDeliverable = getModalDeliverableCardContext(card);
   container.innerHTML = "";
 
-  getPinnedFirstEntries(noteItems, normalizeDeliverableNoteItem).forEach(
+  getDeliverableNoteSortEntries(noteItems).forEach(
     ({ item: noteItem, index }) => {
       noteItems[index] = normalizeDeliverableNoteItem(noteItems[index]);
       const liveNote = noteItems[index];
@@ -26997,14 +27037,12 @@ function renderModalDeliverableNoteList(card, container, options = {}) {
         persistNow: false,
         scope: "edit-modal",
       });
-      const pinBtn = createWorkItemPinButton({
-        pinned: !!liveNote.pinned,
-        titlePinned: "Unpin note",
-        titleUnpinned: "Pin note",
-        onToggle: (nextPinned) => {
-          liveNote.pinned = nextPinned;
+      const dueControl = createNoteDueDateControl({
+        value: liveNote.dueDate || "",
+        allowAdd: true,
+        onCommit: (nextDueDate) => {
+          liveNote.dueDate = nextDueDate;
           renderModalDeliverableNoteList(card, container);
-          return nextPinned;
         },
       });
       const deleteBtn = el("button", {
@@ -27024,7 +27062,7 @@ function renderModalDeliverableNoteList(card, container, options = {}) {
         })();
       });
 
-      actions.append(attachments, pinBtn, deleteBtn);
+      actions.append(dueControl, attachments, deleteBtn);
       content.append(textControl);
       item.append(iconSpan, content, actions);
       container.appendChild(item);
@@ -27096,6 +27134,7 @@ function commitPendingModalDeliverableNote(card, container, options = {}) {
   noteItems.push({
     text: noteText,
     pinned: false,
+    dueDate: "",
     attachments: [],
   });
 
@@ -27162,7 +27201,10 @@ function readForm() {
     );
     const attachments = getDeliverableCardAttachments(card);
 
-    const tasks = getModalDeliverableTaskItems(card)
+    const tasks = (Array.isArray(existingDeliverable?.tasks)
+      ? existingDeliverable.tasks
+      : getModalDeliverableTaskItems(card)
+    )
       .map((task) => {
         const normalizedTask = normalizeTask(task);
         const text = String(normalizedTask.text || "").trim();
@@ -27185,6 +27227,7 @@ function readForm() {
         return {
           text,
           pinned: !!normalizedNoteItem.pinned,
+          dueDate: normalizedNoteItem.dueDate,
           attachments: normalizedNoteItem.attachments,
           links: normalizedNoteItem.links,
           emailRefs: normalizedNoteItem.emailRefs,
@@ -27198,6 +27241,7 @@ function readForm() {
       due,
       noteItems,
       tasks,
+      tasksMigratedToNotes: existingDeliverable?.tasksMigratedToNotes === true,
       statuses,
       attachments,
       pinned: !!existingDeliverable?.pinned || card.dataset.pinned === "true",
@@ -28496,8 +28540,11 @@ const PLUGIN_DOC_OVERRIDES = {
   },
   GeneralCommands: {
     replace: true,
-    order: ["OBJMASK", "VPFROMREG", "LAYRED", "LAYGREEN", "AREALABEL"],
+    order: ["PROJECTCHECKLIST", "PCL", "OBJMASK", "VPFROMREG", "LAYRED", "LAYGREEN", "AREALABEL"],
     commands: {
+      PROJECTCHECKLIST:
+        "Opens a project-scoped checklist palette using checklist definitions from the desktop app and shared completion state for the current project.",
+      PCL: "Alias for PROJECTCHECKLIST.",
       OBJMASK:
         "Creates wipeout objects behind selected text, MText, tables, or polylines to mask the background.",
       VPFROMREG:
@@ -29166,6 +29213,7 @@ const circuitBreakerState = {
   panelSchedulePollTimer: 0,
   lastHandledTerminalJobId: "",
   lastPanelScheduleStatus: null,
+  pasteTargetKind: "",
 };
 
 function generateCircuitBreakerPanelId() {
@@ -29202,6 +29250,47 @@ function normalizeCircuitBreakerFiles(files) {
     return Array.from(files).filter(Boolean);
   }
   return [files].filter(Boolean);
+}
+
+function normalizeCircuitBreakerPhotoKind(kind) {
+  return kind === "breaker" || kind === "directory" ? kind : "";
+}
+
+function setCircuitBreakerPasteTarget(kind) {
+  const normalized = normalizeCircuitBreakerPhotoKind(kind);
+  if (!normalized) return;
+  circuitBreakerState.pasteTargetKind = normalized;
+}
+
+function getCircuitBreakerDropTargetKind(target) {
+  const zone = target?.closest?.("#cbBreakerDrop, #cbDirectoryDrop");
+  if (!zone) return "";
+  return zone.id === "cbBreakerDrop" ? "breaker" : "directory";
+}
+
+function resolveCircuitBreakerPasteTargetKind(eventTarget = null) {
+  const panel = getActiveCircuitBreakerPanel();
+  if (!panel) return "";
+  if (panel.inputMode === "existing_directory") {
+    return "directory";
+  }
+  return (
+    getCircuitBreakerDropTargetKind(eventTarget) ||
+    normalizeCircuitBreakerPhotoKind(circuitBreakerState.pasteTargetKind)
+  );
+}
+
+function getCircuitBreakerClipboardImageFiles(clipboardData) {
+  if (!clipboardData) return [];
+  const files = Array.from(clipboardData.files || []).filter((file) =>
+    String(file?.type || "").toLowerCase().startsWith("image/")
+  );
+  if (files.length) return files;
+  return Array.from(clipboardData.items || [])
+    .map((item) => item.getAsFile?.())
+    .filter((file) =>
+      String(file?.type || "").toLowerCase().startsWith("image/")
+    );
 }
 
 function hasCircuitBreakerPhotoSelection(paths = [], files = []) {
@@ -29369,18 +29458,7 @@ function getPanelScheduleToolCard() {
   return document.getElementById("toolCircuitBreaker");
 }
 
-function setPanelScheduleToolCardStatus(message, { running = false, error = false } = {}) {
-  const text = String(message || "").trim();
-  if (text || error) {
-    window.updateToolStatus(
-      "toolCircuitBreaker",
-      error ? `ERROR: ${text || "Panel Schedule AI failed."}` : text
-    );
-  }
-  const card = getPanelScheduleToolCard();
-  if (!card || error) return;
-  card.classList.toggle("running", Boolean(running));
-}
+
 
 function clearPanelScheduleStatusPoll() {
   if (circuitBreakerState.panelSchedulePollTimer) {
@@ -29454,22 +29532,21 @@ function renderCircuitBreakerPanelTabs() {
   });
 }
 
-function removeCircuitBreakerPhoto(panelId, kind, index) {
+function removeCircuitBreakerPhoto(panelId, kind, index, source = "auto") {
   if (circuitBreakerState.running) return;
   const panel = circuitBreakerState.panels.find((p) => p.id === panelId);
   if (!panel) return;
-  if (kind === "breaker") {
-    if (panel.breakerPaths && panel.breakerPaths.length > 0) {
-      panel.breakerPaths.splice(index, 1);
-    } else if (panel.breakerFiles && panel.breakerFiles.length > 0) {
-      panel.breakerFiles.splice(index, 1);
-    }
-  } else {
-    if (panel.directoryPaths && panel.directoryPaths.length > 0) {
-      panel.directoryPaths.splice(index, 1);
-    } else if (panel.directoryFiles && panel.directoryFiles.length > 0) {
-      panel.directoryFiles.splice(index, 1);
-    }
+  const isBreaker = kind === "breaker";
+  const paths = isBreaker ? panel.breakerPaths : panel.directoryPaths;
+  const files = isBreaker ? panel.breakerFiles : panel.directoryFiles;
+  if (source === "path" && paths && paths.length > 0) {
+    paths.splice(index, 1);
+  } else if (source === "file" && files && files.length > 0) {
+    files.splice(index, 1);
+  } else if (paths && paths.length > 0) {
+    paths.splice(index, 1);
+  } else if (files && files.length > 0) {
+    files.splice(index, 1);
   }
   updateCircuitBreakerUi();
 }
@@ -29492,11 +29569,18 @@ function renderCircuitBreakerFileList(containerId, paths, files, kind, panelId) 
     paths.forEach((path, index) => {
       const parts = path.split(/[\\/]/);
       const name = parts[parts.length - 1];
-      items.push({ name, index, isPath: true });
+      items.push({ name, index, source: "path", isPath: true });
     });
-  } else if (files && files.length > 0) {
+  }
+  if (files && files.length > 0) {
     files.forEach((file, index) => {
-      items.push({ name: file.name, size: file.size, index, isPath: false });
+      items.push({
+        name: file.name || "Pasted image",
+        size: file.size,
+        index,
+        source: "file",
+        isPath: false,
+      });
     });
   }
 
@@ -29548,7 +29632,7 @@ function renderCircuitBreakerFileList(containerId, paths, files, kind, panelId) 
     removeBtn.disabled = circuitBreakerState.running;
     removeBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      removeCircuitBreakerPhoto(panelId, kind, item.index);
+      removeCircuitBreakerPhoto(panelId, kind, item.index, item.source);
     });
 
     fileItem.appendChild(info);
@@ -29806,8 +29890,22 @@ function resetCircuitBreakerForm({ launchContext = null } = {}) {
   circuitBreakerState.activeActivityId = "";
   circuitBreakerState.lastHandledTerminalJobId = "";
   circuitBreakerState.lastPanelScheduleStatus = null;
+  circuitBreakerState.pasteTargetKind = "";
   ensureCircuitBreakerPanels();
   updateCircuitBreakerUi();
+}
+
+function openCircuitBreakerFilePicker(kind) {
+  if (circuitBreakerState.running) return;
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "image/*";
+  input.multiple = true;
+  input.onchange = () => {
+    const files = Array.from(input.files || []);
+    if (files.length) setCircuitBreakerFiles(kind, files);
+  };
+  input.click();
 }
 
 function setCircuitBreakerFiles(kind, files) {
@@ -29838,9 +29936,32 @@ function setCircuitBreakerPaths(kind, paths) {
   updateCircuitBreakerUi();
 }
 
+function appendCircuitBreakerFiles(kind, files) {
+  const panel = getActiveCircuitBreakerPanel();
+  if (!panel) return 0;
+  const normalizedKind = normalizeCircuitBreakerPhotoKind(kind);
+  const nextFiles = normalizeCircuitBreakerFiles(files);
+  if (!normalizedKind || !nextFiles.length) return 0;
+  if (normalizedKind === "breaker") {
+    panel.breakerFiles = [
+      ...normalizeCircuitBreakerFiles(panel.breakerFiles),
+      ...nextFiles,
+    ];
+  } else {
+    panel.directoryFiles = [
+      ...normalizeCircuitBreakerFiles(panel.directoryFiles),
+      ...nextFiles,
+    ];
+  }
+  setCircuitBreakerPasteTarget(normalizedKind);
+  updateCircuitBreakerUi();
+  return nextFiles.length;
+}
+
 async function selectCircuitBreakerImage(kind) {
   const panel = getActiveCircuitBreakerPanel();
   if (!panel) return;
+  setCircuitBreakerPasteTarget(kind);
   if (!window.pywebview?.api?.select_files) {
     toast("File picker is unavailable.");
     return;
@@ -29871,9 +29992,12 @@ async function selectCircuitBreakerSchedulePath(mode) {
       const outputExtension = normalizeCircuitBreakerOutputExtension(
         circuitBreakerState.newOutputExtension
       );
+      const projectId = getLaunchContextProjectId(circuitBreakerState.launchContext);
+      const safeId = projectId.replace(/[\\/:*?"<>|]/g, "").trim();
+      const baseName = safeId ? `${safeId} Panel Schedules` : "Panel_Schedule";
       const selection = await window.pywebview.api.select_template_save_location(
         defaultDirectory || null,
-        "Panel_Schedule",
+        baseName,
         outputExtension
       );
       if (selection?.status === "success" && selection.path) {
@@ -29923,23 +30047,13 @@ function closeCircuitBreaker() {
   if (dlg && dlg.open) dlg.close();
 }
 
-function openCircuitBreakerFilePicker(kind) {
-  if (circuitBreakerState.running) return;
-  const input = document.createElement("input");
-  input.type = "file";
-  input.accept = "image/*";
-  input.multiple = true;
-  input.onchange = () => {
-    const files = Array.from(input.files || []);
-    if (files.length) setCircuitBreakerFiles(kind, files);
-  };
-  input.click();
-}
+
 
 function handleCircuitBreakerDrop(kind, e, zone) {
   e.preventDefault();
   if (zone) zone.classList.remove("is-dragover");
   if (circuitBreakerState.running) return;
+  setCircuitBreakerPasteTarget(kind);
   const files = Array.from(e.dataTransfer?.files || []);
   if (files.length) setCircuitBreakerFiles(kind, files);
 }
@@ -29947,12 +30061,35 @@ function handleCircuitBreakerDrop(kind, e, zone) {
 function handleCircuitBreakerDragOver(e, zone) {
   e.preventDefault();
   if (circuitBreakerState.running) return;
+  const kind = getCircuitBreakerDropTargetKind(zone);
+  if (kind) setCircuitBreakerPasteTarget(kind);
   if (zone) zone.classList.add("is-dragover");
 }
 
 function handleCircuitBreakerDragLeave(e, zone) {
   e.preventDefault();
   if (zone) zone.classList.remove("is-dragover");
+}
+
+function handleCircuitBreakerPaste(e) {
+  if (circuitBreakerState.running) return;
+  const imageFiles = getCircuitBreakerClipboardImageFiles(e.clipboardData);
+  if (!imageFiles.length) return;
+  const targetKind = resolveCircuitBreakerPasteTargetKind(e.target);
+  e.preventDefault();
+  if (!targetKind) {
+    toast("Click the breaker or directory upload area before pasting images.");
+    return;
+  }
+  const count = appendCircuitBreakerFiles(targetKind, imageFiles);
+  if (count > 0) {
+    const targetLabel = targetKind === "breaker" ? "breaker" : "directory";
+    toast(
+      count === 1
+        ? `Pasted 1 ${targetLabel} photo.`
+        : `Pasted ${count} ${targetLabel} photos.`
+    );
+  }
 }
 
 function readFileAsDataUrl(file) {
@@ -30714,9 +30851,7 @@ function normalizeLightingSchedulePath(rawPath) {
   return path;
 }
 
-function getLightingSchedulePathKey(rawPath) {
-  return normalizeLightingSchedulePath(rawPath).toLowerCase();
-}
+
 
 function extractLightingScheduleProjectIdFromPath(rawPath) {
   const path = normalizeLightingSchedulePath(rawPath);
@@ -31069,96 +31204,11 @@ async function persistActiveLightingSchedule({
   }
 }
 
-function getLightingScheduleProjectMatchResult(project, syncProject, targetDwgPath) {
-  const desktopProjectId = String(project?.id || "").trim();
-  const syncProjectId = String(syncProject?.projectId || "").trim();
-  if (desktopProjectId && syncProjectId) {
-    return {
-      matched: desktopProjectId === syncProjectId,
-      mode: "projectId",
-      desktopValue: desktopProjectId,
-      syncValue: syncProjectId,
-    };
-  }
 
-  const desktopBaseKey = getProjectBaseKey(project?.path || targetDwgPath || "");
-  const syncBaseKey = getProjectBaseKey(
-    syncProject?.projectBasePath || syncProject?.dwgPath || ""
-  );
-  if (desktopBaseKey && syncBaseKey) {
-    return {
-      matched: desktopBaseKey === syncBaseKey,
-      mode: "projectBasePath",
-      desktopValue: getProjectBasePath(project?.path || targetDwgPath || ""),
-      syncValue: getProjectBasePath(
-        syncProject?.projectBasePath || syncProject?.dwgPath || ""
-      ),
-    };
-  }
 
-  return {
-    matched: false,
-    mode: "unknown",
-    desktopValue: "",
-    syncValue: "",
-  };
-}
 
-function normalizeIncomingLightingSyncPayload(rawPayload) {
-  const payload =
-    rawPayload && typeof rawPayload === "object" ? rawPayload : null;
-  if (!payload) {
-    return null;
-  }
-  const rows =
-    Array.isArray(payload?.schedule?.rows) && payload.schedule.rows.length
-      ? payload.schedule.rows.map((row) => createLightingScheduleRow(row))
-      : [createLightingScheduleRow()];
-  const schedule = {
-    rows,
-    generalNotes: normalizeLightingScheduleText(payload?.schedule?.generalNotes),
-    notes: normalizeLightingScheduleText(payload?.schedule?.notes),
-  };
-  return {
-    schemaVersion: String(payload.schemaVersion || "").trim(),
-    metadata:
-      payload.metadata && typeof payload.metadata === "object"
-        ? payload.metadata
-        : {},
-    project:
-      payload.project && typeof payload.project === "object"
-        ? payload.project
-        : {},
-    table:
-      payload.table && typeof payload.table === "object" ? payload.table : {},
-    schedule,
-  };
-}
 
-function buildLightingScheduleSyncPayload(project, schedule) {
-  const targetDwgPath = normalizeLightingSchedulePath(schedule.targetDwgPath);
-  const canonicalSchedule = buildCanonicalLightingSchedule(schedule);
-  const fingerprint = computeLightingScheduleFingerprint(canonicalSchedule);
-  return {
-    schemaVersion: LIGHTING_SCHEDULE_SYNC_SCHEMA_VERSION,
-    metadata: {
-      sourceApp: "desktop",
-      generatedAtUtc: new Date().toISOString(),
-      generatedBy: String(userSettings?.userName || "desktop").trim() || "desktop",
-      fingerprint,
-    },
-    project: {
-      projectId: String(project?.id || "").trim(),
-      projectBasePath: getProjectBasePath(project?.path || targetDwgPath || ""),
-      dwgPath: targetDwgPath,
-      dwgName: getFileNameFromPath(targetDwgPath),
-    },
-    table: {
-      tableHandle: "",
-    },
-    schedule: canonicalSchedule,
-  };
-}
+
 
 async function browseLightingScheduleTargetDwg() {
   const project = getActiveLightingScheduleProject();
@@ -32189,9 +32239,10 @@ function validateCurrentStep() {
         toast("Please select at least one engineering discipline.");
         return false;
       }
-      userSettings.discipline = Array.from(selectedDisciplines).map(
-        (cb) => cb.value
+      userSettings.discipline = normalizeConfiguredDisciplineList(
+        Array.from(selectedDisciplines).map((cb) => cb.value)
       );
+      syncActiveDisciplineWithConfigured();
       break;
     case 4: // API Key step
       const apiKey = val("onboarding_apiKey").trim();
@@ -33422,7 +33473,7 @@ function guardUnderConstructionToolAccess(card, label, event) {
 }
 
 function handleProjectSearchInput() {
-  if (projectsViewMode === "card" && val("search")) {
+  if (projectsViewMode !== "list" && val("search")) {
     setProjectsViewMode("list", { persist: false });
     return;
   }
@@ -33451,6 +33502,841 @@ function openHelp(topic) {
   if (!dlg) return;
   setActiveHelpTopic(topic);
   showDialog(dlg);
+}
+
+// ===========================================================================
+// Workflows (custom tool chains)
+// ===========================================================================
+
+let workflowToolDescriptors = null;
+let workflowBuilderState = null;
+
+function generateWorkflowId() {
+  const random = Math.random().toString(36).slice(2, 9);
+  return `wf_${Date.now().toString(36)}_${random}`;
+}
+
+async function ensureWorkflowToolDescriptors() {
+  if (Array.isArray(workflowToolDescriptors)) return workflowToolDescriptors;
+  try {
+    const result = await window.pywebview.api.get_workflow_tools();
+    workflowToolDescriptors = Array.isArray(result?.tools) ? result.tools : [];
+  } catch (err) {
+    console.error("Failed to load workflow tool descriptors:", err);
+    workflowToolDescriptors = [];
+  }
+  return workflowToolDescriptors;
+}
+
+function getWorkflowToolDescriptor(toolId) {
+  if (!Array.isArray(workflowToolDescriptors)) return null;
+  return workflowToolDescriptors.find((tool) => tool.toolId === toolId) || null;
+}
+
+function getUserWorkflows() {
+  if (!Array.isArray(userSettings.workflows)) {
+    userSettings.workflows = [];
+  }
+  return userSettings.workflows;
+}
+
+function getWorkflowDisplayName(workflow) {
+  const name = String(workflow?.name || "").trim();
+  return name || "Unnamed workflow";
+}
+
+function getWorkflowActivityLabel(workflow) {
+  return `Workflow: ${getWorkflowDisplayName(workflow)}`;
+}
+
+
+
+function renderWorkflowCards() {
+  const grid = document.getElementById("workflowsGrid");
+  if (!grid) return;
+  const workflows = getUserWorkflows();
+  grid.innerHTML = "";
+
+  workflows.forEach((workflow) => {
+    const card = document.createElement("div");
+    card.className = "tool-card tool-card--workflow";
+    card.dataset.workflowId = workflow.id;
+    card.setAttribute("role", "button");
+    card.tabIndex = 0;
+
+    const settingsBtn = document.createElement("button");
+    settingsBtn.type = "button";
+    settingsBtn.className = "tool-card-settings";
+    settingsBtn.title = "Edit workflow";
+    settingsBtn.setAttribute("aria-label", "Edit workflow");
+    settingsBtn.textContent = "⚙️";
+    settingsBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openWorkflowBuilder(workflow);
+    });
+    card.appendChild(settingsBtn);
+
+    const content = document.createElement("div");
+    content.className = "tool-card-content";
+
+    const icon = document.createElement("div");
+    icon.className = "tool-icon";
+    icon.innerHTML =
+      '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"></polyline><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>';
+    content.appendChild(icon);
+
+    const header = document.createElement("div");
+    header.className = "tool-card-header";
+    header.textContent = getWorkflowDisplayName(workflow);
+    content.appendChild(header);
+
+    const body = document.createElement("div");
+    body.className = "tool-card-body";
+    const steps = Array.isArray(workflow.steps) ? workflow.steps : [];
+    body.textContent =
+      steps.length === 0
+        ? "No steps configured. Click the gear to add steps."
+        : `Runs ${steps.length} step${steps.length === 1 ? "" : "s"} in order. Stops on first failure.`;
+    content.appendChild(body);
+
+    if (steps.length > 0) {
+      const chips = document.createElement("div");
+      chips.className = "tool-card-workflow-steps";
+      steps.forEach((step, idx) => {
+        const chip = document.createElement("span");
+        chip.className = "tool-card-workflow-step-chip";
+        const descriptor = getWorkflowToolDescriptor(step?.toolId);
+        chip.textContent = `${idx + 1}. ${descriptor?.displayName || step?.toolId || "?"}`;
+        chips.appendChild(chip);
+      });
+      content.appendChild(chips);
+    }
+
+    card.appendChild(content);
+
+    const status = document.createElement("div");
+    status.className = "tool-card-status";
+    card.appendChild(status);
+
+    const runHandler = () => {
+      if (card.classList.contains("running")) return;
+      runWorkflow(workflow.id);
+    };
+    card.addEventListener("click", runHandler);
+    card.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        runHandler();
+      }
+    });
+
+    grid.appendChild(card);
+  });
+
+  // Trailing "+ New Workflow" card
+  const newCard = document.createElement("div");
+  newCard.className = "tool-card tool-card--workflow tool-card--workflow-new";
+  newCard.setAttribute("role", "button");
+  newCard.tabIndex = 0;
+  newCard.innerHTML =
+    '<div class="tool-card-content">' +
+    '<div class="tool-icon">' +
+    '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>' +
+    "</div>" +
+    '<div class="tool-card-header">New Workflow</div>' +
+    '<div class="tool-card-body">Build a custom sequence of tools to run as one action.</div>' +
+    "</div>";
+  newCard.addEventListener("click", () => openWorkflowBuilder(null));
+  newCard.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      openWorkflowBuilder(null);
+    }
+  });
+  grid.appendChild(newCard);
+}
+
+function openWorkflowBuilder(workflow) {
+  const dlg = document.getElementById("workflowBuilderDlg");
+  if (!dlg) return;
+  ensureWorkflowToolDescriptors().then(() => {
+    const isEdit = !!workflow;
+    workflowBuilderState = {
+      id: isEdit ? workflow.id : generateWorkflowId(),
+      name: isEdit ? String(workflow.name || "") : "",
+      steps: isEdit
+        ? JSON.parse(JSON.stringify(Array.isArray(workflow.steps) ? workflow.steps : []))
+        : [],
+      isEdit,
+    };
+    document.getElementById("workflowBuilderTitle").textContent = isEdit
+      ? "Edit Workflow"
+      : "New Workflow";
+    document.getElementById("workflowBuilderName").value = workflowBuilderState.name;
+    const deleteBtn = document.getElementById("workflowBuilderDeleteBtn");
+    if (deleteBtn) deleteBtn.hidden = !isEdit;
+
+    populateWorkflowAddStepSelect();
+    renderWorkflowBuilderSteps();
+    hideWorkflowBuilderError();
+    dlg.showModal();
+  });
+}
+
+function populateWorkflowAddStepSelect() {
+  const select = document.getElementById("workflowAddStepSelect");
+  if (!select) return;
+  select.innerHTML = "";
+  (workflowToolDescriptors || []).forEach((tool) => {
+    const opt = document.createElement("option");
+    opt.value = tool.toolId;
+    opt.textContent = tool.displayName;
+    select.appendChild(opt);
+  });
+}
+
+function renderWorkflowBuilderSteps() {
+  const list = document.getElementById("workflowStepsList");
+  if (!list || !workflowBuilderState) return;
+  list.innerHTML = "";
+  const steps = workflowBuilderState.steps;
+  steps.forEach((step, index) => {
+    const descriptor = getWorkflowToolDescriptor(step.toolId);
+    const stepEl = document.createElement("div");
+    stepEl.className = "workflow-step";
+
+    const head = document.createElement("div");
+    head.className = "workflow-step-head";
+
+    const title = document.createElement("div");
+    title.className = "workflow-step-title";
+    const indexSpan = document.createElement("span");
+    indexSpan.className = "workflow-step-index";
+    indexSpan.textContent = `${index + 1}.`;
+    title.appendChild(indexSpan);
+    title.appendChild(
+      document.createTextNode(descriptor?.displayName || step.toolId || "Unknown tool")
+    );
+    head.appendChild(title);
+
+    const actions = document.createElement("div");
+    actions.className = "workflow-step-actions";
+
+    const upBtn = document.createElement("button");
+    upBtn.type = "button";
+    upBtn.title = "Move up";
+    upBtn.textContent = "▲";
+    upBtn.disabled = index === 0;
+    upBtn.addEventListener("click", () => moveWorkflowStep(index, -1));
+    actions.appendChild(upBtn);
+
+    const downBtn = document.createElement("button");
+    downBtn.type = "button";
+    downBtn.title = "Move down";
+    downBtn.textContent = "▼";
+    downBtn.disabled = index === steps.length - 1;
+    downBtn.addEventListener("click", () => moveWorkflowStep(index, 1));
+    actions.appendChild(downBtn);
+
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.title = "Remove step";
+    removeBtn.textContent = "✕";
+    removeBtn.addEventListener("click", () => removeWorkflowStep(index));
+    actions.appendChild(removeBtn);
+
+    head.appendChild(actions);
+    stepEl.appendChild(head);
+
+    const params = document.createElement("div");
+    params.className = "workflow-step-params";
+    if (!descriptor || (descriptor.params || []).length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "workflow-step-empty-params";
+      empty.textContent = "No parameters for this step.";
+      params.appendChild(empty);
+    } else {
+      (descriptor.params || []).forEach((spec) => {
+        params.appendChild(buildStepParamControl(index, spec, step.params || {}));
+      });
+    }
+    stepEl.appendChild(params);
+
+    list.appendChild(stepEl);
+  });
+}
+
+function buildStepParamControl(stepIndex, spec, paramsObj) {
+  const wrap = document.createElement("div");
+  wrap.className = "workflow-step-param";
+  if (spec.type === "bool") wrap.classList.add("workflow-step-param-bool");
+
+  const label = document.createElement("label");
+  label.className = "workflow-step-param-label";
+  label.textContent = spec.label;
+
+  if (spec.type === "bool") {
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    const current = paramsObj[spec.key];
+    cb.checked = current === undefined ? !!spec.default : !!current;
+    cb.addEventListener("change", () => {
+      updateWorkflowStepParam(stepIndex, spec.key, cb.checked);
+    });
+    label.prepend(cb);
+    wrap.appendChild(label);
+  } else if (spec.type === "int") {
+    wrap.appendChild(label);
+    const input = document.createElement("input");
+    input.type = "number";
+    if (spec.min != null) input.min = String(spec.min);
+    if (spec.max != null) input.max = String(spec.max);
+    const current = paramsObj[spec.key];
+    input.value = String(current == null ? spec.default ?? "" : current);
+    input.addEventListener("input", () => {
+      const num = Number(input.value);
+      updateWorkflowStepParam(
+        stepIndex,
+        spec.key,
+        Number.isFinite(num) ? num : spec.default ?? null
+      );
+    });
+    wrap.appendChild(input);
+  } else if (spec.type === "patternList") {
+    wrap.appendChild(label);
+    const input = document.createElement("input");
+    input.type = "text";
+    input.placeholder = "e.g. *cloud*, *rev*";
+    input.value = formatLayerPatternsForInput(paramsObj[spec.key]);
+    input.addEventListener("change", () => {
+      updateWorkflowStepParam(stepIndex, spec.key, parseLayerPatternInput(input.value));
+    });
+    input.addEventListener("blur", () => {
+      updateWorkflowStepParam(stepIndex, spec.key, parseLayerPatternInput(input.value));
+    });
+    wrap.appendChild(input);
+  } else {
+    wrap.appendChild(label);
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = paramsObj[spec.key] == null ? "" : String(paramsObj[spec.key]);
+    input.addEventListener("change", () => {
+      updateWorkflowStepParam(stepIndex, spec.key, input.value);
+    });
+    wrap.appendChild(input);
+  }
+
+  if (spec.help) {
+    const help = document.createElement("div");
+    help.className = "workflow-step-param-help";
+    help.textContent = spec.help;
+    wrap.appendChild(help);
+  }
+  return wrap;
+}
+
+function updateWorkflowStepParam(stepIndex, key, value) {
+  if (!workflowBuilderState) return;
+  const step = workflowBuilderState.steps[stepIndex];
+  if (!step) return;
+  if (!step.params || typeof step.params !== "object") step.params = {};
+  step.params[key] = value;
+}
+
+function addWorkflowStepFromSelect() {
+  if (!workflowBuilderState) return;
+  const select = document.getElementById("workflowAddStepSelect");
+  const toolId = select?.value;
+  if (!toolId) return;
+  workflowBuilderState.steps.push({ toolId, params: {} });
+  renderWorkflowBuilderSteps();
+}
+
+function moveWorkflowStep(index, delta) {
+  if (!workflowBuilderState) return;
+  const steps = workflowBuilderState.steps;
+  const target = index + delta;
+  if (target < 0 || target >= steps.length) return;
+  const [moved] = steps.splice(index, 1);
+  steps.splice(target, 0, moved);
+  renderWorkflowBuilderSteps();
+}
+
+function removeWorkflowStep(index) {
+  if (!workflowBuilderState) return;
+  workflowBuilderState.steps.splice(index, 1);
+  renderWorkflowBuilderSteps();
+}
+
+function showWorkflowBuilderError(message) {
+  const el = document.getElementById("workflowBuilderError");
+  if (!el) return;
+  el.textContent = message;
+  el.hidden = false;
+}
+
+function hideWorkflowBuilderError() {
+  const el = document.getElementById("workflowBuilderError");
+  if (el) el.hidden = true;
+}
+
+function saveWorkflowFromBuilder() {
+  if (!workflowBuilderState) return;
+  const nameInput = document.getElementById("workflowBuilderName");
+  const name = (nameInput?.value || "").trim();
+  if (!name) {
+    showWorkflowBuilderError("Workflow name is required.");
+    nameInput?.focus();
+    return;
+  }
+  if (!workflowBuilderState.steps.length) {
+    showWorkflowBuilderError("Add at least one step to the workflow.");
+    return;
+  }
+  const workflows = getUserWorkflows();
+  const existingIndex = workflows.findIndex((w) => w.id === workflowBuilderState.id);
+  const sanitizedSteps = workflowBuilderState.steps.map((step) => ({
+    toolId: step.toolId,
+    params: step.params && typeof step.params === "object" ? { ...step.params } : {},
+  }));
+  const record = { id: workflowBuilderState.id, name, steps: sanitizedSteps };
+  if (existingIndex >= 0) {
+    workflows[existingIndex] = record;
+  } else {
+    workflows.push(record);
+  }
+  debouncedSaveUserSettings();
+  hideWorkflowBuilderError();
+  closeDlg("workflowBuilderDlg");
+  renderWorkflowCards();
+}
+
+function deleteWorkflowFromBuilder() {
+  if (!workflowBuilderState || !workflowBuilderState.isEdit) return;
+  if (!window.confirm("Delete this workflow? This cannot be undone.")) return;
+  const workflows = getUserWorkflows();
+  const idx = workflows.findIndex((w) => w.id === workflowBuilderState.id);
+  if (idx >= 0) {
+    workflows.splice(idx, 1);
+    debouncedSaveUserSettings();
+  }
+  closeDlg("workflowBuilderDlg");
+  renderWorkflowCards();
+}
+
+// ---------------------------------------------------------------------------
+// Workflow pre-flight modal
+// ---------------------------------------------------------------------------
+
+let workflowPreFlightState = null;
+
+function workflowStepHasRequiredInputs(step) {
+  const descriptor = getWorkflowToolDescriptor(step?.toolId);
+  return !!(descriptor && (descriptor.requiredInputs || []).length);
+}
+
+function workflowHasAnyRequiredInputs(workflow) {
+  const steps = Array.isArray(workflow?.steps) ? workflow.steps : [];
+  return steps.some(workflowStepHasRequiredInputs);
+}
+
+function getWorkflowMissingToolIds(workflow) {
+  const steps = Array.isArray(workflow?.steps) ? workflow.steps : [];
+  const missing = [];
+  steps.forEach((step) => {
+    const toolId = String(step?.toolId || "").trim();
+    if (toolId && !getWorkflowToolDescriptor(toolId) && !missing.includes(toolId)) {
+      missing.push(toolId);
+    }
+  });
+  return missing;
+}
+
+function summarizeDwgList(paths) {
+  if (!Array.isArray(paths) || paths.length === 0) return "";
+  const names = paths.map((p) => String(p || "").split(/[\\/]/).pop()).filter(Boolean);
+  if (names.length <= 2) return `${paths.length} selected — ${names.join(", ")}`;
+  return `${paths.length} selected — ${names[0]}, ${names[1]}, +${paths.length - 2} more`;
+}
+
+function normalizeWorkflowDwgSource(source) {
+  if (!source || typeof source !== "object") return null;
+  const kind = String(source.kind || "file").trim();
+  if (kind === "zipEntry") {
+    const zipPath = String(source.zipPath || "").trim();
+    const entryName = String(source.entryName || "").trim();
+    if (!zipPath || !entryName) return null;
+    return {
+      kind: "zipEntry",
+      zipPath,
+      entryName,
+      projectRoot: String(source.projectRoot || "").trim(),
+      displayPath:
+        String(source.displayPath || "").trim() || `${zipPath}::${entryName}`,
+    };
+  }
+  const path = String(source.path || "").trim();
+  if (!path) return null;
+  return {
+    kind: "file",
+    path,
+    displayPath: String(source.displayPath || "").trim() || path,
+  };
+}
+
+function buildFileWorkflowDwgSources(paths) {
+  return (Array.isArray(paths) ? paths : [])
+    .map((path) => String(path || "").trim())
+    .filter(Boolean)
+    .map((path) => ({ kind: "file", path, displayPath: path }));
+}
+
+async function pickDwgFiles() {
+  try {
+    const result = await window.pywebview.api.select_files({
+      allow_multiple: true,
+      file_types: ["Drawing Files (*.dwg)", "All Files (*.*)"],
+    });
+    if (!result || result.status !== "success") return null;
+    return Array.isArray(result.paths) ? result.paths.filter(Boolean) : null;
+  } catch (err) {
+    console.error("Workflow DWG picker failed:", err);
+    return null;
+  }
+}
+
+async function pickProjectFolder(defaultPath) {
+  try {
+    const result = await window.pywebview.api.select_folder(defaultPath || null);
+    if (!result || result.status !== "success") return null;
+    return String(result.path || "").trim() || null;
+  } catch (err) {
+    console.error("Workflow folder picker failed:", err);
+    return null;
+  }
+}
+
+function renderWorkflowPreFlightSections() {
+  const container = document.getElementById("workflowPreFlightSections");
+  if (!container || !workflowPreFlightState) return;
+  container.innerHTML = "";
+  const { workflow, sections } = workflowPreFlightState;
+  sections.forEach((section, sectionIdx) => {
+    const stepNumber = section.stepIndex + 1;
+    const descriptor = getWorkflowToolDescriptor(section.toolId);
+    const stepEl = document.createElement("div");
+    stepEl.className = "workflow-preflight-step";
+
+    const head = document.createElement("div");
+    head.className = "workflow-preflight-step-head";
+    const idx = document.createElement("span");
+    idx.className = "workflow-preflight-step-index";
+    idx.textContent = `Step ${stepNumber}`;
+    head.appendChild(idx);
+    const title = document.createElement("span");
+    title.className = "workflow-preflight-step-title";
+    title.textContent = descriptor?.displayName || section.toolId;
+    head.appendChild(title);
+    stepEl.appendChild(head);
+
+    (section.inputs || []).forEach((inputState) => {
+      const inputBlock = document.createElement("div");
+      inputBlock.className = "workflow-preflight-input";
+
+      const label = document.createElement("div");
+      label.className = "workflow-preflight-input-label";
+      label.textContent = inputState.spec.label || inputState.spec.key;
+      inputBlock.appendChild(label);
+
+      const row = document.createElement("div");
+      row.className = "workflow-preflight-input-row";
+
+      const value = document.createElement("div");
+      value.className = "workflow-preflight-input-value";
+      const displayValue = (() => {
+        if (inputState.spec.type === "dwgFiles") {
+          const paths = Array.isArray(inputState.value) ? inputState.value : [];
+          return paths.length ? summarizeDwgList(paths) : "No DWG files selected";
+        }
+        return inputState.value || "No folder selected";
+      })();
+      value.textContent = displayValue;
+      if (!inputState.value || (Array.isArray(inputState.value) && !inputState.value.length)) {
+        value.classList.add("placeholder");
+      }
+      if (inputState.invalid) value.classList.add("invalid");
+      row.appendChild(value);
+
+      const browseBtn = document.createElement("button");
+      browseBtn.type = "button";
+      browseBtn.className = "btn tiny";
+      browseBtn.textContent = inputState.spec.type === "folder" ? "Browse…" : "Browse DWGs…";
+      browseBtn.addEventListener("click", async () => {
+        if (inputState.spec.type === "folder") {
+          const chosen = await pickProjectFolder(inputState.value || null);
+          if (chosen) {
+            inputState.value = chosen;
+            inputState.invalid = false;
+            renderWorkflowPreFlightSections();
+          }
+        } else {
+          const chosen = await pickDwgFiles();
+          if (chosen && chosen.length) {
+            inputState.value = chosen;
+            inputState.sources = buildFileWorkflowDwgSources(chosen);
+            inputState.invalid = false;
+            renderWorkflowPreFlightSections();
+          }
+        }
+      });
+      row.appendChild(browseBtn);
+
+      if (inputState.spec.type === "dwgFiles") {
+        // "Copy from step ↑" — copy from the previous DWG section in this modal.
+        const prevDwgSection = sections
+          .slice(0, sectionIdx)
+          .reverse()
+          .find((s) => (s.inputs || []).some((i) => i.spec.type === "dwgFiles" && Array.isArray(i.value) && i.value.length));
+        if (prevDwgSection) {
+          const copyBtn = document.createElement("button");
+          copyBtn.type = "button";
+          copyBtn.className = "btn ghost tiny";
+          copyBtn.textContent = "Copy from step ↑";
+          copyBtn.addEventListener("click", () => {
+            const source = (prevDwgSection.inputs || []).find(
+              (i) => i.spec.type === "dwgFiles" && Array.isArray(i.value) && i.value.length
+            );
+            if (source) {
+              inputState.value = [...source.value];
+              inputState.sources = Array.isArray(source.sources)
+                ? source.sources.map((item) => ({ ...item }))
+                : buildFileWorkflowDwgSources(inputState.value);
+              inputState.invalid = false;
+              renderWorkflowPreFlightSections();
+            }
+          });
+          row.appendChild(copyBtn);
+        }
+      }
+
+      inputBlock.appendChild(row);
+
+      if (inputState.spec.help) {
+        const help = document.createElement("div");
+        help.className = "workflow-preflight-input-help";
+        help.textContent = inputState.spec.help;
+        inputBlock.appendChild(help);
+      }
+
+      stepEl.appendChild(inputBlock);
+    });
+
+    container.appendChild(stepEl);
+  });
+}
+
+function collectPreFlightInputs() {
+  if (!workflowPreFlightState) return null;
+  const stepInputs = {};
+  let anyInvalid = false;
+  workflowPreFlightState.sections.forEach((section) => {
+    const entry = {};
+    section.inputs.forEach((inputState) => {
+      if (inputState.spec.type === "folder") {
+        const v = String(inputState.value || "").trim();
+        if (!v) {
+          inputState.invalid = true;
+          anyInvalid = true;
+        } else {
+          entry.projectFolder = v;
+        }
+      } else if (inputState.spec.type === "dwgFiles") {
+        const list = Array.isArray(inputState.value) ? inputState.value.filter(Boolean) : [];
+        if (!list.length) {
+          inputState.invalid = true;
+          anyInvalid = true;
+        } else {
+          entry.dwgFiles = list;
+          const sources = Array.isArray(inputState.sources)
+            ? inputState.sources.map(normalizeWorkflowDwgSource).filter(Boolean)
+            : [];
+          if (sources.length) {
+            entry.dwgFileSources = sources;
+          }
+        }
+      }
+    });
+    if (Object.keys(entry).length) {
+      stepInputs[String(section.stepIndex)] = entry;
+    }
+  });
+  return { stepInputs, valid: !anyInvalid };
+}
+
+function openWorkflowPreFlight(workflow, launchContext, defaults) {
+  const dlg = document.getElementById("workflowPreFlightDlg");
+  if (!dlg) return Promise.resolve(null);
+
+  const sections = [];
+  (workflow.steps || []).forEach((step, stepIndex) => {
+    const descriptor = getWorkflowToolDescriptor(step.toolId);
+    const required = descriptor?.requiredInputs || [];
+    if (!required.length) return;
+    const stepDefaults = (defaults && defaults[String(stepIndex)]) || {};
+    sections.push({
+      stepIndex,
+      toolId: step.toolId,
+      inputs: required.map((spec) => {
+        let value;
+        if (spec.key === "dwgFiles") {
+          value = Array.isArray(stepDefaults.dwgFiles) ? [...stepDefaults.dwgFiles] : [];
+          const sources = Array.isArray(stepDefaults.dwgFileSources)
+            ? stepDefaults.dwgFileSources
+                .map(normalizeWorkflowDwgSource)
+                .filter(Boolean)
+            : buildFileWorkflowDwgSources(value);
+          return { spec, value, sources, invalid: false };
+        } else {
+          value = String(stepDefaults[spec.key] || "");
+        }
+        return { spec, value, invalid: false };
+      }),
+    });
+  });
+
+  return new Promise((resolve) => {
+    workflowPreFlightState = {
+      workflow,
+      launchContext,
+      sections,
+      resolve,
+    };
+    document.getElementById("workflowPreFlightTitle").textContent =
+      `Run "${getWorkflowDisplayName(workflow)}"`;
+    const errorEl = document.getElementById("workflowPreFlightError");
+    if (errorEl) errorEl.hidden = true;
+    renderWorkflowPreFlightSections();
+    dlg.showModal();
+  });
+}
+
+function closeWorkflowPreFlight(result) {
+  const state = workflowPreFlightState;
+  if (!state) return;
+  workflowPreFlightState = null;
+  closeDlg("workflowPreFlightDlg");
+  if (typeof state.resolve === "function") state.resolve(result);
+}
+
+async function runWorkflow(workflowId) {
+  const workflows = getUserWorkflows();
+  const workflow = workflows.find((w) => w.id === workflowId);
+  if (!workflow) return;
+  await ensureWorkflowToolDescriptors();
+  const missingToolIds = getWorkflowMissingToolIds(workflow);
+  if (missingToolIds.length) {
+    toast("Workflow tools are unavailable. Reopen Tools or restart the app before running this workflow.", 7000);
+    console.warn("Workflow has unavailable tool descriptors:", missingToolIds);
+    return;
+  }
+  const launchContext = resolveCadLaunchContextForTool();
+  const workflowTitle = getWorkflowDisplayName(workflow);
+
+  let stepInputs = null;
+  if (workflowHasAnyRequiredInputs(workflow)) {
+    let defaults = {};
+    try {
+      const defaultsResult = await window.pywebview.api.resolve_workflow_defaults(
+        workflowId,
+        launchContext || null
+      );
+      if (defaultsResult?.status === "success" && defaultsResult.defaults) {
+        defaults = defaultsResult.defaults;
+      }
+    } catch (err) {
+      console.warn("resolve_workflow_defaults failed; opening modal with empty values.", err);
+    }
+    const userResult = await openWorkflowPreFlight(workflow, launchContext, defaults);
+    if (!userResult) return; // cancelled
+    stepInputs = userResult.stepInputs;
+  }
+
+  const activityId = beginActivity({
+    toolId: "toolWorkflow",
+    kind: "workflow",
+    label: getWorkflowActivityLabel(workflow),
+    workflowTitle,
+    message: "Initializing workflow…",
+    progress: 3,
+    rerunLaunchContext: launchContext,
+    rerunDefaultPath: getLaunchContextProjectRoot(launchContext),
+    canRerun: false,
+  });
+  try {
+    const result = await window.pywebview.api.run_workflow(
+      workflowId,
+      launchContext || null,
+      activityId,
+      stepInputs || null
+    );
+    if (result?.status === "error") {
+      failActivity(activityId, {
+        message: result.message || "Workflow failed.",
+      });
+    }
+  } catch (err) {
+    failActivity(activityId, {
+      message: err?.message || "Workflow failed.",
+    });
+  }
+}
+
+function initWorkflowsUi() {
+  ensureWorkflowToolDescriptors().then(() => {
+    renderWorkflowCards();
+  });
+  const addBtn = document.getElementById("workflowAddStepBtn");
+  if (addBtn) addBtn.addEventListener("click", addWorkflowStepFromSelect);
+  const saveBtn = document.getElementById("workflowBuilderSaveBtn");
+  if (saveBtn) saveBtn.addEventListener("click", saveWorkflowFromBuilder);
+  const deleteBtn = document.getElementById("workflowBuilderDeleteBtn");
+  if (deleteBtn) deleteBtn.addEventListener("click", deleteWorkflowFromBuilder);
+
+  const cancelBtn = document.getElementById("workflowPreFlightCancelBtn");
+  if (cancelBtn) {
+    cancelBtn.addEventListener("click", () => closeWorkflowPreFlight(null));
+  }
+  const preflightCloseBtn = document.getElementById("workflowPreFlightCloseBtn");
+  if (preflightCloseBtn) {
+    preflightCloseBtn.addEventListener("click", () => closeWorkflowPreFlight(null));
+  }
+  const runBtn = document.getElementById("workflowPreFlightRunBtn");
+  if (runBtn) {
+    runBtn.addEventListener("click", () => {
+      const collected = collectPreFlightInputs();
+      const errorEl = document.getElementById("workflowPreFlightError");
+      if (!collected) return;
+      if (!collected.valid) {
+        if (errorEl) {
+          errorEl.textContent =
+            "Please fill in every input for each step (folder or DWG files).";
+          errorEl.hidden = false;
+        }
+        renderWorkflowPreFlightSections();
+        return;
+      }
+      if (errorEl) errorEl.hidden = true;
+      closeWorkflowPreFlight({ stepInputs: collected.stepInputs });
+    });
+  }
+  const preFlightDlg = document.getElementById("workflowPreFlightDlg");
+  if (preFlightDlg) {
+    // Treat ESC (dialog 'cancel' event) as Cancel.
+    preFlightDlg.addEventListener("cancel", (e) => {
+      e.preventDefault();
+      closeWorkflowPreFlight(null);
+    });
+  }
 }
 
 function initEventListeners() {
@@ -33842,6 +34728,53 @@ function initEventListeners() {
     saveCustomExpense();
   initImagePreviewDialog();
 
+  // Coordination items dialog
+  populateCoordinationPartySelect();
+  const coordinationAddBtn = document.getElementById("coordinationAddBtn");
+  if (coordinationAddBtn) {
+    coordinationAddBtn.onclick = () => addCoordinationItemFromDialog();
+  }
+  const coordinationPartySelect = document.getElementById(
+    "coordinationPartySelect"
+  );
+  if (coordinationPartySelect) {
+    coordinationPartySelect.onchange = () =>
+      updateCoordinationCustomPartyVisibility();
+  }
+  const coordinationNoteInput = document.getElementById(
+    "coordinationNoteInput"
+  );
+  if (coordinationNoteInput) {
+    coordinationNoteInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        addCoordinationItemFromDialog();
+      }
+    });
+  }
+  const coordinationDueInput = document.getElementById("coordinationDueInput");
+  if (coordinationDueInput) {
+    coordinationDueInput.addEventListener("click", (e) => {
+      e.stopPropagation();
+      showCalendarForInput(coordinationDueInput, () => {});
+    });
+    coordinationDueInput.addEventListener("blur", () => {
+      autoFormatDateInput(coordinationDueInput);
+    });
+    coordinationDueInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        addCoordinationItemFromDialog();
+      }
+    });
+  }
+  const coordinationDlg = document.getElementById("coordinationDlg");
+  if (coordinationDlg) {
+    coordinationDlg.addEventListener("close", () => {
+      coordinationDialogProject = null;
+    });
+  }
+
   document.getElementById("checkUpdateBtn").onclick = () =>
     refreshAppUpdateStatus({ manual: true });
   document.getElementById("appUpdateBtn").onclick = installAppUpdate;
@@ -33860,6 +34793,7 @@ function initEventListeners() {
   if (headerGoogleAuthBtn) {
     headerGoogleAuthBtn.onclick = () => handleHeaderGoogleAuthAction();
   }
+  initializeHeaderDisciplineSwitcher();
   document.getElementById("settingsBtn").onclick = async () => {
     hideSetupHelpBanner(); // Hide the banner when user manually opens settings
     await populateSettingsModal();
@@ -34129,7 +35063,7 @@ function initEventListeners() {
       const launchContext = resolveCadLaunchContextForTool();
       console.debug("Workroom CAD launch context (publish):", launchContext);
       if (e.currentTarget.classList.contains("running")) return;
-      if (!userSettings.autocadPath) {
+      if (!(await ensureAutocadPathLoaded())) {
         await showAutocadSelectModal();
         return;
       }
@@ -34162,7 +35096,7 @@ function initEventListeners() {
       const launchContext = resolveCadLaunchContextForTool();
       console.debug("Workroom CAD launch context (manage layers):", launchContext);
       if (e.currentTarget.classList.contains("running")) return;
-      if (!userSettings.autocadPath) {
+      if (!(await ensureAutocadPathLoaded())) {
         await showAutocadSelectModal();
         return;
       }
@@ -34197,7 +35131,7 @@ function initEventListeners() {
     .addEventListener("click", async (e) => {
       const launchContext = resolveCadLaunchContextForTool();
       if (e.currentTarget.classList.contains("running")) return;
-      if (!userSettings.autocadPath) {
+      if (!(await ensureAutocadPathLoaded())) {
         await showAutocadSelectModal();
         return;
       }
@@ -34412,6 +35346,8 @@ function initEventListeners() {
     });
   }
 
+  initWorkflowsUi();
+
   const copyProjectLocallyBtn = document.getElementById("toolCopyProjectLocally");
   if (copyProjectLocallyBtn) {
     const handler = async () => {
@@ -34478,6 +35414,7 @@ function initEventListeners() {
 
   const circuitBreakerDlg = document.getElementById("circuitBreakerDlg");
   if (circuitBreakerDlg) {
+    circuitBreakerDlg.addEventListener("paste", handleCircuitBreakerPaste);
     circuitBreakerDlg.addEventListener("close", () => {
       if (!circuitBreakerState.running) {
         resetCircuitBreakerForm();
@@ -34487,6 +35424,12 @@ function initEventListeners() {
 
   const cbBreakerDrop = document.getElementById("cbBreakerDrop");
   if (cbBreakerDrop) {
+    cbBreakerDrop.addEventListener("focus", () =>
+      setCircuitBreakerPasteTarget("breaker")
+    );
+    cbBreakerDrop.addEventListener("pointerdown", () =>
+      setCircuitBreakerPasteTarget("breaker")
+    );
     cbBreakerDrop.addEventListener("click", () => {
       void selectCircuitBreakerImage("breaker");
     });
@@ -34509,6 +35452,12 @@ function initEventListeners() {
 
   const cbDirectoryDrop = document.getElementById("cbDirectoryDrop");
   if (cbDirectoryDrop) {
+    cbDirectoryDrop.addEventListener("focus", () =>
+      setCircuitBreakerPasteTarget("directory")
+    );
+    cbDirectoryDrop.addEventListener("pointerdown", () =>
+      setCircuitBreakerPasteTarget("directory")
+    );
     cbDirectoryDrop.addEventListener("click", () => {
       void selectCircuitBreakerImage("directory");
     });
@@ -34910,6 +35859,7 @@ function initEventListeners() {
       });
       if (res.status === "success" && res.paths.length) {
         document.getElementById("settings_autocadPath").value = res.paths[0];
+        settingsAutocadPathExplicitlyChanged = true;
         // Uncheck radio buttons
         document
           .querySelectorAll('input[name="autocad_version_radio"]')
@@ -34927,6 +35877,7 @@ function initEventListeners() {
       });
       if (res.status === "success" && res.paths.length) {
         document.getElementById("autocad_select_custom").value = res.paths[0];
+        settingsAutocadPathExplicitlyChanged = true;
         // Uncheck radio buttons
         document
           .querySelectorAll('input[name="autocad_select_radio"]')
@@ -34946,6 +35897,10 @@ function initEventListeners() {
         userSettings.autocadPath = document
           .getElementById("autocad_select_custom")
           .value.trim();
+      }
+      const settingsAutocadInput = document.getElementById("settings_autocadPath");
+      if (settingsAutocadInput) {
+        settingsAutocadInput.value = userSettings.autocadPath || "";
       }
       try {
         const saved = await persistUserSettingsLocally({
@@ -35074,24 +36029,44 @@ function initEventListeners() {
         const checked = document.querySelectorAll(
           'input[name="settings_discipline_checkbox"]:checked'
         );
-        userSettings.discipline = Array.from(checked).map((cb) => cb.value);
+        userSettings.discipline = normalizeConfiguredDisciplineList(
+          Array.from(checked).map((cb) => cb.value)
+        );
+        syncActiveDisciplineWithConfigured();
+        document
+          .querySelectorAll('input[name="settings_discipline_checkbox"]')
+          .forEach((input) => {
+            input.checked = userSettings.discipline.includes(input.value);
+          });
+        refreshActiveDisciplineDependentUi();
         debouncedSaveUserSettings();
       };
     });
 
-  ["settings_publish_autoDetectPaperSize", "publish_modal_autoDetectPaperSize"]
-    .map((id) => document.getElementById(id))
-    .filter(Boolean)
-    .forEach((checkbox) => {
-      checkbox.onchange = (e) => {
-        if (!userSettings.publishDwgOptions) {
-          userSettings.publishDwgOptions = { ...DEFAULT_PUBLISH_DWG_OPTIONS };
-        }
-        userSettings.publishDwgOptions.autoDetectPaperSize = e.target.checked;
-        syncPublishOptionsInputs();
-        debouncedSaveUserSettings();
-      };
-    });
+  [
+    [
+      "autoDetectPaperSize",
+      ["settings_publish_autoDetectPaperSize", "publish_modal_autoDetectPaperSize"],
+    ],
+    [
+      "stripPdfLayers",
+      ["settings_publish_stripPdfLayers", "publish_modal_stripPdfLayers"],
+    ],
+  ].forEach(([settingKey, checkboxIds]) => {
+    checkboxIds
+      .map((id) => document.getElementById(id))
+      .filter(Boolean)
+      .forEach((checkbox) => {
+        checkbox.onchange = (e) => {
+          if (!userSettings.publishDwgOptions) {
+            userSettings.publishDwgOptions = { ...DEFAULT_PUBLISH_DWG_OPTIONS };
+          }
+          userSettings.publishDwgOptions[settingKey] = e.target.checked;
+          syncPublishOptionsInputs();
+          debouncedSaveUserSettings();
+        };
+      });
+  });
 
   [
     ["settings_publish_shrinkPercent", "settings_publish_shrinkValue"],
@@ -35132,6 +36107,27 @@ function initEventListeners() {
       };
     });
 
+  const bindManageLayersPatternInput = (id, key) => {
+    const input = document.getElementById(id);
+    if (!input) return;
+    const handler = () => {
+      if (!userSettings.manageLayersOptions) {
+        userSettings.manageLayersOptions = { ...DEFAULT_MANAGE_LAYERS_OPTIONS };
+      }
+      userSettings.manageLayersOptions[key] = parseLayerPatternInput(input.value);
+      debouncedSaveUserSettings();
+    };
+    input.addEventListener("change", handler);
+    input.addEventListener("blur", () => {
+      handler();
+      syncManageLayersOptionsInputs();
+    });
+  };
+  bindManageLayersPatternInput("manageLayers_modal_freezePatterns", "freezePatterns");
+  bindManageLayersPatternInput("manageLayers_modal_thawPatterns", "thawPatterns");
+  bindManageLayersPatternInput("settings_manageLayers_freezePatterns", "freezePatterns");
+  bindManageLayersPatternInput("settings_manageLayers_thawPatterns", "thawPatterns");
+
   ["settings_workroomAutoSelectCadFiles"]
     .map((id) => document.getElementById(id))
     .filter(Boolean)
@@ -35142,6 +36138,40 @@ function initEventListeners() {
         debouncedSaveUserSettings();
       };
     });
+
+  const workflowCadBindings = [
+    [
+      "settings_workflowCad_manageLayersElectricalTopLevel",
+      (checked) => ({
+        manageLayersDwgSource: checked ? "electricalTopLevel" : "manual",
+      }),
+    ],
+    [
+      "settings_workflowCad_cleanXrefsElectricalXrefsToNewestArch",
+      (checked) => ({
+        cleanXrefsDwgSource: checked ? "electricalXrefsToNewestArch" : "manual",
+      }),
+    ],
+    [
+      "settings_workflowCad_cleanXrefsSearchZipArchives",
+      (checked) => ({ cleanXrefsSearchZipArchives: checked }),
+    ],
+  ];
+  workflowCadBindings.forEach(([id, buildPatch]) => {
+    const checkbox = document.getElementById(id);
+    if (!checkbox) return;
+    checkbox.onchange = (e) => {
+      userSettings.workflowCadDefaults = {
+        ...normalizeWorkflowCadDefaults(userSettings.workflowCadDefaults),
+        ...buildPatch(e.target.checked),
+      };
+      userSettings.workflowCadDefaults = normalizeWorkflowCadDefaults(
+        userSettings.workflowCadDefaults
+      );
+      syncWorkflowCadDefaultInputs();
+      debouncedSaveUserSettings();
+    };
+  });
 
   const underConstructionToolsCheckbox = document.getElementById(
     "settings_enableUnderConstructionTools"

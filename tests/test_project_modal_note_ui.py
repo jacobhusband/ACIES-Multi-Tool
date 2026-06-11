@@ -34,7 +34,9 @@ class ProjectModalNoteUiTests(unittest.TestCase):
         self.assertIn('kind: "note",', script)
         self.assertIn("attachments: normalizedNoteItem.attachments,", script)
         self.assertIn("emailRefs: normalizedNoteItem.emailRefs,", script)
-        self.assertIn("actions.append(attachments, pinBtn, deleteBtn);", script)
+        self.assertIn("actions.append(dueControl, attachments, deleteBtn);", script)
+        self.assertNotIn('titleUnpinned: "Pin note",', script)
+        self.assertNotIn('titlePinned: "Unpin note",', script)
 
     def test_modal_note_editor_markup_replaces_textarea(self):
         html = INDEX_HTML_PATH.read_text(encoding="utf-8")

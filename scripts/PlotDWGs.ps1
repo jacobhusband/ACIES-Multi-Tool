@@ -2,6 +2,7 @@ param(
   [string]$AcadCore,
   [string]$AutoDetectPaperSize = "true",
   [int]$ShrinkPercent = 100,
+  [string]$StripPdfLayers = "true",
   [string]$FilesListPath = "",
   [string]$DefaultDirectory = ""
 )
@@ -22,6 +23,7 @@ function Convert-ToBool {
 }
 
 $AutoDetectPaperSize = Convert-ToBool $AutoDetectPaperSize $true
+$StripPdfLayers = Convert-ToBool $StripPdfLayers $true
 
 function Ensure-WinFormsAssemblies {
   Add-Type -AssemblyName System.Windows.Forms
@@ -75,6 +77,135 @@ function Convert-ToLispQuotedList {
   return ($cleanValues | ForEach-Object { '"' + ($_ -replace '"', '\"') + '"' }) -join " "
 }
 
+function Convert-ToSafeFileStem {
+  param([string]$Value)
+
+  if ([string]::IsNullOrWhiteSpace($Value)) { return "" }
+  $safeStem = $Value.Trim()
+  foreach ($invalidChar in [System.IO.Path]::GetInvalidFileNameChars()) {
+    $safeStem = $safeStem.Replace([string]$invalidChar, " ")
+  }
+  $safeStem = ($safeStem -replace '\s+', ' ').Trim()
+  return $safeStem.TrimEnd([char[]]@('.', ' '))
+}
+
+function Get-MaxPdfFileNameLengthForDirectory {
+  param(
+    [string]$OutputDirectory,
+    [int]$MaxFullPathLength = 240
+  )
+
+  if ([string]::IsNullOrWhiteSpace($OutputDirectory)) { return 0 }
+  $normalizedDirectory = $OutputDirectory.TrimEnd([char[]]@('\', '/'))
+  $maxFileNameLength = $MaxFullPathLength - $normalizedDirectory.Length - 1
+  if ($maxFileNameLength -lt 1) { return 1 }
+  return $maxFileNameLength
+}
+
+function Convert-ToSafePdfFileName {
+  param(
+    [string]$BaseName,
+    [string]$FallbackName = "combined.pdf",
+    [int]$MaxFileNameLength = 0,
+    [string]$PreserveSuffix = ""
+  )
+
+  if ([string]::IsNullOrWhiteSpace($BaseName)) { return $FallbackName }
+  $safeName = Convert-ToSafeFileStem -Value $BaseName
+  if ([string]::IsNullOrWhiteSpace($safeName)) { return $FallbackName }
+
+  $extension = ".pdf"
+  $fileName = "$safeName$extension"
+  if ($MaxFileNameLength -gt 0 -and $fileName.Length -gt $MaxFileNameLength) {
+    $safeSuffix = Convert-ToSafeFileStem -Value $PreserveSuffix
+    $suffixPart = ""
+    $prefixPart = $safeName
+
+    if (-not [string]::IsNullOrWhiteSpace($safeSuffix)) {
+      $suffixPart = " - $safeSuffix"
+      if ($prefixPart.EndsWith($suffixPart, [System.StringComparison]::OrdinalIgnoreCase)) {
+        $prefixPart = $prefixPart.Substring(0, $prefixPart.Length - $suffixPart.Length)
+        $prefixPart = $prefixPart.TrimEnd([char[]]@('.', ' ', '-'))
+      }
+    }
+
+    $ellipsis = "..."
+    $reservedLength = $ellipsis.Length + $suffixPart.Length + $extension.Length
+    $maxPrefixLength = $MaxFileNameLength - $reservedLength
+    if ($maxPrefixLength -gt 0) {
+      if ($prefixPart.Length -gt $maxPrefixLength) {
+        $prefixPart = $prefixPart.Substring(0, $maxPrefixLength)
+      }
+      $prefixPart = $prefixPart.TrimEnd([char[]]@('.', ' ', '-'))
+      if (-not [string]::IsNullOrWhiteSpace($prefixPart)) {
+        return "$prefixPart$ellipsis$suffixPart$extension"
+      }
+    }
+
+    return $FallbackName
+  }
+
+  return $fileName
+}
+
+function Get-ToolOutputSummary {
+  param(
+    [object[]]$Output,
+    [string]$DefaultMessage = "See _BatchPlotLog.txt for details."
+  )
+
+  $lines = @(
+    $Output |
+      ForEach-Object { [string]$_ } |
+      Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+  )
+  if ($lines.Count -eq 0) { return $DefaultMessage }
+
+  $summary = $lines |
+    Where-Object { $_ -match '(?i)(critical error|error|failed|cannot open|traceback|no pages)' } |
+    Select-Object -First 1
+  if ([string]::IsNullOrWhiteSpace($summary)) {
+    $summary = $lines | Select-Object -Last 1
+  }
+  if ($summary.Length -gt 260) {
+    $summary = "$($summary.Substring(0, 257).TrimEnd())..."
+  }
+  return $summary
+}
+
+function Resolve-CombinedPdfName {
+  param(
+    [string]$DwgPath,
+    [string]$OutputDirectory = "",
+    [int]$MaxFullPathLength = 240
+  )
+
+  $fallbackName = "combined.pdf"
+  if ([string]::IsNullOrWhiteSpace($DwgPath)) { return $fallbackName }
+
+  try {
+    $dwgItem = Get-Item -LiteralPath $DwgPath -ErrorAction Stop
+  }
+  catch {
+    return $fallbackName
+  }
+
+  $parentDir = $dwgItem.Directory
+  if ($null -eq $parentDir -or $null -eq $parentDir.Parent) {
+    return $fallbackName
+  }
+
+  $projectDir = $parentDir.Parent
+  $projectName = ($projectDir.Name -replace '^\s*\d{5,}\s*[-_.]*\s*', '').Trim()
+  if ([string]::IsNullOrWhiteSpace($projectName)) {
+    $projectName = $projectDir.Name
+  }
+
+  $rawName = "$projectName - $($parentDir.Name)"
+  $maxFileNameLength = Get-MaxPdfFileNameLengthForDirectory -OutputDirectory $OutputDirectory -MaxFullPathLength $MaxFullPathLength
+  return Convert-ToSafePdfFileName -BaseName $rawName -FallbackName $fallbackName -MaxFileNameLength $maxFileNameLength -PreserveSuffix $parentDir.Name
+}
+
 # --- SCRIPT CONFIGURATION ---
 # Logic to find AutoCAD Core Console
 if ($AcadCore -and (Test-Path -Path $AcadCore)) {
@@ -95,10 +226,9 @@ else {
   }
 }
 
-# Name for the combined PDF file
-$combinedPdfName = "combined.pdf"
 # Name of the Python executable (can be python, python3, or a full path)
 $pythonExecutable = "python"
+$MaxCombinedPdfFullPathLength = 240
 
 # --- DEFINE AVAILABLE PAPER SIZES ---
 $paperSizes = @(
@@ -113,9 +243,14 @@ $scriptRoot = $PSScriptRoot
 $pythonScriptPath = Join-Path $scriptRoot "merge_pdfs.py"
 $detectSizeScriptPath = Join-Path $scriptRoot "detect_pdf_size.py"
 $shrinkScriptPath = Join-Path $scriptRoot "shrink_pdf.py"
+$stripPdfLayersScriptPath = Join-Path $scriptRoot "strip_pdf_layers.py"
 # Check if the Python script exists
 if (-not (Test-Path $pythonScriptPath)) {
   Write-Host "PROGRESS: ERROR: 'merge_pdfs.py' not found."
+  exit 1
+}
+if ($StripPdfLayers -and -not (Test-Path $stripPdfLayersScriptPath)) {
+  Write-Host "PROGRESS: ERROR: 'strip_pdf_layers.py' not found."
   exit 1
 }
 # Check if Python is available in the system's PATH
@@ -134,6 +269,9 @@ if ([System.Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') {
   }
   if ($PSBoundParameters.ContainsKey('ShrinkPercent')) {
     $argsList += @("-ShrinkPercent", $ShrinkPercent)
+  }
+  if ($PSBoundParameters.ContainsKey('StripPdfLayers')) {
+    $argsList += @("-StripPdfLayers", $StripPdfLayers)
   }
   if ($PSBoundParameters.ContainsKey('FilesListPath') -and -not [string]::IsNullOrWhiteSpace($FilesListPath)) {
     $argsList += @("-FilesListPath", $FilesListPath)
@@ -418,9 +556,11 @@ if ([string]::IsNullOrWhiteSpace($selectedPaperSize)) {
 Write-Host "PROGRESS: Preparing to plot $($files.Count) file(s)..."
 $basePlotDir = Join-Path -Path ([Environment]::GetFolderPath("MyDocuments")) -ChildPath "AutoCAD Plots"
 $timestamp = Get-Date -Format 'yyyy-MM-dd_HH-mm-ss'
-$firstFileParentDirName = (Get-Item -Path $files[0]).Directory.Parent.Name
+$firstDwgItem = Get-Item -LiteralPath ([string]$files[0])
+$firstFileParentDirName = $firstDwgItem.Directory.Parent.Name
 $batchOutputDir = Join-Path -Path (Join-Path -Path $basePlotDir -ChildPath $firstFileParentDirName) -ChildPath $timestamp
 New-Item -ItemType Directory -Force -Path $batchOutputDir | Out-Null
+$combinedPdfName = Resolve-CombinedPdfName -DwgPath ([string]$files[0]) -OutputDirectory $batchOutputDir -MaxFullPathLength $MaxCombinedPdfFullPathLength
 
 # --- SINGLE LOG FILE SETUP ---
 $logFile = Join-Path $batchOutputDir "_BatchPlotLog.txt"
@@ -428,7 +568,9 @@ $logFile = Join-Path $batchOutputDir "_BatchPlotLog.txt"
 "Selected Paper Size: $selectedPaperSize" | Out-File $logFile -Append
 "AutoCAD Core Used: $acadCore" | Out-File $logFile -Append
 "ARCALIGNEDTEXT module candidates: $($arcAlignedTextSupportCandidates -join '; ')" | Out-File $logFile -Append
+"Strip PDF Layers: $StripPdfLayers" | Out-File $logFile -Append
 "Output Folder: $batchOutputDir" | Out-File $logFile -Append
+"Combined PDF Name: $combinedPdfName" | Out-File $logFile -Append
 "Processing $($files.Count) files..." | Out-File $logFile -Append
 
 # Initialize lists to track progress and generated files
@@ -436,6 +578,8 @@ $allGeneratedPdfs = [System.Collections.ArrayList]::new()
 $failed = @()
 $arcAlignedTextSupportFailures = @()
 $noPdfOutputFailures = @()
+$pdfMergeFailed = $false
+$pdfLayerCleanupFailed = $false
 $i = 0
 
 # --- Main Processing Loop (Plotting ONLY) ---
@@ -732,30 +876,49 @@ if ($allGeneratedPdfs.Count -gt 0) {
   Write-Host "PROGRESS: Combining $($allGeneratedPdfs.Count) generated PDFs..."
   $combinedPdfPath = Join-Path $batchOutputDir $combinedPdfName
    
-  $pythonArgs = @(
-    "`"$combinedPdfPath`""
-  ) + $allGeneratedPdfs.ForEach({ "`"$_`"" })
+  $pythonArgs = @($combinedPdfPath) + @($allGeneratedPdfs | ForEach-Object { [string]$_ })
     
-  $mergeOutput = & $pythonExecutable $pythonScriptPath $pythonArgs 2>&1
+  $mergeOutput = & $pythonExecutable $pythonScriptPath @pythonArgs 2>&1
    
   if ($LASTEXITCODE -eq 0) {
     "Python script executed successfully." | Out-File $logFile -Append
-    "$mergeOutput" | Out-File $logFile -Append
+    $mergeOutput | ForEach-Object { [string]$_ } | Out-File $logFile -Append
     $finalCombinedPdfPath = $combinedPdfPath
+
+    if ($StripPdfLayers) {
+      Write-Host "PROGRESS: Removing PDF layers from combined PDF..."
+      $stripOutput = & $pythonExecutable $stripPdfLayersScriptPath $combinedPdfPath 2>&1
+      if ($LASTEXITCODE -eq 0) {
+        "PDF layer cleanup completed." | Out-File $logFile -Append
+        "$stripOutput" | Out-File $logFile -Append
+      }
+      else {
+        $pdfLayerCleanupFailed = $true
+        $finalCombinedPdfPath = ""
+        Write-Host "PROGRESS: ERROR: PDF layer cleanup failed."
+        "PDF layer cleanup failed. Output from Python script:" | Out-File $logFile -Append
+        "$stripOutput" | Out-File $logFile -Append
+      }
+    }
 
     $shrinkPercentInt = [int]$ShrinkPercent
     if ($shrinkPercentInt -lt 5) { $shrinkPercentInt = 5 }
     if ($shrinkPercentInt -gt 100) { $shrinkPercentInt = 100 }
-    if ($shrinkPercentInt -lt 100) {
+    if (-not $pdfLayerCleanupFailed -and $shrinkPercentInt -lt 100) {
       if (Test-Path $shrinkScriptPath) {
-        $shrunkName = "combined-shrunk-$shrinkPercentInt-percent.pdf"
+        $combinedPdfBaseName = [System.IO.Path]::GetFileNameWithoutExtension($combinedPdfName)
+        $shrunkName = "$combinedPdfBaseName-shrunk-$shrinkPercentInt-percent.tmp.pdf"
         $shrunkPath = Join-Path $batchOutputDir $shrunkName
+        if (Test-Path -LiteralPath $shrunkPath -PathType Leaf) {
+          Remove-Item -LiteralPath $shrunkPath -Force
+        }
         Write-Host "PROGRESS: Shrinking combined PDF to $shrinkPercentInt%..."
-        $shrinkOutput = & $pythonExecutable $shrinkScriptPath "`"$combinedPdfPath`"" "`"$shrunkPath`"" $shrinkPercentInt 2>&1
-        if ($LASTEXITCODE -eq 0) {
-          "Shrunk PDF created: $shrunkName" | Out-File $logFile -Append
+        $shrinkOutput = & $pythonExecutable $shrinkScriptPath $combinedPdfPath $shrunkPath $shrinkPercentInt 2>&1
+        if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $shrunkPath -PathType Leaf)) {
+          Move-Item -LiteralPath $shrunkPath -Destination $combinedPdfPath -Force
+          "Shrunk PDF applied to final output: $combinedPdfName" | Out-File $logFile -Append
           "$shrinkOutput" | Out-File $logFile -Append
-          $finalCombinedPdfPath = $shrunkPath
+          $finalCombinedPdfPath = $combinedPdfPath
         } else {
           Write-Host "PROGRESS: ERROR: PDF shrinking failed."
           "PDF shrinking failed. Output from Python script:" | Out-File $logFile -Append
@@ -768,9 +931,12 @@ if ($allGeneratedPdfs.Count -gt 0) {
     }
   }
   else {
-    Write-Host "PROGRESS: ERROR: PDF merging failed."
+    $pdfMergeFailed = $true
+    $finalCombinedPdfPath = ""
+    $mergeErrorSummary = Get-ToolOutputSummary -Output $mergeOutput
+    Write-Host "PROGRESS: ERROR: PDF merging failed: $mergeErrorSummary"
     "PDF Merging Failed. Output from Python script:" | Out-File $logFile -Append
-    "$mergeOutput" | Out-File $logFile -Append
+    $mergeOutput | ForEach-Object { [string]$_ } | Out-File $logFile -Append
   }
 }
 else {
@@ -800,12 +966,20 @@ if ($failed.Count) {
   Write-Host "PROGRESS: ERROR: $failMsg"
   $failMsg | Out-File $logFile -Append
 }
+if ($pdfLayerCleanupFailed) {
+  Write-Host "PROGRESS: ERROR: Publish failed because PDF layer cleanup did not complete."
+  "Publish failed because PDF layer cleanup did not complete." | Out-File $logFile -Append
+}
+if ($pdfMergeFailed) {
+  Write-Host "PROGRESS: ERROR: Publish failed because PDF merge did not complete."
+  "Publish failed because PDF merge did not complete." | Out-File $logFile -Append
+}
 
 if (-not [string]::IsNullOrWhiteSpace($finalCombinedPdfPath) -and (Test-Path -Path $finalCombinedPdfPath -PathType Leaf)) {
   Write-Host "PROGRESS: COMBINED_PDF: $finalCombinedPdfPath"
 }
 Write-Host "PROGRESS: OUTPUT_FOLDER: $batchOutputDir"
 
-if ($failed.Count) {
+if ($failed.Count -or $pdfLayerCleanupFailed -or $pdfMergeFailed) {
   exit 1
 }

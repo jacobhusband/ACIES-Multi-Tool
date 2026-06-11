@@ -2,8 +2,24 @@ param(
   [string]$AcadCore,
   [string]$ScanAllLayers = "true",
   [string]$FilesListPath = "",
-  [string]$DefaultDirectory = ""
+  [string]$DefaultDirectory = "",
+  [string]$FreezePatterns = "",
+  [string]$ThawPatterns = ""
 )
+
+function ConvertTo-PatternArray {
+  param([string]$Value)
+  if ([string]::IsNullOrWhiteSpace($Value)) { return @() }
+  return @(
+    $Value -split ';' |
+      ForEach-Object { $_.Trim() } |
+      Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+  )
+}
+
+$freezePatternList = ConvertTo-PatternArray $FreezePatterns
+$thawPatternList = ConvertTo-PatternArray $ThawPatterns
+$usePatternMode = ($freezePatternList.Count -gt 0 -or $thawPatternList.Count -gt 0)
 
 function Convert-ToBool {
   param(
@@ -80,6 +96,12 @@ if ([System.Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') {
   }
   if ($PSBoundParameters.ContainsKey('DefaultDirectory') -and -not [string]::IsNullOrWhiteSpace($DefaultDirectory)) {
     $argsList += @("-DefaultDirectory", $DefaultDirectory)
+  }
+  if ($PSBoundParameters.ContainsKey('FreezePatterns') -and -not [string]::IsNullOrWhiteSpace($FreezePatterns)) {
+    $argsList += @("-FreezePatterns", $FreezePatterns)
+  }
+  if ($PSBoundParameters.ContainsKey('ThawPatterns') -and -not [string]::IsNullOrWhiteSpace($ThawPatterns)) {
+    $argsList += @("-ThawPatterns", $ThawPatterns)
   }
   $child = Start-Process -FilePath $ps -ArgumentList $argsList -Wait -PassThru
   exit $child.ExitCode
@@ -654,11 +676,33 @@ if ($allLayers.Count -eq 0) {
   exit 1
 }
 
-# ---------------- 5) USER SELECTION (GUI with THREE LISTS) ----------------
+# ---------------- 5) DETERMINE LAYERS TO FREEZE / THAW ----------------
 $allSorted = @($allLayers | Sort-Object)
 $layersToFreezeSet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
 $layersToThawSet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
 
+if ($usePatternMode) {
+  Write-Host "PROGRESS: Pattern mode enabled. FreezePatterns=[$($freezePatternList -join ', ')] ThawPatterns=[$($thawPatternList -join ', ')]."
+  foreach ($layer in $allSorted) {
+    $matchedFreeze = $false
+    foreach ($pat in $freezePatternList) {
+      if ($layer -like $pat) {
+        [void]$layersToFreezeSet.Add($layer)
+        $matchedFreeze = $true
+        break
+      }
+    }
+    if ($matchedFreeze) { continue }
+    foreach ($pat in $thawPatternList) {
+      if ($layer -like $pat) {
+        [void]$layersToThawSet.Add($layer)
+        break
+      }
+    }
+  }
+  Write-Host "PROGRESS: Pattern match -> $($layersToFreezeSet.Count) to freeze, $($layersToThawSet.Count) to thaw."
+}
+else {
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "Select Layers to Freeze or Thaw"
 $form.StartPosition = "Manual"
@@ -1044,6 +1088,7 @@ Write-Host "PROGRESS: Waiting for layer selection..."
 Write-Host "PROGRESS: Layer selection dialog should be visible on the primary display."
 Write-Host "PROGRESS: TRACE branch=layer_selection_dialog"
 if ($form.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { exit }
+}  # end of "if (-not $usePatternMode)" — GUI selection branch
 
 $layersToFreeze = @($layersToFreezeSet | Sort-Object)
 $layersToThaw = @($layersToThawSet | Sort-Object)

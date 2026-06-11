@@ -84,6 +84,16 @@ class ActivityTrayUiTests(unittest.TestCase):
             text,
         )
 
+    def test_workflow_activity_title_is_rendered(self):
+        text = SCRIPT_JS_PATH.read_text(encoding="utf-8")
+
+        self.assertIn("function getWorkflowDisplayName(workflow) {", text)
+        self.assertIn("function getWorkflowActivityLabel(workflow) {", text)
+        self.assertIn("function getActivityLabelFromPayload(toolId, payload = {}, existing = null) {", text)
+        self.assertIn('normalizedToolId === "toolWorkflow" && workflowTitle', text)
+        self.assertIn("const activityTitle =", text)
+        self.assertIn("textContent: activityTitle", text)
+
 
 if __name__ == "__main__":
     unittest.main()

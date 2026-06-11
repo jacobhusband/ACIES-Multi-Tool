@@ -47,84 +47,97 @@ class DeliverableToolDropdownUiTests(unittest.TestCase):
         ):
             self.assertIn(expected, text)
 
-    def test_unified_deliverable_actions_dropdown_wiring_exists(self):
+    def test_card_view_icon_action_wiring_exists(self):
         text = SCRIPT_JS_PATH.read_text(encoding="utf-8")
 
         for expected in (
-            "function createDeliverableActionsDropdown(deliverable, project, card) {",
-            'className: "deliverable-actions-trigger",',
-            'className: "deliverable-actions-menu"',
-            "function buildDeliverableActionsItem({",
-            "function buildDeliverableActionsSubmenu(label, renderSubmenu) {",
-            "getDeliverableToolMenuEntriesByCategory()",
-            '"Unpin deliverable" : "Pin deliverable"',
-            '"Expand details" : "Collapse details"',
-            '"Expand details"',
-            '"Collapse details"',
-            'buildDeliverableActionsSubmenu("Status"',
-            'buildDeliverableActionsSubmenu("Tools"',
-            'label: "Attachments",',
-            'label: "Open Project Folder",',
-            'label: "Edit Project",',
-            'label: "Delete Project",',
+            "function createDeliverableCardTopActions(deliverable, project, card) {",
+            "function createDeliverableCardActionButton({",
+            "function createDeliverableAttachmentAction(deliverable, project, card) {",
+            'className: "deliverable-card-action-row"',
+            'className: "deliverable-card-action-group deliverable-card-action-group-left"',
+            'className: "deliverable-card-action-group deliverable-card-action-group-right"',
+            "const statusDropdown = createStatusDropdown(deliverable, project, card);",
+            'statusDropdown.classList.add("deliverable-card-status-action");',
+            "const toolDropdown = createDeliverableToolDropdown(deliverable, project, card);",
+            'toolDropdown.classList.add("deliverable-card-tool-action");',
+            "const pinBtn = createDeliverablePinButton(deliverable);",
+            "const attachmentBtn = createDeliverableAttachmentAction(deliverable, project, card);",
+            "leftActions.append(pinBtn, statusDropdown, toolDropdown);",
+            "rightActions.append(",
+            "rightActions.append(coordinationBtn, attachmentBtn);",
+            "actions.append(leftActions, rightActions);",
             "openEdit(projectIndex)",
             "removeProject(projectIndex)",
             "openAttachmentPanel(attachmentContext)",
             "async function handleDeliverableActionsDrop(context, event) {",
-            "addDroppedEmailToAttachmentContext(context, event)",
+            "await handleDeliverableActionsDrop(attachmentContext, event);",
+            "updateAttachmentTriggerState(button, getAttachments());",
             "isSupportedEmailFile",
-            "const actionsDropdown = createDeliverableActionsDropdown(deliverable, project, card);",
-            "actions.append(actionsDropdown);",
-            "const parentRect = parent.getBoundingClientRect();\n"
-            "    const containingMenuRect =\n"
-            "      wrapper.parentElement?.getBoundingClientRect?.() || parentRect;\n"
-            "    const menuOverlap = 1;",
-            "const topCorrection = targetTop - placedRect.top;",
-            "const leftCorrection = targetLeft - placedRect.left;",
-            "let targetTop = Math.max(viewportPadding, parentRect.top);",
+            "const actionRow = createDeliverableCardTopActions(deliverable, project, card);",
+            "card.append(actionRow, header, statusSection, notesSection);",
+            'const actionRow = card.querySelector(":scope > .deliverable-card-action-row");',
+            "card.insertBefore(projectMeta, actionRow?.nextSibling || card.firstChild);",
         ):
             self.assertIn(expected, text)
 
-    def test_deliverable_actions_close_behavior_is_wired(self):
+        top_actions_start = text.index("function createDeliverableCardTopActions(")
+        top_actions_end = text.index("let openDeliverableActionsDropdown = null;", top_actions_start)
+        top_actions_block = text[top_actions_start:top_actions_end]
+        self.assertIn("leftActions.append(pinBtn, statusDropdown, toolDropdown);", top_actions_block)
+        delete_index = top_actions_block.index('className: "deliverable-card-delete-action"')
+        edit_index = top_actions_block.index('className: "deliverable-card-edit-action"')
+        attachment_index = top_actions_block.index("rightActions.append(coordinationBtn, attachmentBtn);")
+        self.assertLess(delete_index, edit_index)
+        self.assertLess(edit_index, attachment_index)
+        self.assertNotIn("createExpandToggle(card)", top_actions_block)
+        self.assertNotIn("deliverable-card-expand-action", top_actions_block)
+
+        header_start = text.index("function createCardHeader(")
+        header_end = text.index("function createExpandToggle(", header_start)
+        header_block = text[header_start:header_end]
+        self.assertNotIn("createDeliverableActionsDropdown", header_block)
+        self.assertNotIn("actionsDropdown", header_block)
+        self.assertNotIn("createDeliverableCardTopActions", header_block)
+
+        self.assertNotIn("function createDeliverableCardBottomActions(", text)
+        self.assertNotIn("const bottomActions = createDeliverableCardBottomActions(", text)
+        self.assertNotIn("deliverable-card-bottom-actions", text)
+
+    def test_card_view_icon_actions_close_other_popovers(self):
         text = SCRIPT_JS_PATH.read_text(encoding="utf-8")
 
         for expected in (
-            "function closeOpenDeliverableActionsDropdown({ except = null, focusTrigger = false } = {}) {",
-            "function setDeliverableActionsDropdownState(dropdown, isOpen) {",
-            "function ensureDeliverableActionsGlobalHandlers() {",
-            "function closeDeliverableActionsSiblingSubmenus(wrapper) {",
-            'document.addEventListener("keydown", (e) => {',
-            'if (e.key !== "Escape" || !openDeliverableActionsDropdown) return;',
-            "closeOpenDeliverableActionsDropdown({ focusTrigger: true });",
+            "function closeDeliverableCardActionOverlays() {",
             "closeOpenDeliverableToolDropdown();",
             "closeOpenDeliverableStatusDropdowns();",
+            "closeOpenDeliverableActionsDropdown();",
             "if (openAttachmentPanelContext) {",
             "void requestAttachmentPanelClose();",
         ):
             self.assertIn(expected, text)
 
-    def test_deliverable_actions_styles_exist(self):
+    def test_card_view_icon_action_styles_exist(self):
         css = STYLES_CSS_PATH.read_text(encoding="utf-8")
 
         for expected in (
-            ".deliverable-actions-dropdown {",
-            ".deliverable-actions-trigger {",
-            ".deliverable-actions-trigger.is-dragover {",
-            ".deliverable-actions-trigger.has-attachments::after {",
-            ".deliverable-actions-trigger-icon {",
-            ".deliverable-actions-menu {",
-            ".deliverable-actions-menu.open {",
-            ".deliverable-actions-item {",
-            ".deliverable-actions-item.has-submenu::after {",
-            ".deliverable-actions-item.danger {",
-            ".deliverable-actions-divider {",
-            ".deliverable-actions-submenu-wrapper {",
-            ".deliverable-actions-submenu {",
-            ".deliverable-actions-submenu.open {",
-            "left: -8px;",
-            "right: -8px;",
+            ".deliverable-card-action-row {",
+            ".deliverable-card-action-group {",
+            ".deliverable-card-action-group-left {",
+            ".deliverable-card-action-group-right {",
+            ".deliverable-card-action-btn,",
+            ".deliverable-card-action-btn:hover,",
+            ".deliverable-card-action-btn.is-pinned {",
+            ".deliverable-card-action-btn.danger {",
+            ".deliverable-card-action-btn.is-dragover {",
+            ".deliverable-card-action-btn.has-attachments::after {",
+            ".deliverable-card-action-row .deliverable-status-trigger,",
+            ".deliverable-card-action-row .deliverable-tool-menu {",
         ):
             self.assertIn(expected, css)
+
+        self.assertNotIn(".deliverable-card-bottom-actions {", css)
+        self.assertNotIn(".deliverable-card-top-actions {", css)
 
 
 if __name__ == "__main__":

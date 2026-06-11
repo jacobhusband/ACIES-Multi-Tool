@@ -17,7 +17,6 @@ import http.server
 import html
 from pathlib import Path
 from copy import copy, deepcopy
-from contextlib import closing
 from dotenv import load_dotenv
 import datetime
 import threading
@@ -33,7 +32,6 @@ from typing import List
 import importlib
 import uuid
 from urllib.parse import parse_qs, urlencode, urlparse, unquote
-import fitz
 
 # Work around NumPy 2.x removing scalar aliases used by openpyxl.
 _NUMPY_ALIAS_MAP = {
@@ -106,7 +104,7 @@ except AttributeError as _exc:
         raise
 from openpyxl.worksheet.copier import WorksheetCopy
 from pydantic import BaseModel, Field
-from PIL import Image as PILImage, ImageOps, ImageDraw, ImageFont, UnidentifiedImageError
+from PIL import Image as PILImage, ImageOps, UnidentifiedImageError
 
 HEIF_IMAGE_EXTENSIONS = {".heic", ".heics", ".heif", ".heifs", ".hif"}
 HEIF_SUPPORT_ENABLED = False
@@ -247,6 +245,8 @@ OUTLOOK_SCAN_PROMPT_SKIP_REASON = "Excluded from the AI batch prompt to keep the
 OUTLOOK_SCAN_RETRY_SKIP_REASON = (
     "Excluded from the reduced AI retry batch after the first request timed out."
 )
+EMAIL_INTAKE_PROJECT_CONTEXT_MAX_PROJECTS = 200
+EMAIL_INTAKE_PROJECT_CONTEXT_BUDGET_CHARS = 25000
 FIREBASE_API_KEY_ENV = "FIREBASE_API_KEY"
 FIREBASE_AUTH_DOMAIN_ENV = "FIREBASE_AUTH_DOMAIN"
 FIREBASE_PROJECT_ID_ENV = "FIREBASE_PROJECT_ID"
@@ -264,10 +264,195 @@ def build_default_cloud_sync_settings():
     }
 
 
+def build_default_workflow_cad_defaults():
+    return {
+        'manageLayersDwgSource': 'electricalTopLevel',
+        'cleanXrefsDwgSource': 'electricalXrefsToNewestArch',
+        'cleanXrefsSearchZipArchives': True,
+    }
+
+
+def _normalize_workflow_cad_defaults(value):
+    defaults = build_default_workflow_cad_defaults()
+    source = value if isinstance(value, dict) else {}
+    manage_source = str(
+        source.get('manageLayersDwgSource') or defaults['manageLayersDwgSource']
+    ).strip()
+    clean_source = str(
+        source.get('cleanXrefsDwgSource') or defaults['cleanXrefsDwgSource']
+    ).strip()
+    return {
+        'manageLayersDwgSource': (
+            manage_source
+            if manage_source in {'electricalTopLevel', 'manual'}
+            else defaults['manageLayersDwgSource']
+        ),
+        'cleanXrefsDwgSource': (
+            clean_source
+            if clean_source in {'electricalXrefsToNewestArch', 'manual'}
+            else defaults['cleanXrefsDwgSource']
+        ),
+        'cleanXrefsSearchZipArchives': (
+            source.get('cleanXrefsSearchZipArchives', True) is not False
+        ),
+    }
+
+
+# Schema describing each tool that can appear in a user-defined workflow.
+# 'invoke' is `(api_instance, launch_context, activity_id, params)` -> dict result.
+# 'params' lists the per-step parameter spec the workflow-builder UI introspects via
+# Api.get_workflow_tools() so it can render the correct editor controls.
+WORKFLOW_TOOL_REGISTRY = {
+    'backupDrawings': {
+        'displayName': 'Backup DWGs',
+        'description': 'Archive configured discipline folders and Xrefs into a timestamped Archive folder.',
+        'invoke': (lambda api, ctx, aid, params:
+                   api.backup_project_drawings(None, ctx)),
+        'params': [],
+        'requiredInputs': [
+            {'key': 'projectFolder', 'type': 'folder', 'label': 'Project folder',
+             'help': 'Discipline folders and Xrefs will be archived from this folder.'},
+        ],
+    },
+    'manageLayers': {
+        'displayName': 'Freeze/Thaw Layers',
+        'description': 'Freeze or thaw layers across selected DWGs. Patterns support wildcards (* and ?).',
+        'invoke': (lambda api, ctx, aid, params:
+                   api.run_manage_layers_script(ctx, aid, params)),
+        'params': [
+            {'key': 'freezePatterns', 'label': 'Freeze patterns',
+             'type': 'patternList',
+             'help': 'Layer-name wildcards to freeze (e.g. *cloud*, *rev*). Leave empty to skip.'},
+            {'key': 'thawPatterns', 'label': 'Thaw patterns',
+             'type': 'patternList',
+             'help': 'Layer-name wildcards to thaw. Leave empty to skip.'},
+        ],
+        'requiredInputs': [
+            {'key': 'dwgFiles', 'type': 'dwgFiles', 'label': 'DWG files',
+             'help': 'These DWGs will be scanned and matching layers frozen or thawed.'},
+        ],
+    },
+    'cleanXrefs': {
+        'displayName': 'Prepare CAD for XREF',
+        'description': 'Strip XREF paths, set colors by layer, purge, and audit.',
+        'invoke': (lambda api, ctx, aid, params:
+                   api.run_clean_xrefs_script(ctx, aid, params)),
+        'params': [
+            {'key': 'stripXrefs', 'label': 'Strip XREF paths', 'type': 'bool', 'default': True},
+            {'key': 'setByLayer', 'label': 'Set color by layer', 'type': 'bool', 'default': True},
+            {'key': 'purge', 'label': 'Purge', 'type': 'bool', 'default': True},
+            {'key': 'audit', 'label': 'Audit', 'type': 'bool', 'default': True},
+            {'key': 'hatchColor', 'label': 'Adjust hatch color', 'type': 'bool', 'default': True},
+        ],
+        'requiredInputs': [
+            {'key': 'dwgFiles', 'type': 'dwgFiles', 'label': 'DWG files',
+             'help': 'These DWGs will have XREF paths stripped, colors set by layer, purged, and audited.'},
+        ],
+    },
+    'publishDwgs': {
+        'displayName': 'Publish DWGs',
+        'description': 'Plot DWG layouts and combine outputs.',
+        'invoke': (lambda api, ctx, aid, params:
+                   api.run_publish_script(ctx, aid, params)),
+        'params': [
+            {'key': 'autoDetectPaperSize', 'label': 'Auto-detect paper size',
+             'type': 'bool', 'default': True},
+            {'key': 'shrinkPercent', 'label': 'Shrink %',
+             'type': 'int', 'default': 100, 'min': 25, 'max': 200},
+            {'key': 'stripPdfLayers', 'label': 'Remove PDF layers',
+             'type': 'bool', 'default': True},
+        ],
+        'requiredInputs': [
+            {'key': 'dwgFiles', 'type': 'dwgFiles', 'label': 'DWG files',
+             'help': 'These DWGs will be plotted and combined into output PDFs.'},
+        ],
+    },
+}
+
+
+def get_workflow_tool_descriptors():
+    """Return a JSON-safe list describing available workflow step tools (no callables)."""
+    return [
+        {
+            'toolId': tool_id,
+            'displayName': entry['displayName'],
+            'description': entry.get('description', ''),
+            'params': list(entry.get('params') or []),
+            'requiredInputs': list(entry.get('requiredInputs') or []),
+        }
+        for tool_id, entry in WORKFLOW_TOOL_REGISTRY.items()
+    ]
+
+
+def _normalize_layer_pattern_list(value):
+    """Normalize layer-name pattern input to a clean list of non-empty strings.
+
+    Accepts list/tuple of strings, a single string (possibly semicolon- or comma-delimited),
+    or None. Strips whitespace, drops empties, preserves order, de-duplicates case-insensitively.
+    """
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        raw = value
+    else:
+        text = str(value)
+        for sep in (';', ','):
+            if sep in text:
+                raw = text.split(sep)
+                break
+        else:
+            raw = [text]
+    seen = set()
+    result = []
+    for entry in raw:
+        cleaned = str(entry or '').strip()
+        if not cleaned:
+            continue
+        key = cleaned.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(cleaned)
+    return result
+
+
+DISCIPLINE_OPTIONS = ('Electrical', 'Mechanical', 'Plumbing')
+
+
+def _normalize_settings_discipline_list(value):
+    if isinstance(value, (list, tuple)):
+        raw = value
+    elif isinstance(value, str):
+        raw = re.split(r'[,/;]+', value)
+    else:
+        raw = []
+
+    lookup = {item.lower(): item for item in DISCIPLINE_OPTIONS}
+    seen = set()
+    result = []
+    for entry in raw:
+        normalized = lookup.get(str(entry or '').strip().lower())
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(normalized)
+    return result or ['Electrical']
+
+
+def _normalize_active_discipline(value, configured_disciplines):
+    lookup = {item.lower(): item for item in DISCIPLINE_OPTIONS}
+    normalized = lookup.get(str(value or '').strip().lower())
+    if normalized:
+        return normalized
+    configured = _normalize_settings_discipline_list(configured_disciplines)
+    return configured[0] if configured else 'Electrical'
+
+
 def build_default_user_settings():
     return {
         'userName': '',
         'discipline': ['Electrical'],
+        'activeDiscipline': 'Electrical',
         'apiKey': '',
         'autocadPath': '',
         'showSetupHelp': True,
@@ -280,15 +465,20 @@ def build_default_user_settings():
         },
         'publishDwgOptions': {
             'autoDetectPaperSize': True,
-            'shrinkPercent': 100
+            'shrinkPercent': 100,
+            'stripPdfLayers': True
         },
         'manageLayersOptions': {
-            'scanAllLayers': True
+            'scanAllLayers': True,
+            'freezePatterns': [],
+            'thawPatterns': []
         },
+        'workflowCadDefaults': build_default_workflow_cad_defaults(),
         'workroomAutoSelectCadFiles': True,
         'enableUnderConstructionTools': False,
         'googleAuth': None,
         'cloudSync': build_default_cloud_sync_settings(),
+        'workflows': [],
     }
 
 
@@ -407,6 +597,40 @@ def _sanitize_user_settings_payload(settings):
         if key not in normalized:
             normalized[key] = deepcopy(value)
             changed = True
+
+    default_publish_options = defaults.get("publishDwgOptions") or {}
+    source_publish_options = normalized.get("publishDwgOptions")
+    if not isinstance(source_publish_options, dict):
+        normalized["publishDwgOptions"] = deepcopy(default_publish_options)
+        changed = True
+    else:
+        merged_publish_options = deepcopy(default_publish_options)
+        merged_publish_options.update(source_publish_options)
+        if source_publish_options != merged_publish_options:
+            normalized["publishDwgOptions"] = merged_publish_options
+            changed = True
+
+    workflow_cad_defaults = _normalize_workflow_cad_defaults(
+        normalized.get("workflowCadDefaults")
+    )
+    if normalized.get("workflowCadDefaults") != workflow_cad_defaults:
+        normalized["workflowCadDefaults"] = workflow_cad_defaults
+        changed = True
+
+    normalized_disciplines = _normalize_settings_discipline_list(
+        normalized.get("discipline")
+    )
+    if normalized.get("discipline") != normalized_disciplines:
+        normalized["discipline"] = normalized_disciplines
+        changed = True
+
+    normalized_active_discipline = _normalize_active_discipline(
+        normalized.get("activeDiscipline"),
+        normalized_disciplines,
+    )
+    if normalized.get("activeDiscipline") != normalized_active_discipline:
+        normalized["activeDiscipline"] = normalized_active_discipline
+        changed = True
 
     return normalized, changed
 
@@ -804,7 +1028,6 @@ def _update_word_file_via_com(file_path, replacements, remove_to_section=False):
 def _apply_template_context(file_path, context=None, options=None):
     context = context or {}
     options = options or {}
-    template_key = options.get("templateKey")
     remove_to_section = bool(options.get("removeToSection"))
 
     replacements = {
@@ -878,6 +1101,7 @@ CHECKLISTS_FILE = get_app_data_path("checklists.json")
 SYNC_BACKUPS_DIR = os.path.join(get_app_data_dir(), "sync_backups")
 LIGHTING_SCHEDULE_SYNC_FILE = "T24LightingFixtureSchedule.sync.json"
 LIGHTING_SCHEDULE_DB_FILE = get_app_data_path("lighting_schedules.db")
+PROJECT_CHECKLIST_DB_FILE = get_app_data_path("project_checklists.db")
 SYNC_TRACKED_FILES = {
     "settings": SETTINGS_FILE,
     "tasks": TASKS_FILE,
@@ -1530,6 +1754,318 @@ def _overlay_projects_with_lighting_schedule_records(projects):
     return projects
 
 
+def _normalize_project_checklist_project_id(project_like):
+    return _resolve_lighting_schedule_project_id(project_like)
+
+
+def _create_default_project_checklist_state():
+    return {"checklists": []}
+
+
+def _normalize_project_checklist_state(state):
+    source = state if isinstance(state, dict) else {}
+    raw_checklists = source.get("checklists")
+    raw_checklists = raw_checklists if isinstance(raw_checklists, list) else []
+
+    checklists = []
+    seen_checklists = set()
+    for raw_entry in raw_checklists:
+        if not isinstance(raw_entry, dict):
+            continue
+
+        checklist_id = str(
+            raw_entry.get("checklistId") or raw_entry.get("id") or ""
+        ).strip()
+        if not checklist_id or checklist_id in seen_checklists:
+            continue
+        seen_checklists.add(checklist_id)
+
+        completed_items = []
+        seen_items = set()
+        for raw_item_id in raw_entry.get("completedItems") or []:
+            item_id = str(raw_item_id or "").strip()
+            if not item_id or item_id in seen_items:
+                continue
+            seen_items.add(item_id)
+            completed_items.append(item_id)
+
+        raw_notes = raw_entry.get("itemNotes")
+        raw_notes = raw_notes if isinstance(raw_notes, dict) else {}
+        item_notes = {}
+        for raw_item_id, raw_note in raw_notes.items():
+            item_id = str(raw_item_id or "").strip()
+            if not item_id:
+                continue
+            item_notes[item_id] = str(raw_note if raw_note is not None else "")
+
+        checklists.append(
+            {
+                "checklistId": checklist_id,
+                "completedItems": completed_items,
+                "itemNotes": item_notes,
+            }
+        )
+
+    return {"checklists": checklists}
+
+
+def _open_project_checklist_db():
+    conn = sqlite3.connect(PROJECT_CHECKLIST_DB_FILE, timeout=5)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode = WAL;")
+    conn.execute("PRAGMA foreign_keys = ON;")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS project_checklist_records (
+            project_id TEXT PRIMARY KEY,
+            state_json TEXT NOT NULL,
+            version INTEGER NOT NULL DEFAULT 1,
+            updated_at_utc TEXT NOT NULL,
+            updated_by TEXT NOT NULL DEFAULT 'unknown'
+        );
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS project_checklist_links (
+            dwg_path TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            last_seen_at_utc TEXT NOT NULL,
+            FOREIGN KEY(project_id) REFERENCES project_checklist_records(project_id)
+                ON DELETE CASCADE
+        );
+        """
+    )
+    conn.commit()
+    return conn
+
+
+def _normalize_project_checklist_record(row):
+    if row is None:
+        return None
+
+    try:
+        state_payload = json.loads(row["state_json"])
+    except (TypeError, ValueError, KeyError):
+        state_payload = _create_default_project_checklist_state()
+
+    return {
+        "projectId": str(row["project_id"] or "").strip(),
+        "version": int(row["version"] or 0),
+        "updatedAtUtc": str(row["updated_at_utc"] or "").strip(),
+        "updatedBy": str(row["updated_by"] or "").strip(),
+        "state": _normalize_project_checklist_state(state_payload),
+    }
+
+
+def _get_project_checklist_record(project_id):
+    resolved_id = _normalize_project_checklist_project_id(project_id)
+    if not resolved_id:
+        return None
+
+    conn = _open_project_checklist_db()
+    try:
+        row = conn.execute(
+            """
+            SELECT project_id, state_json, version, updated_at_utc, updated_by
+            FROM project_checklist_records
+            WHERE project_id = ?
+            """,
+            (resolved_id,),
+        ).fetchone()
+        return _normalize_project_checklist_record(row)
+    finally:
+        conn.close()
+
+
+def _get_project_checklist_version(project_id):
+    record = _get_project_checklist_record(project_id)
+    if not record:
+        return {
+            "exists": False,
+            "projectId": _normalize_project_checklist_project_id(project_id),
+            "version": 0,
+            "updatedAtUtc": "",
+            "updatedBy": "",
+        }
+
+    return {
+        "exists": True,
+        "projectId": record["projectId"],
+        "version": record["version"],
+        "updatedAtUtc": record["updatedAtUtc"],
+        "updatedBy": record["updatedBy"],
+    }
+
+
+def _normalize_project_checklist_dwg_path(dwg_path):
+    raw = str(dwg_path or "").strip().strip('"').strip("'")
+    if not raw:
+        return ""
+    return os.path.normpath(raw)
+
+
+def _get_project_checklist_link(dwg_path):
+    normalized_dwg = _normalize_project_checklist_dwg_path(dwg_path)
+    if not normalized_dwg:
+        return None
+
+    conn = _open_project_checklist_db()
+    try:
+        row = conn.execute(
+            """
+            SELECT dwg_path, project_id, last_seen_at_utc
+            FROM project_checklist_links
+            WHERE dwg_path = ?
+            """,
+            (normalized_dwg,),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    if row is None:
+        return None
+    return {
+        "dwgPath": str(row["dwg_path"] or "").strip(),
+        "projectId": str(row["project_id"] or "").strip(),
+        "lastSeenAtUtc": str(row["last_seen_at_utc"] or "").strip(),
+    }
+
+
+def _upsert_project_checklist_link(conn, project_id, dwg_path):
+    resolved_id = _normalize_project_checklist_project_id(project_id)
+    normalized_dwg = _normalize_project_checklist_dwg_path(dwg_path)
+    if not resolved_id or not normalized_dwg:
+        return
+
+    now_iso = datetime.datetime.utcnow().isoformat()
+    conn.execute(
+        """
+        INSERT INTO project_checklist_links (
+            dwg_path, project_id, last_seen_at_utc
+        )
+        VALUES (?, ?, ?)
+        ON CONFLICT(dwg_path) DO UPDATE SET
+            project_id = excluded.project_id,
+            last_seen_at_utc = excluded.last_seen_at_utc
+        """,
+        (normalized_dwg, resolved_id, now_iso),
+    )
+
+
+def _save_project_checklist_record(project_id, payload, updated_by="desktop"):
+    resolved_id = _normalize_project_checklist_project_id(project_id)
+    if not resolved_id:
+        raise ValueError("Project checklist project ID is required.")
+    if not isinstance(payload, dict):
+        raise ValueError("Project checklist payload must be a JSON object.")
+
+    state = _normalize_project_checklist_state(payload.get("state"))
+    expected_version = payload.get("expectedVersion", None)
+    canonical_state_json = json.dumps(
+        state,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    now_iso = datetime.datetime.utcnow().isoformat()
+
+    conn = _open_project_checklist_db()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        existing = conn.execute(
+            """
+            SELECT project_id, version
+            FROM project_checklist_records
+            WHERE project_id = ?
+            """,
+            (resolved_id,),
+        ).fetchone()
+
+        previous_version = int(existing["version"] or 0) if existing else 0
+        next_version = previous_version + 1 if existing else 1
+        conn.execute(
+            """
+            INSERT INTO project_checklist_records (
+                project_id, state_json, version, updated_at_utc, updated_by
+            )
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(project_id) DO UPDATE SET
+                state_json = excluded.state_json,
+                version = excluded.version,
+                updated_at_utc = excluded.updated_at_utc,
+                updated_by = excluded.updated_by
+            """,
+            (
+                resolved_id,
+                canonical_state_json,
+                next_version,
+                now_iso,
+                str(updated_by or "desktop").strip() or "desktop",
+            ),
+        )
+
+        dwg_path = payload.get("dwgPath") or payload.get("dwg_path")
+        if dwg_path:
+            _upsert_project_checklist_link(conn, resolved_id, dwg_path)
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        conn.close()
+
+    record = _get_project_checklist_record(resolved_id)
+    if record is None:
+        raise RuntimeError("Project checklist save completed but record could not be reloaded.")
+
+    try:
+        expected_version_int = int(expected_version)
+    except (TypeError, ValueError):
+        expected_version_int = None
+    record["conflict"] = (
+        expected_version_int is not None
+        and expected_version_int != previous_version
+    )
+    record["previousVersion"] = previous_version
+    return record
+
+
+def _save_project_checklist_link(project_id, dwg_path):
+    resolved_id = _normalize_project_checklist_project_id(project_id)
+    normalized_dwg = _normalize_project_checklist_dwg_path(dwg_path)
+    if not resolved_id:
+        raise ValueError("Project checklist project ID is required.")
+    if not normalized_dwg:
+        raise ValueError("DWG path is required.")
+
+    existing = _get_project_checklist_record(resolved_id)
+    if existing is None:
+        _save_project_checklist_record(
+            resolved_id,
+            {"state": _create_default_project_checklist_state()},
+            updated_by="link",
+        )
+
+    conn = _open_project_checklist_db()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        _upsert_project_checklist_link(conn, resolved_id, normalized_dwg)
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        conn.close()
+
+    return _get_project_checklist_link(normalized_dwg)
+
+
 def get_bundled_template_path(template_name: str) -> Path:
     """
     Resolve template files for both dev runs and packaged desktop runs.
@@ -1615,12 +2151,24 @@ class CircuitItem(BaseModel):
     breaker_amps: str = Field(..., description="Amperage (e.g., '20')")
     poles: int = Field(1, description="Number of poles (1, 2, or 3)")
     load_type: str = Field(..., description="Code: 'C', 'D', 'G', 'K', 'M'")
+    kva: str = Field(
+        "",
+        description="Visible load in kVA from an existing directory schedule, or blank if not shown",
+    )
+    phase_kva: List[str] = Field(
+        [],
+        description="Visible kVA values for each occupied circuit row, ordered top-to-bottom",
+    )
 
 
 class PanelData(BaseModel):
     panel_name: str = Field(..., description="Panel Name")
     voltage: str = Field(..., description="Voltage")
     bus_rating: str = Field(..., description="Bus Rating")
+    aic_rating: str = Field(
+        "",
+        description="Panel AIC rating when visibly shown, or blank if not shown",
+    )
     phase: str = Field(..., description="Phase")
     wire: str = Field(..., description="Wire")
     mounting: str = Field(..., description="Mounting")
@@ -1708,6 +2256,41 @@ def cb_calculate_estimated_load(amps_str, description, load_type):
     return round((numeric_amps * factor * 120) / 1000, 2)
 
 
+def cb_normalize_extracted_kva(raw_kva):
+    if raw_kva is None or isinstance(raw_kva, bool):
+        return ""
+    if isinstance(raw_kva, (int, float)):
+        value = float(raw_kva)
+    else:
+        text = str(raw_kva).strip()
+        if not text:
+            return ""
+        upper = text.upper()
+        if upper in {"N/A", "NA", "NONE", "UNKNOWN", "UNREADABLE", "BLANK", "-", "--", "---"}:
+            return ""
+        match = re.search(r"[-+]?\d+(?:\.\d+)?", upper.replace(",", ""))
+        if not match:
+            return ""
+        try:
+            value = float(match.group(0))
+        except Exception:
+            return ""
+        if "VA" in upper and "KVA" not in upper and value >= 10:
+            value = value / 1000
+    if not math.isfinite(value) or value < 0:
+        return ""
+    return round(value, 3)
+
+
+def cb_normalize_extracted_phase_kva(circuit):
+    raw_values = getattr(circuit, "phase_kva", None)
+    if isinstance(raw_values, (list, tuple)):
+        values = [cb_normalize_extracted_kva(value) for value in raw_values]
+        if any(value != "" for value in values):
+            return values
+    return [cb_normalize_extracted_kva(getattr(circuit, "kva", ""))]
+
+
 def cb_fix_nema_type(raw_type):
     t = str(raw_type).upper()
     return "NEMA 3R" if any(x in t for x in ["3R", "OUT", "EXT", "WEATHER"]) else "NEMA 1"
@@ -1761,7 +2344,7 @@ def cb_ensure_template_sheet(wb):
         template_wb.close()
 
 
-def cb_update_excel_workbook(panel_data: PanelData, workbook_path: str) -> str:
+def cb_update_excel_workbook(panel_data: PanelData, workbook_path: str, use_extracted_kva=False) -> str:
     wb = openpyxl.load_workbook(workbook_path)
     cb_ensure_template_sheet(wb)
 
@@ -1779,6 +2362,9 @@ def cb_update_excel_workbook(panel_data: PanelData, workbook_path: str) -> str:
     target["K3"] = cb_clean_text(panel_data.phase)
     target["K4"] = cb_fix_nema_type(panel_data.enclosure)
     target["N2"] = cb_clean_text(panel_data.mounting)
+    aic_rating = cb_clean_text(getattr(panel_data, "aic_rating", ""))
+    if aic_rating:
+        target["N3"] = aic_rating
 
     start_row = 8
     max_row = 28
@@ -1816,9 +2402,17 @@ def cb_update_excel_workbook(panel_data: PanelData, workbook_path: str) -> str:
         desc_text = cb_clean_text(ckt.description)
         is_spare = any(x in desc_text for x in ["SPARE", "SPACE", "UNUSED"])
 
-        kva_val = "" if is_spare else cb_calculate_estimated_load(
-            ckt.breaker_amps, ckt.description, ckt.load_type
-        )
+        if is_spare:
+            kva_val = ""
+            phase_kva_values = []
+        elif use_extracted_kva:
+            phase_kva_values = cb_normalize_extracted_phase_kva(ckt)
+            kva_val = phase_kva_values[0] if phase_kva_values else ""
+        else:
+            kva_val = cb_calculate_estimated_load(
+                ckt.breaker_amps, ckt.description, ckt.load_type
+            )
+            phase_kva_values = []
         note_val = "" if is_spare else "1"
         type_val = "" if is_spare else cb_clean_text(ckt.load_type)
 
@@ -1838,7 +2432,11 @@ def cb_update_excel_workbook(panel_data: PanelData, workbook_path: str) -> str:
                     target[f"{c_desc}{ext_row}"] = "---"
                     target[f"{c_pole}{ext_row}"] = "-"
                     target[f"{c_trip}{ext_row}"] = "-"
-                    target[f"{c_kva}{ext_row}"] = kva_val
+                    if use_extracted_kva:
+                        ext_kva_val = phase_kva_values[i] if i < len(phase_kva_values) else ""
+                    else:
+                        ext_kva_val = kva_val
+                    target[f"{c_kva}{ext_row}"] = ext_kva_val
                     target[f"{c_type}{ext_row}"] = type_val
                     target[f"{c_note}{ext_row}"] = note_val
                     occupied_slots.add((side, ext_row))
@@ -2271,13 +2869,14 @@ class Api:
             logging.error(f"Failed to uninstall {bundle_name}: {e}")
             return {'status': 'error', 'message': f"Failed to uninstall {bundle_name}: {e}"}
 
-    def _run_script_with_progress(self, command, tool_id, activity_id=None):
+    def _run_script_with_progress(self, command, tool_id, activity_id=None, wait=False):
         """
         Runs a script in a separate thread, captures its stdout, and sends
         progress updates to the frontend.
         """
+        result_holder = {'status': 'started'}
+
         def script_runner():
-            window = webview.windows[0]
             try:
                 print(f"DEBUG THREAD: Starting script for {tool_id}")
                 startupinfo = None
@@ -2359,6 +2958,10 @@ class Api:
                         "DONE",
                         activity_id=activity_id,
                     )
+                    result_holder.update({
+                        'status': 'success',
+                        'returnCode': return_code,
+                    })
                 else:
                     if last_progress_error:
                         error_message = (
@@ -2371,6 +2974,11 @@ class Api:
                         f"ERROR: {error_message}",
                         activity_id=activity_id,
                     )
+                    result_holder.update({
+                        'status': 'error',
+                        'message': error_message,
+                        'returnCode': return_code,
+                    })
 
             except Exception as e:
                 print(f"DEBUG THREAD ERROR: {e}")
@@ -2382,9 +2990,17 @@ class Api:
                     f"ERROR: {str(e)}",
                     activity_id=activity_id,
                 )
+                result_holder.update({
+                    'status': 'error',
+                    'message': str(e),
+                })
 
         thread = threading.Thread(target=script_runner)
         thread.start()
+        if wait:
+            thread.join()
+            return dict(result_holder)
+        return {'status': 'started'}
 
     def _build_powershell_script_command(self, script_path, *args):
         command = [
@@ -2502,19 +3118,6 @@ class Api:
             return b""
         padding = "=" * ((4 - (len(text) % 4)) % 4)
         return base64.urlsafe_b64decode(f"{text}{padding}")
-
-    def _decode_jwt_payload(self, token):
-        raw = str(token or "").strip()
-        if not raw:
-            return {}
-        parts = raw.split(".")
-        if len(parts) < 2:
-            return {}
-        try:
-            payload = json.loads(self._base64url_decode(parts[1]).decode("utf-8"))
-        except Exception:
-            return {}
-        return payload if isinstance(payload, dict) else {}
 
     def _generate_google_pkce_pair(self):
         verifier = secrets.token_urlsafe(64)
@@ -4946,132 +5549,6 @@ CURRENT_DELIVERABLES_IN_PERIOD:
             logging.error(f"Error getting chat response from AI: {e}")
             return {'status': 'error', 'response': f"An AI error occurred: {msg}"}
 
-    def _process_email_with_ai_legacy(self, email_text, api_key, user_name, discipline):
-        """
-        Processes email text using Google GenAI to extract project details.
-        """
-        final_api_key = (api_key or "").strip()
-        if not final_api_key:
-            final_api_key = (os.getenv("GOOGLE_API_KEY") or "").strip()
-
-        if not final_api_key:
-            return {
-                'status': 'error',
-                'message': 'AI API key is not configured. Please provide it in the app settings or set GOOGLE_API_KEY in your .env file.'
-            }
-
-        current_date = datetime.date.today().strftime("%m/%d/%Y")
-        disciplines_str = ', '.join(discipline) if isinstance(
-            discipline, list) else (discipline or 'Engineering')
-        task_notes_contract = self._build_deliverable_task_notes_prompt_contract(
-            disciplines_str,
-            include_json_field_names=False,
-        )
-        prompt = f"""
-You are an intelligent assistant for {user_name}, a(n) {disciplines_str} engineering project manager. Your task is to analyze an email and extract specific project details. Focus ONLY on the primary {disciplines_str} engineering tasks mentioned. Ignore tasks for other disciplines.
-Analyze the following email text and extract the information into a valid JSON object with the following keys: "id", "name", "due", "path", "deliverable", "tasks", "notes".
-- "id": Find a project number or project ID (e.g., "250597", "P-12345", "Job #1042"). Look in the subject line, headers, and body. This could be called a job number, project number, project ID, or similar. If none, leave it empty.
-- "name": Determine the project name, typically including the client and address or building name (e.g., "BofA, 22004 Sherman Way, Canoga Park, CA"). Include enough detail to uniquely identify the project. If no formal name is found, compose one from the client name and location mentioned.
-- "due": Find the due date and format it as "MM/DD/YY". The current date is {current_date}. If the year is not specified in the email, assume the current year or the next year if the date would be in the past. Ensure the due date is on or after today. If multiple dates, choose the most relevant upcoming one.
-- "path": Find the main project file path (e.g., "M:\\\\Gensler\\\\...").
-- "deliverable": Infer the deliverable name from the email if possible. Prefer concise, standardized names when present (for example: DD60, DD90, CD60, CD90, CD100, CDF, RFI, RFI #2, Submittal, Lighting Submittal, Controls Submittal, Record Set, Record Drawings, IFP, Site Survey, Survey Report, ASR, ASR #2, PCC, PCC #3, Bulletin #2, Coordination, Meeting, Revision). If no deliverable is clear, leave it empty.
-{task_notes_contract}
-If a piece of information is not found, the value should be an empty string "" for strings, or an empty array [] for tasks.
-Here is the email:
----
-{email_text}
----
-Return ONLY the JSON object.
-""".strip()
-        try:
-            self._ensure_aiohttp()
-            client = genai.Client(
-                api_key=final_api_key,
-                http_options=types.HttpOptions(timeout=120000),
-            )
-            model = "gemini-3-flash-preview"
-
-            contents = [
-                types.Content(
-                    role="user",
-                    parts=[types.Part.from_text(text=prompt)],
-                ),
-            ]
-
-            generate_content_config = types.GenerateContentConfig(
-                temperature=0,
-                response_mime_type="application/json",
-            )
-
-            response = client.models.generate_content(
-                model=model,
-                contents=contents,
-                config=generate_content_config,
-            )
-
-            # Log response for debugging
-            logging.debug(f"AI response object: {response}")
-
-            # Handle case where response.text might be None or empty
-            raw_text = response.text
-            if raw_text is None:
-                # Try accessing via parts if .text is None
-                if hasattr(response, 'parts') and response.parts:
-                    raw_text = ''.join(
-                        part.text for part in response.parts
-                        if hasattr(part, 'text') and part.text
-                    )
-                if not raw_text:
-                    logging.error(f"AI returned empty response. Full response: {response}")
-                    return {'status': 'error', 'message': 'AI returned an empty response. Please try again.'}
-
-            cleaned = raw_text.strip()
-            if not cleaned:
-                return {'status': 'error', 'message': 'AI returned an empty response. Please try again.'}
-
-            logging.debug(f"AI response text: {cleaned[:500]}...")
-            project_data = json.loads(cleaned)
-
-            # Handle case where AI returns a list instead of a dict
-            if isinstance(project_data, list):
-                project_data = project_data[0] if project_data else {}
-
-            project_data.setdefault("id", "")
-            project_data.setdefault("name", "")
-            project_data.setdefault("due", "")
-            project_data.setdefault("path", "")
-            project_data.setdefault("deliverable", "")
-            project_data.setdefault("tasks", [])
-            project_data.setdefault("notes", "")
-
-            if 'tasks' in project_data and isinstance(project_data['tasks'], list):
-                project_data['tasks'] = [{'text': str(task), 'done': False, 'links': [
-                ]} for task in project_data['tasks']]
-
-            return {'status': 'success', 'data': project_data}
-
-        except json.JSONDecodeError as e:
-            logging.error(f"Failed to parse AI response as JSON: {e}")
-            return {'status': 'error', 'message': 'AI returned invalid JSON. Please try again.'}
-        except Exception as e:
-            msg = str(e)
-            lower = msg.lower()
-            logging.error(f"Error processing email with AI: {type(e).__name__}: {e}")
-            if ("api key expired" in lower or
-                "api_key_invalid" in lower or
-                    "invalid api key" in lower):
-                return {'status': 'error',
-                        'message': ('Your Google API key is expired/invalid. '
-                                    'Create a new key in Google AI Studio → API keys, '
-                                    'update your settings, then try again.')}
-            if "model" in lower and ("not found" in lower or "does not exist" in lower):
-                return {'status': 'error',
-                        'message': 'AI model not available. The Gemini 3 Flash model may not be accessible with your API key.'}
-            if "quota" in lower or "rate limit" in lower:
-                return {'status': 'error',
-                        'message': 'API rate limit exceeded. Please wait a moment and try again.'}
-            return {'status': 'error', 'message': f"AI error: {msg}"}
-
     def _resolve_google_ai_api_key(self, api_key):
         final_api_key = (api_key or "").strip()
         if not final_api_key:
@@ -5082,7 +5559,7 @@ Return ONLY the JSON object.
             )
         return final_api_key
 
-    def _build_email_analysis_prompt(self, email_text, user_name, discipline):
+    def _build_email_analysis_prompt(self, email_text, user_name, discipline, project_context=None):
         current_date = datetime.date.today().strftime("%m/%d/%Y")
         disciplines_str = ', '.join(discipline) if isinstance(
             discipline, list) else (discipline or 'Engineering')
@@ -5090,11 +5567,32 @@ Return ONLY the JSON object.
             disciplines_str,
             include_json_field_names=False,
         )
+        known_projects = self._normalize_email_intake_project_context(project_context)
+        known_projects_section = ""
+        if known_projects:
+            known_projects_json = json.dumps(
+                known_projects,
+                ensure_ascii=True,
+                separators=(",", ":"),
+            )
+            known_projects_section = f"""
+Known existing projects are provided below as JSON.
+- Use KNOWN_PROJECTS only when the email evidence clearly supports a match.
+- If the email mentions a known project id/job number, exact or close project name, nickname, project path, path leaf, client, address, building, or location that clearly matches one entry, return that known project's exact "id", "name", and "path".
+- Prefer exact known-project identity over composing a new project name.
+- Use "nick" and "pathLeaf" only as matching evidence; do not add extra JSON keys.
+- If multiple known projects could match and the evidence is ambiguous, do not force a known project; extract the best supported fields from the email instead.
+
+KNOWN_PROJECTS:
+{known_projects_json}
+""".strip()
+        known_projects_text = f"\n{known_projects_section}\n" if known_projects_section else ""
         return f"""
 You are an intelligent assistant for {user_name}, a(n) {disciplines_str} engineering project manager. Your task is to analyze an email and extract specific project details. Focus ONLY on the primary {disciplines_str} engineering tasks mentioned. Ignore tasks for other disciplines.
 Analyze the following email text and extract the information into a valid JSON object with the following keys: "id", "name", "due", "path", "deliverable", "tasks", "notes".
+{known_projects_text}
 - "id": Find a project number or project ID (e.g., "250597", "P-12345", "Job #1042"). Look in the subject line, headers, and body. This could be called a job number, project number, project ID, or similar. If none, leave it empty.
-- "name": Determine the project name, typically including the client and address or building name (e.g., "BofA, 22004 Sherman Way, Canoga Park, CA"). Include enough detail to uniquely identify the project. If no formal name is found, compose one from the client name and location mentioned.
+- "name": Determine the project name, typically including the client and address or building name (e.g., "BofA, 22004 Sherman Way, Canoga Park, CA"). Include enough detail to uniquely identify the project. If no formal name is found and no known project is clearly supported, compose one from the client name and location mentioned.
 - "due": Find the due date and format it as "MM/DD/YY". The current date is {current_date}. If the year is not specified in the email, assume the current year or the next year if the date would be in the past. Ensure the due date is on or after today. If multiple dates, choose the most relevant upcoming one.
 - "path": Find the main project file path (e.g., "M:\\\\Gensler\\\\...").
 - "deliverable": Infer the deliverable name from the email if possible. Prefer concise, standardized names when present (for example: DD60, DD90, CD60, CD90, CD100, CDF, RFI, RFI #2, Submittal, Lighting Submittal, Controls Submittal, Record Set, Record Drawings, IFP, Site Survey, Survey Report, ASR, ASR #2, PCC, PCC #3, Bulletin #2, Coordination, Meeting, Revision). If no deliverable is clear, leave it empty.
@@ -5140,6 +5638,57 @@ Return ONLY the JSON object.
         project_data["tasks"] = normalized_tasks
         return project_data
 
+    def _normalize_email_intake_project_context(self, raw_context):
+        if not isinstance(raw_context, list):
+            return []
+
+        normalized = []
+        for raw_project in raw_context:
+            if not isinstance(raw_project, dict):
+                continue
+            path = str(raw_project.get("path") or "").strip()
+            path_leaf = str(
+                raw_project.get("pathLeaf")
+                or raw_project.get("path_leaf")
+                or ""
+            ).strip()
+            if not path_leaf and path:
+                path_leaf = re.split(r"[\\/]+", path.rstrip("\\/"))[-1].strip()
+            project = {
+                "id": str(raw_project.get("id") or "").strip(),
+                "name": str(raw_project.get("name") or "").strip(),
+                "nick": str(raw_project.get("nick") or "").strip(),
+                "path": path,
+                "pathLeaf": path_leaf,
+            }
+            if any(project.values()):
+                normalized.append(project)
+
+        normalized.sort(
+            key=lambda project: (
+                str(project.get("id") or "").lower(),
+                str(project.get("name") or "").lower(),
+                str(project.get("nick") or "").lower(),
+                str(project.get("path") or "").lower(),
+                str(project.get("pathLeaf") or "").lower(),
+            )
+        )
+
+        capped = []
+        serialized_chars = 2
+        for project in normalized:
+            if len(capped) >= EMAIL_INTAKE_PROJECT_CONTEXT_MAX_PROJECTS:
+                break
+            serialized = json.dumps(project, ensure_ascii=True, separators=(",", ":"))
+            next_chars = serialized_chars + len(serialized) + (1 if capped else 0)
+            if capped and next_chars > EMAIL_INTAKE_PROJECT_CONTEXT_BUDGET_CHARS:
+                break
+            if not capped and next_chars > EMAIL_INTAKE_PROJECT_CONTEXT_BUDGET_CHARS:
+                continue
+            capped.append(project)
+            serialized_chars = next_chars
+        return capped
+
     def _build_deliverable_task_notes_prompt_contract(
         self,
         disciplines_str,
@@ -5152,9 +5701,21 @@ Return ONLY the JSON object.
             f'- {notes_label}: Provide only non-actionable context the user should note, such as constraints, approvals, dependencies, reminders, delivery method, or special instructions. Do NOT put action items, next steps, or completion work in {notes_label}. Example: "Awaiting architect approval before final issue." If there is no notable non-actionable context, return "".',
         ])
 
-    def _extract_project_data_from_email_text(self, email_text, api_key, user_name, discipline):
+    def _extract_project_data_from_email_text(
+        self,
+        email_text,
+        api_key,
+        user_name,
+        discipline,
+        project_context=None,
+    ):
         final_api_key = self._resolve_google_ai_api_key(api_key)
-        prompt = self._build_email_analysis_prompt(email_text, user_name, discipline)
+        prompt = self._build_email_analysis_prompt(
+            email_text,
+            user_name,
+            discipline,
+            project_context,
+        )
         try:
             self._ensure_aiohttp()
             client = genai.Client(
@@ -5216,7 +5777,7 @@ Return ONLY the JSON object.
                 raise RuntimeError('API rate limit exceeded. Please wait a moment and try again.')
             raise RuntimeError(f"AI error: {msg}")
 
-    def process_email_with_ai(self, email_text, api_key, user_name, discipline):
+    def process_email_with_ai(self, email_text, api_key, user_name, discipline, project_context=None):
         """
         Processes email text using Google GenAI to extract project details.
         """
@@ -5226,6 +5787,7 @@ Return ONLY the JSON object.
                 api_key,
                 user_name,
                 discipline,
+                project_context,
             )
             return {'status': 'success', 'data': project_data}
         except Exception as e:
@@ -5368,6 +5930,74 @@ Return ONLY the JSON object.
             }
         except Exception as e:
             logging.error(f"Error loading lighting schedule links: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def get_project_checklist_record(self, project_id):
+        """Load the project-scoped checklist completion record from SQLite."""
+        try:
+            record = _get_project_checklist_record(project_id)
+            return {
+                'status': 'success',
+                'exists': bool(record),
+                'projectId': _normalize_project_checklist_project_id(project_id),
+                'data': record,
+            }
+        except Exception as e:
+            logging.error(f"Error loading project checklist record: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def save_project_checklist_record(self, project_id, payload):
+        """Persist project-scoped checklist completion state to SQLite."""
+        try:
+            safe_payload = payload if isinstance(payload, dict) else {}
+            record = _save_project_checklist_record(
+                project_id,
+                safe_payload,
+                updated_by=safe_payload.get('updatedBy', 'desktop'),
+            )
+            return {
+                'status': 'success',
+                'projectId': record['projectId'],
+                'data': record,
+            }
+        except Exception as e:
+            logging.error(f"Error saving project checklist record: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def get_project_checklist_version(self, project_id):
+        """Return only project checklist version metadata for polling."""
+        try:
+            return {
+                'status': 'success',
+                'data': _get_project_checklist_version(project_id),
+            }
+        except Exception as e:
+            logging.error(f"Error loading project checklist version: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def get_project_checklist_link(self, dwg_path):
+        """Return the project checklist DWG-to-project link, if one exists."""
+        try:
+            link = _get_project_checklist_link(dwg_path)
+            return {
+                'status': 'success',
+                'exists': bool(link),
+                'data': link,
+            }
+        except Exception as e:
+            logging.error(f"Error loading project checklist link: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def save_project_checklist_link(self, project_id, dwg_path):
+        """Persist a DWG-to-project link for project checklist lookups."""
+        try:
+            link = _save_project_checklist_link(project_id, dwg_path)
+            return {
+                'status': 'success',
+                'data': link,
+            }
+        except Exception as e:
+            logging.error(f"Error saving project checklist link: {e}")
             return {'status': 'error', 'message': str(e)}
 
     def read_t24_output_json(self, json_path):
@@ -5629,7 +6259,6 @@ Return ONLY the JSON object.
         normalized_key = self._normalize_template_key(
             template_key or self._infer_template_key(template)
         )
-        context_data = context if isinstance(context, dict) else {}
         source_path = str(template.get('sourcePath') or '').strip()
         extension = os.path.splitext(source_path)[1]
         if not extension:
@@ -8242,12 +8871,7 @@ Return ONLY the JSON object.
                     else 'Newer than server'
                 )
 
-        settings = self.get_user_settings()
-        managed_names = {n.lower() for n in self._get_local_project_manager_managed_root_names(settings)}
-        should_auto_select = (
-            resolved_root_folder.lower() in managed_names
-            and resolved_change_type in {'newer', 'missing'}
-        )
+        should_auto_select = resolved_change_type in {'newer', 'missing'}
 
         return {
             'relativePath': normalized_relative_path,
@@ -8440,84 +9064,83 @@ Return ONLY the JSON object.
             scope_type = str(path_details.get('scopeType') or 'additive_only').strip().lower()
 
             if local_file and server_file:
-                if scope_type == 'managed':
-                    local_modified_timestamp = float(local_file.get('modifiedTimestamp') or 0.0)
-                    server_modified_timestamp = float(server_file.get('modifiedTimestamp') or 0.0)
-                    time_difference = local_modified_timestamp - server_modified_timestamp
-                    if time_difference > comparison_tolerance_seconds:
-                        conflict_path = self._get_local_project_manager_target_conflict(
+                local_modified_timestamp = float(local_file.get('modifiedTimestamp') or 0.0)
+                server_modified_timestamp = float(server_file.get('modifiedTimestamp') or 0.0)
+                time_difference = local_modified_timestamp - server_modified_timestamp
+                if time_difference > comparison_tolerance_seconds:
+                    conflict_path = self._get_local_project_manager_target_conflict(
+                        normalized_server_project_path,
+                        relative_path,
+                    )
+                    if conflict_path:
+                        add_local_blocked_entry(
+                            self._build_local_project_manager_blocked_entry(
+                                normalized_local_project_path,
+                                normalized_server_project_path,
+                                relative_path,
+                                'file_directory_conflict',
+                                local_path=local_file.get('path') or '',
+                                server_path=conflict_path,
+                            )
+                        )
+                        continue
+                    local_to_server_candidates.append(
+                        self._build_local_project_manager_candidate_entry(
+                            normalized_local_project_path,
                             normalized_server_project_path,
                             relative_path,
+                            'local_newer',
+                            local_file=local_file,
+                            server_file=server_file,
+                            direction='to_server',
+                            root_folder=root_folder,
+                            scope_type=scope_type,
+                            change_type='newer',
+                            direction_label='Newer than server',
                         )
-                        if conflict_path:
-                            add_local_blocked_entry(
-                                self._build_local_project_manager_blocked_entry(
-                                    normalized_local_project_path,
-                                    normalized_server_project_path,
-                                    relative_path,
-                                    'file_directory_conflict',
-                                    local_path=local_file.get('path') or '',
-                                    server_path=conflict_path,
-                                )
-                            )
-                            continue
-                        local_to_server_candidates.append(
-                            self._build_local_project_manager_candidate_entry(
+                    )
+                    continue
+
+                if time_difference < -comparison_tolerance_seconds:
+                    conflict_path = self._get_local_project_manager_target_conflict(
+                        normalized_local_project_path,
+                        relative_path,
+                    )
+                    if conflict_path:
+                        add_server_blocked_entry(
+                            self._build_local_project_manager_blocked_entry(
                                 normalized_local_project_path,
                                 normalized_server_project_path,
                                 relative_path,
-                                'local_newer',
-                                local_file=local_file,
-                                server_file=server_file,
-                                direction='to_server',
-                                root_folder=root_folder,
-                                scope_type=scope_type,
-                                change_type='newer',
-                                direction_label='Newer than server',
+                                'file_directory_conflict',
+                                local_path=conflict_path,
+                                server_path=server_file.get('path') or '',
                             )
                         )
                         continue
-
-                    if time_difference < -comparison_tolerance_seconds:
-                        conflict_path = self._get_local_project_manager_target_conflict(
+                    server_to_local_candidates.append(
+                        self._build_local_project_manager_candidate_entry(
                             normalized_local_project_path,
+                            normalized_server_project_path,
                             relative_path,
+                            'server_newer',
+                            local_file=local_file,
+                            server_file=server_file,
+                            direction='to_local',
+                            root_folder=root_folder,
+                            scope_type=scope_type,
+                            change_type='newer',
+                            direction_label='Newer than local',
                         )
-                        if conflict_path:
-                            add_server_blocked_entry(
-                                self._build_local_project_manager_blocked_entry(
-                                    normalized_local_project_path,
-                                    normalized_server_project_path,
-                                    relative_path,
-                                    'file_directory_conflict',
-                                    local_path=conflict_path,
-                                    server_path=server_file.get('path') or '',
-                                )
-                            )
-                            continue
-                        server_to_local_candidates.append(
-                            self._build_local_project_manager_candidate_entry(
-                                normalized_local_project_path,
-                                normalized_server_project_path,
-                                relative_path,
-                                'server_newer',
-                                local_file=local_file,
-                                server_file=server_file,
-                                direction='to_local',
-                                root_folder=root_folder,
-                                scope_type=scope_type,
-                                change_type='newer',
-                                direction_label='Newer than local',
-                            )
-                        )
-                        continue
+                    )
+                    continue
 
-                    equal_files.append({
-                        'relativePath': relative_path,
-                        'path': relative_path,
-                        'rootFolder': root_folder,
-                        'scopeType': scope_type,
-                    })
+                equal_files.append({
+                    'relativePath': relative_path,
+                    'path': relative_path,
+                    'rootFolder': root_folder,
+                    'scopeType': scope_type,
+                })
                 continue
 
             if local_file:
@@ -8743,14 +9366,12 @@ Return ONLY the JSON object.
         managed_local_newer_count = sum(
             1
             for item in local_to_server_candidates
-            if str(item.get('scopeType') or '').strip().lower() == 'managed'
-            and str(item.get('changeType') or '').strip().lower() == 'newer'
+            if str(item.get('changeType') or '').strip().lower() == 'newer'
         )
         managed_server_newer_count = sum(
             1
             for item in server_to_local_candidates
-            if str(item.get('scopeType') or '').strip().lower() == 'managed'
-            and str(item.get('changeType') or '').strip().lower() == 'newer'
+            if str(item.get('changeType') or '').strip().lower() == 'newer'
         )
 
         summary = 'equal'
@@ -9330,6 +9951,15 @@ Return ONLY the JSON object.
                 'resolvedFromWorkroom': True,
                 'resolutionMode': 'workroom_missing_project_path',
                 'workroomProjectPath': '',
+            }
+
+        if os.path.isdir(self._to_windows_extended_path(context_project_path)):
+            return {
+                'status': 'success',
+                'path': os.path.normpath(context_project_path),
+                'resolvedFromWorkroom': True,
+                'resolutionMode': 'workroom_project_path',
+                'workroomProjectPath': context_project_path,
             }
 
         resolved_root = self._find_workroom_project_root_by_id(context_project_path)
@@ -11025,12 +11655,16 @@ Return ONLY the JSON object.
                 except Exception:
                     pass
 
-    def _update_panel_schedule_workbook(self, panel_data, output_path):
+    def _update_panel_schedule_workbook(self, panel_data, output_path, use_extracted_kva=False):
         output_extension = self._normalize_panel_schedule_extension(
             os.path.splitext(str(output_path))[1]
         )
         if output_extension == ".xlsx":
-            return cb_update_excel_workbook(panel_data, output_path)
+            return cb_update_excel_workbook(
+                panel_data,
+                output_path,
+                use_extracted_kva=use_extracted_kva,
+            )
         if output_extension != ".xls":
             raise ValueError("Panel schedule must be an .xlsx or .xls file.")
 
@@ -11040,7 +11674,11 @@ Return ONLY the JSON object.
 
         try:
             self._convert_excel_workbook(output_path, temp_xlsx_path, ".xlsx")
-            sheet_name = cb_update_excel_workbook(panel_data, temp_xlsx_path)
+            sheet_name = cb_update_excel_workbook(
+                panel_data,
+                temp_xlsx_path,
+                use_extracted_kva=use_extracted_kva,
+            )
             self._convert_excel_workbook(temp_xlsx_path, output_path, ".xls")
             return sheet_name
         finally:
@@ -11070,6 +11708,9 @@ IMAGE INTERPRETATION RULES
 TASK 1: HEADER
 - Extract Voltage, Bus Rating, Wire, Phase, Mounting, Enclosure.
 - Look at the directory images or labels on the panel across all images.
+- Extract the panel AIC rating into JSON field "aic_rating" when visibly shown (examples: "10 KAIC", "22,000 AIC").
+- If AIC is blank, hidden, unreadable, or not present, set "aic_rating" to "".
+- Do not confuse AIC rating with Bus Rating, breaker amperage, voltage, or main requirement.
 
 TASK 2: CIRCUITS & POLES
 - Identify every breaker visible across the Breaker Images.
@@ -11091,7 +11732,7 @@ TASK 3: LOAD TYPES
         return f"""
 Analyze these electrical panel schedule directory document photos for Panel: {panel_name}.
 
-You are provided with {num_dir_imgs} images of the existing panel directory document. This document contains all the circuit information (circuit numbers, load descriptions, breaker ratings/amperages, and poles) needed to recreate the panel schedule.
+You are provided with {num_dir_imgs} images of the existing panel directory document. This document contains the circuit information (circuit numbers, load descriptions, breaker ratings/amperages, poles, and any visible kVA/load values) needed to recreate the panel schedule.
 
 IMAGE INTERPRETATION RULES
 - All directory images belong to the SAME panel directory document.
@@ -11100,7 +11741,10 @@ IMAGE INTERPRETATION RULES
 - Reconcile overlapping information by using visible circuit numbers, breaker positions, and the clearest label text.
 
 TASK 1: HEADER
-- Extract Voltage, Bus Rating, Wire, Phase, Mounting, Enclosure from any headers, tables, or title block details.
+- Extract Voltage, Bus Rating, Wire, Phase, Mounting, Enclosure, and panel AIC rating from any headers, tables, or title block details.
+- Set the JSON field "aic_rating" to the visible AIC value (examples: "10 KAIC", "22,000 AIC").
+- If AIC is blank, hidden, unreadable, or not present, set "aic_rating" to "".
+- Do not confuse AIC rating with Bus Rating, breaker amperage, voltage, or main requirement.
 
 TASK 2: CIRCUITS & POLES
 - Identify every circuit entry in the directory document.
@@ -11108,7 +11752,12 @@ TASK 2: CIRCUITS & POLES
     - Look at how descriptions or circuit lines are grouped or span multiple spaces to represent multi-pole breakers.
     - A 2-pole breaker has tied circuit spaces (e.g., descriptions spanning circuits 1 and 3, or a single breaker amperage serving a 2-circuit load).
     - Provide the circuit_number as the TOP-most circuit number the breaker occupies.
-- Extract Amperage (e.g. 20A, 30A, 50A) and Load Description for each circuit from the directory table.
+- Extract Amperage (e.g. 20A, 30A, 50A), Load Description, and the visible kVA/load values from the directory table.
+- For each circuit, set the JSON field "phase_kva" to an ordered array of visible kVA decimals for the occupied circuit rows, top-to-bottom (examples: ["0.72"] for 1-pole, ["1.20", "1.10"] for 2-pole, ["2.00", "2.10", "2.05"] for 3-pole).
+- If a value is shown in VA, convert it to kVA. If an occupied row's kVA/load value is blank, hidden, unreadable, or not present, use "" for that row in "phase_kva".
+- Do not add, total, or sum phase loads together. Do not repeat a 2-pole or 3-pole total on every occupied row.
+- Keep the legacy JSON field "kva" blank unless only one single visible total is available and there are no row-by-row phase values.
+- Do not estimate kVA and do not infer it from breaker amperage, voltage, load type, or description.
 - Resolve ditto marks (") if seen in the directory.
 - If the same circuit appears in overlapping photos, combine the evidence and keep one final record.
 
@@ -11380,7 +12029,11 @@ TASK 3: LOAD TYPES
                 except Exception as e:
                     raise RuntimeError(self._format_panel_schedule_ai_error(e)) from e
 
-                sheet_name = self._update_panel_schedule_workbook(panel_data, output_path)
+                sheet_name = self._update_panel_schedule_workbook(
+                    panel_data,
+                    output_path,
+                    use_extracted_kva=input_mode == "existing_directory",
+                )
                 success_count += 1
                 results.append({
                     'panelId': panel_id,
@@ -11546,7 +12199,11 @@ TASK 3: LOAD TYPES
     def _resolve_workroom_context(self, settings, launch_context):
         context = self._normalize_launch_context(launch_context)
         source = str(context.get('source') or '').strip().lower()
-        project_path = str(context.get('projectPath') or '').strip()
+        project_path = str(
+            context.get('projectPath')
+            or context.get('project_path')
+            or ''
+        ).strip()
         root_project_path = str(context.get('rootProjectPath') or '').strip()
         effective_project_path = root_project_path or project_path
         if source == 'workroom':
@@ -11576,7 +12233,10 @@ TASK 3: LOAD TYPES
             return ''
 
         raw_path = str(
-            context.get('rootProjectPath') or context.get('projectPath') or ''
+            context.get('rootProjectPath')
+            or context.get('projectPath')
+            or context.get('project_path')
+            or ''
         ).strip()
         if not raw_path:
             return ''
@@ -11632,6 +12292,334 @@ TASK 3: LOAD TYPES
             temp_file.write(path + '\n')
         temp_file.close()
         return temp_file.name
+
+    def _source_display_path(self, source):
+        if not isinstance(source, dict):
+            return ''
+        display_path = str(source.get('displayPath') or '').strip()
+        if display_path:
+            return display_path
+        if str(source.get('kind') or '').strip() == 'zipEntry':
+            zip_path = str(source.get('zipPath') or '').strip()
+            entry_name = str(source.get('entryName') or '').strip()
+            if zip_path and entry_name:
+                return f'{zip_path}::{entry_name}'
+        return str(source.get('path') or '').strip()
+
+    def _normalize_dwg_file_sources(self, sources, require_exists=True):
+        if not isinstance(sources, (list, tuple)):
+            return []
+        normalized_sources = []
+        seen = set()
+        for raw_source in sources:
+            if isinstance(raw_source, str):
+                raw_source = {'kind': 'file', 'path': raw_source}
+            if not isinstance(raw_source, dict):
+                continue
+            kind = str(raw_source.get('kind') or 'file').strip()
+            if kind == 'zipEntry':
+                zip_path = os.path.normpath(str(raw_source.get('zipPath') or '').strip())
+                entry_name = str(raw_source.get('entryName') or '').strip().replace('\\', '/')
+                if not zip_path or not entry_name:
+                    continue
+                if os.path.splitext(entry_name)[1].lower() != '.dwg':
+                    continue
+                if require_exists and not os.path.isfile(zip_path):
+                    continue
+                project_root = str(raw_source.get('projectRoot') or '').strip()
+                source = {
+                    'kind': 'zipEntry',
+                    'zipPath': zip_path,
+                    'entryName': entry_name,
+                    'projectRoot': os.path.normpath(project_root) if project_root else '',
+                    'displayPath': str(raw_source.get('displayPath') or f'{zip_path}::{entry_name}').strip(),
+                }
+                key = ('zipEntry', os.path.normcase(zip_path), entry_name.lower())
+            else:
+                path = os.path.normpath(str(raw_source.get('path') or '').strip())
+                if not path or os.path.splitext(path)[1].lower() != '.dwg':
+                    continue
+                if require_exists and not os.path.isfile(path):
+                    continue
+                source = {
+                    'kind': 'file',
+                    'path': path,
+                    'displayPath': str(raw_source.get('displayPath') or path).strip(),
+                }
+                project_root = str(raw_source.get('projectRoot') or '').strip()
+                if project_root:
+                    source['projectRoot'] = os.path.normpath(project_root)
+                key = ('file', os.path.normcase(path))
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized_sources.append(source)
+        return normalized_sources
+
+    def _write_dwg_source_manifest_temp(self, sources):
+        normalized_sources = self._normalize_dwg_file_sources(
+            sources, require_exists=True)
+        if not normalized_sources:
+            return ''
+        temp_file = tempfile.NamedTemporaryFile(
+            mode='w', suffix='.json', delete=False, encoding='utf-8')
+        json.dump(normalized_sources, temp_file, ensure_ascii=True)
+        temp_file.close()
+        return temp_file.name
+
+    def _get_launch_context_dwg_file_sources(self, launch_context):
+        context = self._normalize_launch_context(launch_context)
+        return self._normalize_dwg_file_sources(
+            context.get('dwgFileSources'), require_exists=True)
+
+    def _get_workflow_project_path(self, settings, launch_context):
+        context = self._resolve_workroom_context(settings, launch_context)
+        project_path = str(context.get('project_path') or '').strip()
+        if project_path:
+            return project_path
+        launch_payload = self._normalize_launch_context(launch_context)
+        return os.path.normpath(str(
+            launch_payload.get('rootProjectPath')
+            or launch_payload.get('projectPath')
+            or ''
+        ).strip()) if launch_payload else ''
+
+    def _path_has_archive_part(self, path):
+        parts = re.split(r'[\\/]+', str(path or ''))
+        return any(
+            str(part or '').strip().lower() in {'archive', '0 archive'}
+            for part in parts
+        )
+
+    def _resolve_workflow_electrical_dwg_files(self, settings, launch_context):
+        project_path = self._get_workflow_project_path(settings, launch_context)
+        if not project_path:
+            return []
+        folder_resolution = self._resolve_workroom_discipline_folder(
+            project_path, 'Electrical')
+        electrical_folder = folder_resolution.get('resolved_folder') or ''
+        if not electrical_folder:
+            return []
+        return self._list_base_level_dwgs(electrical_folder)
+
+    def _read_workflow_xref_scan_results(self, settings, dwg_files):
+        dwg_paths = self._normalize_dwg_file_paths(dwg_files, require_exists=True)
+        if not dwg_paths:
+            return []
+        acad_path = str((settings or {}).get('autocadPath') or '').strip()
+        script_path = os.path.join(BASE_DIR, "scripts", "ListDwgXrefs.ps1")
+        if not acad_path or not os.path.isfile(acad_path) or not os.path.exists(script_path):
+            return []
+        files_list_path = self._write_files_list_temp(dwg_paths)
+        try:
+            command = self._build_powershell_script_command(
+                script_path,
+                '-AcadCore',
+                acad_path,
+                '-FilesListPath',
+                files_list_path,
+            )
+            timeout = max(60, min(600, len(dwg_paths) * 45))
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                encoding='utf-8',
+                errors='replace',
+                timeout=timeout,
+            )
+            output = (result.stdout or '') + '\n' + (result.stderr or '')
+            for line in reversed(output.splitlines()):
+                line = line.strip()
+                if line.startswith('XREF_JSON:'):
+                    payload = line[len('XREF_JSON:'):].strip()
+                    parsed = json.loads(payload)
+                    return parsed if isinstance(parsed, list) else []
+            if result.returncode != 0:
+                logging.warning(
+                    "ListDwgXrefs.ps1 failed with code %s: %s",
+                    result.returncode,
+                    output[-1000:],
+                )
+        except Exception as exc:
+            logging.warning("Workflow XREF scan failed: %s", exc)
+        finally:
+            try:
+                os.unlink(files_list_path)
+            except Exception:
+                pass
+        return []
+
+    def _extract_xref_target_basenames(self, scan_results):
+        seen = set()
+        basenames = []
+
+        def _add_candidate(value):
+            raw = str(value or '').strip()
+            if not raw:
+                return
+            candidate = raw.replace('/', os.sep).replace('\\', os.sep)
+            base_name = os.path.basename(candidate)
+            if not base_name:
+                base_name = raw
+            if base_name.lower().endswith('.dwg'):
+                base_name = os.path.splitext(base_name)[0]
+            base_name = base_name.strip()
+            if not base_name:
+                return
+            key = base_name.lower()
+            if key in seen:
+                return
+            seen.add(key)
+            basenames.append(base_name)
+
+        for item in scan_results or []:
+            if isinstance(item, str):
+                _add_candidate(item)
+                continue
+            if not isinstance(item, dict):
+                continue
+            refs = item.get('references')
+            if not isinstance(refs, list):
+                refs = [item]
+            for ref in refs:
+                if isinstance(ref, str):
+                    _add_candidate(ref)
+                elif isinstance(ref, dict):
+                    _add_candidate(
+                        ref.get('path')
+                        or ref.get('fileName')
+                        or ref.get('baseName')
+                        or ref.get('name')
+                    )
+        return basenames
+
+    def _zipinfo_timestamp(self, info):
+        try:
+            return datetime.datetime(*info.date_time).timestamp()
+        except Exception:
+            return 0
+
+    def _iter_arch_dwg_source_candidates(self, arch_folder, project_root, include_zips=True):
+        if not arch_folder or not os.path.isdir(arch_folder):
+            return []
+        candidates = []
+        for root, dirs, files in os.walk(arch_folder):
+            dirs[:] = [
+                name for name in dirs
+                if not self._path_has_archive_part(os.path.join(root, name))
+            ]
+            if self._path_has_archive_part(root):
+                continue
+            try:
+                folder_mtime = os.path.getmtime(root)
+            except Exception:
+                folder_mtime = 0
+            for filename in files:
+                full_path = os.path.join(root, filename)
+                lower_name = filename.lower()
+                if lower_name.endswith('.dwg'):
+                    try:
+                        file_mtime = os.path.getmtime(full_path)
+                    except Exception:
+                        file_mtime = 0
+                    candidates.append({
+                        'matchKey': os.path.splitext(filename)[0].lower(),
+                        'folderMtime': folder_mtime,
+                        'fileMtime': file_mtime,
+                        'source': {
+                            'kind': 'file',
+                            'path': os.path.normpath(full_path),
+                            'displayPath': os.path.normpath(full_path),
+                            'projectRoot': os.path.normpath(project_root) if project_root else '',
+                        },
+                    })
+                    continue
+                if not include_zips or not lower_name.endswith('.zip'):
+                    continue
+                try:
+                    zip_mtime = os.path.getmtime(full_path)
+                    with zipfile.ZipFile(full_path) as archive:
+                        for info in archive.infolist():
+                            if info.is_dir():
+                                continue
+                            entry_name = str(info.filename or '').replace('\\', '/')
+                            if not entry_name.lower().endswith('.dwg'):
+                                continue
+                            if self._path_has_archive_part(entry_name):
+                                continue
+                            entry_base = os.path.basename(entry_name)
+                            candidates.append({
+                                'matchKey': os.path.splitext(entry_base)[0].lower(),
+                                'folderMtime': folder_mtime,
+                                'fileMtime': max(zip_mtime, self._zipinfo_timestamp(info)),
+                                'source': {
+                                    'kind': 'zipEntry',
+                                    'zipPath': os.path.normpath(full_path),
+                                    'entryName': entry_name,
+                                    'projectRoot': os.path.normpath(project_root) if project_root else '',
+                                    'displayPath': f'{os.path.normpath(full_path)}::{entry_name}',
+                                },
+                            })
+                except Exception as exc:
+                    logging.info("Skipping unreadable Arch ZIP %s: %s", full_path, exc)
+        candidates.sort(
+            key=lambda item: (
+                -float(item.get('folderMtime') or 0),
+                -float(item.get('fileMtime') or 0),
+                self._source_display_path(item.get('source') or {}).lower(),
+            )
+        )
+        return candidates
+
+    def _resolve_workflow_clean_xref_sources(self, settings, launch_context):
+        electrical_dwgs = self._resolve_workflow_electrical_dwg_files(
+            settings, launch_context)
+        if not electrical_dwgs:
+            return []
+        scan_results = self._read_workflow_xref_scan_results(settings, electrical_dwgs)
+        target_basenames = self._extract_xref_target_basenames(scan_results)
+        if not target_basenames:
+            return []
+        project_path = self._get_workflow_project_path(settings, launch_context)
+        if not project_path:
+            return []
+        project_root = (
+            self._find_workroom_project_root_by_id(project_path)
+            or os.path.normpath(project_path)
+        )
+        arch_resolution = self._resolve_workroom_discipline_folder(project_path, 'Arch')
+        arch_folder = arch_resolution.get('resolved_folder') or ''
+        include_zips = _normalize_workflow_cad_defaults(
+            (settings or {}).get('workflowCadDefaults')
+        ).get('cleanXrefsSearchZipArchives', True)
+        candidates = self._iter_arch_dwg_source_candidates(
+            arch_folder, project_root, include_zips=include_zips)
+        if not candidates:
+            return []
+        by_key = {}
+        for candidate in candidates:
+            by_key.setdefault(candidate.get('matchKey'), []).append(candidate)
+        selected = []
+        seen_sources = set()
+        for basename in target_basenames:
+            matches = by_key.get(str(basename or '').strip().lower()) or []
+            if not matches:
+                continue
+            source = matches[0].get('source') or {}
+            if source.get('kind') == 'zipEntry':
+                source_key = (
+                    'zipEntry',
+                    os.path.normcase(source.get('zipPath') or ''),
+                    str(source.get('entryName') or '').lower(),
+                )
+            else:
+                source_key = ('file', os.path.normcase(source.get('path') or ''))
+            if source_key in seen_sources:
+                continue
+            seen_sources.add(source_key)
+            selected.append(source)
+        return self._normalize_dwg_file_sources(selected, require_exists=True)
 
     def _trace_cad_auto_select(self, event, **fields):
         try:
@@ -11938,17 +12926,39 @@ TASK 3: LOAD TYPES
                 tool_name=tool_name,
             )
             return None
-        if not self._is_workroom_auto_select_enabled(settings, launch_context):
-            self._trace_cad_auto_select(
-                'auto_select_skipped_disabled',
-                tool_name=tool_name,
-                launch_context=self._normalize_launch_context(launch_context),
-            )
-            return None
         context = self._resolve_workroom_context(settings, launch_context)
         launch_payload = self._normalize_launch_context(launch_context)
         project_path = context.get('project_path') or ''
         discipline = context.get('discipline') or 'Electrical'
+        explicit_dwg_files = self._get_launch_context_cad_file_paths(launch_context)
+        workflow_preselected = launch_payload.get('workflowPreselectedDwgFiles') is True
+
+        def _use_explicit_dwg_files(selection_source='launch_context_explicit_files'):
+            files_list_path = self._write_files_list_temp(explicit_dwg_files)
+            shared_parent = self._get_shared_parent_folder(explicit_dwg_files)
+            logging.info(
+                f"{tool_name}: Auto-selected {len(explicit_dwg_files)} explicit DWG(s) from launch context "
+                f"(folder={shared_parent or '<multiple>'}).")
+            self._trace_cad_auto_select(
+                'auto_select_selected',
+                tool_name=tool_name,
+                selection_source=selection_source,
+                project_path=project_path,
+                discipline=discipline,
+                folder_path=shared_parent,
+                files_list_path=files_list_path,
+                count=len(explicit_dwg_files),
+                file_paths=explicit_dwg_files,
+            )
+            return {
+                'files_list_path': files_list_path,
+                'project_path': project_path,
+                'discipline': discipline,
+                'folder_path': shared_parent,
+                'count': len(explicit_dwg_files),
+                'resolution_mode': selection_source,
+            }
+
         self._trace_cad_auto_select(
             'auto_select_request',
             tool_name=tool_name,
@@ -11958,6 +12968,29 @@ TASK 3: LOAD TYPES
             discipline_source=context.get('discipline_source') or '',
             launch_context=launch_payload,
         )
+        if workflow_preselected and explicit_dwg_files:
+            return _use_explicit_dwg_files('workflow_preselected_files')
+        if workflow_preselected and 'cadFilePaths' in launch_payload:
+            self._trace_cad_auto_select(
+                'auto_select_explicit_invalid',
+                tool_name=tool_name,
+                project_path=project_path,
+                discipline=discipline,
+                cad_file_paths=launch_payload.get('cadFilePaths'),
+                workflow_preselected=True,
+            )
+            return None
+
+        if not self._is_workroom_auto_select_enabled(settings, launch_context):
+            if explicit_dwg_files:
+                return _use_explicit_dwg_files()
+            self._trace_cad_auto_select(
+                'auto_select_skipped_disabled',
+                tool_name=tool_name,
+                launch_context=launch_payload,
+            )
+            return None
+
         cached_entry = self._get_workroom_cad_file_cache_entry(
             project_path, discipline)
         if cached_entry:
@@ -12014,32 +13047,8 @@ TASK 3: LOAD TYPES
                     project_path=project_path,
                     discipline=discipline,
                 )
-        explicit_dwg_files = self._get_launch_context_cad_file_paths(launch_context)
         if explicit_dwg_files:
-            files_list_path = self._write_files_list_temp(explicit_dwg_files)
-            shared_parent = self._get_shared_parent_folder(explicit_dwg_files)
-            logging.info(
-                f"{tool_name}: Auto-selected {len(explicit_dwg_files)} explicit DWG(s) from launch context "
-                f"(folder={shared_parent or '<multiple>'}).")
-            self._trace_cad_auto_select(
-                'auto_select_selected',
-                tool_name=tool_name,
-                selection_source='launch_context_explicit_files',
-                project_path=project_path,
-                discipline=discipline,
-                folder_path=shared_parent,
-                files_list_path=files_list_path,
-                count=len(explicit_dwg_files),
-                file_paths=explicit_dwg_files,
-            )
-            return {
-                'files_list_path': files_list_path,
-                'project_path': project_path,
-                'discipline': discipline,
-                'folder_path': shared_parent,
-                'count': len(explicit_dwg_files),
-                'resolution_mode': 'launch_context_explicit_files',
-            }
+            return _use_explicit_dwg_files()
         if 'cadFilePaths' in launch_payload:
             logging.info(
                 f"{tool_name}: Launch context cadFilePaths were provided but no valid DWG files remained. "
@@ -12504,12 +13513,18 @@ TASK 3: LOAD TYPES
             'activityId': str(activity_id or '').strip(),
         }
 
-    def run_publish_script(self, launch_context=None, activity_id=None):
-        """Runs the PlotDWGs.ps1 PowerShell script with progress updates."""
+    def run_publish_script(self, launch_context=None, activity_id=None, params_override=None):
+        """Runs the PlotDWGs.ps1 PowerShell script with progress updates.
+
+        params_override (dict, optional): per-invocation overrides for publishDwgOptions
+        (autoDetectPaperSize, shrinkPercent, stripPdfLayers). Used by the workflow runner.
+        """
         script_path = os.path.join(BASE_DIR, "scripts", "PlotDWGs.ps1")
         if not os.path.exists(script_path):
             raise Exception("PlotDWGs.ps1 not found in scripts directory.")
         settings = self.get_user_settings()
+        launch_payload = self._normalize_launch_context(launch_context)
+        workflow_blocking = launch_payload.get('workflowBlocking') is True
         if self.test_mode:
             return self._run_workroom_cad_tool_in_test_mode(
                 settings,
@@ -12521,9 +13536,12 @@ TASK 3: LOAD TYPES
         acad_path = settings.get('autocadPath', '')
         if not acad_path:
             raise Exception("No AutoCAD version selected in settings.")
-        publish_options = settings.get('publishDwgOptions') or {}
+        publish_options = dict(settings.get('publishDwgOptions') or {})
+        if isinstance(params_override, dict):
+            publish_options.update(params_override)
         auto_detect = publish_options.get('autoDetectPaperSize', True)
         shrink_percent = publish_options.get('shrinkPercent', 100)
+        strip_pdf_layers = publish_options.get('stripPdfLayers', True)
 
         def _ps_bool(value):
             return "1" if value else "0"
@@ -12564,6 +13582,8 @@ TASK 3: LOAD TYPES
             _ps_bool(auto_detect),
             '-ShrinkPercent',
             shrink_percent,
+            '-StripPdfLayers',
+            _ps_bool(strip_pdf_layers),
         )
         if auto_selection:
             command.extend([
@@ -12592,20 +13612,38 @@ TASK 3: LOAD TYPES
             files_list_path=auto_selection.get('files_list_path') if auto_selection else '',
             auto_selection=auto_selection,
         )
-        self._run_script_with_progress(
+        run_kwargs = {'activity_id': activity_id}
+        if workflow_blocking:
+            run_kwargs['wait'] = True
+        script_result = self._run_script_with_progress(
             command,
             'toolPublishDwgs',
-            activity_id=activity_id,
+            **run_kwargs,
         )
+        if workflow_blocking and isinstance(script_result, dict) and script_result.get('status') == 'error':
+            return {
+                'status': 'error',
+                'message': script_result.get('message') or 'Publish DWGs failed.',
+                'activityId': str(activity_id or '').strip(),
+                'scriptResult': script_result,
+            }
         return {'status': 'success', 'activityId': str(activity_id or '').strip()}
 
-    def run_manage_layers_script(self, launch_context=None, activity_id=None):
-        """Runs the ManageLayersDWGs.ps1 PowerShell script with progress updates."""
+    def run_manage_layers_script(self, launch_context=None, activity_id=None, params_override=None):
+        """Runs the ManageLayersDWGs.ps1 PowerShell script with progress updates.
+
+        params_override (dict, optional): per-invocation overrides for manageLayersOptions
+        keys (e.g., scanAllLayers, freezePatterns, thawPatterns). Used by the workflow runner
+        so a single workflow step can supply its own freeze/thaw patterns without mutating
+        the user's global manageLayersOptions.
+        """
         script_path = os.path.join(BASE_DIR, "scripts", "ManageLayersDWGs.ps1")
         if not os.path.exists(script_path):
             raise Exception(
                 "ManageLayersDWGs.ps1 not found in scripts directory.")
         settings = self.get_user_settings()
+        launch_payload = self._normalize_launch_context(launch_context)
+        workflow_blocking = launch_payload.get('workflowBlocking') is True
         if self.test_mode:
             return self._run_workroom_cad_tool_in_test_mode(
                 settings,
@@ -12617,8 +13655,14 @@ TASK 3: LOAD TYPES
         acad_path = settings.get('autocadPath', '')
         if not acad_path:
             raise Exception("No AutoCAD version selected in settings.")
-        manage_options = settings.get('manageLayersOptions') or {}
+        manage_options = dict(settings.get('manageLayersOptions') or {})
+        if isinstance(params_override, dict):
+            manage_options.update(params_override)
         scan_all = manage_options.get('scanAllLayers', True)
+        freeze_patterns = _normalize_layer_pattern_list(
+            manage_options.get('freezePatterns'))
+        thaw_patterns = _normalize_layer_pattern_list(
+            manage_options.get('thawPatterns'))
 
         def _ps_bool(value):
             return "1" if value else "0"
@@ -12658,6 +13702,10 @@ TASK 3: LOAD TYPES
             '-ScanAllLayers',
             _ps_bool(scan_all),
         )
+        if freeze_patterns:
+            command.extend(['-FreezePatterns', ';'.join(freeze_patterns)])
+        if thaw_patterns:
+            command.extend(['-ThawPatterns', ';'.join(thaw_patterns)])
         if auto_selection:
             command.extend([
                 '-FilesListPath',
@@ -12685,21 +13733,37 @@ TASK 3: LOAD TYPES
             files_list_path=auto_selection.get('files_list_path') if auto_selection else '',
             auto_selection=auto_selection,
         )
-        self._run_script_with_progress(
+        run_kwargs = {'activity_id': activity_id}
+        if workflow_blocking:
+            run_kwargs['wait'] = True
+        script_result = self._run_script_with_progress(
             command,
             'toolManageLayers',
-            activity_id=activity_id,
+            **run_kwargs,
         )
+        if workflow_blocking and isinstance(script_result, dict) and script_result.get('status') == 'error':
+            return {
+                'status': 'error',
+                'message': script_result.get('message') or 'Freeze/Thaw Layers failed.',
+                'activityId': str(activity_id or '').strip(),
+                'scriptResult': script_result,
+            }
         return {'status': 'success', 'activityId': str(activity_id or '').strip()}
 
-    def run_clean_xrefs_script(self, launch_context=None, activity_id=None):
-        """Runs the removeXREFPaths.ps1 PowerShell script with progress updates."""
+    def run_clean_xrefs_script(self, launch_context=None, activity_id=None, params_override=None):
+        """Runs the removeXREFPaths.ps1 PowerShell script with progress updates.
+
+        params_override (dict, optional): per-invocation overrides for cleanDwgOptions keys
+        (stripXrefs, setByLayer, purge, audit, hatchColor). Used by the workflow runner.
+        """
         try:
             script_path = os.path.join(BASE_DIR, "scripts", "removeXREFPaths.ps1")
             if not os.path.exists(script_path):
                 raise Exception(
                     "removeXREFPaths.ps1 not found in scripts directory.")
             settings = self.get_user_settings()
+            launch_payload = self._normalize_launch_context(launch_context)
+            workflow_blocking = launch_payload.get('workflowBlocking') is True
             if self.test_mode:
                 return self._run_workroom_clean_xrefs_tool_in_test_mode(
                     settings,
@@ -12720,7 +13784,9 @@ TASK 3: LOAD TYPES
             discipline_short = discipline_short_map.get(
                 discipline, (discipline[:1] or 'E').upper())
 
-            clean_options = settings.get('cleanDwgOptions') or {}
+            clean_options = dict(settings.get('cleanDwgOptions') or {})
+            if isinstance(params_override, dict):
+                clean_options.update(params_override)
             def _bool_setting(key, default=True):
                 value = clean_options.get(key, default)
                 return bool(value) if value is not None else default
@@ -12737,8 +13803,14 @@ TASK 3: LOAD TYPES
             source = context.get('source') or 'none'
             project_path = context.get('project_path') or ''
             discipline_source = context.get('discipline_source') or 'unknown'
+            source_manifest_path = ''
+            workflow_dwg_sources = self._get_launch_context_dwg_file_sources(
+                launch_context)
+            if workflow_dwg_sources:
+                source_manifest_path = self._write_dwg_source_manifest_temp(
+                    workflow_dwg_sources)
             force_manual_selection = self._should_force_workroom_clean_xrefs_manual_selection(
-                context)
+                context) and not source_manifest_path
             default_directory = self._resolve_launch_context_default_directory(
                 launch_context
             )
@@ -12785,27 +13857,53 @@ TASK 3: LOAD TYPES
                         "Workroom auto-select unavailable. Opening file picker...",
                         activity_id=activity_id,
                     )
+            if source_manifest_path:
+                self._notify_tool_status(
+                    'toolCleanXrefs',
+                    f"Using workflow-selected DWGs ({len(workflow_dwg_sources)})...",
+                    activity_id=activity_id,
+                )
 
-            command = (
-                f'powershell.exe -ExecutionPolicy Bypass -File "{script_path}" '
-                f'-AcadCore "{acad_path}" -DisciplineShort "{discipline_short}" '
-                f'-StripXrefs {_ps_bool(strip_xrefs)} '
-                f'-SetByLayer {_ps_bool(set_by_layer)} '
-                f'-Purge {_ps_bool(purge)} '
-                f'-Audit {_ps_bool(audit)} '
-                f'-HatchColor {_ps_bool(hatch_color)}'
+            command = self._build_powershell_script_command(
+                script_path,
+                '-AcadCore',
+                acad_path,
+                '-DisciplineShort',
+                discipline_short,
+                '-StripXrefs',
+                _ps_bool(strip_xrefs),
+                '-SetByLayer',
+                _ps_bool(set_by_layer),
+                '-Purge',
+                _ps_bool(purge),
+                '-Audit',
+                _ps_bool(audit),
+                '-HatchColor',
+                _ps_bool(hatch_color),
             )
+            if source_manifest_path:
+                command.extend(['-SourceManifestPath', source_manifest_path])
             if auto_selection:
-                command += f' -FilesListPath "{auto_selection["files_list_path"]}"'
+                command.extend(['-FilesListPath', auto_selection["files_list_path"]])
             if arch_folder:
-                command += f' -DefaultDirectory "{arch_folder}"'
+                command.extend(['-DefaultDirectory', arch_folder])
             elif default_directory:
-                command += f' -DefaultDirectory "{default_directory}"'
-            self._run_script_with_progress(
+                command.extend(['-DefaultDirectory', default_directory])
+            run_kwargs = {'activity_id': activity_id}
+            if workflow_blocking:
+                run_kwargs['wait'] = True
+            script_result = self._run_script_with_progress(
                 command,
                 'toolCleanXrefs',
-                activity_id=activity_id,
+                **run_kwargs,
             )
+            if workflow_blocking and isinstance(script_result, dict) and script_result.get('status') == 'error':
+                return {
+                    'status': 'error',
+                    'message': script_result.get('message') or 'Prepare CAD for XREF failed.',
+                    'activityId': str(activity_id or '').strip(),
+                    'scriptResult': script_result,
+                }
             return {'status': 'success', 'activityId': str(activity_id or '').strip()}
         except Exception as e:
             logging.error(f"run_clean_xrefs_script failed: {e}")
@@ -12815,6 +13913,335 @@ TASK 3: LOAD TYPES
                 activity_id=activity_id,
             )
             return {'status': 'error', 'message': str(e)}
+
+    def get_workflow_tools(self):
+        """Returns the JSON-safe registry of tools available as workflow steps."""
+        return {'status': 'success', 'tools': get_workflow_tool_descriptors()}
+
+    def _build_workflow_step_launch_context(self, base_launch_context, inputs, required):
+        """Construct a per-step launch_context that injects pre-flight user inputs.
+
+        Does NOT mutate `base_launch_context`. Maps the schema-declared input keys onto
+        the launch_context fields the existing tool methods already consume:
+          - 'projectFolder' -> ctx['project_path'], ctx['projectPath'], ctx['rootProjectPath']
+          - 'dwgFiles'      -> ctx['cadFilePaths']
+        For projectFolder, when no `source` is set on the base context, marks the
+        derived context as 'manual' so downstream code treats it as an explicit path
+        instead of an unresolved Workroom reference.
+        """
+        ctx = dict(base_launch_context or {})
+        if not isinstance(inputs, dict):
+            return ctx
+        required_keys = {
+            str(spec.get('key') or '').strip()
+            for spec in (required or [])
+            if isinstance(spec, dict)
+        }
+
+        if 'projectFolder' in required_keys and inputs.get('projectFolder'):
+            folder = str(inputs['projectFolder']).strip()
+            if folder:
+                ctx['project_path'] = folder
+                ctx['projectPath'] = folder
+                ctx['rootProjectPath'] = folder
+                if not str(ctx.get('source') or '').strip():
+                    ctx['source'] = 'manual'
+
+        if 'dwgFiles' in required_keys:
+            raw_files = inputs.get('dwgFiles')
+            if isinstance(raw_files, (list, tuple)):
+                cleaned = [str(p).strip() for p in raw_files if str(p or '').strip()]
+                if cleaned:
+                    ctx['cadFilePaths'] = cleaned
+                    raw_sources = inputs.get('dwgFileSources')
+                    sources = self._normalize_dwg_file_sources(
+                        raw_sources, require_exists=False)
+                    if not sources:
+                        sources = self._normalize_dwg_file_sources(
+                            [{'kind': 'file', 'path': path} for path in cleaned],
+                            require_exists=False,
+                        )
+                    if sources:
+                        ctx['dwgFileSources'] = sources
+                    ctx['workflowPreselectedDwgFiles'] = True
+        return ctx
+
+    def resolve_workflow_defaults(self, workflow_id, launch_context=None):
+        """Read-only: suggest pre-flight input values for each step that needs them.
+
+        Returns {'status': 'success', 'defaults': {<stepIndex>: {<key>: value}}}
+        Uses the same Workroom-resolution helpers individual tools already use so the
+        user sees the same auto-resolved values they'd get if they ran each tool alone.
+        Does not fire any PowerShell scripts or write activity events.
+        """
+        try:
+            workflow_id_str = str(workflow_id or '').strip()
+            if not workflow_id_str:
+                return {'status': 'error', 'message': 'Workflow id is required.'}
+            settings = self.get_user_settings()
+            workflows = settings.get('workflows') or []
+            workflow = next(
+                (w for w in workflows
+                 if isinstance(w, dict) and str(w.get('id') or '').strip() == workflow_id_str),
+                None,
+            )
+            if not workflow:
+                return {'status': 'error', 'message': f'Workflow not found: {workflow_id_str}'}
+
+            steps = workflow.get('steps') or []
+            defaults = {}
+            workflow_cad_defaults = _normalize_workflow_cad_defaults(
+                settings.get('workflowCadDefaults'))
+
+            workroom_ctx = None
+            workroom_files_cache = None  # cached resolution; reused for every dwgFiles step
+            electrical_files_cache = None
+            clean_xref_sources_cache = None
+
+            def _get_workroom_ctx():
+                nonlocal workroom_ctx
+                if workroom_ctx is None:
+                    try:
+                        workroom_ctx = self._resolve_workroom_context(settings, launch_context) or {}
+                    except Exception:
+                        workroom_ctx = {}
+                return workroom_ctx
+
+            def _get_workroom_files():
+                nonlocal workroom_files_cache
+                if workroom_files_cache is not None:
+                    return workroom_files_cache
+                workroom_files_cache = []
+                try:
+                    selection = self._resolve_workroom_auto_file_selection(
+                        settings, launch_context, 'run_publish_script')
+                except Exception:
+                    selection = None
+                if selection and selection.get('files_list_path'):
+                    try:
+                        with open(selection['files_list_path'], 'r', encoding='utf-8') as fh:
+                            workroom_files_cache = [
+                                line.strip() for line in fh if line.strip()
+                            ]
+                    except Exception:
+                            workroom_files_cache = []
+                return workroom_files_cache
+
+            def _get_electrical_files():
+                nonlocal electrical_files_cache
+                if electrical_files_cache is None:
+                    try:
+                        electrical_files_cache = self._resolve_workflow_electrical_dwg_files(
+                            settings, launch_context)
+                    except Exception:
+                        electrical_files_cache = []
+                return electrical_files_cache
+
+            def _get_clean_xref_sources():
+                nonlocal clean_xref_sources_cache
+                if clean_xref_sources_cache is None:
+                    try:
+                        clean_xref_sources_cache = self._resolve_workflow_clean_xref_sources(
+                            settings, launch_context)
+                    except Exception:
+                        logging.exception("Failed to resolve workflow clean-xrefs defaults.")
+                        clean_xref_sources_cache = []
+                return clean_xref_sources_cache
+
+            for index, step in enumerate(steps):
+                if not isinstance(step, dict):
+                    continue
+                tool_id = str(step.get('toolId') or '').strip()
+                entry = WORKFLOW_TOOL_REGISTRY.get(tool_id)
+                if not entry:
+                    continue
+                required = entry.get('requiredInputs') or []
+                if not required:
+                    continue
+
+                step_defaults = {}
+                for spec in required:
+                    key = str(spec.get('key') or '').strip()
+                    if key == 'projectFolder':
+                        ctx = _get_workroom_ctx()
+                        candidate = (
+                            str(ctx.get('project_path') or '').strip()
+                            or str((launch_context or {}).get('project_path') or '').strip()
+                        )
+                        if candidate:
+                            step_defaults['projectFolder'] = candidate
+                    elif key == 'dwgFiles':
+                        if (
+                            tool_id == 'manageLayers'
+                            and workflow_cad_defaults.get('manageLayersDwgSource') == 'electricalTopLevel'
+                        ):
+                            files = _get_electrical_files()
+                        elif (
+                            tool_id == 'cleanXrefs'
+                            and workflow_cad_defaults.get('cleanXrefsDwgSource') == 'electricalXrefsToNewestArch'
+                        ):
+                            sources = _get_clean_xref_sources()
+                            files = [self._source_display_path(source) for source in sources]
+                            if files:
+                                step_defaults['dwgFileSources'] = list(sources)
+                        else:
+                            files = _get_workroom_files()
+                        if files:
+                            step_defaults['dwgFiles'] = list(files)
+                if step_defaults:
+                    defaults[str(index)] = step_defaults
+
+            return {'status': 'success', 'defaults': defaults}
+        except Exception as exc:
+            logging.exception("resolve_workflow_defaults failed.")
+            return {'status': 'error', 'message': str(exc)}
+
+    def run_workflow(self, workflow_id, launch_context=None, activity_id=None, step_inputs=None):
+        """Sequentially run the steps of a saved workflow. Stops on first failure.
+
+        Each step dispatches to a callable in WORKFLOW_TOOL_REGISTRY. The parent
+        activity_id receives high-level progress messages; each step is given its own
+        sub-activity id so per-step progress shows as a distinct row in the activity tray.
+
+        step_inputs (dict, optional): JSON-safe per-step pre-flight inputs collected
+        by the workflow UI before dispatch. Keys are stringified step indices (0-based);
+        values are dicts like {'projectFolder': '...', 'dwgFiles': [...]}. When provided,
+        each step's launch_context is augmented with the matching input fields so the
+        tool methods don't need to prompt the user again.
+        """
+        try:
+            workflow_id_str = str(workflow_id or '').strip()
+            if not workflow_id_str:
+                return {'status': 'error', 'message': 'Workflow id is required.'}
+            settings = self.get_user_settings()
+            workflows = settings.get('workflows') or []
+            workflow = next(
+                (w for w in workflows
+                 if isinstance(w, dict) and str(w.get('id') or '').strip() == workflow_id_str),
+                None,
+            )
+            if not workflow:
+                return {'status': 'error', 'message': f'Workflow not found: {workflow_id_str}'}
+
+            name = str(workflow.get('name') or 'Unnamed workflow').strip() or 'Unnamed workflow'
+            steps = workflow.get('steps') or []
+            if not isinstance(steps, list) or not steps:
+                return {'status': 'error', 'message': 'Workflow has no steps.'}
+
+            parent_activity_id = str(activity_id or '').strip()
+            total = len(steps)
+
+            def _post_parent(message, *, status=None, progress=None):
+                if not parent_activity_id:
+                    return
+                payload = {
+                    'toolId': 'toolWorkflow',
+                    'activityId': parent_activity_id,
+                    'message': message,
+                    'label': f'Workflow: {name}',
+                    'workflowTitle': name,
+                }
+                if progress is not None:
+                    payload['progress'] = progress
+                if status:
+                    payload['status'] = status
+                self._notify_activity_status(payload)
+
+            _post_parent(f'Starting workflow: {name}', progress=3)
+
+            for index, step in enumerate(steps, start=1):
+                if not isinstance(step, dict):
+                    msg = f'Step {index} is malformed.'
+                    _post_parent(f'ERROR: {msg}', status='error')
+                    return {'status': 'error', 'failedStep': index, 'message': msg}
+
+                tool_id = str(step.get('toolId') or '').strip()
+                entry = WORKFLOW_TOOL_REGISTRY.get(tool_id)
+                if not entry:
+                    msg = f'Unknown tool "{tool_id}" in step {index}.'
+                    _post_parent(f'ERROR: {msg}', status='error')
+                    return {'status': 'error', 'failedStep': index, 'message': msg}
+
+                step_params = step.get('params')
+                if not isinstance(step_params, dict):
+                    step_params = {}
+                display = entry.get('displayName') or tool_id
+                progress = int(5 + (index - 1) * 90 / max(total, 1))
+                _post_parent(f'Step {index}/{total}: {display}…', progress=progress)
+                step_activity_id = (
+                    f'{parent_activity_id}-step{index}' if parent_activity_id else ''
+                )
+                inputs_for_step = {}
+                if isinstance(step_inputs, dict):
+                    candidate = step_inputs.get(str(index - 1))
+                    if isinstance(candidate, dict):
+                        inputs_for_step = candidate
+                per_step_context = self._build_workflow_step_launch_context(
+                    base_launch_context=launch_context,
+                    inputs=inputs_for_step,
+                    required=entry.get('requiredInputs') or [],
+                )
+                per_step_context['workflowBlocking'] = True
+                try:
+                    result = entry['invoke'](self, per_step_context, step_activity_id, step_params)
+                except Exception as exc:
+                    logging.exception(
+                        f"run_workflow: step {index} ({tool_id}) raised an exception.")
+                    msg = str(exc) or 'Unknown error.'
+                    _post_parent(
+                        f'ERROR: workflow halted at step {index} ({display}): {msg}',
+                        status='error',
+                    )
+                    return {
+                        'status': 'error',
+                        'failedStep': index,
+                        'tool': tool_id,
+                        'message': msg,
+                    }
+
+                if isinstance(result, dict) and result.get('status') == 'error':
+                    msg = str(result.get('message') or 'Step reported an error.').strip()
+                    _post_parent(
+                        f'ERROR: workflow halted at step {index} ({display}): {msg}',
+                        status='error',
+                    )
+                    return {
+                        'status': 'error',
+                        'failedStep': index,
+                        'tool': tool_id,
+                        'message': msg,
+                        'stepResult': result,
+                    }
+
+            _post_parent(
+                f'Workflow "{name}" complete ({total}/{total} steps).',
+                status='success',
+                progress=100,
+            )
+            return {
+                'status': 'success',
+                'workflowId': workflow_id_str,
+                'stepCount': total,
+                'activityId': parent_activity_id,
+            }
+        except Exception as exc:
+            logging.exception("run_workflow failed unexpectedly.")
+            if activity_id:
+                try:
+                    workflow_title = str(locals().get('name') or '').strip()
+                    payload = {
+                        'toolId': 'toolWorkflow',
+                        'activityId': str(activity_id).strip(),
+                        'message': f'ERROR: {exc}',
+                        'status': 'error',
+                    }
+                    if workflow_title:
+                        payload['label'] = f'Workflow: {workflow_title}'
+                        payload['workflowTitle'] = workflow_title
+                    self._notify_activity_status(payload)
+                except Exception:
+                    pass
+            return {'status': 'error', 'message': str(exc)}
 
     def select_files(self, options):
         """Shows a file dialog and returns selected paths."""

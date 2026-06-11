@@ -60,12 +60,9 @@ class ProjectDeliverablePinnedWorkItemsUiTests(unittest.TestCase):
             'className: "deliverable-status-inline-group",',
             'className: "deliverable-pinned-inline-group"',
             'titleUnpinned: "Pin task",',
-            'titleUnpinned: "Pin note",',
-            "liveNote.pinned = nextPinned;",
             "renderNoteList();",
             "pinned: !!task?.pinned,",
             "pinned: !!noteItem?.pinned,",
-            "attachments: normalizeAttachments(item.attachments, {",
             'pillIcon.classList.add("deliverable-pinned-inline-pill-icon");',
             'className: `deliverable-pinned-inline-pill ${',
             'className: "deliverable-pinned-inline-pill-text"',
@@ -86,7 +83,7 @@ class ProjectDeliverablePinnedWorkItemsUiTests(unittest.TestCase):
         self.assertNotIn('className: "deliverable-pinned-item-kind-label"', script)
         self.assertNotIn("createPinnedWorkItemAttachments(previewItem);", script)
 
-    def test_status_row_groups_pinned_preview_with_status_menu(self):
+    def test_status_row_groups_pinned_preview_and_top_actions(self):
         script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
 
         status_badges_block = self._script_block(
@@ -106,12 +103,37 @@ class ProjectDeliverablePinnedWorkItemsUiTests(unittest.TestCase):
             'className: "deliverable-status-row"',
             'className: "deliverable-status-inline-group"',
             'className: "deliverable-pinned-inline-group"',
-            "const statusDropdown = createStatusDropdown(deliverable, project, card);",
             "renderDeliverablePinnedPreview(pinnedHost, deliverable);",
-            "statusInlineGroup.append(pinnedHost, statusDropdown);",
+            "statusInlineGroup.append(pinnedHost);",
             "statusSection.append(statusBadges, statusInlineGroup);",
+            "updateDeliverableStatusRowVisibility(statusSection);",
         ):
             self.assertIn(expected, status_section_block)
+        self.assertNotIn("statusInlineGroup.append(pinnedHost, statusDropdown);", status_section_block)
+
+        top_actions_block = self._script_block(
+            script,
+            "function createDeliverableCardTopActions(deliverable, project, card) {",
+            "let openDeliverableActionsDropdown = null;",
+        )
+        for expected in (
+            'className: "deliverable-card-action-row"',
+            'className: "deliverable-card-action-group deliverable-card-action-group-left"',
+            'className: "deliverable-card-action-group deliverable-card-action-group-right"',
+            "const statusDropdown = createStatusDropdown(deliverable, project, card);",
+            'statusDropdown.classList.add("deliverable-card-status-action");',
+            "const toolDropdown = createDeliverableToolDropdown(deliverable, project, card);",
+            'toolDropdown.classList.add("deliverable-card-tool-action");',
+            "leftActions.append(pinBtn, statusDropdown, toolDropdown);",
+            "rightActions.append(",
+            "rightActions.append(coordinationBtn, attachmentBtn);",
+            "actions.append(leftActions, rightActions);",
+        ):
+            self.assertIn(expected, top_actions_block)
+        self.assertNotIn("createExpandToggle(card)", top_actions_block)
+
+        self.assertNotIn("function createDeliverableCardBottomActions(", script)
+        self.assertNotIn("const bottomActions = createDeliverableCardBottomActions(", script)
 
         update_work_item_ui_block = self._script_block(
             script,
@@ -123,6 +145,8 @@ class ProjectDeliverablePinnedWorkItemsUiTests(unittest.TestCase):
             'card?.querySelector(".deliverable-status-badges")',
             "renderDeliverablePinnedPreview(",
             'card?.querySelector(".deliverable-pinned-inline-group")',
+            "updateDeliverableStatusRowVisibility(",
+            'card?.querySelector(".deliverable-status-row")',
         ):
             self.assertIn(expected, update_work_item_ui_block)
 
@@ -141,9 +165,27 @@ class ProjectDeliverablePinnedWorkItemsUiTests(unittest.TestCase):
             legacy_card_block,
         )
         self.assertIn(
+            "const actionRow = createDeliverableCardTopActions(deliverable, project, card);",
+            legacy_card_block,
+        )
+        self.assertIn(
+            "card.append(actionRow, header, progress, statusSection, tasksPreview, notesSection);",
+            legacy_card_block,
+        )
+        self.assertIn(
             "const statusSection = createDeliverableStatusSection(",
             current_card_block,
         )
+        self.assertIn(
+            "const actionRow = createDeliverableCardTopActions(deliverable, project, card);",
+            current_card_block,
+        )
+        self.assertIn(
+            "card.append(actionRow, header, statusSection, notesSection);",
+            current_card_block,
+        )
+        self.assertNotIn("bottomActions", legacy_card_block)
+        self.assertNotIn("bottomActions", current_card_block)
 
     def test_status_change_rerenders_projects_while_restoring_expanded_cards(self):
         script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
@@ -191,9 +233,18 @@ class ProjectDeliverablePinnedWorkItemsUiTests(unittest.TestCase):
 
         for expected in (
             ".deliverable-status-row {",
+            ".deliverable-status-row[hidden] {",
             ".deliverable-status-badges {",
             ".deliverable-status-inline-group {",
             ".deliverable-status-dropdown {",
+            ".deliverable-card-action-row {",
+            ".deliverable-card-action-group {",
+            ".deliverable-notes-footer {",
+            ".deliverable-note-add-btn {",
+            ".deliverable-note-row {",
+            ".deliverable-note-delete-btn {",
+            ".deliverable-note-add-input {",
+            ".deliverable-notes-toggle {",
             ".work-item-actions {",
             ".work-item-pin-btn {",
             ".work-item-pin-btn.is-pinned {",
@@ -202,7 +253,6 @@ class ProjectDeliverablePinnedWorkItemsUiTests(unittest.TestCase):
             ".deliverable-pinned-inline-pill-icon {",
             ".deliverable-pinned-inline-pill-text {",
             ".deliverable-pinned-inline-pill.is-task {",
-            ".deliverable-pinned-inline-pill.is-note {",
             ".deliverable-pinned-item-attachments {",
             ".deliverable-pinned-link,",
         ):
@@ -211,6 +261,7 @@ class ProjectDeliverablePinnedWorkItemsUiTests(unittest.TestCase):
         self.assertNotIn(".deliverable-pinned-preview-heading {", css)
         self.assertNotIn(".deliverable-pinned-preview {", css)
         self.assertNotIn(".deliverable-pinned-item-kind {", css)
+        self.assertNotIn(".deliverable-pinned-inline-pill.is-note {", css)
 
         status_row_block = self._css_block(css, ".deliverable-status-row {")
         self.assertIn("display: flex;", status_row_block)
@@ -263,59 +314,56 @@ class ProjectDeliverablePinnedWorkItemsUiTests(unittest.TestCase):
         self.assertNotIn("text-overflow: ellipsis;", pill_text_block)
         self.assertNotIn("white-space: nowrap;", pill_text_block)
 
-    def test_projects_note_toggle_uses_work_item_sync_and_save(self):
+    def test_projects_notes_footer_supports_add_delete_and_overflow_toggle(self):
         script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
 
-        projects_note_toggle_block = self._script_block_within(
+        notes_block = self._script_block(
             script,
             "function createNotesSection(deliverable, card, project = null) {",
-            'const pinBtn = createWorkItemPinButton({',
-            'const deleteBtn = el("button", {',
+            "function createTasksPreview(deliverable, card, project = null) {",
         )
 
         for expected in (
-            'titlePinned: "Unpin note",',
-            'titleUnpinned: "Pin note",',
-            "liveNote.pinned = nextPinned;",
-            "deliverable.noteItems[index].pinned = nextPinned;",
+            'className: "deliverable-notes-footer"',
+            'className: "deliverable-note-add-btn"',
+            'className: "deliverable-note-row"',
+            'className: "deliverable-note-delete-btn"',
+            'className: "deliverable-note-add-input"',
+            'className: "deliverable-notes-toggle"',
+            "noteEntries.slice(0, 2)",
+            'toggleBtn.textContent = notesExpanded ? "Hide notes" : "Show all notes";',
+            'noteInput.addEventListener("keydown", (e) => {',
+            'void finishAddingNote("commit");',
+            'void finishAddingNote("cancel");',
+            "deliverable.noteItems.push({",
+            "deliverable.noteItems.splice(index, 1);",
             "syncDeliverableWorkItemFields(deliverable);",
+            "syncDeliverableNoteFields(deliverable);",
             "renderNoteList();",
             "updateDeliverableWorkItemUi(card, deliverable);",
             "await save();",
-            "return nextPinned;",
         ):
-            self.assertIn(expected, projects_note_toggle_block)
+            self.assertIn(expected, notes_block)
 
         self.assertNotIn(
-            "syncDeliverableNoteFields(deliverable);",
-            projects_note_toggle_block,
+            'const pinBtn = createWorkItemPinButton({',
+            notes_block,
         )
 
-    def test_main_and_modal_note_toggles_share_next_pinned_contract(self):
+    def test_modal_note_rows_do_not_expose_pin_controls(self):
         script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
 
-        projects_note_toggle_block = self._script_block_within(
-            script,
-            "function createNotesSection(deliverable, card, project = null) {",
-            'const pinBtn = createWorkItemPinButton({',
-            'const deleteBtn = el("button", {',
-        )
-        modal_note_toggle_block = self._script_block_within(
+        modal_note_block = self._script_block(
             script,
             "function renderModalDeliverableNoteList(card, container, options = {}) {",
-            'const pinBtn = createWorkItemPinButton({',
-            'const deleteBtn = el("button", {',
+            "function commitPendingModalDeliverableNote(card, container, options = {}) {",
         )
 
-        for expected in (
-            'const pinBtn = createWorkItemPinButton({',
-            'titlePinned: "Unpin note",',
-            'titleUnpinned: "Pin note",',
-            "liveNote.pinned = nextPinned;",
-            "return nextPinned;",
-        ):
-            self.assertIn(expected, projects_note_toggle_block)
-            self.assertIn(expected, modal_note_toggle_block)
+        self.assertIn("actions.append(dueControl, attachments, deleteBtn);", modal_note_block)
+        self.assertNotIn('const pinBtn = createWorkItemPinButton({', modal_note_block)
+        self.assertNotIn('titlePinned: "Unpin note",', modal_note_block)
+        self.assertNotIn('titleUnpinned: "Pin note",', modal_note_block)
+        self.assertNotIn("liveNote.pinned = nextPinned;", modal_note_block)
 
     def test_work_item_pin_button_supports_async_toggle_rollback(self):
         script = SCRIPT_JS_PATH.read_text(encoding="utf-8")

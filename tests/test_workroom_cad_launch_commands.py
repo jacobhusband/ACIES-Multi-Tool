@@ -150,6 +150,8 @@ TOOL_CASES = (
             "0",
             "-ShrinkPercent",
             "85",
+            "-StripPdfLayers",
+            "1",
         ),
     },
     {
@@ -212,6 +214,30 @@ class WorkroomCadLaunchCommandTests(unittest.TestCase):
                 trace_result["entries"][1]["file_paths"],
             )
 
+    def test_resolve_workroom_context_accepts_snake_case_project_path(self):
+        with tempfile.TemporaryDirectory(prefix="acies-context-path-") as temp_dir:
+            selected_path = str(Path(temp_dir) / "260001 Example")
+            result = self.api._resolve_workroom_context(
+                {"discipline": ["Electrical"]},
+                {
+                    "source": "workroom",
+                    "project_path": selected_path,
+                    "discipline": "Mechanical",
+                },
+            )
+
+        self.assertEqual("workroom", result["source"])
+        self.assertEqual(selected_path, result["project_path"])
+        self.assertEqual("Mechanical", result["discipline"])
+
+    def test_default_directory_accepts_snake_case_project_path(self):
+        with tempfile.TemporaryDirectory(prefix="acies-default-dir-") as temp_dir:
+            result = self.api._resolve_launch_context_default_directory(
+                {"source": "manual", "project_path": temp_dir}
+            )
+
+        self.assertEqual(str(Path(temp_dir)), result)
+
     def _run_tool(self, case, auto_selection, auto_select_enabled=True):
         captured = []
         with patch.object(self.api, "get_user_settings", return_value=case["settings"]), patch.object(
@@ -268,6 +294,65 @@ class WorkroomCadLaunchCommandTests(unittest.TestCase):
                 self.assertEqual(AUTO_SELECTED_FILES_LIST, command[files_list_index + 1])
                 notify_mock.assert_not_called()
 
+    def test_workflow_blocking_manage_layers_passes_wait_true(self):
+        manage_case = next(
+            case for case in TOOL_CASES if case["method_name"] == "run_manage_layers_script"
+        )
+        captured = []
+        with patch.object(self.api, "get_user_settings", return_value=manage_case["settings"]), \
+                patch.object(self.api, "_resolve_workroom_auto_file_selection",
+                             return_value={"files_list_path": AUTO_SELECTED_FILES_LIST, "count": 1}), \
+                patch.object(
+                    self.api,
+                    "_run_script_with_progress",
+                    side_effect=lambda command, tool_id, **kwargs: captured.append((command, tool_id, kwargs))
+                    or {"status": "success"},
+                ):
+            result = self.api.run_manage_layers_script(
+                {"source": "workroom", "workflowBlocking": True}
+            )
+
+        self.assertEqual("success", result["status"])
+        self.assertEqual(1, len(captured))
+        self.assertEqual("toolManageLayers", captured[0][1])
+        self.assertTrue(captured[0][2]["wait"])
+
+    def test_workflow_selected_dwg_files_bypass_manual_picker_when_auto_select_disabled(self):
+        manage_case = next(
+            case for case in TOOL_CASES if case["method_name"] == "run_manage_layers_script"
+        )
+        with tempfile.TemporaryDirectory(prefix="acies-workflow-dwgs-") as temp_dir:
+            dwg_path = Path(temp_dir) / "E001.dwg"
+            dwg_path.write_text("", encoding="utf-8")
+            captured = []
+            with patch.object(self.api, "get_user_settings", return_value=manage_case["settings"]), \
+                    patch.object(
+                        self.api,
+                        "_run_script_with_progress",
+                        side_effect=lambda command, tool_id, **kwargs: captured.append((command, tool_id, kwargs))
+                        or {"status": "success"},
+                    ), patch.object(self.api, "_notify_tool_status") as notify_mock:
+                result = self.api.run_manage_layers_script({
+                    "source": "manual",
+                    "cadFilePaths": [str(dwg_path)],
+                    "workflowPreselectedDwgFiles": True,
+                })
+
+            self.assertEqual("success", result["status"])
+            self.assertEqual(1, len(captured))
+            command = captured[0][0]
+            self.assertIn("-FilesListPath", command)
+            files_list_path = Path(command[command.index("-FilesListPath") + 1])
+            try:
+                self.assertEqual([str(dwg_path)], files_list_path.read_text(encoding="utf-8").splitlines())
+            finally:
+                files_list_path.unlink(missing_ok=True)
+            notify_mock.assert_called_once_with(
+                "toolManageLayers",
+                "Using auto-selected DWGs (1) via workflow_preselected_files...",
+                activity_id=None,
+            )
+
     def test_workroom_cad_tools_preserve_manual_fallback_when_auto_selection_is_empty(self):
         for case in TOOL_CASES:
             with self.subTest(method=case["method_name"]):
@@ -291,6 +376,30 @@ class WorkroomCadLaunchCommandTests(unittest.TestCase):
                     FALLBACK_STATUS_MESSAGE,
                     activity_id=None,
                 )
+
+    def test_publish_tool_can_disable_pdf_layer_cleanup(self):
+        publish_case = next(
+            case for case in TOOL_CASES if case["method_name"] == "run_publish_script"
+        )
+        settings = {
+            **publish_case["settings"],
+            "publishDwgOptions": {
+                **publish_case["settings"]["publishDwgOptions"],
+                "stripPdfLayers": False,
+            },
+        }
+        case = {**publish_case, "settings": settings}
+
+        result, captured, _ = self._run_tool(
+            case,
+            auto_selection={"files_list_path": AUTO_SELECTED_FILES_LIST},
+        )
+
+        self.assertEqual("success", result["status"])
+        self.assertEqual(1, len(captured))
+        command = captured[0][0]
+        strip_arg_index = command.index("-StripPdfLayers")
+        self.assertEqual("0", command[strip_arg_index + 1])
 
     def test_projects_tab_cad_tools_pass_default_directory_for_manual_picker(self):
         default_directory = r"C:\Projects\260243 BofA - Eastport Plaza"
@@ -525,6 +634,69 @@ class WorkroomCadLaunchCommandTests(unittest.TestCase):
 
             resolve_folder_mock.assert_not_called()
             list_dwgs_mock.assert_not_called()
+
+    def test_workflow_preselected_files_override_cached_detection(self):
+        with tempfile.TemporaryDirectory(prefix="acies-workflow-cache-") as temp_dir:
+            temp_path = Path(temp_dir)
+            cached_dwg = temp_path / "cached.dwg"
+            explicit_dwg = temp_path / "explicit.dwg"
+            cached_dwg.write_text("", encoding="utf-8")
+            explicit_dwg.write_text("", encoding="utf-8")
+            self.api._set_workroom_cad_file_cache_entry(
+                r"C:\Projects\123456",
+                "Electrical",
+                str(temp_path),
+                [str(cached_dwg)],
+                "project_path_child_folder",
+            )
+
+            result = self.api._resolve_workroom_auto_file_selection(
+                {"workroomAutoSelectCadFiles": True},
+                {
+                    "source": "workroom",
+                    "projectPath": r"C:\Projects\123456",
+                    "discipline": "Electrical",
+                    "cadFilePaths": [str(explicit_dwg)],
+                    "workflowPreselectedDwgFiles": True,
+                },
+                "run_manage_layers_script",
+            )
+
+            self.assertIsNotNone(result)
+            self.assertEqual("workflow_preselected_files", result["resolution_mode"])
+            self.assertEqual(1, result["count"])
+            files_list_path = Path(result["files_list_path"])
+            try:
+                self.assertEqual([str(explicit_dwg)], files_list_path.read_text(encoding="utf-8").splitlines())
+            finally:
+                files_list_path.unlink(missing_ok=True)
+
+    def test_invalid_workflow_preselected_files_do_not_fall_back_to_cache(self):
+        with tempfile.TemporaryDirectory(prefix="acies-workflow-cache-invalid-") as temp_dir:
+            temp_path = Path(temp_dir)
+            cached_dwg = temp_path / "cached.dwg"
+            cached_dwg.write_text("", encoding="utf-8")
+            self.api._set_workroom_cad_file_cache_entry(
+                r"C:\Projects\123456",
+                "Electrical",
+                str(temp_path),
+                [str(cached_dwg)],
+                "project_path_child_folder",
+            )
+
+            result = self.api._resolve_workroom_auto_file_selection(
+                {"workroomAutoSelectCadFiles": True},
+                {
+                    "source": "workroom",
+                    "projectPath": r"C:\Projects\123456",
+                    "discipline": "Electrical",
+                    "cadFilePaths": [str(temp_path / "missing.dwg")],
+                    "workflowPreselectedDwgFiles": True,
+                },
+                "run_manage_layers_script",
+            )
+
+        self.assertIsNone(result)
 
     def test_resolve_workroom_auto_file_selection_falls_back_to_explicit_paths_when_cached_detection_is_stale(self):
         with tempfile.TemporaryDirectory(prefix="acies-workroom-cad-") as temp_dir:

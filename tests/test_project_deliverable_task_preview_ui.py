@@ -8,31 +8,40 @@ STYLES_CSS_PATH = REPO_ROOT / "styles.css"
 
 
 class ProjectDeliverableTaskPreviewUiTests(unittest.TestCase):
-    def test_projects_task_preview_always_renders_full_list(self):
+    @staticmethod
+    def _block(text: str, start_marker: str, end_marker: str) -> str:
+        start = text.index(start_marker)
+        end = text.index(end_marker, start)
+        return text[start:end]
+
+    def test_projects_notes_footer_limits_rows_and_toggles_overflow(self):
         script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
-
-        self.assertIn(
+        notes_block = self._block(
+            script,
+            "function createNotesSection(deliverable, card, project = null) {",
             "function createTasksPreview(deliverable, card, project = null) {",
-            script,
-        )
-        self.assertIn(
-            "getPinnedDeliverableTaskEntries(deliverable).forEach(({ item: taskObj, index }) => {",
-            script,
-        )
-        self.assertIn("renderTaskList();", script)
-        self.assertNotIn("const maxVisible = 3;", script)
-        self.assertNotIn('className: "deliverable-expand-btn"', script)
-        self.assertNotIn('textContent: "Show less"', script)
-        self.assertNotIn(
-            "textContent: `+${deliverable.tasks.length - maxVisible} more`",
-            script,
         )
 
-    def test_projects_task_preview_expand_button_styles_removed(self):
+        self.assertIn("const visibleEntries = notesExpanded ? noteEntries : noteEntries.slice(0, 2);", notes_block)
+        self.assertIn("const hasOverflow = noteEntries.length > 2;", notes_block)
+        self.assertIn('toggleBtn.textContent = notesExpanded ? "Hide notes" : "Show all notes";', notes_block)
+        self.assertIn('toggleBtn.setAttribute("aria-expanded", String(notesExpanded));', notes_block)
+        self.assertNotIn("getPinnedDeliverableTaskEntries(deliverable).forEach", notes_block)
+
+    def test_projects_notes_footer_styles_exist(self):
         css = STYLES_CSS_PATH.read_text(encoding="utf-8")
 
-        self.assertNotIn(".deliverable-expand-btn {", css)
-        self.assertNotIn(".deliverable-expand-btn:hover {", css)
+        for expected in (
+            ".deliverable-notes-footer {",
+            ".deliverable-notes-footer-controls {",
+            ".deliverable-note-add-btn {",
+            ".deliverable-note-row {",
+            ".deliverable-note-row .note-text {",
+            ".deliverable-note-delete-btn {",
+            ".deliverable-note-add-input {",
+            ".deliverable-notes-toggle {",
+        ):
+            self.assertIn(expected, css)
 
 
 if __name__ == "__main__":

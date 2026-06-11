@@ -116,6 +116,18 @@
                     </span>
                     <span class="header-auth-status-dot" id="headerGoogleAuthStatusDot" aria-hidden="true"></span>
                 </button>
+                <div class="header-discipline-switcher" id="headerDisciplineSwitcher" role="radiogroup"
+                    aria-label="Active discipline filter">
+                    <button type="button" class="header-discipline-toggle" id="headerDisciplineMechanical"
+                        data-discipline="Mechanical" role="radio" aria-checked="false" title="Mechanical"
+                        aria-label="Use Mechanical discipline filter">M</button>
+                    <button type="button" class="header-discipline-toggle" id="headerDisciplineElectrical"
+                        data-discipline="Electrical" role="radio" aria-checked="true" title="Electrical"
+                        aria-label="Use Electrical discipline filter">E</button>
+                    <button type="button" class="header-discipline-toggle" id="headerDisciplinePlumbing"
+                        data-discipline="Plumbing" role="radio" aria-checked="false" title="Plumbing"
+                        aria-label="Use Plumbing discipline filter">P</button>
+                </div>
                 <div class="header-account-popover" id="headerAccountPopover" role="dialog"
                     aria-label="Google account" hidden>
                     <div class="header-account-profile">
@@ -208,6 +220,14 @@
                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                     <rect x="3" y="3" width="7" height="18" rx="1"></rect>
                                     <rect x="14" y="3" width="7" height="11" rx="1"></rect>
+                                </svg>
+                            </button>
+                            <button type="button" class="view-toggle-btn" id="viewToggleCoordination" data-view-mode="coordination" aria-pressed="false" title="Coordination view">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                                    <circle cx="9" cy="7" r="4"></circle>
+                                    <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                                    <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
                                 </svg>
                             </button>
                         </div>
@@ -363,6 +383,15 @@
                                 <path d="m11 9-3 3 3 3"></path>
                             </svg>
                         </button>
+                        <button type="button" class="icon-btn projects-hide-empty-columns-toggle" id="projectsHideEmptyColumnsToggle" aria-label="Hide empty columns" aria-pressed="false" title="Hide empty columns">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                                <path d="M3 3l18 18"></path>
+                                <path d="M10.6 10.6a2 2 0 0 0 2.8 2.8"></path>
+                                <path d="M9.9 4.2A10.9 10.9 0 0 1 12 4c5 0 9 4 10 8a11.5 11.5 0 0 1-2.1 3.4"></path>
+                                <path d="M6.6 6.6A11.4 11.4 0 0 0 2 12c1 4 5 8 10 8a10.9 10.9 0 0 0 5.4-1.4"></path>
+                            </svg>
+                        </button>
                         <button type="button" class="icon-btn" id="columnConfigBtn" aria-label="Configure columns" title="Configure columns" aria-expanded="false">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                 <line x1="4" y1="6" x2="20" y2="6"></line>
@@ -377,13 +406,13 @@
                     </div>
                 </div>
                 <div class="projects-card-view" id="projectsCardView" hidden></div>
+                <div class="projects-coordination-view" id="projectsCoordinationView" hidden></div>
                 <table class="table projects-table">
                     <thead>
                         <tr>
                             <th style="width:90px" data-sort="id">ID</th>
                             <th data-sort="name">Project Details</th>
                             <th class="deliverables-header" data-sort="due" colspan="3">Deliverable</th>
-                            <th class="nowrap" style="width:150px;text-align:center">Actions</th>
                         </tr>
                     </thead>
                     <tbody id="tbody"></tbody>
@@ -681,6 +710,15 @@
                             <div class="tool-card-status"></div>
                         </div>
                     </div>
+                </div>
+
+                <div class="tools-section" id="workflowsSection">
+                    <div class="tools-section-header">
+                        <h4 class="tools-section-title">Workflows</h4>
+                        <p class="tiny muted tools-section-desc">Chain multiple tools together and run them as a single
+                            action. Each step keeps its own parameters; the chain stops if a step fails.</p>
+                    </div>
+                    <div class="tools-grid" id="workflowsGrid"></div>
                 </div>
 
                 <div class="tools-section">
@@ -1230,6 +1268,42 @@
             </div>
         </div>
     </dialog>
+    <!-- Coordination Items Dialog -->
+    <dialog id="coordinationDlg" class="coordination-dialog">
+        <div class="modal-header">
+            <div>
+                <div class="title">Coordination Items</div>
+                <div id="coordinationDlgSummary" class="muted tiny">0 open / 0 total</div>
+            </div>
+            <button class="btn ghost" type="button" onclick="closeDlg('coordinationDlg')">Close</button>
+        </div>
+        <div class="modal-body stack">
+            <section class="coordination-composer" aria-label="Add coordination item">
+                <div class="coordination-composer-row">
+                    <div class="coordination-composer-field coordination-composer-party">
+                        <label class="label">Coordinate With</label>
+                        <select id="coordinationPartySelect"></select>
+                    </div>
+                    <div class="coordination-composer-field coordination-composer-due">
+                        <label class="label">Due Date</label>
+                        <input id="coordinationDueInput" placeholder="MM/DD/YYYY" autocomplete="off" />
+                    </div>
+                </div>
+                <div class="coordination-composer-field" id="coordinationCustomPartyField" hidden>
+                    <label class="label">Other Party</label>
+                    <input id="coordinationCustomPartyInput" placeholder="e.g. Structural" />
+                </div>
+                <div class="coordination-composer-field">
+                    <label class="label">Note</label>
+                    <div class="coordination-composer-note-row">
+                        <input id="coordinationNoteInput" placeholder="What needs to be coordinated?" />
+                        <button class="btn-primary" id="coordinationAddBtn" type="button">Add Item</button>
+                    </div>
+                </div>
+            </section>
+            <div id="coordinationItemList" class="coordination-item-list stack" role="list"></div>
+        </div>
+    </dialog>
     <dialog id="imagePreviewDlg" class="image-preview-dialog" aria-label="Image preview">
         <div class="image-preview-shell">
             <button id="imagePreviewCloseBtn" class="image-preview-close" type="button" aria-label="Close preview" onclick="closeImagePreviewDialog()">&times;</button>
@@ -1582,6 +1656,8 @@
                     <div class="stack" style="gap: 0.35rem;">
                         <label class="radio-label"><input type="checkbox" id="settings_publish_autoDetectPaperSize">
                             Auto-detect page size</label>
+                        <label class="radio-label"><input type="checkbox" id="settings_publish_stripPdfLayers">
+                            Remove PDF layers</label>
                         <div class="inline" style="gap: 0.5rem; align-items: center;">
                             <label class="tiny muted" style="min-width: 160px;">Reduce combined PDF quality to</label>
                             <input type="range" id="settings_publish_shrinkPercent" min="5" max="100" step="5" />
@@ -1610,6 +1686,22 @@
                         DWGs from the active discipline folder. Prepare CAD DWG for Reference always opens the Arch
                         folder for manual file selection.
                     </div>
+                </div>
+                <div class="col-12" style="margin-top: 0.6rem;">
+                    <label class="label">Workflow CAD Defaults</label>
+                    <div class="stack" style="gap: 0.35rem;">
+                        <label class="radio-label"><input type="checkbox"
+                                id="settings_workflowCad_manageLayersElectricalTopLevel">
+                            Freeze/Thaw workflow steps default to top-level Electrical DWGs</label>
+                        <label class="radio-label"><input type="checkbox"
+                                id="settings_workflowCad_cleanXrefsElectricalXrefsToNewestArch">
+                            Prepare CAD workflow steps find Electrical XREFs in newest Arch DWGs</label>
+                        <label class="radio-label"><input type="checkbox"
+                                id="settings_workflowCad_cleanXrefsSearchZipArchives">
+                            Search ZIP archives in the Arch folder for matching DWGs</label>
+                    </div>
+                    <div class="tiny muted" style="margin-top: 0.35rem;">Applied only to workflow pre-flight defaults.
+                        Each workflow run can still be changed before it starts.</div>
                 </div>
             </div>
 
@@ -1761,6 +1853,21 @@
                 </div>
                 <div class="tool-setting">
                     <div class="tool-setting-text">
+                        <div class="tool-setting-title">Remove PDF layers</div>
+                        <div class="tool-setting-desc">On: removes the saved PDF layer list from the combined output
+                            while keeping drawing content visible.</div>
+                    </div>
+                    <div class="tool-setting-control">
+                        <span class="toggle-label">Off</span>
+                        <label class="switch" aria-label="Remove PDF layers">
+                            <input type="checkbox" id="publish_modal_stripPdfLayers">
+                            <span class="slider"></span>
+                        </label>
+                        <span class="toggle-label">On</span>
+                    </div>
+                </div>
+                <div class="tool-setting">
+                    <div class="tool-setting-text">
                         <div class="tool-setting-title">Output quality</div>
                         <div class="tool-setting-desc">Controls the rasterization quality of the combined PDF. 100%
                             keeps the sharpest output; lower values compress more but can soften text.</div>
@@ -1802,6 +1909,83 @@
                         <span class="toggle-label">On</span>
                     </div>
                 </div>
+                <div class="tool-setting tool-setting-stacked">
+                    <div class="tool-setting-text">
+                        <div class="tool-setting-title">Default freeze patterns</div>
+                        <div class="tool-setting-desc">Wildcards (* and ?) matched against layer names. Comma- or
+                            semicolon-separated. When set, the tool skips the manual layer dialog and freezes any layer
+                            that matches. Leave empty to keep the manual dialog.</div>
+                    </div>
+                    <div class="tool-setting-control tool-setting-control-wide">
+                        <input type="text" id="manageLayers_modal_freezePatterns"
+                            placeholder="e.g. *cloud*, *rev*" autocomplete="off">
+                    </div>
+                </div>
+                <div class="tool-setting tool-setting-stacked">
+                    <div class="tool-setting-text">
+                        <div class="tool-setting-title">Default thaw patterns</div>
+                        <div class="tool-setting-desc">Same syntax as freeze patterns. Matched layers are thawed.</div>
+                    </div>
+                    <div class="tool-setting-control tool-setting-control-wide">
+                        <input type="text" id="manageLayers_modal_thawPatterns"
+                            placeholder="e.g. *visible*" autocomplete="off">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </dialog>
+    <!-- Workflow Builder -->
+    <dialog id="workflowBuilderDlg" class="workflow-builder-dialog">
+        <div class="modal-header">
+            <div class="title" id="workflowBuilderTitle">New Workflow</div>
+            <button class="btn ghost" onclick="closeDlg('workflowBuilderDlg')">Close</button>
+        </div>
+        <div class="modal-body stack workflow-builder-body">
+            <div class="tool-settings-intro">
+                <p class="tiny muted">Build a named sequence of tools. Each step has its own parameters. When you run the
+                    workflow, steps execute in order and stop at the first failure.</p>
+            </div>
+            <div class="form-row">
+                <label class="form-label" for="workflowBuilderName">Workflow name</label>
+                <input type="text" id="workflowBuilderName" placeholder="e.g. Pre-XREF Prep" autocomplete="off">
+            </div>
+            <div class="workflow-steps-header">
+                <div class="form-label">Steps</div>
+                <div class="workflow-add-step">
+                    <select id="workflowAddStepSelect"></select>
+                    <button type="button" class="btn primary tiny" id="workflowAddStepBtn">+ Add step</button>
+                </div>
+            </div>
+            <div class="workflow-steps-list" id="workflowStepsList"></div>
+            <div id="workflowBuilderError" class="workflow-builder-error" hidden></div>
+        </div>
+        <div class="modal-footer workflow-builder-footer">
+            <button type="button" class="btn danger ghost" id="workflowBuilderDeleteBtn" hidden>Delete workflow</button>
+            <div class="workflow-builder-footer-right">
+                <button type="button" class="btn ghost" onclick="closeDlg('workflowBuilderDlg')">Cancel</button>
+                <button type="button" class="btn primary" id="workflowBuilderSaveBtn">Save workflow</button>
+            </div>
+        </div>
+    </dialog>
+    <!-- Workflow Pre-flight Inputs -->
+    <dialog id="workflowPreFlightDlg" class="workflow-builder-dialog">
+        <div class="modal-header">
+            <div class="title" id="workflowPreFlightTitle">Run workflow</div>
+            <button class="btn ghost" id="workflowPreFlightCloseBtn">Close</button>
+        </div>
+        <div class="modal-body stack workflow-builder-body">
+            <div class="tool-settings-intro">
+                <p class="tiny muted">Confirm or override the inputs each step needs for the current project. Pre-filled
+                    values come from your active Workroom project when available.</p>
+            </div>
+            <div class="workflow-preflight-sections" id="workflowPreFlightSections"></div>
+            <div id="workflowPreFlightError" class="workflow-builder-error" hidden></div>
+        </div>
+        <div class="modal-footer workflow-builder-footer">
+            <div></div>
+            <div class="workflow-builder-footer-right">
+                <button type="button" class="btn ghost" id="workflowPreFlightCancelBtn">Cancel</button>
+                <button type="button" class="btn primary" id="workflowPreFlightRunBtn">Run workflow</button>
             </div>
         </div>
     </dialog>
@@ -2525,7 +2709,7 @@
                                         </svg>
                                     </div>
                                     <div class="cb-drop-text">Drag &amp; drop photos or click to select</div>
-                                    <div class="tiny muted">JPG, PNG, HEIC, HEIF supported. New selections replace the current set.</div>
+                                    <div class="tiny muted">JPG, PNG, HEIC, HEIF supported. New selections replace the current set; pasted screenshots append.</div>
                                 </div>
                                 <div class="cb-upload-actions">
                                     <span id="cbBreakerFile" class="cb-file-pill" data-empty="true">No photos selected</span>
@@ -2543,7 +2727,7 @@
                                         </svg>
                                     </div>
                                     <div class="cb-drop-text" id="cbDirectoryDropText">Drag &amp; drop photos or click to select</div>
-                                    <div class="tiny muted">JPG, PNG, HEIC, HEIF supported. New selections replace the current set.</div>
+                                    <div class="tiny muted">JPG, PNG, HEIC, HEIF supported. New selections replace the current set; pasted screenshots append.</div>
                                 </div>
                                 <div class="cb-upload-actions">
                                     <span id="cbDirectoryFile" class="cb-file-pill" data-empty="true">No photos selected</span>
@@ -2835,7 +3019,6 @@
             <td class="cell-id"><span class="id-badge"></span></td>
             <td class="cell-name"></td>
             <td class="cell-deliverables" colspan="3"></td>
-            <td class="cell-actions actions"></td>
         </tr>
     </template>
     <template id="deliverable-card-template">
@@ -2880,10 +3063,6 @@
                 <div class="stack">
                     <div class="title section-header">Notes</div>
                     <div class="deliverable-note-list stack"></div>
-                </div>
-                <div class="stack">
-                    <div class="title section-header">Tasks</div>
-                    <div class="deliverable-task-list stack"></div>
                 </div>
             </div>
         </div>

@@ -94,7 +94,7 @@ class ProjectFiltersUiTests(unittest.TestCase):
         ]
         settings_handlers_start = script.index('document.getElementById("settings_userName").oninput = (e) => {')
         settings_handlers_end = script.index(
-            '["settings_publish_autoDetectPaperSize", "publish_modal_autoDetectPaperSize"]',
+            '      "autoDetectPaperSize",',
             settings_handlers_start,
         )
         settings_handlers_block = script[settings_handlers_start:settings_handlers_end]

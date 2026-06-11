@@ -51,10 +51,10 @@ class ProjectDeliverableInlineEditUiTests(unittest.TestCase):
             "function createNotesSection(deliverable, card, project = null) {",
             "function createTasksPreview(deliverable, card, project = null) {",
         )
-        tasks_block = self._block(
+        card_block = self._block(
             script,
-            "function createTasksPreview(deliverable, card, project = null) {",
             "function renderDeliverableCard(deliverable, isPrimary, project) {",
+            "function normalizeProjectMatchValue(value) {",
         )
 
         for expected in (
@@ -66,18 +66,10 @@ class ProjectDeliverableInlineEditUiTests(unittest.TestCase):
         ):
             self.assertIn(expected, notes_block)
 
-        for expected in (
-            "const checkbox = createWorkItemDoneCheckbox({",
-            'const textControl = createInlineWorkItemTextControl({',
-            'title: "Click to edit task",',
-            "liveTask.done = nextDone;",
-            "liveTask.text = nextText;",
-            "item.append(checkbox, content, actions);",
-            "await save();",
-        ):
-            self.assertIn(expected, tasks_block)
-
-        self.assertNotIn('item.addEventListener("click"', tasks_block)
+        self.assertIn("const notesSection = createNotesSection(deliverable, card, project);", card_block)
+        self.assertIn("card.append(actionRow, header, statusSection, notesSection);", card_block)
+        self.assertNotIn("createTasksPreview(", card_block)
+        self.assertNotIn("createProgressSection(", card_block)
 
     def test_modal_work_item_inline_edit_script_wiring_exists(self):
         script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
@@ -93,24 +85,12 @@ class ProjectDeliverableInlineEditUiTests(unittest.TestCase):
         )
 
         for expected in (
-            "const checkbox = createWorkItemDoneCheckbox({",
-            'const textControl = createInlineWorkItemTextControl({',
-            'title: "Click to edit task",',
-            "liveTask.done = nextDone;",
-            "liveTask.text = nextText;",
-            "item.append(checkbox, content, actions);",
-        ):
-            self.assertIn(expected, modal_task_block)
-
-        for expected in (
             'const textControl = createInlineWorkItemTextControl({',
             'title: "Click to edit note",',
             "liveNote.text = nextText;",
         ):
             self.assertIn(expected, modal_note_block)
 
-        self.assertNotIn('item.addEventListener("click"', modal_task_block)
-        self.assertNotIn("await save();", modal_task_block)
         self.assertNotIn("await save();", modal_note_block)
 
     def test_inline_edit_styles_exist(self):

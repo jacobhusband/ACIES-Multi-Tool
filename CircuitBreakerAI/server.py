@@ -79,11 +79,14 @@ class CircuitItem(BaseModel):
     breaker_amps: str = Field(..., description="Amperage (e.g., '20')")
     poles: int = Field(1, description="Number of poles (1, 2, or 3)")
     load_type: str = Field(..., description="Code: 'C', 'D', 'G', 'K', 'M'")
+    kva: str = Field("", description="Visible load in kVA from an existing directory schedule, or blank if not shown")
+    phase_kva: List[str] = Field([], description="Visible kVA values for each occupied circuit row, ordered top-to-bottom")
 
 class PanelData(BaseModel):
     panel_name: str = Field(..., description="Panel Name")
     voltage: str = Field(..., description="Voltage")
     bus_rating: str = Field(..., description="Bus Rating")
+    aic_rating: str = Field("", description="Panel AIC rating when visibly shown, or blank if not shown")
     phase: str = Field(..., description="Phase")
     wire: str = Field(..., description="Wire")
     mounting: str = Field(..., description="Mounting")
@@ -188,6 +191,39 @@ def calculate_estimated_load(amps_str, description, load_type):
     factor = 0.50 if l_type in ['C', 'G'] else 0.80
     return round((numeric_amps * factor * 120) / 1000, 2)
 
+def normalize_extracted_kva(raw_kva):
+    if raw_kva is None or isinstance(raw_kva, bool):
+        return ""
+    if isinstance(raw_kva, (int, float)):
+        value = float(raw_kva)
+    else:
+        text = str(raw_kva).strip()
+        if not text:
+            return ""
+        upper = text.upper()
+        if upper in {"N/A", "NA", "NONE", "UNKNOWN", "UNREADABLE", "BLANK", "-", "--", "---"}:
+            return ""
+        match = re.search(r"[-+]?\d+(?:\.\d+)?", upper.replace(",", ""))
+        if not match:
+            return ""
+        try:
+            value = float(match.group(0))
+        except Exception:
+            return ""
+        if "VA" in upper and "KVA" not in upper and value >= 10:
+            value = value / 1000
+    if not math.isfinite(value) or value < 0:
+        return ""
+    return round(value, 3)
+
+def normalize_extracted_phase_kva(circuit):
+    raw_values = getattr(circuit, "phase_kva", None)
+    if isinstance(raw_values, (list, tuple)):
+        values = [normalize_extracted_kva(value) for value in raw_values]
+        if any(value != "" for value in values):
+            return values
+    return [normalize_extracted_kva(getattr(circuit, "kva", ""))]
+
 def fix_nema_type(raw_type):
     t = str(raw_type).upper()
     return "NEMA 3R" if any(x in t for x in ["3R", "OUT", "EXT", "WEATHER"]) else "NEMA 1"
@@ -208,7 +244,7 @@ def resolve_ditto_marks(circuits: List[CircuitItem]) -> List[CircuitItem]:
         return col_list
     return process_column(odds) + process_column(evens)
 
-def update_excel_workbook(panel_data: PanelData, folder_name: str):
+def update_excel_workbook(panel_data: PanelData, folder_name: str, use_extracted_kva=False):
     global session_initialized
 
     # On first panel of the session, start fresh from template
@@ -247,6 +283,9 @@ def update_excel_workbook(panel_data: PanelData, folder_name: str):
     target["K3"] = clean_text(panel_data.phase)
     target["K4"] = fix_nema_type(panel_data.enclosure)
     target["N2"] = clean_text(panel_data.mounting)
+    aic_rating = clean_text(getattr(panel_data, "aic_rating", ""))
+    if aic_rating:
+        target["N3"] = aic_rating
 
     # Circuits
     START_ROW = 8
@@ -276,7 +315,15 @@ def update_excel_workbook(panel_data: PanelData, folder_name: str):
         desc_text = clean_text(ckt.description)
         is_spare = any(x in desc_text for x in ["SPARE", "SPACE", "UNUSED"])
 
-        kva_val = "" if is_spare else calculate_estimated_load(ckt.breaker_amps, ckt.description, ckt.load_type)
+        if is_spare:
+            kva_val = ""
+            phase_kva_values = []
+        elif use_extracted_kva:
+            phase_kva_values = normalize_extracted_phase_kva(ckt)
+            kva_val = phase_kva_values[0] if phase_kva_values else ""
+        else:
+            kva_val = calculate_estimated_load(ckt.breaker_amps, ckt.description, ckt.load_type)
+            phase_kva_values = []
         note_val = "" if is_spare else "1"
         type_val = "" if is_spare else clean_text(ckt.load_type)
 
@@ -296,7 +343,11 @@ def update_excel_workbook(panel_data: PanelData, folder_name: str):
                     target[f"{c_desc}{ext_row}"] = "---"
                     target[f"{c_pole}{ext_row}"] = "-"
                     target[f"{c_trip}{ext_row}"] = "-"
-                    target[f"{c_kva}{ext_row}"] = kva_val
+                    if use_extracted_kva:
+                        ext_kva_val = phase_kva_values[i] if i < len(phase_kva_values) else ""
+                    else:
+                        ext_kva_val = kva_val
+                    target[f"{c_kva}{ext_row}"] = ext_kva_val
                     target[f"{c_type}{ext_row}"] = type_val
                     target[f"{c_note}{ext_row}"] = note_val
                     occupied_slots.add((side, ext_row))
@@ -361,7 +412,7 @@ async def analyze_panel_endpoint(
             prompt = f"""
             Analyze these electrical panel schedule directory document photos for Panel: {panel_name}.
 
-            You are provided with {num_dir_imgs} images of the existing panel directory document. This document contains all the circuit information (circuit numbers, load descriptions, breaker ratings/amperages, and poles) needed to recreate the panel schedule.
+            You are provided with {num_dir_imgs} images of the existing panel directory document. This document contains the circuit information (circuit numbers, load descriptions, breaker ratings/amperages, poles, and any visible kVA/load values) needed to recreate the panel schedule.
 
             IMAGE INTERPRETATION RULES
             - All directory images belong to the SAME panel directory document.
@@ -370,7 +421,10 @@ async def analyze_panel_endpoint(
             - Reconcile overlapping information by using visible circuit numbers, breaker positions, and the clearest label text.
 
             TASK 1: HEADER
-            - Extract Voltage, Bus Rating, Wire, Phase, Mounting, Enclosure from any headers, tables, or title block details.
+            - Extract Voltage, Bus Rating, Wire, Phase, Mounting, Enclosure, and panel AIC rating from any headers, tables, or title block details.
+            - Set the JSON field "aic_rating" to the visible AIC value (examples: "10 KAIC", "22,000 AIC").
+            - If AIC is blank, hidden, unreadable, or not present, set "aic_rating" to "".
+            - Do not confuse AIC rating with Bus Rating, breaker amperage, voltage, or main requirement.
 
             TASK 2: CIRCUITS & POLES
             - Identify every circuit entry in the directory document.
@@ -378,7 +432,12 @@ async def analyze_panel_endpoint(
                 - Look at how descriptions or circuit lines are grouped or span multiple spaces to represent multi-pole breakers.
                 - A 2-pole breaker has tied circuit spaces (e.g., descriptions spanning circuits 1 and 3, or a single breaker amperage serving a 2-circuit load).
                 - Provide the circuit_number as the TOP-most circuit number the breaker occupies.
-            - Extract Amperage (e.g. 20A, 30A, 50A) and Load Description for each circuit from the directory table.
+            - Extract Amperage (e.g. 20A, 30A, 50A), Load Description, and the visible kVA/load values from the directory table.
+            - For each circuit, set the JSON field "phase_kva" to an ordered array of visible kVA decimals for the occupied circuit rows, top-to-bottom (examples: ["0.72"] for 1-pole, ["1.20", "1.10"] for 2-pole, ["2.00", "2.10", "2.05"] for 3-pole).
+            - If a value is shown in VA, convert it to kVA. If an occupied row's kVA/load value is blank, hidden, unreadable, or not present, use "" for that row in "phase_kva".
+            - Do not add, total, or sum phase loads together. Do not repeat a 2-pole or 3-pole total on every occupied row.
+            - Keep the legacy JSON field "kva" blank unless only one single visible total is available and there are no row-by-row phase values.
+            - Do not estimate kVA and do not infer it from breaker amperage, voltage, load type, or description.
             - Resolve ditto marks (") if seen in the directory.
             - If the same circuit appears in overlapping photos, combine the evidence and keep one final record.
 
@@ -406,6 +465,9 @@ async def analyze_panel_endpoint(
             TASK 1: HEADER
             - Extract Voltage, Bus Rating, Wire, Phase, Mounting, Enclosure.
             - Look at the directory images or labels on the panel across all images.
+            - Extract the panel AIC rating into JSON field "aic_rating" when visibly shown (examples: "10 KAIC", "22,000 AIC").
+            - If AIC is blank, hidden, unreadable, or not present, set "aic_rating" to "".
+            - Do not confuse AIC rating with Bus Rating, breaker amperage, voltage, or main requirement.
 
             TASK 2: CIRCUITS & POLES
             - Identify every breaker visible across the Breaker Images.
@@ -436,7 +498,11 @@ async def analyze_panel_endpoint(
         panel_data.panel_name = panel_name # Ensure name matches
 
         # Update Excel
-        update_excel_workbook(panel_data, panel_name)
+        update_excel_workbook(
+            panel_data,
+            panel_name,
+            use_extracted_kva=input_mode == "existing_directory",
+        )
 
         return {
             "status": "success",
@@ -506,7 +572,7 @@ async def analyze_panel_stream_endpoint(
                 prompt = f"""
                 Analyze these electrical panel schedule directory document photos for Panel: {panel_name}.
 
-                You are provided with {num_dir_imgs} images of the existing panel directory document. This document contains all the circuit information (circuit numbers, load descriptions, breaker ratings/amperages, and poles) needed to recreate the panel schedule.
+                You are provided with {num_dir_imgs} images of the existing panel directory document. This document contains the circuit information (circuit numbers, load descriptions, breaker ratings/amperages, poles, and any visible kVA/load values) needed to recreate the panel schedule.
 
                 IMAGE INTERPRETATION RULES
                 - All directory images belong to the SAME panel directory document.
@@ -515,7 +581,10 @@ async def analyze_panel_stream_endpoint(
                 - Reconcile overlapping information by using visible circuit numbers, breaker positions, and the clearest label text.
 
                 TASK 1: HEADER
-                - Extract Voltage, Bus Rating, Wire, Phase, Mounting, Enclosure from any headers, tables, or title block details.
+                - Extract Voltage, Bus Rating, Wire, Phase, Mounting, Enclosure, and panel AIC rating from any headers, tables, or title block details.
+                - Set the JSON field "aic_rating" to the visible AIC value (examples: "10 KAIC", "22,000 AIC").
+                - If AIC is blank, hidden, unreadable, or not present, set "aic_rating" to "".
+                - Do not confuse AIC rating with Bus Rating, breaker amperage, voltage, or main requirement.
 
                 TASK 2: CIRCUITS & POLES
                 - Identify every circuit entry in the directory document.
@@ -523,7 +592,12 @@ async def analyze_panel_stream_endpoint(
                     - Look at how descriptions or circuit lines are grouped or span multiple spaces to represent multi-pole breakers.
                     - A 2-pole breaker has tied circuit spaces (e.g., descriptions spanning circuits 1 and 3, or a single breaker amperage serving a 2-circuit load).
                     - Provide the circuit_number as the TOP-most circuit number the breaker occupies.
-                - Extract Amperage (e.g. 20A, 30A, 50A) and Load Description for each circuit from the directory table.
+                - Extract Amperage (e.g. 20A, 30A, 50A), Load Description, and the visible kVA/load values from the directory table.
+                - For each circuit, set the JSON field "phase_kva" to an ordered array of visible kVA decimals for the occupied circuit rows, top-to-bottom (examples: ["0.72"] for 1-pole, ["1.20", "1.10"] for 2-pole, ["2.00", "2.10", "2.05"] for 3-pole).
+                - If a value is shown in VA, convert it to kVA. If an occupied row's kVA/load value is blank, hidden, unreadable, or not present, use "" for that row in "phase_kva".
+                - Do not add, total, or sum phase loads together. Do not repeat a 2-pole or 3-pole total on every occupied row.
+                - Keep the legacy JSON field "kva" blank unless only one single visible total is available and there are no row-by-row phase values.
+                - Do not estimate kVA and do not infer it from breaker amperage, voltage, load type, or description.
                 - Resolve ditto marks (") if seen in the directory.
                 - If the same circuit appears in overlapping photos, combine the evidence and keep one final record.
 
@@ -551,6 +625,9 @@ async def analyze_panel_stream_endpoint(
                 TASK 1: HEADER
                 - Extract Voltage, Bus Rating, Wire, Phase, Mounting, Enclosure.
                 - Look at the directory images or labels on the panel across all images.
+                - Extract the panel AIC rating into JSON field "aic_rating" when visibly shown (examples: "10 KAIC", "22,000 AIC").
+                - If AIC is blank, hidden, unreadable, or not present, set "aic_rating" to "".
+                - Do not confuse AIC rating with Bus Rating, breaker amperage, voltage, or main requirement.
 
                 TASK 2: CIRCUITS & POLES
                 - Identify every breaker visible across the Breaker Images.
@@ -581,7 +658,11 @@ async def analyze_panel_stream_endpoint(
             panel_data.panel_name = panel_name
 
             # Update Excel
-            update_excel_workbook(panel_data, panel_name)
+            update_excel_workbook(
+                panel_data,
+                panel_name,
+                use_extracted_kva=input_mode == "existing_directory",
+            )
 
             # Send final result
             msg_payload = {

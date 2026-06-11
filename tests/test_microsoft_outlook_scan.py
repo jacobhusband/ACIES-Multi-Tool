@@ -521,6 +521,101 @@ class DeliverableAiPromptContractTests(unittest.TestCase):
         self.assertIn('Example: "Awaiting architect approval before final issue."', prompt)
         self.assertNotIn('summary of the email', prompt)
 
+    def test_build_email_analysis_prompt_includes_known_project_matching_context(self):
+        prompt = self.api._build_email_analysis_prompt(
+            "Subject: Canoga BofA submittal\nPlease update the lighting package.",
+            "Jacob Husband",
+            ["Electrical"],
+            [
+                {
+                    "id": "250597",
+                    "name": "BofA Sherman",
+                    "nick": "Canoga",
+                    "path": r"M:\Projects\250597 BofA Sherman",
+                }
+            ],
+        )
+
+        self.assertIn("KNOWN_PROJECTS:", prompt)
+        self.assertIn('"id":"250597"', prompt)
+        self.assertIn('"name":"BofA Sherman"', prompt)
+        self.assertIn('"nick":"Canoga"', prompt)
+        self.assertIn('"pathLeaf":"250597 BofA Sherman"', prompt)
+        self.assertIn("Prefer exact known-project identity", prompt)
+        self.assertIn('return that known project\'s exact "id", "name", and "path"', prompt)
+
+    def test_normalize_email_intake_project_context_ignores_malformed_and_deliverables(self):
+        result = self.api._normalize_email_intake_project_context(
+            [
+                "not-a-project",
+                {"deliverables": [{"name": "Submittal"}]},
+                {
+                    "id": " 250597 ",
+                    "name": " BofA Sherman ",
+                    "nick": " Canoga ",
+                    "path": r"M:\Projects\250597 BofA Sherman",
+                    "deliverables": [{"name": "Should not be included"}],
+                },
+            ]
+        )
+
+        self.assertEqual(
+            [
+                {
+                    "id": "250597",
+                    "name": "BofA Sherman",
+                    "nick": "Canoga",
+                    "path": r"M:\Projects\250597 BofA Sherman",
+                    "pathLeaf": "250597 BofA Sherman",
+                }
+            ],
+            result,
+        )
+        self.assertNotIn("deliverables", result[0])
+
+    def test_normalize_email_intake_project_context_caps_project_count(self):
+        result = self.api._normalize_email_intake_project_context(
+            [
+                {"id": f"P-{index:04d}", "name": f"Project {index}"}
+                for index in range(main_module.EMAIL_INTAKE_PROJECT_CONTEXT_MAX_PROJECTS + 5)
+            ]
+        )
+
+        self.assertEqual(main_module.EMAIL_INTAKE_PROJECT_CONTEXT_MAX_PROJECTS, len(result))
+        self.assertEqual("P-0000", result[0]["id"])
+
+    def test_process_email_with_ai_remains_backward_compatible_without_project_context(self):
+        expected = {
+            "id": "",
+            "name": "Client Project",
+            "due": "",
+            "path": "",
+            "deliverable": "",
+            "tasks": [],
+            "notes": "",
+        }
+
+        with patch.object(
+            self.api,
+            "_extract_project_data_from_email_text",
+            return_value=expected,
+        ) as extract_mock:
+            result = self.api.process_email_with_ai(
+                "Please update the submittal.",
+                "api-key",
+                "Jacob Husband",
+                ["Electrical"],
+            )
+
+        self.assertEqual({"status": "success", "data": expected}, result)
+        extract_mock.assert_called_once_with(
+            "Please update the submittal.",
+            "api-key",
+            "Jacob Husband",
+            ["Electrical"],
+            None,
+        )
+
     def test_build_outlook_scan_batch_prompt_separates_tasks_from_notes(self):
         prompt = self.api._build_outlook_scan_batch_prompt(
             included_emails=[],

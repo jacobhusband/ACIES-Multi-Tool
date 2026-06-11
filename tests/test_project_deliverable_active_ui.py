@@ -63,6 +63,16 @@ class ProjectDeliverableActiveUiTests(unittest.TestCase):
 
         self.assertNotIn(".d-primary", script)
 
+    def test_edit_modal_deliverables_sort_by_latest_due_date_first(self):
+        script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
+        fill_form_start = script.index("function fillForm(project) {")
+        fill_form_end = script.index("function getDeliverableCardEmailRefs", fill_form_start)
+        fill_form_block = script[fill_form_start:fill_form_end]
+
+        self.assertIn(".sort(compareDeliverablesByDueDesc);", fill_form_block)
+        self.assertNotIn("sortDeliverablesByPrimaryThenDueDesc(", fill_form_block)
+        self.assertIn("activeAnchorDeliverable?.id", fill_form_block)
+
 
 if __name__ == "__main__":
     unittest.main()

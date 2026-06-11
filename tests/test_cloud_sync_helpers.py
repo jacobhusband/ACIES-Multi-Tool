@@ -105,9 +105,68 @@ class CloudSyncHelperTests(unittest.TestCase):
         settings = main_module.build_default_user_settings()
 
         self.assertIn("cloudSync", settings)
+        self.assertEqual("Electrical", settings["activeDiscipline"])
         self.assertEqual(
             main_module.build_default_cloud_sync_settings(), settings["cloudSync"]
         )
+        self.assertEqual(
+            main_module.build_default_workflow_cad_defaults(),
+            settings["workflowCadDefaults"],
+        )
+        self.assertTrue(settings["publishDwgOptions"]["stripPdfLayers"])
+
+    def test_sanitize_user_settings_preserves_valid_unconfigured_active_discipline(self):
+        payload = main_module.build_default_user_settings()
+        payload["discipline"] = ["Mechanical", "Plumbing"]
+        payload["activeDiscipline"] = "Electrical"
+
+        sanitized, changed = main_module._sanitize_user_settings_payload(payload)
+
+        self.assertFalse(changed)
+        self.assertEqual(["Mechanical", "Plumbing"], sanitized["discipline"])
+        self.assertEqual("Electrical", sanitized["activeDiscipline"])
+
+    def test_sanitize_user_settings_falls_back_for_invalid_active_discipline(self):
+        payload = main_module.build_default_user_settings()
+        payload["discipline"] = ["Mechanical", "Plumbing"]
+        payload["activeDiscipline"] = "Architectural"
+
+        sanitized, changed = main_module._sanitize_user_settings_payload(payload)
+
+        self.assertTrue(changed)
+        self.assertEqual(["Mechanical", "Plumbing"], sanitized["discipline"])
+        self.assertEqual("Mechanical", sanitized["activeDiscipline"])
+
+    def test_sanitize_user_settings_normalizes_workflow_cad_defaults(self):
+        payload = main_module.build_default_user_settings()
+        payload["workflowCadDefaults"] = {
+            "manageLayersDwgSource": "manual",
+            "cleanXrefsSearchZipArchives": False,
+        }
+
+        sanitized, changed = main_module._sanitize_user_settings_payload(payload)
+
+        self.assertTrue(changed)
+        self.assertEqual("manual", sanitized["workflowCadDefaults"]["manageLayersDwgSource"])
+        self.assertEqual(
+            "electricalXrefsToNewestArch",
+            sanitized["workflowCadDefaults"]["cleanXrefsDwgSource"],
+        )
+        self.assertFalse(sanitized["workflowCadDefaults"]["cleanXrefsSearchZipArchives"])
+
+    def test_sanitize_user_settings_adds_missing_publish_layer_cleanup_default(self):
+        payload = main_module.build_default_user_settings()
+        payload["publishDwgOptions"] = {
+            "autoDetectPaperSize": False,
+            "shrinkPercent": 85,
+        }
+
+        sanitized, changed = main_module._sanitize_user_settings_payload(payload)
+
+        self.assertTrue(changed)
+        self.assertFalse(sanitized["publishDwgOptions"]["autoDetectPaperSize"])
+        self.assertEqual(85, sanitized["publishDwgOptions"]["shrinkPercent"])
+        self.assertTrue(sanitized["publishDwgOptions"]["stripPdfLayers"])
 
     def test_build_google_auth_record_preserves_id_token(self):
         existing_auth = {"idToken": "existing-id-token", "refreshToken": "refresh-token"}

@@ -14682,6 +14682,18 @@ function normalizeDeliverableLinks(links, legacyLinkPath = "") {
   return normalized;
 }
 
+function normalizePage(raw) {
+  let html = "";
+  let updatedAt = "";
+  if (typeof raw === "string") {
+    html = raw;
+  } else if (raw && typeof raw === "object") {
+    html = typeof raw.html === "string" ? raw.html : "";
+    updatedAt = typeof raw.updatedAt === "string" ? raw.updatedAt : "";
+  }
+  return { html, updatedAt };
+}
+
 function normalizeDeliverable(deliverable = {}) {
   const attachments = normalizeAttachments(deliverable.attachments, {
     legacyLinks: normalizeDeliverableLinks(
@@ -14697,6 +14709,7 @@ function normalizeDeliverable(deliverable = {}) {
     name: String(deliverable.name || "").trim(),
     due: String(deliverable.due || "").trim(),
     notes: String(deliverable.notes || ""),
+    page: normalizePage(deliverable.page),
     noteItems: normalizeDeliverableNoteItems(
       deliverable.noteItems,
       deliverable.notes || ""
@@ -15033,6 +15046,7 @@ function normalizeProject(project) {
     localProjectPath: normalizeWindowsPath(project.localProjectPath || ""),
     workroomRootPath: normalizeWindowsPath(project.workroomRootPath || ""),
     notes: project.notes || "",
+    page: normalizePage(project.page),
     refs: Array.isArray(project.refs)
       ? project.refs.map(normalizeRef).filter(Boolean)
       : [],
@@ -21439,6 +21453,31 @@ function createDeliverableCardTopActions(deliverable, project, card) {
     );
   }
   rightActions.append(coordinationBtn, attachmentBtn);
+  // Notion-style page entry points (project page + this deliverable's subpage)
+  if (project) {
+    rightActions.append(
+      createDeliverableCardActionButton({
+        className: "deliverable-card-open-project-page-action",
+        title: "Open project page",
+        ariaLabel: "Open project page",
+        iconPath: FOLDER_ICON_PATH,
+        onClick: () => {
+          closeDeliverableCardActionOverlays();
+          openProjectPage(project);
+        },
+      }),
+      createDeliverableCardActionButton({
+        className: "deliverable-card-open-page-action",
+        title: "Open deliverable page",
+        ariaLabel: "Open deliverable page",
+        iconPath: EXPAND_ICON_PATH,
+        onClick: () => {
+          closeDeliverableCardActionOverlays();
+          if (deliverable) openDeliverablePage(project, deliverable);
+        },
+      })
+    );
+  }
   actions.append(leftActions, rightActions);
 
   return actions;
@@ -24613,7 +24652,9 @@ function renderCoordinationProjectPanel(project) {
   sortCoordinationItemsForDisplay(getProjectCoordinationItems(project)).forEach(
     (item) => {
       const row = el("div", {
-        className: `coordination-item-row ${item.done ? "is-done" : ""}`.trim(),
+        className: `coordination-item-row coordination-project-item-row ${
+          item.done ? "is-done" : ""
+        }`.trim(),
       });
       row.setAttribute("role", "listitem");
       const checkbox = createWorkItemDoneCheckbox({
@@ -36443,6 +36484,923 @@ async function init() {
   } finally {
     hideAppLoader();
   }
+}
+
+// ===================== NOTION-STYLE PROJECT / DELIVERABLE PAGES =====================
+let pageViewInitialized = false;
+let pageNav = { project: null, deliverable: null };
+let pageEditorTarget = null; // reference to the {html, updatedAt} object being edited
+let pageEditorOwnerKey = "";
+let pageSaveTimer = null;
+let pageMiscSaveTimer = null;
+let pageSelectionRange = null;
+let pageSelectedImage = null;
+const PAGE_IMAGE_MIN_PERCENT = 10;
+const PAGE_IMAGE_MAX_PERCENT = 100;
+const PAGE_IMAGE_STEP_PERCENT = 5;
+const PAGE_IMAGE_DEFAULT_PERCENT = 80;
+
+function getPageEditorEl() {
+  return document.getElementById("pageEditor");
+}
+function setPageSaveStatus(text) {
+  const el = document.getElementById("pageSaveStatus");
+  if (el) el.textContent = text || "";
+}
+
+// --- Selection helpers (scoped to the page editor) ---
+function pageNodeInEditor(node, editor) {
+  if (!node || !editor) return false;
+  const target = node.nodeType === Node.TEXT_NODE ? node.parentNode : node;
+  return !!target && editor.contains(target);
+}
+function clonePageRange(range) {
+  try {
+    return range ? range.cloneRange() : null;
+  } catch (_) {
+    return null;
+  }
+}
+function getPageSelectionRange(editor) {
+  const sel = window.getSelection?.();
+  if (!sel || sel.rangeCount === 0) return null;
+  const range = sel.getRangeAt(0);
+  return pageNodeInEditor(range.commonAncestorContainer, editor) ? range : null;
+}
+function savePageSelection(editor) {
+  const range = getPageSelectionRange(editor);
+  if (range) pageSelectionRange = clonePageRange(range);
+}
+function restorePageSelection(editor) {
+  if (!editor) return null;
+  editor.focus();
+  let range = clonePageRange(pageSelectionRange);
+  if (!range || !pageNodeInEditor(range.commonAncestorContainer, editor)) {
+    range = document.createRange();
+    range.selectNodeContents(editor);
+    range.collapse(false);
+  }
+  const sel = window.getSelection?.();
+  if (sel) {
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+  pageSelectionRange = clonePageRange(range);
+  return range;
+}
+function placePageCaretAfterNode(editor, node) {
+  if (!editor) return;
+  const range = document.createRange();
+  if (node?.parentNode) range.setStartAfter(node);
+  else range.selectNodeContents(editor);
+  range.collapse(true);
+  const sel = window.getSelection?.();
+  if (sel) {
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+  pageSelectionRange = clonePageRange(range);
+}
+function movePageCaretToPoint(editor, x, y) {
+  if (!editor) return;
+  let range = null;
+  if (document.caretRangeFromPoint) {
+    range = document.caretRangeFromPoint(x, y);
+  } else if (document.caretPositionFromPoint) {
+    const pos = document.caretPositionFromPoint(x, y);
+    if (pos?.offsetNode) {
+      range = document.createRange();
+      range.setStart(pos.offsetNode, pos.offset);
+      range.collapse(true);
+    }
+  }
+  if (!range || !pageNodeInEditor(range.commonAncestorContainer, editor)) return;
+  const sel = window.getSelection?.();
+  if (sel) {
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+  pageSelectionRange = clonePageRange(range);
+}
+
+// --- Serialization & save ---
+function serializePageHtml(editor) {
+  if (!editor) return "";
+  const clone = editor.cloneNode(true);
+  clone.querySelectorAll("img").forEach((img) => {
+    img.classList.add("page-inline-image");
+    img.classList.remove("is-selected");
+    if (img.dataset.asset) img.removeAttribute("src");
+  });
+  return clone.innerHTML;
+}
+function queuePageSave() {
+  const editor = getPageEditorEl();
+  if (!editor || !pageEditorTarget) return;
+  pageEditorTarget.html = serializePageHtml(editor);
+  pageEditorTarget.updatedAt = new Date().toISOString();
+  setPageSaveStatus("Saving…");
+  if (pageSaveTimer) clearTimeout(pageSaveTimer);
+  pageSaveTimer = setTimeout(async () => {
+    pageSaveTimer = null;
+    const ok = await save({ silent: true });
+    setPageSaveStatus(ok ? "Saved" : "Save failed");
+  }, 700);
+}
+async function flushPageSave() {
+  if (pageSaveTimer) {
+    clearTimeout(pageSaveTimer);
+    pageSaveTimer = null;
+  }
+  if (pageMiscSaveTimer) {
+    clearTimeout(pageMiscSaveTimer);
+    pageMiscSaveTimer = null;
+  }
+  const editor = getPageEditorEl();
+  if (editor && pageEditorTarget) {
+    pageEditorTarget.html = serializePageHtml(editor);
+    pageEditorTarget.updatedAt = new Date().toISOString();
+  }
+  try {
+    await save({ silent: true });
+  } catch (_) {}
+}
+
+// --- Inline image sizing/selection ---
+function normalizePageImagePercent(value, fallback = PAGE_IMAGE_DEFAULT_PERCENT) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  const stepped =
+    Math.round(numeric / PAGE_IMAGE_STEP_PERCENT) * PAGE_IMAGE_STEP_PERCENT;
+  return Math.min(
+    PAGE_IMAGE_MAX_PERCENT,
+    Math.max(PAGE_IMAGE_MIN_PERCENT, stepped)
+  );
+}
+function getPageEditorContentWidth(editor) {
+  if (!editor) return 0;
+  const styles = window.getComputedStyle(editor);
+  const pad =
+    (parseFloat(styles.paddingLeft || "0") || 0) +
+    (parseFloat(styles.paddingRight || "0") || 0);
+  return Math.max(160, editor.clientWidth - pad);
+}
+function getPageImageWidthPercent(img, editor) {
+  if (!img || !editor) return PAGE_IMAGE_DEFAULT_PERCENT;
+  const dataPercent = normalizePageImagePercent(img.dataset.widthPercent, NaN);
+  if (Number.isFinite(dataPercent)) return dataPercent;
+  const raw = String(img.style.width || "").trim();
+  if (raw.endsWith("%")) return normalizePageImagePercent(parseFloat(raw));
+  const widthPx =
+    parseFloat(raw) || img.getBoundingClientRect().width || img.naturalWidth || 0;
+  if (!widthPx) return PAGE_IMAGE_DEFAULT_PERCENT;
+  const base = getPageEditorContentWidth(editor);
+  if (!base) return PAGE_IMAGE_DEFAULT_PERCENT;
+  return normalizePageImagePercent((widthPx / base) * 100);
+}
+function applyPageImageWidth(img, percent, { save: doSave = true } = {}) {
+  const editor = getPageEditorEl();
+  if (!editor || !img || !editor.contains(img)) return;
+  const pct = normalizePageImagePercent(percent);
+  const widthPx = Math.max(
+    32,
+    Math.round((getPageEditorContentWidth(editor) * pct) / 100)
+  );
+  img.dataset.widthPercent = String(pct);
+  img.classList.add("page-inline-image");
+  img.style.width = `${widthPx}px`;
+  img.style.maxWidth = "100%";
+  img.style.height = "auto";
+  img.removeAttribute("width");
+  img.removeAttribute("height");
+  updatePageImageControls();
+  if (doSave) queuePageSave();
+}
+function getActivePageImage(editor) {
+  if (!editor || !pageSelectedImage || !editor.contains(pageSelectedImage)) {
+    return null;
+  }
+  return pageSelectedImage;
+}
+function updatePageImageControls() {
+  const editor = getPageEditorEl();
+  const controls = document.getElementById("pageImageControls");
+  const sizeRange = document.getElementById("pageImageSizeRange");
+  const sizeLabel = document.getElementById("pageImageSizeLabel");
+  const btns = [
+    "pageImageSmallerBtn",
+    "pageImageLargerBtn",
+    "pageImageResetBtn",
+    "pageRemoveImageBtn",
+  ].map((id) => document.getElementById(id));
+  const activeImage = getActivePageImage(editor);
+  const hasImage = !!activeImage;
+  if (controls) controls.hidden = !hasImage;
+  if (sizeRange) sizeRange.disabled = !hasImage;
+  btns.forEach((b) => {
+    if (b) b.disabled = !hasImage;
+  });
+  if (!hasImage) {
+    if (sizeLabel) sizeLabel.textContent = "";
+    return;
+  }
+  const pct = getPageImageWidthPercent(activeImage, editor);
+  if (sizeRange) sizeRange.value = String(pct);
+  if (sizeLabel) sizeLabel.textContent = `${pct}%`;
+}
+function clearPageSelectedImage() {
+  if (pageSelectedImage) pageSelectedImage.classList.remove("is-selected");
+  pageSelectedImage = null;
+  updatePageImageControls();
+}
+function setPageSelectedImage(img) {
+  const editor = getPageEditorEl();
+  if (!editor || !img || !editor.contains(img)) {
+    clearPageSelectedImage();
+    return;
+  }
+  if (pageSelectedImage && pageSelectedImage !== img) {
+    pageSelectedImage.classList.remove("is-selected");
+  }
+  pageSelectedImage = img;
+  img.classList.add("is-selected");
+  updatePageImageControls();
+}
+function normalizePageInlineImage(img) {
+  const editor = getPageEditorEl();
+  if (!editor || !img || !editor.contains(img)) return;
+  img.classList.add("page-inline-image");
+  img.draggable = false;
+  if (!img.alt) img.alt = "Image";
+  applyPageImageWidth(img, getPageImageWidthPercent(img, editor), { save: false });
+}
+function normalizePageEditorImages(editor) {
+  if (!editor) return;
+  editor.querySelectorAll("img").forEach(normalizePageInlineImage);
+  if (pageSelectedImage && !editor.contains(pageSelectedImage)) {
+    clearPageSelectedImage();
+  } else {
+    updatePageImageControls();
+  }
+}
+function getPageImageFromSelection(editor) {
+  const range = getPageSelectionRange(editor);
+  if (!range) return null;
+  if (
+    range.startContainer === range.endContainer &&
+    range.startContainer?.nodeType === Node.ELEMENT_NODE &&
+    range.endOffset === range.startOffset + 1
+  ) {
+    const node = range.startContainer.childNodes[range.startOffset];
+    if (node instanceof HTMLImageElement && editor.contains(node)) return node;
+  }
+  const target =
+    range.startContainer?.nodeType === Node.ELEMENT_NODE
+      ? range.startContainer
+      : range.startContainer?.parentElement;
+  return target instanceof HTMLImageElement
+    ? target
+    : target?.closest?.("img.page-inline-image") || null;
+}
+function syncPageSelectionState(editor) {
+  savePageSelection(editor);
+  const img = getPageImageFromSelection(editor);
+  if (img) setPageSelectedImage(img);
+  else clearPageSelectedImage();
+}
+
+// --- Image insertion / hydration (files-on-disk via backend) ---
+function insertPageImage(dataUrl, assetPath, altText = "Image") {
+  const editor = getPageEditorEl();
+  if (!editor || !dataUrl) return null;
+  const range = restorePageSelection(editor) || getPageSelectionRange(editor);
+  if (!range) return null;
+  range.deleteContents();
+  const img = document.createElement("img");
+  img.src = dataUrl;
+  if (assetPath) img.dataset.asset = assetPath;
+  img.alt = String(altText || "Image").trim() || "Image";
+  img.dataset.widthPercent = String(PAGE_IMAGE_DEFAULT_PERCENT);
+  range.insertNode(img);
+  const spacer = document.createTextNode(" ");
+  img.parentNode?.insertBefore(spacer, img.nextSibling);
+  placePageCaretAfterNode(editor, spacer);
+  normalizePageInlineImage(img);
+  setPageSelectedImage(img);
+  queuePageSave();
+  return img;
+}
+async function handlePageImageFiles(files) {
+  const imageFiles = Array.from(files || []).filter((f) =>
+    String(f?.type || "").toLowerCase().startsWith("image/")
+  );
+  if (!imageFiles.length) return;
+  const editor = getPageEditorEl();
+  if (!editor) return;
+  restorePageSelection(editor);
+  let inserted = 0;
+  for (const file of imageFiles) {
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      const res = await window.pywebview.api.save_page_asset(
+        pageEditorOwnerKey,
+        dataUrl,
+        file.name || ""
+      );
+      if (!res || res.status !== "success" || !res.assetPath) {
+        toast(res?.message || "Could not save image.");
+        continue;
+      }
+      if (insertPageImage(dataUrl, res.assetPath, file.name || "Image")) {
+        inserted += 1;
+      }
+    } catch (e) {
+      console.warn("Page image insert failed:", e);
+    }
+  }
+  if (inserted) toast(inserted === 1 ? "Image added." : `Added ${inserted} images.`);
+}
+function openPageImagePicker() {
+  const editor = getPageEditorEl();
+  const input = document.getElementById("pageImageInput");
+  if (!editor || !input) return;
+  savePageSelection(editor);
+  input.value = "";
+  input.click();
+}
+function removePageSelectedImage() {
+  const editor = getPageEditorEl();
+  const img = getActivePageImage(editor);
+  if (!editor || !img) return;
+  const prev = img.previousSibling;
+  img.remove();
+  clearPageSelectedImage();
+  placePageCaretAfterNode(editor, prev || editor.lastChild);
+  queuePageSave();
+}
+async function hydratePageImages(editor) {
+  if (!editor) return;
+  const imgs = Array.from(editor.querySelectorAll("img[data-asset]"));
+  for (const img of imgs) {
+    if (img.getAttribute("src")) continue;
+    const assetPath = img.dataset.asset;
+    if (!assetPath) continue;
+    try {
+      const res = await window.pywebview.api.get_page_asset(assetPath);
+      if (res && res.status === "success" && res.dataUrl) {
+        img.src = res.dataUrl;
+      } else {
+        img.alt = "Image unavailable";
+        img.classList.add("page-image-missing");
+      }
+    } catch (e) {
+      console.warn("Page image hydrate failed:", e);
+    }
+  }
+}
+function getPageClipboardImageFiles(clipboardData) {
+  if (!clipboardData) return [];
+  const files = Array.from(clipboardData.files || []).filter((f) =>
+    String(f?.type || "").toLowerCase().startsWith("image/")
+  );
+  if (files.length) return files;
+  return Array.from(clipboardData.items || [])
+    .map((i) => i.getAsFile?.())
+    .filter((f) => String(f?.type || "").toLowerCase().startsWith("image/"));
+}
+
+// --- To-do blocks ("tasks") ---
+function createPageTodoElement() {
+  const todo = document.createElement("div");
+  todo.className = "page-todo";
+  todo.dataset.checked = "false";
+  const box = document.createElement("span");
+  box.className = "page-todo-box";
+  box.setAttribute("contenteditable", "false");
+  box.setAttribute("role", "checkbox");
+  box.setAttribute("aria-checked", "false");
+  const text = document.createElement("div");
+  text.className = "page-todo-text";
+  text.appendChild(document.createElement("br"));
+  todo.appendChild(box);
+  todo.appendChild(text);
+  return todo;
+}
+function placePageCaretAtStart(node) {
+  if (!node) return;
+  const range = document.createRange();
+  range.setStart(node, 0);
+  range.collapse(true);
+  const sel = window.getSelection?.();
+  if (sel) {
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+  pageSelectionRange = clonePageRange(range);
+}
+function insertPageTodo() {
+  const editor = getPageEditorEl();
+  if (!editor) return;
+  const range = restorePageSelection(editor);
+  if (!range) return;
+  const todo = createPageTodoElement();
+  range.deleteContents();
+  range.insertNode(todo);
+  placePageCaretAtStart(todo.querySelector(".page-todo-text"));
+  queuePageSave();
+}
+// Enter inside a to-do must not split the flex row (which renders as "columns").
+// Non-empty item -> start a new to-do below; empty item -> exit to a normal line.
+function handlePageTodoEnter(editor) {
+  const sel = window.getSelection?.();
+  if (!sel || sel.rangeCount === 0) return false;
+  const start = sel.getRangeAt(0).startContainer;
+  const host = start.nodeType === Node.TEXT_NODE ? start.parentElement : start;
+  const todo = host?.closest?.(".page-todo");
+  if (!todo || !editor.contains(todo)) return false;
+  const textEl = todo.querySelector(".page-todo-text");
+  const isEmpty = !String(textEl?.textContent || "").trim();
+  if (isEmpty) {
+    const line = document.createElement("div");
+    line.appendChild(document.createElement("br"));
+    todo.replaceWith(line);
+    placePageCaretAtStart(line);
+  } else {
+    const nextTodo = createPageTodoElement();
+    todo.after(nextTodo);
+    placePageCaretAtStart(nextTodo.querySelector(".page-todo-text"));
+  }
+  queuePageSave();
+  return true;
+}
+function togglePageTodo(box) {
+  const todo = box.closest(".page-todo");
+  if (!todo) return;
+  const checked = todo.dataset.checked === "true";
+  todo.dataset.checked = checked ? "false" : "true";
+  todo.classList.toggle("done", !checked);
+  box.setAttribute("aria-checked", checked ? "false" : "true");
+  queuePageSave();
+}
+
+// --- Rich-text commands ---
+function applyPageCommand(cmd) {
+  const editor = getPageEditorEl();
+  if (!editor) return;
+  restorePageSelection(editor);
+  try {
+    document.execCommand(cmd, false, null);
+  } catch (_) {}
+  editor.focus();
+  savePageSelection(editor);
+  queuePageSave();
+}
+function applyPageBlock(tag) {
+  const editor = getPageEditorEl();
+  if (!editor) return;
+  restorePageSelection(editor);
+  try {
+    document.execCommand("formatBlock", false, tag);
+  } catch (_) {}
+  editor.focus();
+  savePageSelection(editor);
+  queuePageSave();
+}
+function applyPageTextColor(color) {
+  const editor = getPageEditorEl();
+  if (!editor) return;
+  const value = String(color || "").trim() || "#2f6fed";
+  restorePageSelection(editor);
+  try {
+    document.execCommand("foreColor", false, value);
+  } catch (_) {}
+  editor.focus();
+  savePageSelection(editor);
+  queuePageSave();
+}
+function normalizePageLinkHref(url) {
+  const raw = String(url || "").trim();
+  if (!raw) return "";
+  if (/^(https?:|mailto:|tel:|file:|ftp:)/i.test(raw)) return raw;
+  if (/^[\w.+-]+@[\w.-]+\.\w+$/.test(raw)) return `mailto:${raw}`;
+  if (/^\/\//.test(raw)) return `https:${raw}`;
+  return `https://${raw}`;
+}
+function insertPageLink() {
+  const editor = getPageEditorEl();
+  if (!editor) return;
+  // Capture the selection BEFORE prompt() steals focus and collapses it.
+  savePageSelection(editor);
+  const url = window.prompt("Link URL", "https://");
+  if (!url || !url.trim() || url.trim() === "https://") return;
+  const href = normalizePageLinkHref(url);
+  const range = restorePageSelection(editor);
+  if (range && !range.collapsed) {
+    try {
+      document.execCommand("createLink", false, href);
+    } catch (_) {}
+  } else if (range) {
+    // No text selected: insert a new anchor showing the URL.
+    const anchor = document.createElement("a");
+    anchor.href = href;
+    anchor.textContent = url.trim();
+    range.deleteContents();
+    range.insertNode(anchor);
+    placePageCaretAfterNode(editor, anchor);
+  }
+  // Make links open in the system browser and survive serialization.
+  editor.querySelectorAll("a[href]").forEach((a) => {
+    a.setAttribute("target", "_blank");
+    a.setAttribute("rel", "noopener noreferrer");
+  });
+  editor.focus();
+  savePageSelection(editor);
+  queuePageSave();
+}
+
+// --- Navigation state & rendering ---
+function showPageView() {
+  const view = document.getElementById("pageView");
+  if (!view) return;
+  view.hidden = false;
+  document.body.dataset.pageOpen = "1";
+  const editor = getPageEditorEl();
+  setTimeout(() => editor?.focus(), 0);
+}
+async function closePageView() {
+  await flushPageSave();
+  const view = document.getElementById("pageView");
+  if (view) view.hidden = true;
+  delete document.body.dataset.pageOpen;
+  pageNav = { project: null, deliverable: null };
+  pageEditorTarget = null;
+  clearPageSelectedImage();
+  try {
+    render();
+  } catch (_) {}
+}
+function pageGoBack() {
+  const { project, deliverable } = pageNav;
+  if (deliverable && project) {
+    flushPageSave().then(() => openProjectPage(project));
+  } else {
+    closePageView();
+  }
+}
+function openProjectPage(project) {
+  if (!project) return;
+  ensurePageViewReady();
+  pageNav = { project, deliverable: null };
+  renderPageView();
+  showPageView();
+}
+function openDeliverablePage(project, deliverable) {
+  if (!project || !deliverable) return;
+  ensurePageViewReady();
+  pageNav = { project, deliverable };
+  renderPageView();
+  showPageView();
+}
+function renderPageView() {
+  const { project, deliverable } = pageNav;
+  if (!project) return;
+  const editor = getPageEditorEl();
+  const titleEl = document.getElementById("pageTitle");
+  const metaEl = document.getElementById("pageMeta");
+  const deliverablesEl = document.getElementById("pageDeliverables");
+  const target = deliverable || project;
+  if (!target.page || typeof target.page !== "object") {
+    target.page = { html: "", updatedAt: "" };
+  }
+  pageEditorTarget = target.page;
+  pageEditorOwnerKey = deliverable
+    ? `dlv_${project.id || "x"}_${deliverable.id || "x"}`
+    : `proj_${project.id || "x"}`;
+
+  renderPageBreadcrumb(project, deliverable);
+
+  if (titleEl) {
+    titleEl.textContent = (deliverable ? deliverable.name : project.name) || "";
+  }
+
+  if (metaEl) {
+    if (deliverable) {
+      metaEl.hidden = false;
+      renderPageDeliverableMeta(metaEl, project, deliverable);
+    } else {
+      metaEl.hidden = true;
+      metaEl.innerHTML = "";
+    }
+  }
+
+  clearPageSelectedImage();
+  if (editor) {
+    editor.innerHTML = target.page.html || "";
+    normalizePageEditorImages(editor);
+    hydratePageImages(editor);
+  }
+
+  if (deliverablesEl) {
+    if (deliverable) {
+      deliverablesEl.hidden = true;
+    } else {
+      deliverablesEl.hidden = false;
+      renderPageDeliverablesGrid(project);
+    }
+  }
+
+  setPageSaveStatus("");
+}
+function renderPageBreadcrumb(project, deliverable) {
+  const nav = document.getElementById("pageBreadcrumb");
+  if (!nav) return;
+  nav.innerHTML = "";
+  const addCrumb = (label, onClick, isCurrent) => {
+    const el = document.createElement(onClick ? "button" : "span");
+    el.className = "page-crumb" + (isCurrent ? " is-current" : "");
+    el.textContent = label || "Untitled";
+    if (onClick) {
+      el.type = "button";
+      el.addEventListener("click", onClick);
+    }
+    nav.appendChild(el);
+  };
+  const addSep = () => {
+    const s = document.createElement("span");
+    s.className = "page-crumb-sep";
+    s.textContent = "/";
+    nav.appendChild(s);
+  };
+  addCrumb("Projects", () => closePageView(), false);
+  addSep();
+  if (deliverable) {
+    addCrumb(project.name || project.id || "Project", () => openProjectPage(project), false);
+    addSep();
+    addCrumb(deliverable.name || "Deliverable", null, true);
+  } else {
+    addCrumb(project.name || project.id || "Project", null, true);
+  }
+}
+function toPageDateInputValue(due) {
+  const raw = String(due || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+  try {
+    const d = parseDueStr(raw);
+    if (d instanceof Date && !isNaN(d)) {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    }
+  } catch (_) {}
+  return "";
+}
+function setPageDeliverableStatus(deliverable, value) {
+  deliverable.status = value || "";
+  try {
+    syncStatusArrays(deliverable);
+  } catch (_) {}
+}
+function queuePageMiscSave() {
+  setPageSaveStatus("Saving…");
+  if (pageMiscSaveTimer) clearTimeout(pageMiscSaveTimer);
+  pageMiscSaveTimer = setTimeout(async () => {
+    pageMiscSaveTimer = null;
+    const ok = await save({ silent: true });
+    setPageSaveStatus(ok ? "Saved" : "Save failed");
+    try {
+      render();
+    } catch (_) {}
+  }, 500);
+}
+function renderPageDeliverableMeta(metaEl, project, deliverable) {
+  metaEl.innerHTML = "";
+  const statusWrap = document.createElement("label");
+  statusWrap.className = "page-meta-field";
+  const statusLabel = document.createElement("span");
+  statusLabel.className = "page-meta-label";
+  statusLabel.textContent = "Status";
+  const statusSel = document.createElement("select");
+  statusSel.className = "page-meta-select";
+  const options = Array.isArray(STATUS_CANON) ? STATUS_CANON : [];
+  [""].concat(options).forEach((opt) => {
+    const o = document.createElement("option");
+    o.value = opt;
+    o.textContent = opt || "—";
+    if ((deliverable.status || "") === opt) o.selected = true;
+    statusSel.appendChild(o);
+  });
+  statusSel.addEventListener("change", () => {
+    setPageDeliverableStatus(deliverable, statusSel.value);
+    queuePageMiscSave();
+  });
+  statusWrap.appendChild(statusLabel);
+  statusWrap.appendChild(statusSel);
+
+  const dueWrap = document.createElement("label");
+  dueWrap.className = "page-meta-field";
+  const dueLabel = document.createElement("span");
+  dueLabel.className = "page-meta-label";
+  dueLabel.textContent = "Due";
+  const dueInput = document.createElement("input");
+  dueInput.type = "date";
+  dueInput.className = "page-meta-date";
+  dueInput.value = toPageDateInputValue(deliverable.due);
+  dueInput.addEventListener("change", () => {
+    deliverable.due = dueInput.value || "";
+    queuePageMiscSave();
+  });
+  dueWrap.appendChild(dueLabel);
+  dueWrap.appendChild(dueInput);
+
+  metaEl.appendChild(statusWrap);
+  metaEl.appendChild(dueWrap);
+}
+function renderPageDeliverablesGrid(project) {
+  const grid = document.getElementById("pageDeliverablesGrid");
+  if (!grid) return;
+  grid.innerHTML = "";
+  const deliverables = getProjectDeliverables(project);
+  if (!deliverables.length) {
+    const empty = document.createElement("div");
+    empty.className = "page-deliverables-empty muted";
+    empty.textContent = "No deliverables yet. Add one to create a subpage.";
+    grid.appendChild(empty);
+    return;
+  }
+  deliverables.forEach((deliverable) => {
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "page-deliverable-card";
+    const title = document.createElement("div");
+    title.className = "page-deliverable-card-title";
+    title.textContent = deliverable.name || "Untitled deliverable";
+    const meta = document.createElement("div");
+    meta.className = "page-deliverable-card-meta";
+    const status = deliverable.status || "—";
+    const due = deliverable.due ? `Due ${deliverable.due}` : "";
+    meta.textContent = [status, due].filter(Boolean).join(" · ");
+    card.appendChild(title);
+    card.appendChild(meta);
+    card.addEventListener("click", () => openDeliverablePage(project, deliverable));
+    grid.appendChild(card);
+  });
+}
+async function addDeliverableFromPage() {
+  const { project } = pageNav;
+  if (!project) return;
+  const deliverable = createDeliverable({ name: "New deliverable" });
+  if (!Array.isArray(project.deliverables)) project.deliverables = [];
+  project.deliverables.push(deliverable);
+  await save({ silent: true });
+  renderPageDeliverablesGrid(project);
+  try {
+    render();
+  } catch (_) {}
+  openDeliverablePage(project, deliverable);
+}
+function queuePageTitleSave() {
+  const titleEl = document.getElementById("pageTitle");
+  if (!titleEl) return;
+  const value = (titleEl.textContent || "").trim();
+  const { project, deliverable } = pageNav;
+  if (deliverable) deliverable.name = value;
+  else if (project) project.name = value;
+  queuePageMiscSave();
+}
+
+function ensurePageViewReady() {
+  if (pageViewInitialized) return;
+  const view = document.getElementById("pageView");
+  const editor = getPageEditorEl();
+  if (!view || !editor) return;
+  pageViewInitialized = true;
+
+  editor.addEventListener("input", () => {
+    normalizePageEditorImages(editor);
+    queuePageSave();
+  });
+  editor.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+      if (handlePageTodoEnter(editor)) e.preventDefault();
+    }
+  });
+  editor.addEventListener("keyup", () => syncPageSelectionState(editor));
+  editor.addEventListener("mouseup", () => syncPageSelectionState(editor));
+  editor.addEventListener("blur", () => savePageSelection(editor));
+  editor.addEventListener("click", (e) => {
+    const link = e.target?.closest?.("a[href]");
+    if (link && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      openExternalUrl(link.getAttribute("href"));
+      return;
+    }
+    const box = e.target?.closest?.(".page-todo-box");
+    if (box) {
+      e.preventDefault();
+      togglePageTodo(box);
+      return;
+    }
+    const img = e.target?.closest?.("img.page-inline-image");
+    if (img) setPageSelectedImage(img);
+    else clearPageSelectedImage();
+  });
+  editor.addEventListener("dblclick", (e) => {
+    const img = e.target?.closest?.("img.page-inline-image");
+    if (img && img.src) {
+      openImagePreviewDialog({
+        dataUrl: img.src,
+        filename: img.alt || "Image",
+        width: img.naturalWidth || 1,
+        height: img.naturalHeight || 1,
+      });
+    }
+  });
+  editor.addEventListener("paste", (e) => {
+    const files = getPageClipboardImageFiles(e.clipboardData);
+    if (files.length) {
+      e.preventDefault();
+      handlePageImageFiles(files);
+    }
+  });
+  editor.addEventListener("dragover", (e) => {
+    if (Array.from(e.dataTransfer?.types || []).includes("Files")) e.preventDefault();
+  });
+  editor.addEventListener("drop", (e) => {
+    const files = Array.from(e.dataTransfer?.files || []).filter((f) =>
+      String(f.type || "").toLowerCase().startsWith("image/")
+    );
+    if (files.length) {
+      e.preventDefault();
+      movePageCaretToPoint(editor, e.clientX, e.clientY);
+      handlePageImageFiles(files);
+    }
+  });
+
+  const titleEl = document.getElementById("pageTitle");
+  if (titleEl) {
+    titleEl.addEventListener("input", () => queuePageTitleSave());
+    titleEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        editor.focus();
+      }
+    });
+  }
+
+  const toolbar = view.querySelector(".page-toolbar");
+  if (toolbar) {
+    toolbar.addEventListener("mousedown", (e) => {
+      if (e.target?.closest?.("button")) e.preventDefault();
+    });
+    toolbar.addEventListener("click", (e) => {
+      const btn = e.target?.closest?.("button");
+      if (!btn) return;
+      if (btn.dataset.pageCmd) applyPageCommand(btn.dataset.pageCmd);
+      else if (btn.dataset.pageBlock) applyPageBlock(btn.dataset.pageBlock);
+      else if (btn.dataset.pageAction === "todo") insertPageTodo();
+      else if (btn.dataset.pageAction === "link") insertPageLink();
+    });
+  }
+  const colorInput = document.getElementById("pageTextColorInput");
+  if (colorInput) {
+    colorInput.addEventListener("input", () => applyPageTextColor(colorInput.value));
+  }
+
+  document.getElementById("pageInsertImageBtn")?.addEventListener("click", openPageImagePicker);
+  document.getElementById("pageImageInput")?.addEventListener("change", (e) => {
+    const files = e.target.files;
+    if (files && files.length) handlePageImageFiles(files);
+    e.target.value = "";
+  });
+  document.getElementById("pageImageSmallerBtn")?.addEventListener("click", () => {
+    const img = getActivePageImage(editor);
+    if (img) applyPageImageWidth(img, getPageImageWidthPercent(img, editor) - PAGE_IMAGE_STEP_PERCENT);
+  });
+  document.getElementById("pageImageLargerBtn")?.addEventListener("click", () => {
+    const img = getActivePageImage(editor);
+    if (img) applyPageImageWidth(img, getPageImageWidthPercent(img, editor) + PAGE_IMAGE_STEP_PERCENT);
+  });
+  document.getElementById("pageImageResetBtn")?.addEventListener("click", () => {
+    const img = getActivePageImage(editor);
+    if (img) applyPageImageWidth(img, PAGE_IMAGE_DEFAULT_PERCENT);
+  });
+  document.getElementById("pageImageSizeRange")?.addEventListener("input", (e) => {
+    const img = getActivePageImage(editor);
+    if (img) applyPageImageWidth(img, e.target.value);
+  });
+  document.getElementById("pageRemoveImageBtn")?.addEventListener("click", removePageSelectedImage);
+
+  document.getElementById("pageViewBackBtn")?.addEventListener("click", pageGoBack);
+  document.getElementById("pageViewCloseBtn")?.addEventListener("click", () => closePageView());
+  document.getElementById("pageAddDeliverableBtn")?.addEventListener("click", addDeliverableFromPage);
+
+  view.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      pageGoBack();
+    }
+  });
 }
 
 init();

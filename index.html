@@ -1088,6 +1088,84 @@
             role="textbox" aria-multiline="true" aria-label="Scratchpad notes"
             data-placeholder="Start typing your unsorted notes…"></div>
     </aside>
+    <!-- Full-page Notion-style Project / Deliverable page view -->
+    <section id="pageView" class="page-view" hidden aria-label="Project page">
+        <header class="page-view-topbar">
+            <button type="button" class="page-view-back" id="pageViewBackBtn" aria-label="Back" title="Back">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="19" y1="12" x2="5" y2="12"></line>
+                    <polyline points="12 19 5 12 12 5"></polyline>
+                </svg>
+                <span>Back</span>
+            </button>
+            <nav class="page-breadcrumb" id="pageBreadcrumb" aria-label="Breadcrumb"></nav>
+            <div class="page-view-spacer"></div>
+            <div class="page-save-status" id="pageSaveStatus" aria-live="polite"></div>
+            <button type="button" class="icon-btn mini" id="pageViewCloseBtn" aria-label="Close page" title="Close">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+            </button>
+        </header>
+        <div class="page-view-scroll">
+            <div class="page-view-inner">
+                <div class="page-meta" id="pageMeta" hidden></div>
+                <h1 class="page-title" id="pageTitle" contenteditable="true" spellcheck="true" role="textbox"
+                    aria-label="Page title" data-placeholder="Untitled"></h1>
+                <div class="page-toolbar" role="toolbar" aria-label="Formatting">
+                    <div class="page-toolbar-group" aria-label="Text style">
+                        <button type="button" class="page-fmt-btn" data-page-block="p" title="Normal text">Text</button>
+                        <button type="button" class="page-fmt-btn" data-page-block="h1" title="Heading 1">H1</button>
+                        <button type="button" class="page-fmt-btn" data-page-block="h2" title="Heading 2">H2</button>
+                        <button type="button" class="page-fmt-btn" data-page-block="h3" title="Heading 3">H3</button>
+                    </div>
+                    <div class="page-toolbar-group" aria-label="Text formatting">
+                        <button type="button" class="page-fmt-btn" data-page-cmd="bold" title="Bold (Ctrl+B)"><strong>B</strong></button>
+                        <button type="button" class="page-fmt-btn" data-page-cmd="italic" title="Italic (Ctrl+I)"><em>I</em></button>
+                        <button type="button" class="page-fmt-btn" data-page-cmd="underline" title="Underline (Ctrl+U)"><u>U</u></button>
+                        <button type="button" class="page-fmt-btn" data-page-cmd="strikeThrough" title="Strikethrough"><s>S</s></button>
+                    </div>
+                    <div class="page-toolbar-group" aria-label="Lists">
+                        <button type="button" class="page-fmt-btn" data-page-cmd="insertUnorderedList" title="Bulleted list">• List</button>
+                        <button type="button" class="page-fmt-btn" data-page-cmd="insertOrderedList" title="Numbered list">1. List</button>
+                        <button type="button" class="page-fmt-btn" data-page-action="todo" title="To-do checkbox">☑ To-do</button>
+                    </div>
+                    <div class="page-toolbar-group page-color-tools" aria-label="Text color">
+                        <label class="page-color-picker" title="Text color">
+                            <input type="color" id="pageTextColorInput" value="#2f6fed" aria-label="Text color" />
+                            <span class="page-color-picker-mark">A</span>
+                        </label>
+                        <button type="button" class="page-fmt-btn" data-page-action="link" title="Insert link">Link</button>
+                    </div>
+                    <div class="page-toolbar-group page-image-tools" aria-label="Image tools">
+                        <button type="button" class="page-tool-btn" id="pageInsertImageBtn" title="Insert image">Img</button>
+                        <div class="page-image-controls" id="pageImageControls" hidden>
+                            <button type="button" class="page-tool-btn" id="pageImageSmallerBtn" title="Smaller">-</button>
+                            <input type="range" id="pageImageSizeRange" min="10" max="100" step="5" value="80" aria-label="Selected image width" />
+                            <button type="button" class="page-tool-btn" id="pageImageLargerBtn" title="Larger">+</button>
+                            <button type="button" class="page-tool-btn" id="pageImageResetBtn" title="Reset width">Fit</button>
+                            <button type="button" class="page-tool-btn" id="pageRemoveImageBtn" title="Remove image">Del</button>
+                            <span class="page-image-size-label" id="pageImageSizeLabel">80%</span>
+                        </div>
+                    </div>
+                </div>
+                <div id="pageEditor" class="page-editor" contenteditable="true" spellcheck="true" role="textbox"
+                    aria-multiline="true" aria-label="Page content"
+                    data-placeholder="Type here — add headings, to-dos, images, links, and notes…"></div>
+                <section class="page-deliverables" id="pageDeliverables" hidden>
+                    <div class="page-deliverables-header">
+                        <h2>Deliverables</h2>
+                        <button type="button" class="btn" id="pageAddDeliverableBtn">+ Add deliverable</button>
+                    </div>
+                    <div class="page-deliverables-grid" id="pageDeliverablesGrid"></div>
+                </section>
+            </div>
+        </div>
+        <input type="file" id="pageImageInput" accept="image/*" multiple hidden />
+    </section>
     <button id="projectsBackToTopBtn" class="projects-back-to-top" type="button" aria-label="Back to top"
         title="Back to top">Top</button>
     <!-- Timesheet Project Selection Dialog -->

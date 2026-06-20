@@ -1099,6 +1099,7 @@ TEMPLATES_FILE = get_app_data_path("templates.json")
 CAD_AUTO_SELECT_TRACE_FILE = get_app_data_path("cad_auto_select_trace.log")
 CHECKLISTS_FILE = get_app_data_path("checklists.json")
 SYNC_BACKUPS_DIR = os.path.join(get_app_data_dir(), "sync_backups")
+SYNC_METADATA_FILE = get_app_data_path("local_project_sync_metadata.json")
 LIGHTING_SCHEDULE_SYNC_FILE = "T24LightingFixtureSchedule.sync.json"
 LIGHTING_SCHEDULE_DB_FILE = get_app_data_path("lighting_schedules.db")
 PROJECT_CHECKLIST_DB_FILE = get_app_data_path("project_checklists.db")
@@ -1210,6 +1211,133 @@ def _atomic_write_json_file(path, payload):
                 os.remove(temp_path)
             except OSError:
                 pass
+
+
+# --- Local Project Manager sync baseline metadata ---
+# Records the last-synced mtime/size of both sides for each file copied by the
+# Work Locally tool so later comparisons can tell "one side changed" apart from
+# "both sides changed" (conflict) and "deleted locally" apart from "never copied".
+_SYNC_METADATA_LOCK = threading.Lock()
+SYNC_BASELINE_MTIME_EPSILON_SECONDS = 2.0
+
+
+def _normalize_sync_metadata_pair_key(local_project_path, server_project_path):
+    normalized_local = os.path.normpath(str(local_project_path or '').strip()).lower()
+    normalized_server = os.path.normpath(str(server_project_path or '').strip()).lower()
+    return f"{normalized_local}|{normalized_server}"
+
+
+def _normalize_sync_metadata_file_key(relative_path):
+    return os.path.normpath(str(relative_path or '').strip()).lower()
+
+
+def _load_sync_metadata():
+    metadata_path = SYNC_METADATA_FILE
+    if not metadata_path or not os.path.exists(metadata_path):
+        return {'version': 1, 'pairs': {}}
+    try:
+        payload = _read_json_file_strict(metadata_path)
+    except Exception as exc:
+        logging.warning(f"Could not read sync metadata file '{metadata_path}': {exc}")
+        return {'version': 1, 'pairs': {}}
+    if not isinstance(payload, dict) or not isinstance(payload.get('pairs'), dict):
+        logging.warning(f"Sync metadata file '{metadata_path}' has an unexpected shape; starting fresh.")
+        return {'version': 1, 'pairs': {}}
+    payload.setdefault('version', 1)
+    return payload
+
+
+def _save_sync_metadata(metadata):
+    _atomic_write_json_file(SYNC_METADATA_FILE, metadata)
+
+
+def _get_sync_baseline_files(local_project_path, server_project_path):
+    pair_key = _normalize_sync_metadata_pair_key(local_project_path, server_project_path)
+    with _SYNC_METADATA_LOCK:
+        metadata = _load_sync_metadata()
+        pair_entry = metadata.get('pairs', {}).get(pair_key)
+        if not isinstance(pair_entry, dict):
+            return {}
+        files = pair_entry.get('files')
+        return copy.deepcopy(files) if isinstance(files, dict) else {}
+
+
+def _sync_baseline_entry_effectively_equal(existing_entry, new_entry):
+    if not isinstance(existing_entry, dict):
+        return False
+    for mtime_key in ('localMtime', 'serverMtime'):
+        try:
+            existing_value = float(existing_entry.get(mtime_key) or 0.0)
+            new_value = float(new_entry.get(mtime_key) or 0.0)
+        except (TypeError, ValueError):
+            return False
+        if abs(existing_value - new_value) > SYNC_BASELINE_MTIME_EPSILON_SECONDS:
+            return False
+    for size_key in ('localSize', 'serverSize'):
+        if existing_entry.get(size_key) != new_entry.get(size_key):
+            return False
+    return True
+
+
+def _update_sync_baseline_files(
+    local_project_path,
+    server_project_path,
+    upsert_entries=None,
+    remove_relative_paths=None,
+):
+    """Upsert/remove per-file baseline entries for a local/server pair.
+
+    Failures are logged and swallowed: baseline maintenance must never break a
+    compare or copy operation.
+    """
+    try:
+        pair_key = _normalize_sync_metadata_pair_key(local_project_path, server_project_path)
+        with _SYNC_METADATA_LOCK:
+            metadata = _load_sync_metadata()
+            pairs = metadata.setdefault('pairs', {})
+            pair_entry = pairs.get(pair_key)
+            if not isinstance(pair_entry, dict):
+                pair_entry = {}
+            files = pair_entry.get('files')
+            if not isinstance(files, dict):
+                files = {}
+            changed = False
+
+            for entry in upsert_entries or []:
+                relative_path = str((entry or {}).get('relativePath') or '').strip()
+                if not relative_path:
+                    continue
+                file_key = _normalize_sync_metadata_file_key(relative_path)
+                new_entry = {
+                    'relativePath': os.path.normpath(relative_path),
+                    'localMtime': float(entry.get('localMtime') or 0.0),
+                    'localSize': entry.get('localSize'),
+                    'serverMtime': float(entry.get('serverMtime') or 0.0),
+                    'serverSize': entry.get('serverSize'),
+                    'syncedAt': datetime.datetime.now().isoformat(),
+                }
+                if _sync_baseline_entry_effectively_equal(files.get(file_key), new_entry):
+                    continue
+                files[file_key] = new_entry
+                changed = True
+
+            for relative_path in remove_relative_paths or []:
+                file_key = _normalize_sync_metadata_file_key(relative_path)
+                if file_key in files:
+                    del files[file_key]
+                    changed = True
+
+            if not changed:
+                return
+
+            pair_entry['localProjectPath'] = os.path.normpath(str(local_project_path or '').strip())
+            pair_entry['serverProjectPath'] = os.path.normpath(str(server_project_path or '').strip())
+            pair_entry['updatedAt'] = datetime.datetime.now().isoformat()
+            pair_entry['files'] = files
+            pairs[pair_key] = pair_entry
+            _save_sync_metadata(metadata)
+    except Exception as exc:
+        logging.warning(f"Could not update sync baseline metadata: {exc}")
 
 
 def _get_file_modified_iso(path):
@@ -7482,6 +7610,122 @@ Return ONLY the JSON object.
             logging.error(f"Error generating expense image preview: {e}")
             return {'status': 'error', 'message': str(e)}
 
+    def _page_assets_root(self):
+        """Absolute path to the page_assets media folder (created on demand)."""
+        root = get_app_data_path("page_assets")
+        os.makedirs(root, exist_ok=True)
+        return os.path.realpath(root)
+
+    def _safe_page_owner_key(self, owner_key):
+        """Sanitizes an owner key (project/deliverable scope) into a safe folder name."""
+        cleaned = re.sub(r"[^A-Za-z0-9_-]+", "_", str(owner_key or "").strip()).strip("_")
+        return cleaned or "shared"
+
+    def _resolve_page_asset_path(self, asset_path):
+        """Resolves a stored page asset reference to an absolute path strictly inside page_assets."""
+        raw = str(asset_path or "").strip().replace("\\", "/")
+        if not raw:
+            return ""
+        parts = [p for p in raw.split("/") if p not in ("", ".", "..")]
+        if parts and parts[0] == "page_assets":
+            parts = parts[1:]
+        if not parts:
+            return ""
+        root = self._page_assets_root()
+        candidate = os.path.realpath(os.path.join(root, *parts))
+        try:
+            if os.path.commonpath([root, candidate]) != root:
+                return ""
+        except ValueError:
+            return ""
+        return candidate
+
+    def save_page_asset(self, owner_key, data_url, filename=""):
+        """Persists a page image (base64 data URL) to page_assets and returns a relative reference."""
+        try:
+            raw = str(data_url or "")
+            header, _, payload = raw.partition(",")
+            if not payload or "base64" not in header.lower():
+                return {'status': 'error', 'message': 'Unsupported image data.'}
+            mime_match = re.match(r"^data:([^;,]+)", header)
+            mime = (mime_match.group(1).lower() if mime_match else 'image/png')
+            try:
+                blob = base64.b64decode(payload)
+            except Exception:
+                return {'status': 'error', 'message': 'Could not decode image data.'}
+            if not blob:
+                return {'status': 'error', 'message': 'Empty image data.'}
+
+            ext_map = {
+                'image/png': '.png', 'image/jpeg': '.jpg', 'image/jpg': '.jpg',
+                'image/gif': '.gif', 'image/webp': '.webp', 'image/bmp': '.bmp',
+                'image/svg+xml': '.svg', 'image/heic': '.heic', 'image/heif': '.heif',
+            }
+            ext = ext_map.get(mime, '')
+            if not ext:
+                _, guessed = os.path.splitext(str(filename or ''))
+                ext = guessed.lower() if guessed else '.png'
+
+            owner = self._safe_page_owner_key(owner_key)
+            owner_dir = os.path.join(self._page_assets_root(), owner)
+            os.makedirs(owner_dir, exist_ok=True)
+            asset_name = f"{uuid.uuid4().hex}{ext}"
+            with open(os.path.join(owner_dir, asset_name), 'wb') as fh:
+                fh.write(blob)
+
+            return {'status': 'success', 'assetPath': f"page_assets/{owner}/{asset_name}"}
+        except Exception as e:
+            logging.error(f"Error saving page asset: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def get_page_asset(self, asset_path, max_size=1600):
+        """Returns a browser-safe preview data URL for a stored page asset."""
+        try:
+            resolved_path = self._resolve_page_asset_path(asset_path)
+            if not resolved_path or not os.path.isfile(resolved_path):
+                return {'status': 'error', 'message': 'Image file not found.'}
+
+            if resolved_path.lower().endswith('.svg'):
+                with open(resolved_path, 'rb') as fh:
+                    encoded = base64.b64encode(fh.read()).decode('ascii')
+                return {'status': 'success', 'dataUrl': f'data:image/svg+xml;base64,{encoded}'}
+
+            try:
+                preview_max_size = max(1, int(max_size or 1600))
+            except Exception:
+                preview_max_size = 1600
+
+            with _open_local_pil_image(resolved_path) as source_img:
+                if hasattr(source_img, 'n_frames') and source_img.n_frames > 1:
+                    source_img.seek(0)
+                preview = ImageOps.exif_transpose(source_img).copy()
+                if preview.mode in ('P', 'LA'):
+                    preview = preview.convert('RGBA')
+                elif preview.mode not in ('RGB', 'RGBA'):
+                    preview = preview.convert('RGB')
+
+            resampling = getattr(
+                getattr(PILImage, 'Resampling', PILImage),
+                'LANCZOS',
+                getattr(PILImage, 'LANCZOS', getattr(PILImage, 'BICUBIC', 3))
+            )
+            preview.thumbnail((preview_max_size, preview_max_size), resampling)
+
+            buffer = io.BytesIO()
+            preview.save(buffer, format='PNG')
+            encoded = base64.b64encode(buffer.getvalue()).decode('ascii')
+            return {
+                'status': 'success',
+                'dataUrl': f'data:image/png;base64,{encoded}',
+                'width': preview.width,
+                'height': preview.height,
+            }
+        except ValueError as e:
+            return {'status': 'unsupported', 'message': str(e)}
+        except Exception as e:
+            logging.error(f"Error generating page asset preview: {e}")
+            return {'status': 'error', 'message': str(e)}
+
     def export_expense_sheet_excel(self, data):
         """Exports expense sheet data to an Excel file with images."""
         try:
@@ -8085,6 +8329,83 @@ Return ONLY the JSON object.
         except Exception as e:
             logging.error(f"Error opening directory: {e}")
             return {'status': 'error', 'message': str(e)}
+
+    def _resolve_local_project_directory(self, project_info):
+        """Resolve the local "Local Projects" folder for a project payload.
+
+        Prefers an explicit, existing localProjectPath; otherwise derives the
+        folder name from the server path basename (matching the Work Locally copy
+        target), falling back to "<id> <name>" when no server path is saved.
+        """
+        info = project_info if isinstance(project_info, dict) else {}
+
+        explicit_local = os.path.normpath(str(info.get('localProjectPath') or '').strip())
+        if (
+            explicit_local
+            and explicit_local != '.'
+            and os.path.isdir(self._to_windows_extended_path(explicit_local))
+        ):
+            return explicit_local
+
+        server_path = str(info.get('path') or '').strip()
+        if server_path:
+            target_info = self._get_copy_project_target_info(server_path)
+            if target_info.get('status') == 'success' and target_info.get('localProjectPath'):
+                return target_info['localProjectPath']
+
+        project_name = ' '.join(
+            part for part in (
+                str(info.get('id') or '').strip(),
+                str(info.get('name') or '').strip(),
+            ) if part
+        )
+        if not project_name:
+            return ''
+
+        local_root = os.path.join(_get_windows_documents_dir(), 'Local Projects')
+        return os.path.normpath(os.path.join(local_root, project_name))
+
+    def open_project_directory(self, kind, project=None):
+        """Opens the server or local directory for a project.
+
+        Backs the project-details right-click menu ("Open Server Directory" /
+        "Open Local Directory"). Opens the resolved folder directly without
+        falling back to a parent directory.
+        """
+        mode = 'local' if str(kind or '').strip().lower() == 'local' else 'server'
+        try:
+            info = project if isinstance(project, dict) else {}
+
+            if mode == 'local':
+                directory_path = self._resolve_local_project_directory(info)
+                missing_message = 'Local project directory does not exist.'
+            else:
+                directory_path = os.path.normpath(str(info.get('path') or '').strip())
+                if directory_path == '.':
+                    directory_path = ''
+                missing_message = 'Directory does not exist.'
+
+            if not directory_path:
+                return {
+                    'status': 'error',
+                    'mode': mode,
+                    'message': f'No {mode} project path is available for this project.',
+                }
+
+            if not os.path.isdir(self._to_windows_extended_path(directory_path)):
+                return {'status': 'error', 'mode': mode, 'message': missing_message}
+
+            if sys.platform == "win32":
+                os.startfile(directory_path)
+            else:
+                subprocess.run(
+                    ['open', directory_path] if sys.platform == "darwin" else ['xdg-open', directory_path],
+                    check=False,
+                )
+            return {'status': 'success', 'mode': mode, 'path': directory_path}
+        except Exception as e:
+            logging.error(f"Error opening {mode} project directory: {e}")
+            return {'status': 'error', 'mode': mode, 'message': str(e)}
 
     def get_local_project_copy_info(self, server_project_path):
         """Returns the expected local copy path for a server project and whether it exists."""

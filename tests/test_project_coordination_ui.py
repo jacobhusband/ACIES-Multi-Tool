@@ -135,6 +135,7 @@ class ProjectCoordinationUiTests(unittest.TestCase):
         )
         self.assertIn("createInlineWorkItemTextControl({", panel_block)
         self.assertIn('textClassName: "coordination-item-note",', panel_block)
+        self.assertIn("coordination-project-item-row", panel_block)
 
     def test_coordination_dialog_markup_exists(self):
         html = INDEX_HTML_PATH.read_text(encoding="utf-8")
@@ -174,8 +175,26 @@ class ProjectCoordinationUiTests(unittest.TestCase):
         self.assertIn(".projects-coordination-view {", css)
         self.assertIn(".projects-coordination-view[hidden] {", css)
         self.assertIn(".coordination-project-panel {", css)
+        self.assertIn(".coordination-project-item-row {", css)
+        self.assertIn(
+            ".coordination-project-item-row > :is(.work-item-text-wrap) {", css
+        )
+        self.assertIn(
+            ".coordination-project-item-row .coordination-item-due {", css
+        )
         self.assertIn(".coordination-project-count {", css)
         self.assertIn(".coordination-view-empty {", css)
+
+        project_row_block = self._block(
+            css, ".coordination-project-item-row {", "}"
+        )
+        self.assertIn("display: grid;", project_row_block)
+        self.assertIn(
+            "grid-template-columns: auto minmax(0, 1fr) auto;",
+            project_row_block,
+        )
+        self.assertIn('"check note delete"', project_row_block)
+        self.assertIn('". party due"', project_row_block)
 
 
 if __name__ == "__main__":

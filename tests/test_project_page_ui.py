@@ -22,10 +22,12 @@ class ProjectPageUiTests(unittest.TestCase):
         self.assertIn("function openDeliverablePage(project, deliverable) {", script)
         self.assertIn("function serializePageHtml(editor) {", script)
         self.assertIn("function hydratePageImages(editor) {", script)
-        self.assertIn("function insertPageTodo() {", script)
-        self.assertIn("function createPageTodoElement() {", script)
-        self.assertIn("function handlePageTodoEnter(editor) {", script)
-        self.assertIn("if (handlePageTodoEnter(editor)) e.preventDefault();", script)
+        self.assertIn("function insertPageItem(tag) {", script)
+        self.assertIn('function createPageItemElement(tag = "action", id = "") {', script)
+        self.assertIn("function handlePageItemEnter(editor) {", script)
+        self.assertIn("function clearPageItemTag(editor) {", script)
+        self.assertIn("function upgradeLegacyPageTodos(editor) {", script)
+        self.assertIn("if (handlePageItemEnter(editor)) e.preventDefault();", script)
         self.assertIn("function normalizePageLinkHref(url) {", script)
         self.assertIn('openExternalUrl(link.getAttribute("href"));', script)
         self.assertIn("function renderPageDeliverablesGrid(project) {", script)
@@ -46,7 +48,9 @@ class ProjectPageUiTests(unittest.TestCase):
         self.assertIn('id="pageBreadcrumb"', html)
         self.assertIn('id="pageDeliverablesGrid"', html)
         self.assertIn('id="pageInsertImageBtn"', html)
-        self.assertIn('data-page-action="todo"', html)
+        self.assertIn('data-page-action="action"', html)
+        self.assertIn('data-page-action="coordination"', html)
+        self.assertIn('data-page-action="untag"', html)
         self.assertIn('id="pageImageInput"', html)
 
     def test_page_view_styles_exist(self):
@@ -54,7 +58,8 @@ class ProjectPageUiTests(unittest.TestCase):
         self.assertIn(".page-view {", css)
         self.assertIn(".page-editor {", css)
         self.assertIn(".page-toolbar {", css)
-        self.assertIn(".page-todo {", css)
+        self.assertIn(".page-item {", css)
+        self.assertIn(".page-item-badge[data-tag=\"coordination\"] {", css)
         self.assertIn(".page-deliverable-card {", css)
 
     def test_backend_page_asset_api_exists(self):

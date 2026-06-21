@@ -100,8 +100,6 @@ const CHECKLIST_ICON_PATH =
   "M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM7 10h2v7H7zm4-3h2v10h-2zm4 6h2v4h-2z";
 const CHECK_ICON_PATH =
   "M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z";
-const COORDINATION_ICON_PATH =
-  "M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z";
 const MAX_DELIVERABLE_EMAIL_REFS = 3;
 const EMAIL_INTAKE_PROJECT_CONTEXT_MAX_PROJECTS = 200;
 const EMAIL_INTAKE_PROJECT_CONTEXT_MAX_CHARS = 25000;
@@ -2455,15 +2453,6 @@ const WORKROOM_PRE_DESIGN_PAGES = [
   },
 ];
 const WORKROOM_CAD_DISCIPLINES = ["Electrical", "Mechanical", "Plumbing"];
-const COORDINATION_PARTIES = [
-  "Project Manager",
-  "Mechanical",
-  "Plumbing",
-  "Architect",
-  "Landlord",
-  "Client",
-];
-const COORDINATION_OTHER_PARTY_VALUE = "__other__";
 const HEADER_DISCIPLINE_TOGGLE_OPTIONS = [
   { discipline: "Mechanical", shortLabel: "M", label: "Mechanical" },
   { discipline: "Electrical", shortLabel: "E", label: "Electrical" },
@@ -2548,6 +2537,36 @@ function el(tag, props = {}, children = []) {
     else n.appendChild(c);
   });
   return n;
+}
+
+function escapeHtml(value) {
+  return String(value == null ? "" : value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+// Convert plain text (with newlines) into simple page HTML paragraphs.
+function plainTextToPageHtml(text) {
+  const raw = String(text == null ? "" : text);
+  if (!raw.trim()) return "";
+  return raw
+    .split(/\r?\n/)
+    .map((line) => (line.trim() ? `<p>${escapeHtml(line)}</p>` : "<p><br></p>"))
+    .join("");
+}
+
+// Extract readable plain text from page HTML (for search and list previews).
+function pageHtmlToPlainText(html) {
+  if (!html) return "";
+  try {
+    const doc = new DOMParser().parseFromString(String(html), "text/html");
+    return (doc.body?.textContent || "").replace(/\s+/g, " ").trim();
+  } catch (_) {
+    return "";
+  }
 }
 
 function highlightText(text, query) {
@@ -9026,8 +9045,8 @@ function initProjectsBackToTop() {
 
 // State variables
 let db = [];
-let notesDb = {};
-let noteTabs = [];
+let globalPages = []; // [{ id, title, page: { html, updatedAt } }]
+let activeGlobalPageId = null;
 let editIndex = -1;
 let _aiMatchSnapshot = null;
 let currentSort = { key: "due", dir: "asc" };
@@ -9541,7 +9560,6 @@ function syncProjectViewPreferencesFromSettings() {
   updateProjectsLayoutWidthUi();
   updateProjectsEmptyColumnUi();
 }
-let activeNoteTab = null;
 let notesSearchQuery = "";
 let scratchpadHtml = "";
 let checklistSearchQuery = "";
@@ -12446,28 +12464,59 @@ function hasMeaningfulTasksState(doc) {
   return Array.isArray(doc?.projects) && doc.projects.length > 0;
 }
 
+function serializeGlobalPagesForStore() {
+  return (Array.isArray(globalPages) ? globalPages : []).map((p) => ({
+    id: p.id,
+    title: p.title,
+    page: { html: p.page?.html || "", updatedAt: p.page?.updatedAt || "" },
+  }));
+}
+
 function buildNotesCloudDoc() {
   return {
-    tabs: [...(Array.isArray(noteTabs) && noteTabs.length ? noteTabs : ["General"])],
-    general: deepCloneJson(notesDb, {}),
+    version: 2,
+    pages: serializeGlobalPagesForStore(),
     updatedAt:
       normalizeIsoTimestamp(localSyncTimestamps.notes) || new Date().toISOString(),
   };
 }
 
+// Migrate the legacy notes shape ({tabs, general, keyed}) into global pages.
+function migrateLegacyNotesToPages(source = {}) {
+  const data = source && typeof source === "object" ? source : {};
+  const tabs = Array.isArray(data.tabs) ? data.tabs : [];
+  const general =
+    data.general && typeof data.general === "object" ? data.general : {};
+  const keyed = data.keyed && typeof data.keyed === "object" ? data.keyed : {};
+  const pages = [];
+  tabs.forEach((tabRaw) => {
+    const tab = String(tabRaw || "").trim();
+    if (!tab) return;
+    const keyedContent = keyed[tab] ? String(keyed[tab]).trim() : "";
+    const generalContent = general[tab] ? String(general[tab]).trim() : "";
+    const text =
+      keyedContent && generalContent
+        ? `${keyedContent}\n\n--- General Notes ---\n\n${generalContent}`
+        : keyedContent || generalContent;
+    // Skip an empty default "General" tab so first-run stays clean.
+    if (!text && tab === "General") return;
+    pages.push(createGlobalPage({ title: tab, html: plainTextToPageHtml(text) }));
+  });
+  return pages;
+}
+
+function readGlobalPagesData(raw = {}) {
+  const source = raw && typeof raw === "object" ? raw : {};
+  if (Number(source.version) >= 2 && Array.isArray(source.pages)) {
+    return source.pages.map(normalizeGlobalPage).filter(Boolean);
+  }
+  return migrateLegacyNotesToPages(source);
+}
+
 function normalizeCloudNotesDoc(raw = {}) {
   const source = raw && typeof raw === "object" ? raw : {};
-  const tabs =
-    Array.isArray(source.tabs) && source.tabs.length
-      ? source.tabs.map((tab) => String(tab || "").trim()).filter(Boolean)
-      : ["General"];
-  const general =
-    source.general && typeof source.general === "object" && !Array.isArray(source.general)
-      ? deepCloneJson(source.general, {})
-      : {};
   return {
-    tabs: tabs.length ? tabs : ["General"],
-    general,
+    pages: readGlobalPagesData(source),
     updatedAt:
       normalizeIsoTimestamp(source.updatedAt) ||
       normalizeIsoTimestamp(source.lastModified),
@@ -12476,10 +12525,10 @@ function normalizeCloudNotesDoc(raw = {}) {
 
 function hasMeaningfulNotesState(doc) {
   if (!doc) return false;
-  const values = Object.values(doc.general || {});
-  const hasText = values.some((value) => String(value || "").trim());
-  const tabs = Array.isArray(doc.tabs) ? doc.tabs : [];
-  return hasText || tabs.some((tab) => String(tab || "").trim() && tab !== "General");
+  const pages = Array.isArray(doc.pages) ? doc.pages : [];
+  return pages.some(
+    (p) => String(p?.title || "").trim() || String(p?.page?.html || "").trim()
+  );
 }
 
 function buildTemplateSourceName(template) {
@@ -12764,9 +12813,8 @@ async function prepareLocalStateForUserSwitch(nextUid) {
     },
   };
   db = [];
-  notesDb = {};
-  noteTabs = ["General"];
-  activeNoteTab = "General";
+  globalPages = [];
+  activeGlobalPageId = null;
   notesSearchQuery = "";
   checklistSearchQuery = "";
   timesheetDb = { weeks: {}, expenses: {}, lastModified: null };
@@ -12792,15 +12840,14 @@ async function prepareLocalStateForUserSwitch(nextUid) {
     silent: true,
   });
   await save({ skipCloud: true, timestamp: resetAt, silent: true });
-  await saveNotes({ skipCloud: true, timestamp: resetAt, silent: true });
+  await saveGlobalPages({ skipCloud: true, timestamp: resetAt, silent: true });
   await saveTimesheets({ skipCloud: true, timestamp: resetAt, silent: true });
   await saveTemplates({ skipCloud: true, timestamp: resetAt, silent: true });
   templatesDb = (await loadTemplates()) || templatesDb;
   await saveChecklists({ skipCloud: true, timestamp: resetAt, silent: true });
   syncAllCloudComparableFingerprints();
-  renderNoteTabs();
+  renderGlobalPagesView();
   renderChecklistTabs();
-  renderNotesView();
   renderChecklistsView();
   renderTemplates();
   renderTimesheets();
@@ -13020,17 +13067,16 @@ async function applyRemoteCloudDoc(domain, remoteDoc) {
     }
     if (domain === "notes") {
       const cloudNotes = normalizeCloudNotesDoc(remoteDoc);
-      noteTabs = [...cloudNotes.tabs];
-      notesDb = deepCloneJson(cloudNotes.general, {});
-      activeNoteTab = noteTabs.includes(activeNoteTab) ? activeNoteTab : noteTabs[0];
+      globalPages = cloudNotes.pages;
+      activeGlobalPageId =
+        getGlobalPageById(activeGlobalPageId)?.id || globalPages[0]?.id || null;
       touchLocalSyncTimestamp("notes", cloudNotes.updatedAt);
-      await saveNotes({
+      await saveGlobalPages({
         skipCloud: true,
         saveTimestamp: false,
         silent: true,
       });
-      renderNoteTabs();
-      renderNotesView();
+      renderGlobalPagesView();
       return cloudNotes.updatedAt;
     }
     if (domain === "templates") {
@@ -13576,40 +13622,54 @@ async function installAppUpdate() {
   }
 }
 
-async function loadNotes() {
+function normalizeGlobalPage(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const id = String(raw.id || "").trim() || createId("gp");
+  const title = String(raw.title || "").trim() || "Untitled";
+  const page = normalizePage(
+    raw.page != null ? raw.page : { html: raw.html, updatedAt: raw.updatedAt }
+  );
+  return { id, title, page };
+}
+
+function createGlobalPage({ title = "Untitled", html = "" } = {}) {
+  return {
+    id: createId("gp"),
+    title: String(title || "Untitled").trim() || "Untitled",
+    page: { html: html || "", updatedAt: new Date().toISOString() },
+  };
+}
+
+function getGlobalPageById(id) {
+  return (Array.isArray(globalPages) ? globalPages : []).find(
+    (p) => p.id === id
+  ) || null;
+}
+
+function buildGlobalPagesData() {
+  return {
+    version: 2,
+    pages: serializeGlobalPagesForStore(),
+    scratchpad: scratchpadHtml,
+  };
+}
+
+async function loadGlobalPages() {
   try {
     const data = (await window.pywebview.api.get_notes()) || {};
-    noteTabs =
-      Array.isArray(data.tabs) && data.tabs.length > 0
-        ? data.tabs
-        : ["General"];
-    notesDb = {};
-    noteTabs.forEach((tab) => {
-      const keyedContent =
-        data.keyed && data.keyed[tab] ? data.keyed[tab].trim() : "";
-      const generalContent =
-        data.general && data.general[tab] ? data.general[tab].trim() : "";
-      if (keyedContent && generalContent) {
-        notesDb[
-          tab
-        ] = `${keyedContent}\n\n--- General Notes ---\n\n${generalContent}`;
-      } else {
-        notesDb[tab] = keyedContent || generalContent;
-      }
-    });
-    activeNoteTab = noteTabs[0];
+    globalPages = readGlobalPagesData(data);
     scratchpadHtml = typeof data.scratchpad === "string" ? data.scratchpad : "";
-    return notesDb;
+    activeGlobalPageId = globalPages[0]?.id || null;
+    return globalPages;
   } catch (e) {
-    noteTabs = ["General"];
-    notesDb = {};
-    activeNoteTab = noteTabs[0];
+    globalPages = [];
     scratchpadHtml = "";
-    return {};
+    activeGlobalPageId = null;
+    return [];
   }
 }
 
-async function saveNotes({
+async function saveGlobalPages({
   skipCloud = false,
   saveTimestamp = true,
   timestamp = new Date().toISOString(),
@@ -13624,10 +13684,10 @@ async function saveNotes({
     touchLocalSyncTimestamp("notes", resolvedTimestamp);
   }
   try {
-    const dataToSave = { tabs: noteTabs, keyed: {}, general: notesDb, scratchpad: scratchpadHtml };
+    const dataToSave = buildGlobalPagesData();
     const response = await window.pywebview.api.save_notes(dataToSave);
     if (response?.status && response.status !== "success") {
-      throw new Error(response.message || "Failed to save notes.");
+      throw new Error(response.message || "Failed to save pages.");
     }
     syncCloudComparableFingerprint("notes");
     if (
@@ -13640,9 +13700,9 @@ async function saveNotes({
     }
     return true;
   } catch (e) {
-    console.warn("Backend notes save failed:", e);
+    console.warn("Backend pages save failed:", e);
     if (!silent) {
-      toast("Failed to save notes.");
+      toast("Failed to save pages.");
     }
     return false;
   }
@@ -14129,38 +14189,6 @@ function normalizeDeliverableNoteItems(noteItems = [], legacyNotes = "") {
   }
 
   return normalized;
-}
-
-function normalizeCoordinationItem(item) {
-  return {
-    party: String(item?.party || "").trim(),
-    note: String(item?.note || "").trim(),
-    done: item?.done === true,
-    dueDate: normalizeDeliverableNoteDueDate(item?.dueDate),
-    createdAt: normalizeIsoTimestamp(item?.createdAt),
-  };
-}
-
-function normalizeCoordinationItems(items = []) {
-  if (!Array.isArray(items)) return [];
-  const normalized = [];
-  items.forEach((item) => {
-    const normalizedItem = normalizeCoordinationItem(item);
-    if (!normalizedItem.party && !normalizedItem.note) return;
-    normalized.push(normalizedItem);
-  });
-  return normalized;
-}
-
-function getProjectCoordinationItems(project) {
-  return Array.isArray(project?.coordinationItems)
-    ? project.coordinationItems
-    : [];
-}
-
-function getProjectOpenCoordinationCount(project) {
-  return getProjectCoordinationItems(project).filter((item) => !item?.done)
-    .length;
 }
 
 function migrateDeliverableTasksToNotes(deliverable) {
@@ -15029,6 +15057,57 @@ function convertLegacyProject(legacy) {
   };
 }
 
+// One-time, idempotent migrations that fold legacy project notes and
+// coordination items into the project's page. Guarded by flags persisted on the
+// project so they run exactly once per project.
+function migrateProjectNotesToPage(out) {
+  if (!out || out.notesMigratedToPage) return;
+  out.notesMigratedToPage = true;
+  const text = String(out.notes || "").trim();
+  if (!text) return;
+  if (!out.page || typeof out.page !== "object") {
+    out.page = { html: "", updatedAt: "" };
+  }
+  const block = `<h2>Notes</h2>${plainTextToPageHtml(text)}`;
+  out.page.html = out.page.html ? `${out.page.html}${block}` : block;
+  out.page.updatedAt = new Date().toISOString();
+}
+
+function migrateCoordinationItemsToPage(out) {
+  if (!out || out.coordinationMigratedToPage) return;
+  out.coordinationMigratedToPage = true;
+  const items = Array.isArray(out.coordinationItems) ? out.coordinationItems : [];
+  if (!items.length) return;
+  const lines = items
+    .map((item) => {
+      const party = String(item?.party || "").trim();
+      const note = String(item?.note || "").trim();
+      const due = String(item?.dueDate || "").trim();
+      const parts = [];
+      if (party) parts.push(`[${party}]`);
+      if (note) parts.push(note);
+      if (due) parts.push(`(due ${due})`);
+      const label = parts.join(" ").trim();
+      if (!label) return "";
+      const text = escapeHtml(label);
+      const checked = item?.done === true;
+      const id = createId("pi");
+      return `<div class="page-item${checked ? " done" : ""}" data-tag="coordination" data-item-id="${id}" data-checked="${
+        checked ? "true" : "false"
+      }"><span class="page-item-box" contenteditable="false" role="checkbox" aria-checked="${
+        checked ? "true" : "false"
+      }"></span><span class="page-item-badge" contenteditable="false" data-tag="coordination">Coordination</span><div class="page-item-text">${text}</div></div>`;
+    })
+    .filter(Boolean);
+  if (!lines.length) return;
+  if (!out.page || typeof out.page !== "object") {
+    out.page = { html: "", updatedAt: "" };
+  }
+  const block = `<h2>Coordination</h2>${lines.join("")}`;
+  out.page.html = out.page.html ? `${out.page.html}${block}` : block;
+  out.page.updatedAt = new Date().toISOString();
+}
+
 function normalizeProject(project) {
   if (!project) return null;
   if (!Array.isArray(project.deliverables) && isLegacyProject(project)) {
@@ -15057,7 +15136,6 @@ function normalizeProject(project) {
     deliverables: Array.isArray(project.deliverables)
       ? project.deliverables.map(normalizeDeliverable)
       : [],
-    coordinationItems: normalizeCoordinationItems(project.coordinationItems),
     checklistProfiles: normalizeProjectChecklistProfiles(
       project.checklistProfiles || { [ACIES_ELECTRICAL_SCOPE_PROFILE_KEY]: project.checklistProfile }
     ),
@@ -15072,6 +15150,8 @@ function normalizeProject(project) {
   syncProjectActiveDeliverables(out, {
     fallbackActiveId: String(project.overviewDeliverableId || "").trim(),
   });
+  migrateProjectNotesToPage(out);
+  migrateCoordinationItemsToPage(out);
   return out;
 }
 
@@ -21085,242 +21165,6 @@ function createDeliverableCardActionButton({
   return button;
 }
 
-function updateCoordinationTriggerState(button, project) {
-  if (!button) return;
-  const items = getProjectCoordinationItems(project);
-  const openCount = getProjectOpenCoordinationCount(project);
-  const countValue = button.querySelector(".deliverable-coordination-count");
-  if (countValue) countValue.textContent = String(openCount);
-  button.classList.toggle("has-open-coordination", openCount > 0);
-  button.classList.toggle("is-coordination-clear", openCount === 0);
-  const summaryLabel =
-    openCount > 0
-      ? `${openCount} open coordination item${openCount === 1 ? "" : "s"}`
-      : items.length
-        ? "All coordination items resolved"
-        : "No coordination items";
-  button.title = summaryLabel;
-  button.setAttribute("aria-label", summaryLabel);
-}
-
-function updateProjectCoordinationUi(project) {
-  if (!project) return;
-  const deliverableIds = new Set(
-    getProjectDeliverables(project)
-      .map((deliverable) => String(deliverable?.id || "").trim())
-      .filter(Boolean)
-  );
-  document
-    .querySelectorAll(".deliverable-card-new[data-deliverable-id]")
-    .forEach((card) => {
-      if (!deliverableIds.has(card.dataset.deliverableId)) return;
-      const button = card.querySelector(".deliverable-card-coordination-action");
-      if (button) updateCoordinationTriggerState(button, project);
-    });
-  if (projectsViewMode === "coordination") renderCoordinationView();
-}
-
-function createDeliverableCoordinationAction(deliverable, project, card) {
-  const button = createDeliverableCardActionButton({
-    className: "deliverable-card-coordination-action",
-    title: "Coordination items",
-    ariaLabel: "Coordination items",
-    iconPath: COORDINATION_ICON_PATH,
-    onClick: () => {
-      closeDeliverableCardActionOverlays();
-      openCoordinationDialog(project);
-    },
-  });
-  button.setAttribute("aria-haspopup", "dialog");
-  button.appendChild(
-    el("span", { className: "deliverable-coordination-count" })
-  );
-  updateCoordinationTriggerState(button, project);
-  return button;
-}
-
-let coordinationDialogProject = null;
-
-function populateCoordinationPartySelect() {
-  const select = document.getElementById("coordinationPartySelect");
-  if (!select) return;
-  select.innerHTML = "";
-  COORDINATION_PARTIES.forEach((party) => {
-    select.appendChild(el("option", { value: party, textContent: party }));
-  });
-  select.appendChild(
-    el("option", {
-      value: COORDINATION_OTHER_PARTY_VALUE,
-      textContent: "Other…",
-    })
-  );
-}
-
-function updateCoordinationCustomPartyVisibility() {
-  const select = document.getElementById("coordinationPartySelect");
-  const customField = document.getElementById("coordinationCustomPartyField");
-  if (!select || !customField) return;
-  customField.hidden = select.value !== COORDINATION_OTHER_PARTY_VALUE;
-}
-
-function resolveCoordinationPartyValue() {
-  const select = document.getElementById("coordinationPartySelect");
-  const customInput = document.getElementById("coordinationCustomPartyInput");
-  const selected = String(select?.value || "");
-  if (selected === COORDINATION_OTHER_PARTY_VALUE) {
-    return String(customInput?.value || "").trim();
-  }
-  return selected;
-}
-
-function getCoordinationPartyHue(party) {
-  const raw = String(party || "").trim().toLowerCase();
-  if (!raw) return 210;
-  let hash = 0;
-  for (let i = 0; i < raw.length; i++) {
-    hash = (hash * 31 + raw.charCodeAt(i)) % 360;
-  }
-  return hash;
-}
-
-function openCoordinationDialog(project) {
-  const dlg = document.getElementById("coordinationDlg");
-  if (!dlg || !project) return;
-  coordinationDialogProject = project;
-  if (!Array.isArray(project.coordinationItems)) {
-    project.coordinationItems = [];
-  }
-  const select = document.getElementById("coordinationPartySelect");
-  if (select && !select.options.length) populateCoordinationPartySelect();
-  if (select) select.value = COORDINATION_PARTIES[0];
-  const customInput = document.getElementById("coordinationCustomPartyInput");
-  if (customInput) customInput.value = "";
-  updateCoordinationCustomPartyVisibility();
-  const noteInput = document.getElementById("coordinationNoteInput");
-  if (noteInput) noteInput.value = "";
-  const dueInput = document.getElementById("coordinationDueInput");
-  if (dueInput) dueInput.value = "";
-  renderCoordinationItemList();
-  showDialog(dlg);
-  noteInput?.focus();
-}
-
-function renderCoordinationItemList() {
-  const list = document.getElementById("coordinationItemList");
-  if (!list) return;
-  list.innerHTML = "";
-  const project = coordinationDialogProject;
-  const items = getProjectCoordinationItems(project);
-  const openCount = getProjectOpenCoordinationCount(project);
-  const summary = document.getElementById("coordinationDlgSummary");
-  if (summary) {
-    summary.textContent = `${openCount} open / ${items.length} total`;
-  }
-  if (!items.length) {
-    list.appendChild(
-      el("div", {
-        className: "coordination-item-empty muted tiny",
-        textContent: "No coordination items yet.",
-      })
-    );
-    return;
-  }
-  items.forEach((item, index) => {
-    const row = el("div", {
-      className: `coordination-item-row ${item.done ? "is-done" : ""}`.trim(),
-    });
-    row.setAttribute("role", "listitem");
-    const checkbox = createWorkItemDoneCheckbox({
-      checked: item.done,
-      ariaLabel: "Mark coordination item resolved",
-      onToggle: async (nextDone) => {
-        item.done = nextDone === true;
-        renderCoordinationItemList();
-        updateProjectCoordinationUi(project);
-        await save();
-      },
-    });
-    const partyChip = el("span", {
-      className: "coordination-item-party",
-      textContent: item.party || "Unassigned",
-    });
-    partyChip.style.setProperty(
-      "--coordination-party-hue",
-      String(getCoordinationPartyHue(item.party))
-    );
-    const noteText = createInlineWorkItemTextControl({
-      textClassName: "coordination-item-note",
-      value: item.note || "",
-      fallbackText: "Coordination item",
-      title: "Click to edit coordination note",
-      ariaLabel: "Edit coordination note",
-      onCommit: async (nextText) => {
-        item.note = nextText;
-        renderCoordinationItemList();
-        updateProjectCoordinationUi(project);
-        await save();
-      },
-    });
-    const dueControl = createNoteDueDateControl({
-      value: item.dueDate || "",
-      allowAdd: !item.done,
-      onCommit: async (nextDueDate) => {
-        item.dueDate = nextDueDate;
-        renderCoordinationItemList();
-        await save();
-      },
-    });
-    dueControl.classList.add("coordination-item-due");
-    const deleteBtn = el("button", {
-      className: "coordination-item-delete-btn",
-      type: "button",
-      title: "Remove coordination item",
-      "aria-label": "Remove coordination item",
-      textContent: "x",
-    });
-    deleteBtn.addEventListener("click", async (e) => {
-      e.stopPropagation();
-      project.coordinationItems.splice(index, 1);
-      renderCoordinationItemList();
-      updateProjectCoordinationUi(project);
-      await save();
-    });
-    row.append(checkbox, partyChip, noteText, dueControl, deleteBtn);
-    list.appendChild(row);
-  });
-}
-
-async function addCoordinationItemFromDialog() {
-  const project = coordinationDialogProject;
-  if (!project) return;
-  const noteInput = document.getElementById("coordinationNoteInput");
-  const note = String(noteInput?.value || "").trim();
-  if (!note) {
-    toast("Enter a coordination note.");
-    noteInput?.focus();
-    return;
-  }
-  const party = resolveCoordinationPartyValue();
-  const dueInput = document.getElementById("coordinationDueInput");
-  if (dueInput) autoFormatDateInput(dueInput);
-  const dueDate = normalizeDeliverableNoteDueDate(dueInput?.value);
-  if (!Array.isArray(project.coordinationItems)) {
-    project.coordinationItems = [];
-  }
-  project.coordinationItems.push({
-    party,
-    note,
-    done: false,
-    dueDate,
-    createdAt: new Date().toISOString(),
-  });
-  if (noteInput) noteInput.value = "";
-  if (dueInput) dueInput.value = "";
-  noteInput?.focus();
-  renderCoordinationItemList();
-  updateProjectCoordinationUi(project);
-  await save();
-}
 
 function createDeliverableAttachmentAction(deliverable, project, card) {
   ensureAttachmentPanel();
@@ -21419,11 +21263,6 @@ function createDeliverableCardTopActions(deliverable, project, card) {
   );
 
   const attachmentBtn = createDeliverableAttachmentAction(deliverable, project, card);
-  const coordinationBtn = createDeliverableCoordinationAction(
-    deliverable,
-    project,
-    card
-  );
   leftActions.append(pinBtn, statusDropdown, toolDropdown);
 
   const projectIndex = Array.isArray(db) ? db.indexOf(project) : -1;
@@ -21452,7 +21291,7 @@ function createDeliverableCardTopActions(deliverable, project, card) {
       })
     );
   }
-  rightActions.append(coordinationBtn, attachmentBtn);
+  rightActions.append(attachmentBtn);
   // Notion-style page entry points (project page + this deliverable's subpage)
   if (project) {
     rightActions.append(
@@ -24591,165 +24430,226 @@ function formatProjectWeekLabel(weekStart) {
     : `${startMonth} ${startDay} – ${endMonth} ${endDay}, ${year}`;
 }
 
-function getProjectsWithCoordinationItems() {
-  return db.filter(
-    (project) => getProjectCoordinationItems(project).length > 0
+// --- Page items roll-up (action / coordination items across all pages) ---
+function extractPageTaggedItems(html) {
+  if (!html) return [];
+  let doc;
+  try {
+    doc = new DOMParser().parseFromString(String(html), "text/html");
+  } catch (_) {
+    return [];
+  }
+  const nodes = doc.querySelectorAll(
+    '.page-item[data-tag="action"], .page-item[data-tag="coordination"]'
   );
-}
-
-function getEarliestOpenCoordinationDueMs(project) {
-  let earliest = Infinity;
-  getProjectCoordinationItems(project).forEach((item) => {
-    if (item?.done) return;
-    const due = parseDueStr(item?.dueDate);
-    if (due && due.getTime() < earliest) earliest = due.getTime();
+  const items = [];
+  nodes.forEach((node) => {
+    const tag =
+      node.getAttribute("data-tag") === "coordination" ? "coordination" : "action";
+    const id = String(node.getAttribute("data-item-id") || "").trim();
+    const textEl = node.querySelector(".page-item-text");
+    const text = (textEl ? textEl.textContent : node.textContent || "").trim();
+    if (!id || !text) return;
+    items.push({
+      id,
+      tag,
+      text,
+      done: node.getAttribute("data-checked") === "true",
+    });
   });
-  return earliest;
+  return items;
 }
 
-function sortCoordinationItemsForDisplay(items) {
-  return items.slice().sort((a, b) => {
-    if ((a?.done === true) !== (b?.done === true)) return a?.done ? 1 : -1;
-    const aMs = parseDueStr(a?.dueDate)?.getTime() ?? Infinity;
-    const bMs = parseDueStr(b?.dueDate)?.getTime() ?? Infinity;
-    return aMs - bMs;
+// Collect every page that carries tagged items: project pages, deliverable
+// pages, and global pages.
+function collectRollupSources() {
+  const sources = [];
+  (Array.isArray(db) ? db : []).forEach((project) => {
+    const projItems = extractPageTaggedItems(project.page?.html || "");
+    if (projItems.length) {
+      sources.push({
+        kind: "project",
+        project,
+        page: project.page,
+        items: projItems,
+      });
+    }
+    (Array.isArray(project.deliverables) ? project.deliverables : []).forEach(
+      (deliverable) => {
+        const dlvItems = extractPageTaggedItems(deliverable.page?.html || "");
+        if (dlvItems.length) {
+          sources.push({
+            kind: "deliverable",
+            project,
+            deliverable,
+            page: deliverable.page,
+            items: dlvItems,
+          });
+        }
+      }
+    );
   });
+  (Array.isArray(globalPages) ? globalPages : []).forEach((globalPage) => {
+    const gItems = extractPageTaggedItems(globalPage.page?.html || "");
+    if (gItems.length) {
+      sources.push({
+        kind: "global",
+        globalPage,
+        page: globalPage.page,
+        items: gItems,
+      });
+    }
+  });
+  return sources;
 }
 
-function renderCoordinationProjectPanel(project) {
-  const panel = el("section", { className: "coordination-project-panel" });
+function rollupSourceTitle(source) {
+  if (source.kind === "project") {
+    return source.project.nick || source.project.name || "Untitled project";
+  }
+  if (source.kind === "deliverable") {
+    const proj = source.project.nick || source.project.name || "Project";
+    return `${proj} › ${source.deliverable.name || "Deliverable"}`;
+  }
+  return source.globalPage.title || "Untitled page";
+}
 
+function openRollupSource(source) {
+  if (source.kind === "project") openProjectPage(source.project);
+  else if (source.kind === "deliverable")
+    openDeliverablePage(source.project, source.deliverable);
+  else if (source.kind === "global") openGlobalPage(source.globalPage);
+}
+
+// Toggle a tagged item's done state directly in the owning page's stored HTML.
+function setPageItemDoneInHtml(page, itemId, done) {
+  if (!page || !itemId) return false;
+  let doc;
+  try {
+    doc = new DOMParser().parseFromString(String(page.html || ""), "text/html");
+  } catch (_) {
+    return false;
+  }
+  const node = doc.querySelector(`.page-item[data-item-id="${itemId}"]`);
+  if (!node) return false;
+  node.setAttribute("data-checked", done ? "true" : "false");
+  node.classList.toggle("done", done);
+  const box = node.querySelector(".page-item-box");
+  if (box) box.setAttribute("aria-checked", done ? "true" : "false");
+  page.html = doc.body.innerHTML;
+  page.updatedAt = new Date().toISOString();
+  return true;
+}
+
+// Open the owning page and scroll/flash the targeted tagged line.
+function openPageToItem(source, itemId) {
+  openRollupSource(source);
+  setTimeout(() => {
+    const editor = getPageEditorEl();
+    if (!editor) return;
+    const node = editor.querySelector(`.page-item[data-item-id="${itemId}"]`);
+    if (!node) return;
+    node.scrollIntoView({ behavior: "smooth", block: "center" });
+    node.classList.add("page-item-flash");
+    setTimeout(() => node.classList.remove("page-item-flash"), 1600);
+  }, 120);
+}
+
+function refreshRollupIfActive() {
+  if (projectsViewMode === "rollup") renderPageItemsRollupView();
+}
+
+function renderRollupSourcePanel(source) {
+  const panel = el("section", { className: "rollup-source-panel" });
   const header = el("button", {
-    className: "coordination-project-header",
+    className: "rollup-source-header",
     type: "button",
-    title: "Open coordination items",
+    title: "Open page",
+    onclick: () => openRollupSource(source),
   });
-  const heading = el("div", { className: "coordination-project-heading" });
-  const title = el("div", {
-    className: "coordination-project-title",
-    textContent: project.nick || project.name || "Untitled project",
-  });
-  const meta = el("div", {
-    className: "coordination-project-meta muted tiny",
-    textContent: [project.id, project.nick ? project.name : ""]
-      .filter(Boolean)
-      .join(" — "),
-  });
-  heading.append(title);
-  if (meta.textContent) heading.append(meta);
-  const openCount = getProjectOpenCoordinationCount(project);
+  const heading = el("div", { className: "rollup-source-heading" });
+  heading.append(
+    el("div", {
+      className: "rollup-source-title",
+      textContent: rollupSourceTitle(source),
+    })
+  );
+  const openCount = source.items.filter((it) => !it.done).length;
   const countBadge = el("span", {
-    className: `coordination-project-count ${openCount ? "" : "is-clear"}`.trim(),
-    textContent: openCount
-      ? `${openCount} open`
-      : "All resolved",
+    className: `rollup-source-count ${openCount ? "" : "is-clear"}`.trim(),
+    textContent: openCount ? `${openCount} open` : "All done",
   });
   header.append(heading, countBadge);
-  header.addEventListener("click", () => openCoordinationDialog(project));
 
-  const list = el("div", { className: "coordination-item-list stack" });
+  const list = el("div", { className: "rollup-item-list stack" });
   list.setAttribute("role", "list");
-  sortCoordinationItemsForDisplay(getProjectCoordinationItems(project)).forEach(
-    (item) => {
+  source.items
+    .slice()
+    .sort((a, b) => (a.done === b.done ? 0 : a.done ? 1 : -1))
+    .forEach((item) => {
       const row = el("div", {
-        className: `coordination-item-row coordination-project-item-row ${
-          item.done ? "is-done" : ""
-        }`.trim(),
+        className: `rollup-item-row ${item.done ? "is-done" : ""}`.trim(),
       });
       row.setAttribute("role", "listitem");
       const checkbox = createWorkItemDoneCheckbox({
         checked: item.done,
-        ariaLabel: "Mark coordination item resolved",
+        ariaLabel: "Mark item done",
         onToggle: async (nextDone) => {
-          item.done = nextDone === true;
-          updateProjectCoordinationUi(project);
-          await save();
+          if (setPageItemDoneInHtml(source.page, item.id, nextDone === true)) {
+            item.done = nextDone === true;
+            if (source.kind === "global") await saveGlobalPages({ silent: true });
+            else await save({ silent: true });
+            renderPageItemsRollupView();
+          }
         },
       });
-      const partyChip = el("span", {
-        className: "coordination-item-party",
-        textContent: item.party || "Unassigned",
+      const badge = el("span", {
+        className: "rollup-item-badge",
+        textContent: item.tag === "coordination" ? "Coordination" : "Action",
       });
-      partyChip.style.setProperty(
-        "--coordination-party-hue",
-        String(getCoordinationPartyHue(item.party))
-      );
-      const noteText = createInlineWorkItemTextControl({
-        textClassName: "coordination-item-note",
-        value: item.note || "",
-        fallbackText: "Coordination item",
-        title: "Click to edit coordination note",
-        ariaLabel: "Edit coordination note",
-        onCommit: async (nextText) => {
-          item.note = nextText;
-          updateProjectCoordinationUi(project);
-          await save();
-        },
-      });
-      const dueControl = createNoteDueDateControl({
-        value: item.dueDate || "",
-        allowAdd: !item.done,
-        onCommit: async (nextDueDate) => {
-          item.dueDate = nextDueDate;
-          updateProjectCoordinationUi(project);
-          await save();
-        },
-      });
-      dueControl.classList.add("coordination-item-due");
-      const deleteBtn = el("button", {
-        className: "coordination-item-delete-btn",
+      badge.dataset.tag = item.tag;
+      const text = el("button", {
+        className: "rollup-item-text",
         type: "button",
-        title: "Remove coordination item",
-        "aria-label": "Remove coordination item",
-        textContent: "x",
+        title: "Open in page",
+        textContent: item.text,
+        onclick: () => openPageToItem(source, item.id),
       });
-      deleteBtn.addEventListener("click", async (e) => {
-        e.stopPropagation();
-        const liveIndex = project.coordinationItems.indexOf(item);
-        if (liveIndex >= 0) project.coordinationItems.splice(liveIndex, 1);
-        updateProjectCoordinationUi(project);
-        await save();
-      });
-      row.append(checkbox, partyChip, noteText, dueControl, deleteBtn);
+      row.append(checkbox, badge, text);
       list.appendChild(row);
-    }
-  );
+    });
 
   panel.append(header, list);
   return panel;
 }
 
-function renderCoordinationView() {
-  const host = document.getElementById("projectsCoordinationView");
+function renderPageItemsRollupView() {
+  const host = document.getElementById("projectsRollupView");
   if (!host) return;
   host.innerHTML = "";
-  const projects = getProjectsWithCoordinationItems();
-  if (!projects.length) {
+  const sources = collectRollupSources();
+  if (!sources.length) {
     host.appendChild(
       el("div", {
-        className: "coordination-view-empty muted",
+        className: "rollup-view-empty muted",
         textContent:
-          "No coordination items yet. Add them from any deliverable card's coordination button.",
+          "No action or coordination items yet. Tag lines in any page to see them here.",
       })
     );
     return;
   }
-  projects.sort(
-    (a, b) =>
-      getEarliestOpenCoordinationDueMs(a) - getEarliestOpenCoordinationDueMs(b)
-  );
-  projects.forEach((project) =>
-    host.appendChild(renderCoordinationProjectPanel(project))
+  sources.forEach((source) =>
+    host.appendChild(renderRollupSourcePanel(source))
   );
 }
 
 function updateProjectsViewModeUi() {
   const listBtn = document.getElementById("viewToggleList");
   const cardBtn = document.getElementById("viewToggleCard");
-  const coordinationBtn = document.getElementById("viewToggleCoordination");
+  const rollupBtn = document.getElementById("viewToggleRollup");
   const isCard = projectsViewMode === "card";
-  const isCoordination = projectsViewMode === "coordination";
-  const isList = !isCard && !isCoordination;
+  const isRollup = projectsViewMode === "rollup";
+  const isList = !isCard && !isRollup;
   if (listBtn) {
     listBtn.classList.toggle("is-active", isList);
     listBtn.setAttribute("aria-pressed", String(isList));
@@ -24758,9 +24658,9 @@ function updateProjectsViewModeUi() {
     cardBtn.classList.toggle("is-active", isCard);
     cardBtn.setAttribute("aria-pressed", String(isCard));
   }
-  if (coordinationBtn) {
-    coordinationBtn.classList.toggle("is-active", isCoordination);
-    coordinationBtn.setAttribute("aria-pressed", String(isCoordination));
+  if (rollupBtn) {
+    rollupBtn.classList.toggle("is-active", isRollup);
+    rollupBtn.setAttribute("aria-pressed", String(isRollup));
   }
   if (document.body) {
     document.body.dataset.projectsViewMode = projectsViewMode;
@@ -24768,13 +24668,13 @@ function updateProjectsViewModeUi() {
   const table = document.querySelector("#projects-panel .projects-table");
   const cardView = document.getElementById("projectsCardView");
   const cardControls = document.getElementById("projectsCardControls");
-  const coordinationView = document.getElementById("projectsCoordinationView");
+  const rollupView = document.getElementById("projectsRollupView");
   const emptyState = document.getElementById("emptyState");
   const filterControls = document.getElementById("projectsFilterControls");
   if (table) table.hidden = !isList;
   if (cardView) cardView.hidden = !isCard;
   if (cardControls) cardControls.hidden = !isCard;
-  if (coordinationView) coordinationView.hidden = !isCoordination;
+  if (rollupView) rollupView.hidden = !isRollup;
   if (filterControls) filterControls.hidden = !isList;
   if (emptyState && !isList) emptyState.style.display = "none";
 }
@@ -25030,7 +24930,9 @@ function clearProjectSearchInput() {
 }
 
 function normalizeProjectsViewMode(value) {
-  return value === "card" || value === "coordination" ? value : "list";
+  if (value === "card" || value === "rollup") return value;
+  if (value === "coordination") return "rollup"; // legacy mode migrates to roll-up
+  return "list";
 }
 
 function setProjectsViewMode(mode, options = {}) {
@@ -25161,7 +25063,7 @@ function bindProjectsCardViewWheelScroll() {
 function setupProjectsViewModeControls() {
   const listBtn = document.getElementById("viewToggleList");
   const cardBtn = document.getElementById("viewToggleCard");
-  const coordinationBtn = document.getElementById("viewToggleCoordination");
+  const rollupBtn = document.getElementById("viewToggleRollup");
   const widthBtn = document.getElementById("projectsWidthToggle");
   const emptyColumnsBtn = document.getElementById("projectsEmptyColumnsToggle");
   const hideEmptyColumnsBtn = document.getElementById(
@@ -25169,10 +25071,8 @@ function setupProjectsViewModeControls() {
   );
   if (listBtn) listBtn.addEventListener("click", () => setProjectsViewMode("list"));
   if (cardBtn) cardBtn.addEventListener("click", () => setProjectsViewMode("card"));
-  if (coordinationBtn) {
-    coordinationBtn.addEventListener("click", () =>
-      setProjectsViewMode("coordination")
-    );
+  if (rollupBtn) {
+    rollupBtn.addEventListener("click", () => setProjectsViewMode("rollup"));
   }
   if (widthBtn) {
     widthBtn.addEventListener("click", () =>
@@ -25589,11 +25489,11 @@ function render() {
   const matchContextMap = new Map();
   const projectListContextMap = new Map();
   const isCardView = projectsViewMode === "card";
-  const isCoordinationView = projectsViewMode === "coordination";
+  const isRollupView = projectsViewMode === "rollup";
 
-  if (isCoordinationView) {
+  if (isRollupView) {
     emptyState.style.display = "none";
-    renderCoordinationView();
+    renderPageItemsRollupView();
     return;
   }
 
@@ -25956,7 +25856,6 @@ function fillForm(project) {
   document.getElementById("f_id").value = p.id || "";
   document.getElementById("f_name").value = p.name || "";
   document.getElementById("f_nick").value = p.nick || "";
-  document.getElementById("f_notes").value = p.notes || "";
   document.getElementById("f_path").value = p.path || "";
   document.getElementById("f_path").title = p.path || "";
 
@@ -27213,7 +27112,11 @@ function readForm() {
     id: val("f_id"),
     name: val("f_name"),
     nick: val("f_nick"),
-    notes: val("f_notes"),
+    notes: existingProject?.notes || "",
+    page: existingProject?.page,
+    notesMigratedToPage: existingProject?.notesMigratedToPage === true,
+    coordinationMigratedToPage:
+      existingProject?.coordinationMigratedToPage === true,
     path: normalizeProjectPath(val("f_path")),
     localProjectPath: normalizeWindowsPath(existingProject?.localProjectPath || ""),
     workroomRootPath: normalizeWindowsPath(existingProject?.workroomRootPath || ""),
@@ -27280,6 +27183,7 @@ function readForm() {
       id: deliverableId,
       name,
       due,
+      page: existingDeliverable?.page,
       noteItems,
       tasks,
       tasksMigratedToNotes: existingDeliverable?.tasksMigratedToNotes === true,
@@ -27477,34 +27381,62 @@ function importRows(rows, hasHeader = true) {
 }
 
 // ===================== NOTES SYSTEM =====================
-const debouncedSaveNotes = debounce(saveNotes, 500);
-
-function hasActiveNoteSelection() {
-  return Boolean(activeNoteTab && noteTabs.includes(activeNoteTab));
-}
-
 function hasActiveChecklistSelection() {
   return Boolean(getChecklistById(activeChecklistTabId));
 }
 
-function renderNotesView() {
-  const searchInput = document.getElementById("notesSearch");
+function renderGlobalPagesView() {
+  const listEl = document.getElementById("globalPagesList");
   const emptyState = document.getElementById("notesEmptyState");
-  const editorContent = document.getElementById("notesEditorContent");
-  const hasSelection = hasActiveNoteSelection();
-
-  if (searchInput) {
-    searchInput.disabled = !hasSelection;
-    if (searchInput.value !== notesSearchQuery) {
-      searchInput.value = notesSearchQuery;
-    }
+  const searchInput = document.getElementById("notesSearch");
+  const pages = Array.isArray(globalPages) ? globalPages : [];
+  const hasPages = pages.length > 0;
+  if (emptyState) emptyState.hidden = hasPages;
+  if (listEl) listEl.hidden = !hasPages;
+  if (searchInput) searchInput.disabled = !hasPages;
+  if (!listEl) return;
+  listEl.innerHTML = "";
+  const query = String(notesSearchQuery || "").trim().toLowerCase();
+  const visible = query
+    ? pages.filter((p) => {
+        const title = String(p.title || "").toLowerCase();
+        const text = pageHtmlToPlainText(p.page?.html || "").toLowerCase();
+        return title.includes(query) || text.includes(query);
+      })
+    : pages;
+  if (!visible.length) {
+    listEl.appendChild(
+      el("div", {
+        className: "global-pages-empty muted",
+        textContent: "No pages match your search.",
+      })
+    );
+    return;
   }
+  visible.forEach((page) => listEl.appendChild(createGlobalPageCard(page)));
+}
 
-  if (emptyState) emptyState.hidden = hasSelection;
-  if (editorContent) editorContent.hidden = !hasSelection;
-
-  renderNoteSearchResults();
-  updateActiveNoteTextarea();
+function createGlobalPageCard(page) {
+  const card = el("button", {
+    className: "global-page-card",
+    type: "button",
+    onclick: () => openGlobalPage(page),
+  });
+  const title = el("div", {
+    className: "global-page-card-title",
+    textContent: page.title || "Untitled",
+  });
+  const previewText = pageHtmlToPlainText(page.page?.html || "");
+  const preview = el("div", {
+    className: "global-page-card-preview muted",
+    textContent: previewText ? previewText.slice(0, 140) : "Empty page",
+  });
+  const del = createTabDeleteIcon("Delete page", (e) => {
+    e.stopPropagation();
+    deleteGlobalPage(page);
+  });
+  card.append(title, preview, del);
+  return card;
 }
 
 function renderChecklistsView() {
@@ -27547,200 +27479,27 @@ function createTabDeleteIcon(title, onClick) {
   return span;
 }
 
-function promptCreateNotePage() {
-  const name = prompt("Enter name for new page:");
-  if (!name || !name.trim()) return;
-  const trimmed = name.trim();
-  if (noteTabs.includes(trimmed)) {
-    toast("Page name already exists.");
-    return;
+function promptCreateGlobalPage() {
+  const name = prompt("Enter a title for the new page:");
+  if (name === null) return;
+  const page = createGlobalPage({ title: name.trim() || "Untitled" });
+  globalPages.push(page);
+  activeGlobalPageId = page.id;
+  saveGlobalPages();
+  renderGlobalPagesView();
+  openGlobalPage(page);
+}
+
+function deleteGlobalPage(page) {
+  if (!page) return;
+  if (!confirm(`Permanently delete page "${page.title || "Untitled"}"?`)) return;
+  const idx = globalPages.indexOf(page);
+  if (idx > -1) globalPages.splice(idx, 1);
+  if (activeGlobalPageId === page.id) {
+    activeGlobalPageId = globalPages[0]?.id || null;
   }
-  noteTabs.push(trimmed);
-  activeNoteTab = trimmed;
-  saveNotes();
-  renderNoteTabs();
-  renderNotesView();
-}
-
-function renderNoteTabs() {
-  const container = document.getElementById("notesTabsContainer");
-  if (!container) return;
-  container.innerHTML = "";
-  noteTabs.forEach((tabName) => {
-    const isActive = tabName === activeNoteTab;
-    const btn = el("button", {
-      className: `inner-tab-btn ${isActive ? "active" : ""}`,
-      type: "button",
-      onclick: () => {
-        activeNoteTab = tabName;
-        renderNoteTabs();
-        renderNotesView();
-      },
-    });
-    btn.appendChild(
-      el("span", {
-        className: "notebook-pill-label",
-        textContent: tabName,
-      })
-    );
-    const delIcon = createTabDeleteIcon("Delete page", (e) => {
-      e.stopPropagation();
-      if (confirm(`Permanently delete page "${tabName}"?`)) {
-        const idx = noteTabs.indexOf(tabName);
-        if (idx > -1) {
-          noteTabs.splice(idx, 1);
-          delete notesDb[tabName];
-          if (activeNoteTab === tabName) {
-            activeNoteTab =
-              noteTabs.length > 0 ? noteTabs[Math.max(0, idx - 1)] : null;
-          }
-          saveNotes();
-          renderNoteTabs();
-          renderNotesView();
-        }
-      }
-    });
-    btn.appendChild(delIcon);
-    container.appendChild(btn);
-  });
-  const addBtn = el("button", {
-    className: "add-tab-btn",
-    type: "button",
-    textContent: "+",
-    title: "Add New Page",
-    "aria-label": "Add new page",
-    onclick: promptCreateNotePage,
-  });
-  container.appendChild(addBtn);
-  updateActiveNoteTextarea();
-}
-
-function updateActiveNoteTextarea() {
-  const textarea = document.getElementById("notesTextarea");
-  const title = document.getElementById("activeNoteTitle");
-  if (title) title.textContent = activeNoteTab || "Notes";
-  if (!activeNoteTab) {
-    textarea.value = "";
-    textarea.placeholder = "Create a page to begin.";
-    textarea.disabled = true;
-    return;
-  }
-  textarea.disabled = false;
-  textarea.placeholder = `Enter notes for ${activeNoteTab}...`;
-  textarea.value = notesDb[activeNoteTab] || "";
-}
-
-function handleNoteInput(e) {
-  if (!activeNoteTab) return;
-  notesDb[activeNoteTab] = e.target.value;
-  debouncedSaveNotes();
-}
-
-function focusAndSelectNoteSnippet(textarea, noteText, options = {}) {
-  if (!textarea || !noteText) return;
-  const { scrollWindow = false } = options;
-  if (scrollWindow) {
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  }
-
-  const currentVal = textarea.value || "";
-  const start = currentVal.indexOf(noteText);
-  if (start === -1) {
-    toast("Note content changed. Please refresh search.");
-    return;
-  }
-  const end = start + noteText.length;
-
-  textarea.blur();
-  textarea.setSelectionRange(start, end);
-  textarea.focus();
-
-  const mirror = document.createElement("div");
-  const style = window.getComputedStyle(textarea);
-
-  mirror.style.visibility = "hidden";
-  mirror.style.position = "absolute";
-  mirror.style.top = "-9999px";
-  mirror.style.whiteSpace = "pre-wrap";
-  mirror.style.wordWrap = "break-word";
-
-  ["fontFamily", "fontSize", "fontWeight", "lineHeight", "letterSpacing", "padding"].forEach(
-    (prop) => {
-      mirror.style[prop] = style[prop];
-    }
-  );
-
-  mirror.style.boxSizing = "border-box";
-  mirror.style.width = `${textarea.clientWidth}px`;
-  mirror.style.border = "none";
-  mirror.textContent = currentVal.substring(0, start);
-
-  document.body.appendChild(mirror);
-  const targetY = mirror.clientHeight;
-  document.body.removeChild(mirror);
-
-  textarea.scrollTop = Math.max(0, targetY - textarea.clientHeight * 0.3);
-}
-
-function createNoteSearchResultItem(noteText, onEdit) {
-  const item = el("div", {
-    className: "note-result-item",
-    style: "position: relative;",
-  });
-  const contentDiv = el("div", { className: "note-result-content" });
-  contentDiv.append(el("div", { className: "snippet", textContent: noteText }));
-
-  const copyIcon = el("button", {
-    className: "note-action-icon copy-icon",
-    textContent: "\uD83D\uDCCB",
-    title: "Copy",
-    type: "button",
-  });
-  copyIcon.onclick = () => {
-    navigator.clipboard.writeText(noteText).then(() => toast("Copied!"));
-  };
-
-  const editIcon = el("button", {
-    className: "note-action-icon edit-icon",
-    textContent: "\u270F\uFE0F",
-    title: "Edit",
-    type: "button",
-  });
-  editIcon.onclick = () => {
-    if (typeof onEdit === "function") onEdit();
-  };
-
-  item.append(contentDiv, copyIcon, editIcon);
-  return item;
-}
-
-function renderNoteSearchResults() {
-  const query = String(notesSearchQuery || "").toLowerCase();
-  const resultsContainer = document.getElementById("notesSearchResults");
-  if (!resultsContainer) return;
-  resultsContainer.innerHTML = "";
-
-  if (!query || !activeNoteTab) return;
-
-  const queryWords = query.split(" ").filter((w) => w);
-  if (!queryWords.length) return;
-
-  const content = notesDb[activeNoteTab];
-  if (!content) return;
-
-  const notes = content.split(/\n\s*\n/).filter((note) => note.trim() !== "");
-
-  notes.forEach((noteText) => {
-    const lowerNoteText = noteText.toLowerCase();
-    if (!queryWords.every((word) => lowerNoteText.includes(word))) return;
-
-    resultsContainer.append(
-      createNoteSearchResultItem(noteText, () => {
-        const textarea = document.getElementById("notesTextarea");
-        focusAndSelectNoteSnippet(textarea, noteText, { scrollWindow: true });
-      })
-    );
-  });
+  saveGlobalPages();
+  renderGlobalPagesView();
 }
 
 function createChecklistSearchResultItem(item, numberLookup) {
@@ -32126,7 +31885,7 @@ function isNewUser() {
 
 function hasExistingUserData() {
   if (Array.isArray(db) && db.length > 0) return true;
-  if (notesDb && typeof notesDb === "object" && Object.keys(notesDb).length > 0) {
+  if (Array.isArray(globalPages) && globalPages.length > 0) {
     return true;
   }
   if (
@@ -32522,7 +32281,7 @@ function queueScratchpadSave(editor) {
   setScratchpadStatus("Saving...");
   if (scratchpadSaveTimer) clearTimeout(scratchpadSaveTimer);
   scratchpadSaveTimer = setTimeout(async () => {
-    const ok = await saveNotes();
+    const ok = await saveGlobalPages();
     setScratchpadStatus(ok ? "Saved OK" : "Save failed");
   }, 800);
 }
@@ -33406,7 +33165,6 @@ async function dismissSetupHelp(type) {
 
 function initTabbedInterfaces() {
   const mainTabContainer = document.querySelector(".main-nav");
-  const notesResults = document.getElementById("notesSearchResults");
   const checklistResults = document.getElementById("checklistSearchResults");
 
   document.body.dataset.activeTab =
@@ -33425,11 +33183,10 @@ function initTabbedInterfaces() {
       p.classList.toggle("active", p.id === `${tab}-panel`);
     });
 
-    if (tab !== "notes" && notesResults) notesResults.innerHTML = "";
     if (tab !== "checklists" && checklistResults) checklistResults.innerHTML = "";
 
     if (tab === "notes") {
-      renderNotesView();
+      renderGlobalPagesView();
     } else if (tab === "checklists") {
       renderChecklistsView();
     } else if (tab === "tools") {
@@ -34389,7 +34146,7 @@ function initEventListeners() {
     "input",
     debounce((e) => {
       notesSearchQuery = String(e?.target?.value || "");
-      renderNoteSearchResults();
+      renderGlobalPagesView();
     }, 250)
   );
   document.getElementById("checklistsSearch").addEventListener(
@@ -34410,7 +34167,9 @@ function initEventListeners() {
   if (checklistsHelpBtn) checklistsHelpBtn.onclick = () => openHelp("checklists");
 
   const notesEmptyCreate = document.getElementById("notesEmptyStateCreateBtn");
-  if (notesEmptyCreate) notesEmptyCreate.onclick = promptCreateNotePage;
+  if (notesEmptyCreate) notesEmptyCreate.onclick = promptCreateGlobalPage;
+  const globalPagesNewBtn = document.getElementById("globalPagesNewBtn");
+  if (globalPagesNewBtn) globalPagesNewBtn.onclick = promptCreateGlobalPage;
   const checklistsEmptyCreate = document.getElementById(
     "checklistsEmptyStateCreateBtn"
   );
@@ -34768,53 +34527,6 @@ function initEventListeners() {
   document.getElementById("btnSaveCustomExpense").onclick = () =>
     saveCustomExpense();
   initImagePreviewDialog();
-
-  // Coordination items dialog
-  populateCoordinationPartySelect();
-  const coordinationAddBtn = document.getElementById("coordinationAddBtn");
-  if (coordinationAddBtn) {
-    coordinationAddBtn.onclick = () => addCoordinationItemFromDialog();
-  }
-  const coordinationPartySelect = document.getElementById(
-    "coordinationPartySelect"
-  );
-  if (coordinationPartySelect) {
-    coordinationPartySelect.onchange = () =>
-      updateCoordinationCustomPartyVisibility();
-  }
-  const coordinationNoteInput = document.getElementById(
-    "coordinationNoteInput"
-  );
-  if (coordinationNoteInput) {
-    coordinationNoteInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        addCoordinationItemFromDialog();
-      }
-    });
-  }
-  const coordinationDueInput = document.getElementById("coordinationDueInput");
-  if (coordinationDueInput) {
-    coordinationDueInput.addEventListener("click", (e) => {
-      e.stopPropagation();
-      showCalendarForInput(coordinationDueInput, () => {});
-    });
-    coordinationDueInput.addEventListener("blur", () => {
-      autoFormatDateInput(coordinationDueInput);
-    });
-    coordinationDueInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        addCoordinationItemFromDialog();
-      }
-    });
-  }
-  const coordinationDlg = document.getElementById("coordinationDlg");
-  if (coordinationDlg) {
-    coordinationDlg.addEventListener("close", () => {
-      coordinationDialogProject = null;
-    });
-  }
 
   document.getElementById("checkUpdateBtn").onclick = () =>
     refreshAppUpdateStatus({ manual: true });
@@ -36026,9 +35738,6 @@ function initEventListeners() {
     aiNoMatchAddBtn.onclick = () => confirmAiNoMatchAddToProject();
   }
 
-  document
-    .getElementById("notesTextarea")
-    .addEventListener("input", handleNoteInput);
   document.getElementById("settings_userName").oninput = (e) => {
     userSettings.userName = e.target.value;
     debouncedSaveUserSettings();
@@ -36327,10 +36036,9 @@ function initEventListeners() {
       const response = await window.pywebview.api.delete_all_notes();
       if (response.status === "success") {
         toast("All notes data deleted.");
-        notesDb = {};
-        noteTabs = ["General"];
-        activeNoteTab = "General";
-        renderNoteTabs();
+        globalPages = [];
+        activeGlobalPageId = null;
+        renderGlobalPagesView();
       } else {
         toast("Failed to delete notes data.");
       }
@@ -36424,13 +36132,13 @@ async function init() {
       loadedChecklists,
     ] = await Promise.all([
       load(),
-      loadNotes(),
+      loadGlobalPages(),
       loadTimesheets(),
       loadTemplates(),
       loadChecklists(),
     ]);
     db = loadedDb || [];
-    notesDb = loadedNotes || {};
+    globalPages = Array.isArray(loadedNotes) ? loadedNotes : [];
     timesheetDb = loadedTimesheets || { weeks: {}, expenses: {}, lastModified: null };
     if (!timesheetDb.expenses || typeof timesheetDb.expenses !== "object") {
       timesheetDb.expenses = {};
@@ -36465,9 +36173,8 @@ async function init() {
       showOnboardingModal();
     } else {
       showMainApp();
-      renderNoteTabs();
+      renderGlobalPagesView();
       renderChecklistTabs();
-      renderNotesView();
       renderChecklistsView();
       renderTemplates();
       renderTimesheets();
@@ -36488,7 +36195,7 @@ async function init() {
 
 // ===================== NOTION-STYLE PROJECT / DELIVERABLE PAGES =====================
 let pageViewInitialized = false;
-let pageNav = { project: null, deliverable: null };
+let pageNav = { project: null, deliverable: null, globalPage: null };
 let pageEditorTarget = null; // reference to the {html, updatedAt} object being edited
 let pageEditorOwnerKey = "";
 let pageSaveTimer = null;
@@ -36586,6 +36293,10 @@ function movePageCaretToPoint(editor, x, y) {
 // --- Serialization & save ---
 function serializePageHtml(editor) {
   if (!editor) return "";
+  // Ensure every tagged item has a stable id so the roll-up can address it.
+  editor.querySelectorAll(".page-item").forEach((item) => {
+    if (!item.dataset.itemId) item.dataset.itemId = createId("pi");
+  });
   const clone = editor.cloneNode(true);
   clone.querySelectorAll("img").forEach((img) => {
     img.classList.add("page-inline-image");
@@ -36593,6 +36304,12 @@ function serializePageHtml(editor) {
     if (img.dataset.asset) img.removeAttribute("src");
   });
   return clone.innerHTML;
+}
+// Route page persistence to the correct store: global pages -> notes.json,
+// project/deliverable pages -> tasks.json.
+async function persistActivePage() {
+  if (pageNav.globalPage) return saveGlobalPages({ silent: true });
+  return save({ silent: true });
 }
 function queuePageSave() {
   const editor = getPageEditorEl();
@@ -36603,7 +36320,7 @@ function queuePageSave() {
   if (pageSaveTimer) clearTimeout(pageSaveTimer);
   pageSaveTimer = setTimeout(async () => {
     pageSaveTimer = null;
-    const ok = await save({ silent: true });
+    const ok = await persistActivePage();
     setPageSaveStatus(ok ? "Saved" : "Save failed");
   }, 700);
 }
@@ -36622,7 +36339,7 @@ async function flushPageSave() {
     pageEditorTarget.updatedAt = new Date().toISOString();
   }
   try {
-    await save({ silent: true });
+    await persistActivePage();
   } catch (_) {}
 }
 
@@ -36869,22 +36586,51 @@ function getPageClipboardImageFiles(clipboardData) {
     .filter((f) => String(f?.type || "").toLowerCase().startsWith("image/"));
 }
 
-// --- To-do blocks ("tasks") ---
-function createPageTodoElement() {
-  const todo = document.createElement("div");
-  todo.className = "page-todo";
-  todo.dataset.checked = "false";
+// --- Tagged item blocks (action / coordination) ---
+const PAGE_ITEM_TAGS = {
+  action: { label: "Action" },
+  coordination: { label: "Coordination" },
+};
+function normalizePageItemTag(tag) {
+  const key = String(tag || "").trim().toLowerCase();
+  // Legacy "todo" lines map to action items.
+  if (key === "todo") return "action";
+  return PAGE_ITEM_TAGS[key] ? key : "action";
+}
+function createPageItemElement(tag = "action", id = "") {
+  const itemTag = normalizePageItemTag(tag);
+  const item = document.createElement("div");
+  item.className = "page-item";
+  item.dataset.tag = itemTag;
+  item.dataset.itemId = id || createId("pi");
+  item.dataset.checked = "false";
   const box = document.createElement("span");
-  box.className = "page-todo-box";
+  box.className = "page-item-box";
   box.setAttribute("contenteditable", "false");
   box.setAttribute("role", "checkbox");
   box.setAttribute("aria-checked", "false");
+  const badge = document.createElement("span");
+  badge.className = "page-item-badge";
+  badge.setAttribute("contenteditable", "false");
+  badge.dataset.tag = itemTag;
+  badge.textContent = PAGE_ITEM_TAGS[itemTag].label;
   const text = document.createElement("div");
-  text.className = "page-todo-text";
+  text.className = "page-item-text";
   text.appendChild(document.createElement("br"));
-  todo.appendChild(box);
-  todo.appendChild(text);
-  return todo;
+  item.appendChild(box);
+  item.appendChild(badge);
+  item.appendChild(text);
+  return item;
+}
+function setPageItemTag(item, tag) {
+  const itemTag = normalizePageItemTag(tag);
+  item.dataset.tag = itemTag;
+  if (!item.dataset.itemId) item.dataset.itemId = createId("pi");
+  const badge = item.querySelector(".page-item-badge");
+  if (badge) {
+    badge.dataset.tag = itemTag;
+    badge.textContent = PAGE_ITEM_TAGS[itemTag].label;
+  }
 }
 function placePageCaretAtStart(node) {
   if (!node) return;
@@ -36898,49 +36644,142 @@ function placePageCaretAtStart(node) {
   }
   pageSelectionRange = clonePageRange(range);
 }
-function insertPageTodo() {
+// Resolve the block-level element (direct child of the editor) containing a node.
+function getPageBlockElement(editor, node) {
+  if (!editor || !node) return null;
+  let el = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+  if (!el || !editor.contains(el) || el === editor) return null;
+  while (el.parentElement && el.parentElement !== editor) {
+    el = el.parentElement;
+  }
+  return el.parentElement === editor ? el : null;
+}
+// Tag the current line. Smart behavior: retag an existing item, convert a normal
+// line (keeping its text), or insert a fresh empty tagged item.
+function insertPageItem(tag) {
   const editor = getPageEditorEl();
   if (!editor) return;
+  const itemTag = normalizePageItemTag(tag);
   const range = restorePageSelection(editor);
   if (!range) return;
-  const todo = createPageTodoElement();
+  const host =
+    range.startContainer.nodeType === Node.TEXT_NODE
+      ? range.startContainer.parentElement
+      : range.startContainer;
+  const existing = host?.closest?.(".page-item");
+  if (existing && editor.contains(existing)) {
+    setPageItemTag(existing, itemTag);
+    placePageCaretAtStart(existing.querySelector(".page-item-text"));
+    queuePageSave();
+    return;
+  }
+  const block = getPageBlockElement(editor, range.startContainer);
+  if (block && String(block.textContent || "").trim()) {
+    const item = createPageItemElement(itemTag);
+    const textEl = item.querySelector(".page-item-text");
+    textEl.innerHTML = block.innerHTML;
+    block.replaceWith(item);
+    placePageCaretAtStart(textEl);
+    queuePageSave();
+    return;
+  }
+  const item = createPageItemElement(itemTag);
   range.deleteContents();
-  range.insertNode(todo);
-  placePageCaretAtStart(todo.querySelector(".page-todo-text"));
+  range.insertNode(item);
+  placePageCaretAtStart(item.querySelector(".page-item-text"));
   queuePageSave();
 }
-// Enter inside a to-do must not split the flex row (which renders as "columns").
-// Non-empty item -> start a new to-do below; empty item -> exit to a normal line.
-function handlePageTodoEnter(editor) {
+// Enter inside a tagged item must not split the flex row (which renders as "columns").
+// Non-empty item -> start a new item below (same tag); empty item -> exit to a normal line.
+function handlePageItemEnter(editor) {
   const sel = window.getSelection?.();
   if (!sel || sel.rangeCount === 0) return false;
   const start = sel.getRangeAt(0).startContainer;
   const host = start.nodeType === Node.TEXT_NODE ? start.parentElement : start;
-  const todo = host?.closest?.(".page-todo");
-  if (!todo || !editor.contains(todo)) return false;
-  const textEl = todo.querySelector(".page-todo-text");
+  const item = host?.closest?.(".page-item");
+  if (!item || !editor.contains(item)) return false;
+  const textEl = item.querySelector(".page-item-text");
   const isEmpty = !String(textEl?.textContent || "").trim();
   if (isEmpty) {
     const line = document.createElement("div");
     line.appendChild(document.createElement("br"));
-    todo.replaceWith(line);
+    item.replaceWith(line);
     placePageCaretAtStart(line);
   } else {
-    const nextTodo = createPageTodoElement();
-    todo.after(nextTodo);
-    placePageCaretAtStart(nextTodo.querySelector(".page-todo-text"));
+    const nextItem = createPageItemElement(item.dataset.tag || "action");
+    item.after(nextItem);
+    placePageCaretAtStart(nextItem.querySelector(".page-item-text"));
   }
   queuePageSave();
   return true;
 }
-function togglePageTodo(box) {
-  const todo = box.closest(".page-todo");
-  if (!todo) return;
-  const checked = todo.dataset.checked === "true";
-  todo.dataset.checked = checked ? "false" : "true";
-  todo.classList.toggle("done", !checked);
+function togglePageItem(box) {
+  const item = box.closest(".page-item");
+  if (!item) return;
+  const checked = item.dataset.checked === "true";
+  item.dataset.checked = checked ? "false" : "true";
+  item.classList.toggle("done", !checked);
   box.setAttribute("aria-checked", checked ? "false" : "true");
   queuePageSave();
+}
+// Untag the current item back to a normal line, preserving its text.
+function clearPageItemTag(editor) {
+  if (!editor) return;
+  const range = restorePageSelection(editor);
+  if (!range) return;
+  const host =
+    range.startContainer.nodeType === Node.TEXT_NODE
+      ? range.startContainer.parentElement
+      : range.startContainer;
+  const item = host?.closest?.(".page-item");
+  if (!item || !editor.contains(item)) return;
+  const textEl = item.querySelector(".page-item-text");
+  const line = document.createElement("div");
+  line.innerHTML = textEl ? textEl.innerHTML : "<br>";
+  item.replaceWith(line);
+  placePageCaretAtStart(line);
+  queuePageSave();
+}
+// Upgrade legacy .page-todo markup to the tagged-item model and backfill ids/badges.
+function upgradeLegacyPageTodos(editor) {
+  if (!editor) return;
+  editor.querySelectorAll(".page-todo").forEach((todo) => {
+    const checked = todo.dataset.checked === "true";
+    const oldText = todo.querySelector(".page-todo-text");
+    const item = createPageItemElement("action", todo.dataset.itemId || "");
+    item.dataset.checked = checked ? "true" : "false";
+    if (checked) item.classList.add("done");
+    const box = item.querySelector(".page-item-box");
+    if (box) box.setAttribute("aria-checked", checked ? "true" : "false");
+    const text = item.querySelector(".page-item-text");
+    if (text) text.innerHTML = oldText ? oldText.innerHTML : "<br>";
+    todo.replaceWith(item);
+  });
+  editor.querySelectorAll(".page-item").forEach((item) => {
+    if (!item.dataset.itemId) item.dataset.itemId = createId("pi");
+    const tag = normalizePageItemTag(item.dataset.tag);
+    item.dataset.tag = tag;
+    const checked = item.dataset.checked === "true";
+    item.classList.toggle("done", checked);
+    let box = item.querySelector(".page-item-box");
+    if (!box) {
+      box = document.createElement("span");
+      box.className = "page-item-box";
+      box.setAttribute("contenteditable", "false");
+      box.setAttribute("role", "checkbox");
+      item.insertBefore(box, item.firstChild);
+    }
+    box.setAttribute("aria-checked", checked ? "true" : "false");
+    let badge = item.querySelector(".page-item-badge");
+    if (!badge) {
+      badge = document.createElement("span");
+      badge.className = "page-item-badge";
+      badge.setAttribute("contenteditable", "false");
+      box.after(badge);
+    }
+    badge.dataset.tag = tag;
+    badge.textContent = PAGE_ITEM_TAGS[tag].label;
+  });
 }
 
 // --- Rich-text commands ---
@@ -37032,11 +36871,12 @@ async function closePageView() {
   const view = document.getElementById("pageView");
   if (view) view.hidden = true;
   delete document.body.dataset.pageOpen;
-  pageNav = { project: null, deliverable: null };
+  pageNav = { project: null, deliverable: null, globalPage: null };
   pageEditorTarget = null;
   clearPageSelectedImage();
   try {
     render();
+    renderGlobalPagesView();
   } catch (_) {}
 }
 function pageGoBack() {
@@ -37050,24 +36890,57 @@ function pageGoBack() {
 function openProjectPage(project) {
   if (!project) return;
   ensurePageViewReady();
-  pageNav = { project, deliverable: null };
+  pageNav = { project, deliverable: null, globalPage: null };
   renderPageView();
   showPageView();
 }
 function openDeliverablePage(project, deliverable) {
   if (!project || !deliverable) return;
   ensurePageViewReady();
-  pageNav = { project, deliverable };
+  pageNav = { project, deliverable, globalPage: null };
+  renderPageView();
+  showPageView();
+}
+function openGlobalPage(globalPage) {
+  if (!globalPage) return;
+  ensurePageViewReady();
+  pageNav = { project: null, deliverable: null, globalPage };
+  activeGlobalPageId = globalPage.id;
   renderPageView();
   showPageView();
 }
 function renderPageView() {
-  const { project, deliverable } = pageNav;
-  if (!project) return;
+  const { project, deliverable, globalPage } = pageNav;
   const editor = getPageEditorEl();
   const titleEl = document.getElementById("pageTitle");
   const metaEl = document.getElementById("pageMeta");
   const deliverablesEl = document.getElementById("pageDeliverables");
+
+  if (globalPage) {
+    if (!globalPage.page || typeof globalPage.page !== "object") {
+      globalPage.page = { html: "", updatedAt: "" };
+    }
+    pageEditorTarget = globalPage.page;
+    pageEditorOwnerKey = `page_global_${globalPage.id || "x"}`;
+    renderPageBreadcrumb(null, null);
+    if (titleEl) titleEl.textContent = globalPage.title || "";
+    if (metaEl) {
+      metaEl.hidden = true;
+      metaEl.innerHTML = "";
+    }
+    if (deliverablesEl) deliverablesEl.hidden = true;
+    clearPageSelectedImage();
+    if (editor) {
+      editor.innerHTML = globalPage.page.html || "";
+      upgradeLegacyPageTodos(editor);
+      normalizePageEditorImages(editor);
+      hydratePageImages(editor);
+    }
+    setPageSaveStatus("");
+    return;
+  }
+
+  if (!project) return;
   const target = deliverable || project;
   if (!target.page || typeof target.page !== "object") {
     target.page = { html: "", updatedAt: "" };
@@ -37096,6 +36969,7 @@ function renderPageView() {
   clearPageSelectedImage();
   if (editor) {
     editor.innerHTML = target.page.html || "";
+    upgradeLegacyPageTodos(editor);
     normalizePageEditorImages(editor);
     hydratePageImages(editor);
   }
@@ -37131,6 +37005,12 @@ function renderPageBreadcrumb(project, deliverable) {
     s.textContent = "/";
     nav.appendChild(s);
   };
+  if (pageNav.globalPage) {
+    addCrumb("Pages", () => closePageView(), false);
+    addSep();
+    addCrumb(pageNav.globalPage.title || "Untitled", null, true);
+    return;
+  }
   addCrumb("Projects", () => closePageView(), false);
   addSep();
   if (deliverable) {
@@ -37166,10 +37046,11 @@ function queuePageMiscSave() {
   if (pageMiscSaveTimer) clearTimeout(pageMiscSaveTimer);
   pageMiscSaveTimer = setTimeout(async () => {
     pageMiscSaveTimer = null;
-    const ok = await save({ silent: true });
+    const ok = await persistActivePage();
     setPageSaveStatus(ok ? "Saved" : "Save failed");
     try {
-      render();
+      if (pageNav.globalPage) renderGlobalPagesView();
+      else render();
     } catch (_) {}
   }, 500);
 }
@@ -37263,8 +37144,9 @@ function queuePageTitleSave() {
   const titleEl = document.getElementById("pageTitle");
   if (!titleEl) return;
   const value = (titleEl.textContent || "").trim();
-  const { project, deliverable } = pageNav;
-  if (deliverable) deliverable.name = value;
+  const { project, deliverable, globalPage } = pageNav;
+  if (globalPage) globalPage.title = value;
+  else if (deliverable) deliverable.name = value;
   else if (project) project.name = value;
   queuePageMiscSave();
 }
@@ -37282,7 +37164,7 @@ function ensurePageViewReady() {
   });
   editor.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
-      if (handlePageTodoEnter(editor)) e.preventDefault();
+      if (handlePageItemEnter(editor)) e.preventDefault();
     }
   });
   editor.addEventListener("keyup", () => syncPageSelectionState(editor));
@@ -37295,10 +37177,10 @@ function ensurePageViewReady() {
       openExternalUrl(link.getAttribute("href"));
       return;
     }
-    const box = e.target?.closest?.(".page-todo-box");
+    const box = e.target?.closest?.(".page-item-box");
     if (box) {
       e.preventDefault();
-      togglePageTodo(box);
+      togglePageItem(box);
       return;
     }
     const img = e.target?.closest?.("img.page-inline-image");
@@ -37358,7 +37240,10 @@ function ensurePageViewReady() {
       if (!btn) return;
       if (btn.dataset.pageCmd) applyPageCommand(btn.dataset.pageCmd);
       else if (btn.dataset.pageBlock) applyPageBlock(btn.dataset.pageBlock);
-      else if (btn.dataset.pageAction === "todo") insertPageTodo();
+      else if (btn.dataset.pageAction === "action") insertPageItem("action");
+      else if (btn.dataset.pageAction === "coordination") insertPageItem("coordination");
+      else if (btn.dataset.pageAction === "todo") insertPageItem("action");
+      else if (btn.dataset.pageAction === "untag") clearPageItemTag(getPageEditorEl());
       else if (btn.dataset.pageAction === "link") insertPageLink();
     });
   }

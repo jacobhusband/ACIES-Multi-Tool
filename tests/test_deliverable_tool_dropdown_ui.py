@@ -65,7 +65,7 @@ class DeliverableToolDropdownUiTests(unittest.TestCase):
             "const attachmentBtn = createDeliverableAttachmentAction(deliverable, project, card);",
             "leftActions.append(pinBtn, statusDropdown, toolDropdown);",
             "rightActions.append(",
-            "rightActions.append(coordinationBtn, attachmentBtn);",
+            "rightActions.append(attachmentBtn);",
             "actions.append(leftActions, rightActions);",
             "openEdit(projectIndex)",
             "removeProject(projectIndex)",
@@ -87,7 +87,7 @@ class DeliverableToolDropdownUiTests(unittest.TestCase):
         self.assertIn("leftActions.append(pinBtn, statusDropdown, toolDropdown);", top_actions_block)
         delete_index = top_actions_block.index('className: "deliverable-card-delete-action"')
         edit_index = top_actions_block.index('className: "deliverable-card-edit-action"')
-        attachment_index = top_actions_block.index("rightActions.append(coordinationBtn, attachmentBtn);")
+        attachment_index = top_actions_block.index("rightActions.append(attachmentBtn);")
         self.assertLess(delete_index, edit_index)
         self.assertLess(edit_index, attachment_index)
         self.assertNotIn("createExpandToggle(card)", top_actions_block)

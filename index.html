@@ -45,7 +45,7 @@
         <div class="header-center">
             <nav class="main-nav">
                 <button class="main-tab-btn active" data-tab="projects">Projects</button>
-                <button class="main-tab-btn" data-tab="notes">Notes</button>
+                <button class="main-tab-btn" data-tab="notes">Pages</button>
                 <button class="main-tab-btn" data-tab="checklists">Checklists</button>
                 <button class="main-tab-btn" data-tab="tools">Tools</button>
                 <button class="main-tab-btn" data-tab="timesheets">Timesheets</button>
@@ -222,12 +222,14 @@
                                     <rect x="14" y="3" width="7" height="11" rx="1"></rect>
                                 </svg>
                             </button>
-                            <button type="button" class="view-toggle-btn" id="viewToggleCoordination" data-view-mode="coordination" aria-pressed="false" title="Coordination view">
+                            <button type="button" class="view-toggle-btn" id="viewToggleRollup" data-view-mode="rollup" aria-pressed="false" title="Action & coordination items">
                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
-                                    <circle cx="9" cy="7" r="4"></circle>
-                                    <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
-                                    <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                                    <path d="M9 6h11"></path>
+                                    <path d="M9 12h11"></path>
+                                    <path d="M9 18h11"></path>
+                                    <path d="m3 6 1 1 2-2"></path>
+                                    <path d="m3 12 1 1 2-2"></path>
+                                    <path d="m3 18 1 1 2-2"></path>
                                 </svg>
                             </button>
                         </div>
@@ -406,7 +408,7 @@
                     </div>
                 </div>
                 <div class="projects-card-view" id="projectsCardView" hidden></div>
-                <div class="projects-coordination-view" id="projectsCoordinationView" hidden></div>
+                <div class="projects-rollup-view" id="projectsRollupView" hidden></div>
                 <table class="table projects-table">
                     <thead>
                         <tr>
@@ -445,7 +447,7 @@
                                 <circle cx="11" cy="11" r="8"></circle>
                                 <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
                             </svg>
-                            <input id="notesSearch" type="search" placeholder="Search notes..." />
+                            <input id="notesSearch" type="search" placeholder="Search pages..." />
                         </div>
                         <div class="toolbar-actions">
                             <button class="icon-btn" id="notesHelpBtn" aria-label="Notes help" title="Notes help"><svg
@@ -459,48 +461,27 @@
                     </div>
                 </div>
                 <div class="texts-content">
-                    <div class="notebook-layout">
-                        <aside class="notebook-sidebar single-section">
-                            <section class="notebook-sidebar-section">
-                                <div class="notes-controls">
-                                    <div class="notebook-section-header">
-                                        <h3 class="section-title">Notes</h3>
-                                    </div>
-                                    <div class="notes-user-tabs-row">
-                                        <nav class="inner-tabs notes-nav-list" id="notesTabsContainer"></nav>
-                                    </div>
-                                </div>
-                            </section>
-                        </aside>
-                        <div class="notebook-content-shell">
-                            <section class="notes-editor texts-view-pane" id="textsNotesPane">
-                                <div class="notebook-empty-state" id="notesEmptyState" hidden>
-                                    <div class="notebook-empty-state-icon">
-                                        <svg width="40" height="40" viewBox="0 0 24 24" fill="none"
-                                            stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
-                                            stroke-linejoin="round">
-                                            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
-                                            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
-                                        </svg>
-                                    </div>
-                                    <h3 class="notebook-empty-state-title">No notes yet</h3>
-                                    <p class="notebook-empty-state-body">Create your first page to start taking
-                                        notes. Pages autosave as you type.</p>
-                                    <button class="btn btn-accent" type="button" id="notesEmptyStateCreateBtn">+
-                                        Create your first page</button>
-                                </div>
-                                <div class="notebook-editor-content" id="notesEditorContent">
-                                    <div class="notes-editor-header">
-                                        <h3 class="section-title" id="activeNoteTitle">Notes</h3>
-                                    </div>
-                                    <div class="inner-tab-content">
-                                        <textarea id="notesTextarea" class="notes-textarea"
-                                            placeholder="Select a page to start writing notes..."></textarea>
-                                    </div>
-                                    <div id="notesSearchResults" class="notes-search-results"></div>
-                                </div>
-                            </section>
+                    <div class="global-pages">
+                        <div class="global-pages-header">
+                            <h3 class="section-title">Pages</h3>
+                            <button class="btn btn-accent" type="button" id="globalPagesNewBtn">+ New page</button>
                         </div>
+                        <div class="notebook-empty-state" id="notesEmptyState" hidden>
+                            <div class="notebook-empty-state-icon">
+                                <svg width="40" height="40" viewBox="0 0 24 24" fill="none"
+                                    stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+                                    stroke-linejoin="round">
+                                    <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+                                    <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+                                </svg>
+                            </div>
+                            <h3 class="notebook-empty-state-title">No pages yet</h3>
+                            <p class="notebook-empty-state-body">Create your first page to capture notes, action
+                                items, and coordination items. Pages autosave as you type.</p>
+                            <button class="btn btn-accent" type="button" id="notesEmptyStateCreateBtn">+
+                                Create your first page</button>
+                        </div>
+                        <div class="global-pages-list" id="globalPagesList"></div>
                     </div>
                 </div>
             </div>
@@ -1131,7 +1112,11 @@
                     <div class="page-toolbar-group" aria-label="Lists">
                         <button type="button" class="page-fmt-btn" data-page-cmd="insertUnorderedList" title="Bulleted list">• List</button>
                         <button type="button" class="page-fmt-btn" data-page-cmd="insertOrderedList" title="Numbered list">1. List</button>
-                        <button type="button" class="page-fmt-btn" data-page-action="todo" title="To-do checkbox">☑ To-do</button>
+                    </div>
+                    <div class="page-toolbar-group" aria-label="Tag line">
+                        <button type="button" class="page-fmt-btn" data-page-action="action" title="Tag line as an action item">☑ Action</button>
+                        <button type="button" class="page-fmt-btn" data-page-action="coordination" title="Tag line as a coordination item">⇄ Coordination</button>
+                        <button type="button" class="page-fmt-btn" data-page-action="untag" title="Remove tag from line">Untag</button>
                     </div>
                     <div class="page-toolbar-group page-color-tools" aria-label="Text color">
                         <label class="page-color-picker" title="Text color">
@@ -1154,7 +1139,7 @@
                 </div>
                 <div id="pageEditor" class="page-editor" contenteditable="true" spellcheck="true" role="textbox"
                     aria-multiline="true" aria-label="Page content"
-                    data-placeholder="Type here — add headings, to-dos, images, links, and notes…"></div>
+                    data-placeholder="Type here — add headings, action/coordination items, images, links, and notes…"></div>
                 <section class="page-deliverables" id="pageDeliverables" hidden>
                     <div class="page-deliverables-header">
                         <h2>Deliverables</h2>
@@ -1346,42 +1331,6 @@
             </div>
         </div>
     </dialog>
-    <!-- Coordination Items Dialog -->
-    <dialog id="coordinationDlg" class="coordination-dialog">
-        <div class="modal-header">
-            <div>
-                <div class="title">Coordination Items</div>
-                <div id="coordinationDlgSummary" class="muted tiny">0 open / 0 total</div>
-            </div>
-            <button class="btn ghost" type="button" onclick="closeDlg('coordinationDlg')">Close</button>
-        </div>
-        <div class="modal-body stack">
-            <section class="coordination-composer" aria-label="Add coordination item">
-                <div class="coordination-composer-row">
-                    <div class="coordination-composer-field coordination-composer-party">
-                        <label class="label">Coordinate With</label>
-                        <select id="coordinationPartySelect"></select>
-                    </div>
-                    <div class="coordination-composer-field coordination-composer-due">
-                        <label class="label">Due Date</label>
-                        <input id="coordinationDueInput" placeholder="MM/DD/YYYY" autocomplete="off" />
-                    </div>
-                </div>
-                <div class="coordination-composer-field" id="coordinationCustomPartyField" hidden>
-                    <label class="label">Other Party</label>
-                    <input id="coordinationCustomPartyInput" placeholder="e.g. Structural" />
-                </div>
-                <div class="coordination-composer-field">
-                    <label class="label">Note</label>
-                    <div class="coordination-composer-note-row">
-                        <input id="coordinationNoteInput" placeholder="What needs to be coordinated?" />
-                        <button class="btn-primary" id="coordinationAddBtn" type="button">Add Item</button>
-                    </div>
-                </div>
-            </section>
-            <div id="coordinationItemList" class="coordination-item-list stack" role="list"></div>
-        </div>
-    </dialog>
     <dialog id="imagePreviewDlg" class="image-preview-dialog" aria-label="Image preview">
         <div class="image-preview-shell">
             <button id="imagePreviewCloseBtn" class="image-preview-close" type="button" aria-label="Close preview" onclick="closeImagePreviewDialog()">&times;</button>
@@ -1418,10 +1367,6 @@
                 <div class="col-8">
                     <label class="label">Project Path</label>
                     <input id="f_path" placeholder="e.g. M:\Projects\..." />
-                </div>
-                <div class="col-12 modal-full-only">
-                    <label class="label">Global Notes</label>
-                    <textarea id="f_notes" rows="3" placeholder="Global notes"></textarea>
                 </div>
             </div>
             <div class="section-divider modal-full-only"></div>

@@ -21,7 +21,7 @@ class NotebookSplitUiTests(unittest.TestCase):
     def test_main_nav_has_separate_notes_and_checklists_tabs(self):
         html = INDEX_HTML_PATH.read_text(encoding="utf-8")
 
-        self.assertIn('data-tab="notes">Notes</button>', html)
+        self.assertIn('data-tab="notes">Pages</button>', html)
         self.assertIn('data-tab="checklists">Checklists</button>', html)
         self.assertNotIn('data-tab="texts"', html)
         self.assertNotIn('id="texts-panel"', html)
@@ -43,18 +43,17 @@ class NotebookSplitUiTests(unittest.TestCase):
         self.assertIn('id="notesHelpBtn"', html)
         self.assertIn('id="checklistsHelpBtn"', html)
 
-        self.assertIn('id="notesTabsContainer"', html)
+        self.assertIn('id="globalPagesList"', html)
         self.assertIn('id="checklistsTabsContainer"', html)
-        self.assertIn('id="textsNotesPane"', html)
         self.assertIn('id="textsChecklistsPane"', html)
 
         notes_panel_idx = html.index('id="notes-panel"')
         checklists_panel_idx = html.index('id="checklists-panel"')
-        notes_tabs_idx = html.index('id="notesTabsContainer"')
+        notes_list_idx = html.index('id="globalPagesList"')
         checklists_tabs_idx = html.index('id="checklistsTabsContainer"')
 
-        self.assertLess(notes_panel_idx, notes_tabs_idx)
-        self.assertLess(notes_tabs_idx, checklists_panel_idx)
+        self.assertLess(notes_panel_idx, notes_list_idx)
+        self.assertLess(notes_list_idx, checklists_panel_idx)
         self.assertLess(checklists_panel_idx, checklists_tabs_idx)
 
     def test_panels_include_empty_state_blocks(self):
@@ -62,7 +61,7 @@ class NotebookSplitUiTests(unittest.TestCase):
 
         self.assertIn('id="notesEmptyState"', html)
         self.assertIn('id="checklistsEmptyState"', html)
-        self.assertIn('id="notesEditorContent"', html)
+        self.assertIn('id="globalPagesList"', html)
         self.assertIn('id="checklistsEditorContent"', html)
         self.assertIn('id="notesEmptyStateCreateBtn"', html)
         self.assertIn('id="checklistsEmptyStateCreateBtn"', html)
@@ -83,12 +82,11 @@ class NotebookSplitUiTests(unittest.TestCase):
         self.assertNotIn("handleNotebookSearchInput", script)
         self.assertNotIn("renderTextsView", script)
 
-        self.assertIn("function renderNotesView()", script)
+        self.assertIn("function renderGlobalPagesView()", script)
         self.assertIn("function renderChecklistsView()", script)
-        self.assertIn("function hasActiveNoteSelection()", script)
         self.assertIn("function hasActiveChecklistSelection()", script)
         self.assertIn("function createTabDeleteIcon(", script)
-        self.assertIn("function promptCreateNotePage()", script)
+        self.assertIn("function promptCreateGlobalPage()", script)
 
     def test_script_wires_per_page_search_and_help(self):
         script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
@@ -112,7 +110,7 @@ class NotebookSplitUiTests(unittest.TestCase):
         script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
 
         self.assertIn('if (tab === "notes") {', script)
-        self.assertIn('renderNotesView();', script)
+        self.assertIn('renderGlobalPagesView();', script)
         self.assertIn('} else if (tab === "checklists") {', script)
         self.assertIn('renderChecklistsView();', script)
 

@@ -126,7 +126,7 @@ class ProjectDeliverablePinnedWorkItemsUiTests(unittest.TestCase):
             'toolDropdown.classList.add("deliverable-card-tool-action");',
             "leftActions.append(pinBtn, statusDropdown, toolDropdown);",
             "rightActions.append(",
-            "rightActions.append(coordinationBtn, attachmentBtn);",
+            "rightActions.append(attachmentBtn);",
             "actions.append(leftActions, rightActions);",
         ):
             self.assertIn(expected, top_actions_block)

@@ -30,13 +30,47 @@ class GlobalPagesUiTests(unittest.TestCase):
         self.assertIn("function readGlobalPagesData(raw = {}) {", script)
         self.assertIn("function migrateLegacyNotesToPages(source = {}) {", script)
         self.assertIn("function renderGlobalPagesView() {", script)
-        self.assertIn("function createGlobalPageCard(page) {", script)
+        self.assertIn("function createGlobalPageCard(page, searchQuery = \"\") {", script)
+        self.assertIn("function getGlobalPageSearchText(page) {", script)
+        self.assertIn("function globalPageMatchesSearch(page, query) {", script)
+        self.assertIn("function createGlobalPageSearchSnippet(text, query, fallbackLength = 140) {", script)
         self.assertIn("function promptCreateGlobalPage() {", script)
         self.assertIn("function deleteGlobalPage(page) {", script)
         self.assertIn("function openGlobalPage(globalPage) {", script)
         self.assertIn("function plainTextToPageHtml(text) {", script)
         self.assertIn("function pageHtmlToPlainText(html) {", script)
         self.assertIn("function escapeHtml(value) {", script)
+
+    def test_pages_searches_titles_and_body_text(self):
+        script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
+        search_block = self._block(
+            script,
+            "function getGlobalPageSearchText(page) {",
+            "function renderGlobalPagesView() {",
+        )
+        self.assertIn('const title = String(page?.title || "");', search_block)
+        self.assertIn('const body = pageHtmlToPlainText(page?.page?.html || "");', search_block)
+        self.assertIn("return `${title}\\n${body}`;", search_block)
+        self.assertIn("getGlobalPageSearchText(page).toLowerCase().includes(q)", search_block)
+
+        render_block = self._block(
+            script,
+            "function renderGlobalPagesView() {",
+            "function createGlobalPageCard(page, searchQuery = \"\") {",
+        )
+        self.assertIn("pages.filter((p) => globalPageMatchesSearch(p, query));", render_block)
+        self.assertIn("createGlobalPageCard(page, query)", render_block)
+
+    def test_page_search_results_highlight_matches(self):
+        script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
+        card_block = self._block(
+            script,
+            "function createGlobalPageCard(page, searchQuery = \"\") {",
+            "function renderChecklistsView() {",
+        )
+        self.assertIn("title.appendChild(highlightText(titleText, query));", card_block)
+        self.assertIn("const previewSnippet = createGlobalPageSearchSnippet(previewText, query);", card_block)
+        self.assertIn('preview.appendChild(highlightText(previewSnippet || "Empty page", query));', card_block)
 
     def test_storage_is_versioned_pages(self):
         script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
@@ -77,7 +111,7 @@ class GlobalPagesUiTests(unittest.TestCase):
         render_block = self._block(
             script,
             "function renderPageView() {",
-            "function renderPageBreadcrumb(project, deliverable) {",
+            "function renderPageBreadcrumb(project, subpage) {",
         )
         self.assertIn("if (globalPage) {", render_block)
         self.assertIn('pageEditorOwnerKey = `page_global_${globalPage.id || "x"}`;', render_block)

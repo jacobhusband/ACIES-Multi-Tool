@@ -9,8 +9,7 @@ STYLES_CSS_PATH = REPO_ROOT / "styles.css"
 
 
 class PageItemsRollupUiTests(unittest.TestCase):
-    """The cross-project roll-up of tagged page items replaces the old
-    coordination-items feature."""
+    """The cross-project action/coordination roll-up view has been removed."""
 
     @staticmethod
     def _block(text: str, start_marker: str, end_marker: str) -> str:
@@ -18,106 +17,51 @@ class PageItemsRollupUiTests(unittest.TestCase):
         end = text.index(end_marker, start)
         return text[start:end]
 
-    def test_rollup_script_wiring_exists(self):
+    def test_rollup_view_mode_and_markup_removed(self):
         script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
-        self.assertIn("function extractPageTaggedItems(html) {", script)
-        self.assertIn("function collectRollupSources() {", script)
-        self.assertIn("function renderRollupSourcePanel(source) {", script)
-        self.assertIn("function renderPageItemsRollupView() {", script)
-        self.assertIn("function setPageItemDoneInHtml(page, itemId, done) {", script)
-        self.assertIn("function openPageToItem(source, itemId) {", script)
-        self.assertIn("function refreshRollupIfActive() {", script)
+        html = INDEX_HTML_PATH.read_text(encoding="utf-8")
+        css = STYLES_CSS_PATH.read_text(encoding="utf-8")
 
-        extract_block = self._block(
-            script,
+        for removed in (
+            "function renderPageItemsRollupView() {",
+            "function refreshRollupIfActive() {",
             "function extractPageTaggedItems(html) {",
             "function collectRollupSources() {",
-        )
-        self.assertIn(
-            '.page-item[data-tag="action"], .page-item[data-tag="coordination"]',
-            extract_block,
-        )
+            "function renderRollupSourcePanel(source) {",
+            'setProjectsViewMode("rollup")',
+            'projectsViewMode === "rollup"',
+            'document.getElementById("viewToggleRollup")',
+            'document.getElementById("projectsRollupView")',
+        ):
+            self.assertNotIn(removed, script)
 
-        collect_block = self._block(
+        normalize_block = self._block(
             script,
-            "function collectRollupSources() {",
-            "function rollupSourceTitle(source) {",
+            "function normalizeProjectsViewMode(value) {",
+            "function setProjectsViewMode(mode, options = {}) {",
         )
-        # project pages, deliverable pages, and global pages all contribute.
-        self.assertIn('kind: "project"', collect_block)
-        self.assertIn('kind: "deliverable"', collect_block)
-        self.assertIn('kind: "global"', collect_block)
+        self.assertIn('if (value === "card") return "card";', normalize_block)
+        self.assertNotIn('"rollup"', normalize_block)
+        self.assertNotIn('"coordination"', normalize_block)
 
-    def test_rollup_view_mode_wiring_exists(self):
+        self.assertNotIn('id="viewToggleRollup"', html)
+        self.assertNotIn('id="projectsRollupView"', html)
+        self.assertNotIn(".projects-rollup-view {", css)
+        self.assertNotIn(".rollup-source-panel {", css)
+        self.assertNotIn(".rollup-item-row {", css)
+
+    def test_legacy_coordination_migration_uses_plain_page_text(self):
         script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
-        self.assertIn("function normalizeProjectsViewMode(value) {", script)
-        self.assertIn('if (value === "card" || value === "rollup") return value;', script)
-        # Legacy "coordination" view mode migrates to the roll-up.
-        self.assertIn('if (value === "coordination") return "rollup";', script)
-        self.assertIn('setProjectsViewMode("rollup")', script)
-        self.assertIn(
-            'if (projectsViewMode === "rollup") renderPageItemsRollupView();',
+        coord_block = self._block(
             script,
+            "function migrateCoordinationItemsToPage(out) {",
+            "function normalizeProject(project) {",
         )
 
-        render_block = self._block(
-            script,
-            "function render() {",
-            "function updateSortHeaders() {",
-        )
-        self.assertIn("if (isRollupView) {", render_block)
-        self.assertIn("renderPageItemsRollupView();", render_block)
-
-        view_mode_block = self._block(
-            script,
-            "function updateProjectsViewModeUi() {",
-            "function updateProjectsLayoutWidthUi() {",
-        )
-        self.assertIn('document.getElementById("viewToggleRollup")', view_mode_block)
-        self.assertIn('document.getElementById("projectsRollupView")', view_mode_block)
-
-    def test_rollup_markup_exists(self):
-        html = INDEX_HTML_PATH.read_text(encoding="utf-8")
-        self.assertIn('id="viewToggleRollup"', html)
-        self.assertIn('data-view-mode="rollup"', html)
-        self.assertIn('id="projectsRollupView"', html)
-
-    def test_rollup_styles_exist(self):
-        css = STYLES_CSS_PATH.read_text(encoding="utf-8")
-        self.assertIn(".projects-rollup-view {", css)
-        self.assertIn(".rollup-source-panel {", css)
-        self.assertIn(".rollup-source-header {", css)
-        self.assertIn(".rollup-item-row {", css)
-        self.assertIn('.rollup-item-badge[data-tag="coordination"] {', css)
-        self.assertIn(".page-item-flash {", css)
-
-    def test_legacy_coordination_feature_removed(self):
-        script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
-        html = INDEX_HTML_PATH.read_text(encoding="utf-8")
-        css = STYLES_CSS_PATH.read_text(encoding="utf-8")
-
-        # Script: coordination feature functions/consts are gone.
-        self.assertNotIn("const COORDINATION_PARTIES = [", script)
-        self.assertNotIn("const COORDINATION_ICON_PATH =", script)
-        self.assertNotIn("function openCoordinationDialog(", script)
-        self.assertNotIn("function renderCoordinationView(", script)
-        self.assertNotIn("function renderCoordinationProjectPanel(", script)
-        self.assertNotIn("function addCoordinationItemFromDialog(", script)
-        self.assertNotIn("function createDeliverableCoordinationAction(", script)
-        self.assertNotIn(
-            "coordinationItems: normalizeCoordinationItems(project.coordinationItems),",
-            script,
-        )
-
-        # Markup: coordination dialog and old view toggle are gone.
-        self.assertNotIn('id="coordinationDlg"', html)
-        self.assertNotIn('id="viewToggleCoordination"', html)
-        self.assertNotIn('id="projectsCoordinationView"', html)
-
-        # Styles: coordination-specific blocks are gone.
-        self.assertNotIn(".coordination-dialog {", css)
-        self.assertNotIn(".projects-coordination-view {", css)
-        self.assertNotIn(".coordination-project-panel {", css)
+        self.assertIn('const block = `<h2>Coordination</h2>${plainTextToPageHtml(lines.join("\\n"))}`;', coord_block)
+        self.assertIn('if (item?.done === true) parts.push("(done)");', coord_block)
+        self.assertNotIn('data-tag="coordination"', coord_block)
+        self.assertNotIn('class="page-item', coord_block)
 
 
 if __name__ == "__main__":

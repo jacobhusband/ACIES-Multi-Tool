@@ -14,24 +14,23 @@ class ProjectDeliverableTaskPreviewUiTests(unittest.TestCase):
         end = text.index(end_marker, start)
         return text[start:end]
 
-    def test_projects_notes_footer_limits_rows_and_toggles_overflow(self):
+    def test_projects_deliverable_cards_no_longer_render_notes_footer(self):
         script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
-        notes_block = self._block(
+        card_block = self._block(
             script,
-            "function createNotesSection(deliverable, card, project = null) {",
-            "function createTasksPreview(deliverable, card, project = null) {",
+            "function renderDeliverableCard(deliverable, isPrimary, project) {",
+            "function normalizeProjectMatchValue(value) {",
         )
 
-        self.assertIn("const visibleEntries = notesExpanded ? noteEntries : noteEntries.slice(0, 2);", notes_block)
-        self.assertIn("const hasOverflow = noteEntries.length > 2;", notes_block)
-        self.assertIn('toggleBtn.textContent = notesExpanded ? "Hide notes" : "Show all notes";', notes_block)
-        self.assertIn('toggleBtn.setAttribute("aria-expanded", String(notesExpanded));', notes_block)
-        self.assertNotIn("getPinnedDeliverableTaskEntries(deliverable).forEach", notes_block)
+        self.assertNotIn("function createNotesSection(", script)
+        self.assertNotIn("const notesSection =", card_block)
+        self.assertIn("card.append(actionRow, header, statusSection);", card_block)
+        self.assertNotIn("deliverable-note", card_block)
 
-    def test_projects_notes_footer_styles_exist(self):
+    def test_projects_notes_footer_styles_removed(self):
         css = STYLES_CSS_PATH.read_text(encoding="utf-8")
 
-        for expected in (
+        for removed in (
             ".deliverable-notes-footer {",
             ".deliverable-notes-footer-controls {",
             ".deliverable-note-add-btn {",
@@ -41,7 +40,7 @@ class ProjectDeliverableTaskPreviewUiTests(unittest.TestCase):
             ".deliverable-note-add-input {",
             ".deliverable-notes-toggle {",
         ):
-            self.assertIn(expected, css)
+            self.assertNotIn(removed, css)
 
 
 if __name__ == "__main__":

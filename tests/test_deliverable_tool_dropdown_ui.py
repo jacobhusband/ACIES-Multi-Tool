@@ -62,20 +62,18 @@ class DeliverableToolDropdownUiTests(unittest.TestCase):
             "const toolDropdown = createDeliverableToolDropdown(deliverable, project, card);",
             'toolDropdown.classList.add("deliverable-card-tool-action");',
             "const pinBtn = createDeliverablePinButton(deliverable);",
-            "const attachmentBtn = createDeliverableAttachmentAction(deliverable, project, card);",
             "leftActions.append(pinBtn, statusDropdown, toolDropdown);",
             "rightActions.append(",
-            "rightActions.append(attachmentBtn);",
             "actions.append(leftActions, rightActions);",
             "openEdit(projectIndex)",
-            "removeProject(projectIndex)",
+            "removeDeliverable(project, deliverable)",
             "openAttachmentPanel(attachmentContext)",
             "async function handleDeliverableActionsDrop(context, event) {",
             "await handleDeliverableActionsDrop(attachmentContext, event);",
             "updateAttachmentTriggerState(button, getAttachments());",
             "isSupportedEmailFile",
             "const actionRow = createDeliverableCardTopActions(deliverable, project, card);",
-            "card.append(actionRow, header, statusSection, notesSection);",
+            "card.append(actionRow, header, statusSection);",
             'const actionRow = card.querySelector(":scope > .deliverable-card-action-row");',
             "card.insertBefore(projectMeta, actionRow?.nextSibling || card.firstChild);",
         ):
@@ -87,9 +85,17 @@ class DeliverableToolDropdownUiTests(unittest.TestCase):
         self.assertIn("leftActions.append(pinBtn, statusDropdown, toolDropdown);", top_actions_block)
         delete_index = top_actions_block.index('className: "deliverable-card-delete-action"')
         edit_index = top_actions_block.index('className: "deliverable-card-edit-action"')
-        attachment_index = top_actions_block.index("rightActions.append(attachmentBtn);")
         self.assertLess(delete_index, edit_index)
-        self.assertLess(edit_index, attachment_index)
+        # The card delete action removes the deliverable, not the whole project.
+        self.assertIn('title: "Delete deliverable"', top_actions_block)
+        self.assertIn("removeDeliverable(project, deliverable)", top_actions_block)
+        self.assertNotIn("removeProject(projectIndex)", top_actions_block)
+        # The inline attachment and open-project-page buttons have been removed.
+        self.assertNotIn("attachmentBtn", top_actions_block)
+        self.assertNotIn("createDeliverableAttachmentAction", top_actions_block)
+        self.assertNotIn("deliverable-card-open-project-page-action", top_actions_block)
+        # The project notes entry point remains.
+        self.assertIn("deliverable-card-open-page-action", top_actions_block)
         self.assertNotIn("createExpandToggle(card)", top_actions_block)
         self.assertNotIn("deliverable-card-expand-action", top_actions_block)
 

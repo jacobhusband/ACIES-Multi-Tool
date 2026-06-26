@@ -77,8 +77,6 @@ const EYE_ICON_PATH =
   "M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5C21.27 7.61 17 4.5 12 4.5zm0 12.5a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-8a3 3 0 1 0 0 6 3 3 0 0 0 0-6z";
 const PIN_ICON_PATH =
   "M12 2C8.13 2 5 5.13 5 9c0 2.76 1.87 5.08 4.42 5.76L10 22l2-3 2 3-.42-7.24C16.13 14.08 18 11.76 18 9c0-3.87-3.13-7-7-7zm0 8.5A2.5 2.5 0 1 1 12 5a2.5 2.5 0 0 1 0 5z";
-const EXPAND_ICON_PATH =
-  "M5 5h5V3H3v7h2V5zm9-2v2h5v5h2V3h-7zm5 16h-5v2h7v-7h-2v5zM5 14H3v7h7v-2H5v-5z";
 const STATUS_ICON_PATH =
   "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm-1.1 14.2-4.2-4.2 1.4-1.4 2.8 2.8 5.7-5.7 1.4 1.4-7.1 7.1z";
 const TOOLS_ICON_PATH =
@@ -13781,12 +13779,6 @@ async function loadUserSettings() {
     syncUnderConstructionToolsAvailability();
     refreshActiveDisciplineDependentUi();
     renderGoogleAuthUi();
-    if (!Array.isArray(userSettings.workflows)) {
-      userSettings.workflows = [];
-    }
-    if (typeof renderWorkflowCards === "function") {
-      renderWorkflowCards();
-    }
   } catch (e) {
     console.error("Failed to load settings:", e);
   }
@@ -13963,7 +13955,6 @@ async function populateSettingsModal() {
   syncPublishOptionsInputs();
   syncManageLayersOptionsInputs();
   syncWorkroomCadRoutingInputs();
-  syncWorkflowCadDefaultInputs();
   syncUnderConstructionToolsInputs();
   syncUnderConstructionToolsAvailability();
   renderGoogleAuthUi();
@@ -14722,6 +14713,114 @@ function normalizePage(raw) {
   return { html, updatedAt };
 }
 
+function normalizeProjectSubpage(raw = {}, index = 0, usedIds = new Set()) {
+  let id = String(raw?.id || "").trim();
+  if (!id || usedIds.has(id)) id = createId("psp");
+  usedIds.add(id);
+  const parentId = String(raw?.parentId || "").trim();
+  const order = Number(raw?.order);
+  const sourceDeliverableId = String(raw?.sourceDeliverableId || "").trim();
+  return {
+    id,
+    title: String(raw?.title || "").trim() || "Untitled",
+    parentId: parentId || null,
+    page: normalizePage(raw?.page),
+    order: Number.isFinite(order) ? order : index,
+    sourceDeliverableId: sourceDeliverableId || null,
+  };
+}
+
+function normalizeProjectSubpages(rawSubpages = []) {
+  const usedIds = new Set();
+  const subpages = (Array.isArray(rawSubpages) ? rawSubpages : []).map(
+    (raw, index) => normalizeProjectSubpage(raw, index, usedIds)
+  );
+  const ids = new Set(subpages.map((subpage) => subpage.id));
+  subpages.forEach((subpage) => {
+    if (!subpage.parentId || !ids.has(subpage.parentId) || subpage.parentId === subpage.id) {
+      subpage.parentId = null;
+    }
+  });
+
+  const byId = new Map(subpages.map((subpage) => [subpage.id, subpage]));
+  const hasAncestorCycle = (subpage) => {
+    const seen = new Set([subpage.id]);
+    let cursor = subpage.parentId ? byId.get(subpage.parentId) : null;
+    while (cursor) {
+      if (seen.has(cursor.id)) return true;
+      seen.add(cursor.id);
+      cursor = cursor.parentId ? byId.get(cursor.parentId) : null;
+    }
+    return false;
+  };
+  subpages.forEach((subpage) => {
+    if (hasAncestorCycle(subpage)) subpage.parentId = null;
+  });
+  return subpages;
+}
+
+function getProjectSubpages(project) {
+  if (!project) return [];
+  project.subpages = normalizeProjectSubpages(project.subpages);
+  return project.subpages;
+}
+
+function getProjectSubpageById(project, subpageId) {
+  const id = String(subpageId || "").trim();
+  if (!id) return null;
+  return getProjectSubpages(project).find((subpage) => subpage.id === id) || null;
+}
+
+function getProjectSubpageAncestors(project, subpage) {
+  const byId = new Map(getProjectSubpages(project).map((item) => [item.id, item]));
+  const ancestors = [];
+  const seen = new Set();
+  let cursor = subpage?.parentId ? byId.get(subpage.parentId) : null;
+  while (cursor && !seen.has(cursor.id)) {
+    ancestors.unshift(cursor);
+    seen.add(cursor.id);
+    cursor = cursor.parentId ? byId.get(cursor.parentId) : null;
+  }
+  return ancestors;
+}
+
+function getProjectSubpageDescendantIds(project, subpageId) {
+  const targetId = String(subpageId || "").trim();
+  if (!targetId) return new Set();
+  const childrenByParent = new Map();
+  getProjectSubpages(project).forEach((subpage) => {
+    const parentKey = subpage.parentId || "";
+    if (!childrenByParent.has(parentKey)) childrenByParent.set(parentKey, []);
+    childrenByParent.get(parentKey).push(subpage);
+  });
+  const descendants = new Set();
+  const stack = [...(childrenByParent.get(targetId) || [])];
+  while (stack.length) {
+    const subpage = stack.pop();
+    if (!subpage || descendants.has(subpage.id)) continue;
+    descendants.add(subpage.id);
+    stack.push(...(childrenByParent.get(subpage.id) || []));
+  }
+  return descendants;
+}
+
+function createProjectSubpage({
+  title = "Untitled",
+  parentId = null,
+  html = "",
+  sourceDeliverableId = null,
+  order = null,
+} = {}) {
+  return normalizeProjectSubpage({
+    id: createId("psp"),
+    title,
+    parentId,
+    page: { html, updatedAt: html ? new Date().toISOString() : "" },
+    order,
+    sourceDeliverableId,
+  });
+}
+
 function normalizeDeliverable(deliverable = {}) {
   const attachments = normalizeAttachments(deliverable.attachments, {
     legacyLinks: normalizeDeliverableLinks(
@@ -14962,6 +15061,27 @@ function mergeProjects(base, incoming) {
     base.workroomRootPath = incoming.workroomRootPath;
   }
   if (!base.notes && incoming.notes) base.notes = incoming.notes;
+  base.subpages = normalizeProjectSubpages(base.subpages);
+  const existingSubpageIds = new Set(base.subpages.map((subpage) => subpage.id));
+  const incomingSubpages = normalizeProjectSubpages(incoming.subpages);
+  const incomingSubpageIdMap = new Map();
+  incomingSubpages.forEach((subpage) => {
+    incomingSubpageIdMap.set(
+      subpage.id,
+      existingSubpageIds.has(subpage.id) ? createId("psp") : subpage.id
+    );
+  });
+  incomingSubpages.forEach((subpage) => {
+    const cloned = normalizeProjectSubpage({
+      ...subpage,
+      id: incomingSubpageIdMap.get(subpage.id),
+      parentId: subpage.parentId
+        ? incomingSubpageIdMap.get(subpage.parentId) || subpage.parentId
+        : null,
+    });
+    existingSubpageIds.add(cloned.id);
+    base.subpages.push(cloned);
+  });
   base.refs = mergeRefs(base.refs || [], incoming.refs || []);
   base.attachments = normalizeAttachments(
     [
@@ -15058,8 +15178,8 @@ function convertLegacyProject(legacy) {
 }
 
 // One-time, idempotent migrations that fold legacy project notes and
-// coordination items into the project's page. Guarded by flags persisted on the
-// project so they run exactly once per project.
+// coordination fields into the project's page. Guarded by flags persisted on
+// the project so they run exactly once per project.
 function migrateProjectNotesToPage(out) {
   if (!out || out.notesMigratedToPage) return;
   out.notesMigratedToPage = true;
@@ -15087,25 +15207,44 @@ function migrateCoordinationItemsToPage(out) {
       if (party) parts.push(`[${party}]`);
       if (note) parts.push(note);
       if (due) parts.push(`(due ${due})`);
+      if (item?.done === true) parts.push("(done)");
       const label = parts.join(" ").trim();
-      if (!label) return "";
-      const text = escapeHtml(label);
-      const checked = item?.done === true;
-      const id = createId("pi");
-      return `<div class="page-item${checked ? " done" : ""}" data-tag="coordination" data-item-id="${id}" data-checked="${
-        checked ? "true" : "false"
-      }"><span class="page-item-box" contenteditable="false" role="checkbox" aria-checked="${
-        checked ? "true" : "false"
-      }"></span><span class="page-item-badge" contenteditable="false" data-tag="coordination">Coordination</span><div class="page-item-text">${text}</div></div>`;
+      return label;
     })
     .filter(Boolean);
   if (!lines.length) return;
   if (!out.page || typeof out.page !== "object") {
     out.page = { html: "", updatedAt: "" };
   }
-  const block = `<h2>Coordination</h2>${lines.join("")}`;
+  const block = `<h2>Coordination</h2>${plainTextToPageHtml(lines.join("\n"))}`;
   out.page.html = out.page.html ? `${out.page.html}${block}` : block;
   out.page.updatedAt = new Date().toISOString();
+}
+
+function migrateDeliverablePagesToProjectSubpages(out) {
+  if (!out || out.deliverablePagesMigratedToProjectSubpages) return;
+  out.deliverablePagesMigratedToProjectSubpages = true;
+  out.subpages = normalizeProjectSubpages(out.subpages);
+  const existingSources = new Set(
+    out.subpages
+      .map((subpage) => String(subpage.sourceDeliverableId || "").trim())
+      .filter(Boolean)
+  );
+  (Array.isArray(out.deliverables) ? out.deliverables : []).forEach((deliverable) => {
+    const sourceDeliverableId = String(deliverable?.id || "").trim();
+    if (!sourceDeliverableId || existingSources.has(sourceDeliverableId)) return;
+    const page = normalizePage(deliverable.page);
+    if (!String(page.html || "").trim()) return;
+    const subpage = createProjectSubpage({
+      title: deliverable.name || "Deliverable notes",
+      html: page.html,
+      sourceDeliverableId,
+      order: out.subpages.length,
+    });
+    subpage.page.updatedAt = page.updatedAt || subpage.page.updatedAt;
+    out.subpages.push(subpage);
+    existingSources.add(sourceDeliverableId);
+  });
 }
 
 function normalizeProject(project) {
@@ -15126,6 +15265,9 @@ function normalizeProject(project) {
     workroomRootPath: normalizeWindowsPath(project.workroomRootPath || ""),
     notes: project.notes || "",
     page: normalizePage(project.page),
+    subpages: normalizeProjectSubpages(project.subpages),
+    deliverablePagesMigratedToProjectSubpages:
+      project.deliverablePagesMigratedToProjectSubpages === true,
     refs: Array.isArray(project.refs)
       ? project.refs.map(normalizeRef).filter(Boolean)
       : [],
@@ -15152,6 +15294,7 @@ function normalizeProject(project) {
   });
   migrateProjectNotesToPage(out);
   migrateCoordinationItemsToPage(out);
+  migrateDeliverablePagesToProjectSubpages(out);
   return out;
 }
 
@@ -21262,7 +21405,6 @@ function createDeliverableCardTopActions(deliverable, project, card) {
     "deliverable-card-pin-action"
   );
 
-  const attachmentBtn = createDeliverableAttachmentAction(deliverable, project, card);
   leftActions.append(pinBtn, statusDropdown, toolDropdown);
 
   const projectIndex = Array.isArray(db) ? db.indexOf(project) : -1;
@@ -21270,13 +21412,13 @@ function createDeliverableCardTopActions(deliverable, project, card) {
     rightActions.append(
       createDeliverableCardActionButton({
         className: "deliverable-card-delete-action",
-        title: "Delete project",
-        ariaLabel: "Delete project",
+        title: "Delete deliverable",
+        ariaLabel: "Delete deliverable",
         iconPath: TRASH_ICON_PATH,
         danger: true,
         onClick: () => {
           closeDeliverableCardActionOverlays();
-          removeProject(projectIndex);
+          removeDeliverable(project, deliverable);
         },
       }),
       createDeliverableCardActionButton({
@@ -21291,28 +21433,17 @@ function createDeliverableCardTopActions(deliverable, project, card) {
       })
     );
   }
-  rightActions.append(attachmentBtn);
-  // Notion-style page entry points (project page + this deliverable's subpage)
+  // Notion-style project notes entry point
   if (project) {
     rightActions.append(
       createDeliverableCardActionButton({
-        className: "deliverable-card-open-project-page-action",
-        title: "Open project page",
-        ariaLabel: "Open project page",
-        iconPath: FOLDER_ICON_PATH,
+        className: "deliverable-card-open-page-action",
+        title: "Open project notes",
+        ariaLabel: "Open project notes",
+        iconPath: NOTE_ICON_PATH,
         onClick: () => {
           closeDeliverableCardActionOverlays();
           openProjectPage(project);
-        },
-      }),
-      createDeliverableCardActionButton({
-        className: "deliverable-card-open-page-action",
-        title: "Open deliverable page",
-        ariaLabel: "Open deliverable page",
-        iconPath: EXPAND_ICON_PATH,
-        onClick: () => {
-          closeDeliverableCardActionOverlays();
-          if (deliverable) openDeliverablePage(project, deliverable);
         },
       })
     );
@@ -22209,40 +22340,6 @@ function createDeliverableStatusSection(deliverable, project, card) {
   return statusSection;
 }
 
-function createNotesSectionLegacy(deliverable, project) {
-  const section = el("div", { className: "deliverable-notes-section" });
-
-  // Simple header label (no toggle)
-  const header = el("div", { className: "deliverable-notes-header-simple" });
-  const titleText = el("span", {
-    className: "deliverable-notes-label",
-    textContent: "Notes"
-  });
-  header.appendChild(titleText);
-
-  // Content (textarea) - always visible when details are expanded
-  const textarea = el("textarea", {
-    className: "deliverable-notes-textarea",
-    placeholder: "Add notes about this deliverable...",
-    value: deliverable.notes || ""
-  });
-
-  // Auto-save on change
-  let saveTimeout;
-  textarea.addEventListener("input", () => {
-    deliverable.notes = textarea.value;
-
-    // Debounce save
-    clearTimeout(saveTimeout);
-    saveTimeout = setTimeout(async () => {
-      await save();
-    }, 500);
-  });
-
-  section.append(header, textarea);
-  return section;
-}
-
 function createTasksPreviewLegacy(deliverable, card) {
   const container = el("div", { className: "deliverable-tasks-preview" });
 
@@ -22488,10 +22585,7 @@ function renderDeliverableCardLegacy(deliverable, isPrimary, project) {
   // Tasks preview (2-3 tasks, now clickable)
   const tasksPreview = createTasksPreviewLegacy(deliverable, card);
 
-  // Notes section (always visible when expanded, no toggle)
-  const notesSection = createNotesSectionLegacy(deliverable, project);
-
-  card.append(actionRow, header, progress, statusSection, tasksPreview, notesSection);
+  card.append(actionRow, header, progress, statusSection, tasksPreview);
   updateDeliverableTaskStats(card, deliverable);
   return card;
 }
@@ -22673,193 +22767,6 @@ function createInlineWorkItemTextControl({
 }
 
 
-
-function createNotesSection(deliverable, card, project = null) {
-  syncDeliverableWorkItemFields(deliverable);
-  const section = el("div", { className: "deliverable-notes-footer" });
-  const list = el("div", { className: "deliverable-notes-list-edit" });
-  const controls = el("div", { className: "deliverable-notes-footer-controls" });
-  const addNoteBtn = el("button", {
-    className: "deliverable-note-add-btn",
-    type: "button",
-    title: "Add note",
-    "aria-label": "Add note",
-  });
-  addNoteBtn.appendChild(createIcon(NOTE_ICON_PATH, 14));
-  const toggleBtn = el("button", {
-    className: "deliverable-notes-toggle",
-    type: "button",
-  });
-  controls.append(addNoteBtn, toggleBtn);
-
-  let notesExpanded = false;
-  let isAddingNote = false;
-
-  const getNoteEntries = () => {
-    syncDeliverableWorkItemFields(deliverable);
-    const noteItems = Array.isArray(deliverable.noteItems)
-      ? deliverable.noteItems
-      : [];
-    return getDeliverableNoteSortEntries(noteItems).map(({ index }) => {
-      noteItems[index] = normalizeDeliverableNoteItem(noteItems[index]);
-      return { note: noteItems[index], index };
-    });
-  };
-
-  const renderNoteList = ({ focusInput = false } = {}) => {
-    list.innerHTML = "";
-
-    const noteEntries = getNoteEntries();
-    const visibleEntries = notesExpanded ? noteEntries : noteEntries.slice(0, 2);
-
-    visibleEntries.forEach(({ note: liveNote, index }) => {
-      const row = el("div", {
-        className: "deliverable-note-row",
-        tabindex: "0",
-      });
-      const content = el("div", { className: "work-item-content" });
-      const textControl = createInlineWorkItemTextControl({
-        textClassName: "note-text",
-        value: liveNote.text || "",
-        fallbackText: "Note",
-        title: "Click to edit note",
-        ariaLabel: "Edit note text",
-        onCommit: async (nextText) => {
-          liveNote.text = nextText;
-          syncDeliverableNoteFields(deliverable);
-          updateDeliverableWorkItemUi(card, deliverable);
-          renderNoteList();
-          await save();
-        },
-      });
-      const deleteBtn = el("button", {
-        className: "deliverable-note-delete-btn",
-        type: "button",
-        title: "Remove note",
-        "aria-label": "Remove note",
-        textContent: "x",
-      });
-      deleteBtn.addEventListener("click", async (e) => {
-        e.stopPropagation();
-        await clearAttachmentOwnerEmailRefs(liveNote);
-        deliverable.noteItems.splice(index, 1);
-        syncDeliverableNoteFields(deliverable);
-        updateDeliverableWorkItemUi(card, deliverable);
-        renderNoteList();
-        await save();
-      });
-      const dueControl = createNoteDueDateControl({
-        value: liveNote.dueDate || "",
-        allowAdd: true,
-        onCommit: async (nextDueDate) => {
-          liveNote.dueDate = nextDueDate;
-          syncDeliverableNoteFields(deliverable);
-          updateDeliverableWorkItemUi(card, deliverable);
-          renderNoteList();
-          await save();
-        },
-      });
-      content.append(textControl);
-      row.append(content, dueControl, deleteBtn);
-      list.appendChild(row);
-    });
-
-    if (isAddingNote) {
-      const addNoteRow = el("div", { className: "deliverable-note-add-row" });
-      const noteInput = el("input", {
-        className: "deliverable-note-add-input",
-        type: "text",
-        placeholder: "Add a note...",
-      });
-
-      let isCommittingNote = false;
-      const finishAddingNote = async (mode = "commit") => {
-        if (isCommittingNote) return false;
-        const noteText = noteInput.value.trim();
-        if (mode === "cancel" || !noteText) {
-          isAddingNote = false;
-          renderNoteList();
-          return false;
-        }
-
-        isCommittingNote = true;
-        noteInput.value = "";
-        deliverable.noteItems.push({
-          text: noteText,
-          pinned: false,
-          dueDate: "",
-          attachments: [],
-        });
-        notesExpanded = true;
-        isAddingNote = false;
-        syncDeliverableNoteFields(deliverable);
-        updateDeliverableWorkItemUi(card, deliverable);
-        await save();
-        renderNoteList();
-        return true;
-      };
-
-      noteInput.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          e.stopPropagation();
-          void finishAddingNote("commit");
-        } else if (e.key === "Escape") {
-          e.preventDefault();
-          e.stopPropagation();
-          void finishAddingNote("cancel");
-        }
-      });
-
-      noteInput.addEventListener("blur", () => {
-        setTimeout(() => {
-          void finishAddingNote("commit");
-        }, 0);
-      });
-
-      noteInput.addEventListener("click", (e) => {
-        e.stopPropagation();
-      });
-
-      addNoteRow.append(noteInput);
-      list.appendChild(addNoteRow);
-
-      if (focusInput) {
-        setTimeout(() => {
-          noteInput.focus();
-          noteInput.select();
-        }, 0);
-      }
-    }
-
-    const hasOverflow = noteEntries.length > 2;
-    toggleBtn.hidden = !hasOverflow;
-    toggleBtn.textContent = notesExpanded ? "Hide notes" : "Show all notes";
-    toggleBtn.setAttribute("aria-expanded", String(notesExpanded));
-    toggleBtn.setAttribute(
-      "aria-label",
-      notesExpanded ? "Hide notes" : "Show all notes"
-    );
-  };
-
-  addNoteBtn.addEventListener("click", (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    isAddingNote = true;
-    renderNoteList({ focusInput: true });
-  });
-
-  toggleBtn.addEventListener("click", (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    notesExpanded = !notesExpanded;
-    renderNoteList();
-  });
-
-  renderNoteList();
-  section.append(list, controls);
-  return section;
-}
 
 function createTasksPreview(deliverable, card, project = null) {
   syncDeliverableWorkItemFields(deliverable);
@@ -23055,9 +22962,7 @@ function renderDeliverableCard(deliverable, isPrimary, project) {
     card
   );
 
-  const notesSection = createNotesSection(deliverable, card, project);
-
-  card.append(actionRow, header, statusSection, notesSection);
+  card.append(actionRow, header, statusSection);
   updateDeliverableWorkItemUi(card, deliverable);
   return card;
 }
@@ -24144,16 +24049,6 @@ function buildProjectTableRow(project, projectIndex, rowTemplate) {
 
     projectDetailsHeader.append(projectDetailsMain);
     nameCell.appendChild(projectDetailsHeader);
-
-    const projectNotes = (project?.notes || "").trim();
-    if (projectNotes) {
-      nameCell.append(
-        el("div", {
-          className: "project-notes-snippet",
-          textContent: projectNotes,
-        })
-      );
-    }
   }
 
   return tr;
@@ -24387,15 +24282,6 @@ function buildMatchContextRow(q, project, context) {
       container.appendChild(item);
     }
 
-    dCtx.matchingNotes.forEach((noteText) => {
-      const item = el("div", { className: "search-context-item" });
-      item.append(
-        el("span", { className: "search-context-label", textContent: d.name + " Note: " }),
-        createContextSnippet(noteText, q)
-      );
-      container.appendChild(item);
-    });
-
   });
 
   if (!container.children.length) return null;
@@ -24430,226 +24316,11 @@ function formatProjectWeekLabel(weekStart) {
     : `${startMonth} ${startDay} – ${endMonth} ${endDay}, ${year}`;
 }
 
-// --- Page items roll-up (action / coordination items across all pages) ---
-function extractPageTaggedItems(html) {
-  if (!html) return [];
-  let doc;
-  try {
-    doc = new DOMParser().parseFromString(String(html), "text/html");
-  } catch (_) {
-    return [];
-  }
-  const nodes = doc.querySelectorAll(
-    '.page-item[data-tag="action"], .page-item[data-tag="coordination"]'
-  );
-  const items = [];
-  nodes.forEach((node) => {
-    const tag =
-      node.getAttribute("data-tag") === "coordination" ? "coordination" : "action";
-    const id = String(node.getAttribute("data-item-id") || "").trim();
-    const textEl = node.querySelector(".page-item-text");
-    const text = (textEl ? textEl.textContent : node.textContent || "").trim();
-    if (!id || !text) return;
-    items.push({
-      id,
-      tag,
-      text,
-      done: node.getAttribute("data-checked") === "true",
-    });
-  });
-  return items;
-}
-
-// Collect every page that carries tagged items: project pages, deliverable
-// pages, and global pages.
-function collectRollupSources() {
-  const sources = [];
-  (Array.isArray(db) ? db : []).forEach((project) => {
-    const projItems = extractPageTaggedItems(project.page?.html || "");
-    if (projItems.length) {
-      sources.push({
-        kind: "project",
-        project,
-        page: project.page,
-        items: projItems,
-      });
-    }
-    (Array.isArray(project.deliverables) ? project.deliverables : []).forEach(
-      (deliverable) => {
-        const dlvItems = extractPageTaggedItems(deliverable.page?.html || "");
-        if (dlvItems.length) {
-          sources.push({
-            kind: "deliverable",
-            project,
-            deliverable,
-            page: deliverable.page,
-            items: dlvItems,
-          });
-        }
-      }
-    );
-  });
-  (Array.isArray(globalPages) ? globalPages : []).forEach((globalPage) => {
-    const gItems = extractPageTaggedItems(globalPage.page?.html || "");
-    if (gItems.length) {
-      sources.push({
-        kind: "global",
-        globalPage,
-        page: globalPage.page,
-        items: gItems,
-      });
-    }
-  });
-  return sources;
-}
-
-function rollupSourceTitle(source) {
-  if (source.kind === "project") {
-    return source.project.nick || source.project.name || "Untitled project";
-  }
-  if (source.kind === "deliverable") {
-    const proj = source.project.nick || source.project.name || "Project";
-    return `${proj} › ${source.deliverable.name || "Deliverable"}`;
-  }
-  return source.globalPage.title || "Untitled page";
-}
-
-function openRollupSource(source) {
-  if (source.kind === "project") openProjectPage(source.project);
-  else if (source.kind === "deliverable")
-    openDeliverablePage(source.project, source.deliverable);
-  else if (source.kind === "global") openGlobalPage(source.globalPage);
-}
-
-// Toggle a tagged item's done state directly in the owning page's stored HTML.
-function setPageItemDoneInHtml(page, itemId, done) {
-  if (!page || !itemId) return false;
-  let doc;
-  try {
-    doc = new DOMParser().parseFromString(String(page.html || ""), "text/html");
-  } catch (_) {
-    return false;
-  }
-  const node = doc.querySelector(`.page-item[data-item-id="${itemId}"]`);
-  if (!node) return false;
-  node.setAttribute("data-checked", done ? "true" : "false");
-  node.classList.toggle("done", done);
-  const box = node.querySelector(".page-item-box");
-  if (box) box.setAttribute("aria-checked", done ? "true" : "false");
-  page.html = doc.body.innerHTML;
-  page.updatedAt = new Date().toISOString();
-  return true;
-}
-
-// Open the owning page and scroll/flash the targeted tagged line.
-function openPageToItem(source, itemId) {
-  openRollupSource(source);
-  setTimeout(() => {
-    const editor = getPageEditorEl();
-    if (!editor) return;
-    const node = editor.querySelector(`.page-item[data-item-id="${itemId}"]`);
-    if (!node) return;
-    node.scrollIntoView({ behavior: "smooth", block: "center" });
-    node.classList.add("page-item-flash");
-    setTimeout(() => node.classList.remove("page-item-flash"), 1600);
-  }, 120);
-}
-
-function refreshRollupIfActive() {
-  if (projectsViewMode === "rollup") renderPageItemsRollupView();
-}
-
-function renderRollupSourcePanel(source) {
-  const panel = el("section", { className: "rollup-source-panel" });
-  const header = el("button", {
-    className: "rollup-source-header",
-    type: "button",
-    title: "Open page",
-    onclick: () => openRollupSource(source),
-  });
-  const heading = el("div", { className: "rollup-source-heading" });
-  heading.append(
-    el("div", {
-      className: "rollup-source-title",
-      textContent: rollupSourceTitle(source),
-    })
-  );
-  const openCount = source.items.filter((it) => !it.done).length;
-  const countBadge = el("span", {
-    className: `rollup-source-count ${openCount ? "" : "is-clear"}`.trim(),
-    textContent: openCount ? `${openCount} open` : "All done",
-  });
-  header.append(heading, countBadge);
-
-  const list = el("div", { className: "rollup-item-list stack" });
-  list.setAttribute("role", "list");
-  source.items
-    .slice()
-    .sort((a, b) => (a.done === b.done ? 0 : a.done ? 1 : -1))
-    .forEach((item) => {
-      const row = el("div", {
-        className: `rollup-item-row ${item.done ? "is-done" : ""}`.trim(),
-      });
-      row.setAttribute("role", "listitem");
-      const checkbox = createWorkItemDoneCheckbox({
-        checked: item.done,
-        ariaLabel: "Mark item done",
-        onToggle: async (nextDone) => {
-          if (setPageItemDoneInHtml(source.page, item.id, nextDone === true)) {
-            item.done = nextDone === true;
-            if (source.kind === "global") await saveGlobalPages({ silent: true });
-            else await save({ silent: true });
-            renderPageItemsRollupView();
-          }
-        },
-      });
-      const badge = el("span", {
-        className: "rollup-item-badge",
-        textContent: item.tag === "coordination" ? "Coordination" : "Action",
-      });
-      badge.dataset.tag = item.tag;
-      const text = el("button", {
-        className: "rollup-item-text",
-        type: "button",
-        title: "Open in page",
-        textContent: item.text,
-        onclick: () => openPageToItem(source, item.id),
-      });
-      row.append(checkbox, badge, text);
-      list.appendChild(row);
-    });
-
-  panel.append(header, list);
-  return panel;
-}
-
-function renderPageItemsRollupView() {
-  const host = document.getElementById("projectsRollupView");
-  if (!host) return;
-  host.innerHTML = "";
-  const sources = collectRollupSources();
-  if (!sources.length) {
-    host.appendChild(
-      el("div", {
-        className: "rollup-view-empty muted",
-        textContent:
-          "No action or coordination items yet. Tag lines in any page to see them here.",
-      })
-    );
-    return;
-  }
-  sources.forEach((source) =>
-    host.appendChild(renderRollupSourcePanel(source))
-  );
-}
-
 function updateProjectsViewModeUi() {
   const listBtn = document.getElementById("viewToggleList");
   const cardBtn = document.getElementById("viewToggleCard");
-  const rollupBtn = document.getElementById("viewToggleRollup");
   const isCard = projectsViewMode === "card";
-  const isRollup = projectsViewMode === "rollup";
-  const isList = !isCard && !isRollup;
+  const isList = !isCard;
   if (listBtn) {
     listBtn.classList.toggle("is-active", isList);
     listBtn.setAttribute("aria-pressed", String(isList));
@@ -24658,23 +24329,17 @@ function updateProjectsViewModeUi() {
     cardBtn.classList.toggle("is-active", isCard);
     cardBtn.setAttribute("aria-pressed", String(isCard));
   }
-  if (rollupBtn) {
-    rollupBtn.classList.toggle("is-active", isRollup);
-    rollupBtn.setAttribute("aria-pressed", String(isRollup));
-  }
   if (document.body) {
     document.body.dataset.projectsViewMode = projectsViewMode;
   }
   const table = document.querySelector("#projects-panel .projects-table");
   const cardView = document.getElementById("projectsCardView");
   const cardControls = document.getElementById("projectsCardControls");
-  const rollupView = document.getElementById("projectsRollupView");
   const emptyState = document.getElementById("emptyState");
   const filterControls = document.getElementById("projectsFilterControls");
   if (table) table.hidden = !isList;
   if (cardView) cardView.hidden = !isCard;
   if (cardControls) cardControls.hidden = !isCard;
-  if (rollupView) rollupView.hidden = !isRollup;
   if (filterControls) filterControls.hidden = !isList;
   if (emptyState && !isList) emptyState.style.display = "none";
 }
@@ -24930,8 +24595,7 @@ function clearProjectSearchInput() {
 }
 
 function normalizeProjectsViewMode(value) {
-  if (value === "card" || value === "rollup") return value;
-  if (value === "coordination") return "rollup"; // legacy mode migrates to roll-up
+  if (value === "card") return "card";
   return "list";
 }
 
@@ -25063,7 +24727,6 @@ function bindProjectsCardViewWheelScroll() {
 function setupProjectsViewModeControls() {
   const listBtn = document.getElementById("viewToggleList");
   const cardBtn = document.getElementById("viewToggleCard");
-  const rollupBtn = document.getElementById("viewToggleRollup");
   const widthBtn = document.getElementById("projectsWidthToggle");
   const emptyColumnsBtn = document.getElementById("projectsEmptyColumnsToggle");
   const hideEmptyColumnsBtn = document.getElementById(
@@ -25071,9 +24734,6 @@ function setupProjectsViewModeControls() {
   );
   if (listBtn) listBtn.addEventListener("click", () => setProjectsViewMode("list"));
   if (cardBtn) cardBtn.addEventListener("click", () => setProjectsViewMode("card"));
-  if (rollupBtn) {
-    rollupBtn.addEventListener("click", () => setProjectsViewMode("rollup"));
-  }
   if (widthBtn) {
     widthBtn.addEventListener("click", () =>
       setProjectsWideLayout(!projectsWideLayout)
@@ -25489,13 +25149,6 @@ function render() {
   const matchContextMap = new Map();
   const projectListContextMap = new Map();
   const isCardView = projectsViewMode === "card";
-  const isRollupView = projectsViewMode === "rollup";
-
-  if (isRollupView) {
-    emptyState.style.display = "none";
-    renderPageItemsRollupView();
-    return;
-  }
 
   let items = db.filter((p) => {
     if (q) {
@@ -25663,17 +25316,12 @@ function getMatchContext(q, p) {
     const dCtx = {
       deliverable: d,
       fields: [],
-      matchingNotes: [],
     };
     if (str(d.name).includes(q)) dCtx.fields.push("name");
     if (str(d.due).includes(q)) dCtx.fields.push("due");
-    (d.noteItems || []).forEach((noteItem) => {
-      if (str(noteItem?.text).includes(q)) dCtx.matchingNotes.push(noteItem.text);
-    });
     const hasStatusMatch = (d.statuses || []).some((s) => str(s).includes(q));
     if (
       dCtx.fields.length ||
-      dCtx.matchingNotes.length ||
       hasStatusMatch
     ) {
       context.deliverables.push(dCtx);
@@ -25774,6 +25422,17 @@ function removeProject(i) {
   save();
   render();
 }
+function removeDeliverable(project, deliverable) {
+  if (!project || !deliverable) return;
+  const deliverables = getProjectDeliverables(project);
+  const index = deliverables.indexOf(deliverable);
+  if (index < 0) return;
+  if (!confirm("Delete this deliverable?")) return;
+  deliverables.splice(index, 1);
+  syncProjectActiveDeliverables(project);
+  save();
+  render();
+}
 function onSaveProject() {
   const dlg = document.getElementById("editDlg");
   const mode = dlg?.dataset.mode || "full";
@@ -25833,7 +25492,6 @@ function onSaveProject() {
     return;
   }
 
-  flushPendingModalDeliverableNotes();
   const data = readForm();
   autoSetPrimary(data);
   _aiMatchSnapshot = null;
@@ -26149,14 +25807,12 @@ function addDeliverableCard(deliverable, activeAnchorId, options = {}) {
   }
 
   const taskList = card.querySelector(".deliverable-task-list");
-  const noteList = card.querySelector(".deliverable-note-list");
   card._taskItems = (deliverable.tasks || []).map(normalizeTask);
   card._noteItems = normalizeDeliverableNoteItems(
     deliverable.noteItems,
     deliverable.notes || ""
   );
   renderModalDeliverableTaskList(card, taskList);
-  renderModalDeliverableNoteList(card, noteList);
   card.querySelector(".btn-remove").onclick = async () => {
     const cardRefs = buildLegacyEmailRefsFromAttachments(getDeliverableCardAttachments(card));
     const workItemRefs = getModalDeliverableWorkItemEmailRefs(card);
@@ -26572,130 +26228,6 @@ function renderModalDeliverableTaskList(card, container, options = {}) {
   if (!card || !container) return;
   const { focusInput = false, ensureInputVisible = false } = options;
   const taskItems = getModalDeliverableTaskItems(card);
-  container.innerHTML = "";
-
-  taskItems.forEach((task, index) => {
-    const item = el("div", {
-      className: `deliverable-task-item ${task.done ? "done" : "undone"}`,
-    });
-    const iconSpan = el("span", {
-      className: "task-icon",
-      textContent: task.done ? "✓" : "○",
-    });
-    const textSpan = el("span", {
-      className: "task-text",
-      textContent: task.text || "Task",
-    });
-    const deleteBtn = el("button", {
-      className: "task-delete-btn",
-      type: "button",
-      title: "Remove task",
-      textContent: "×",
-    });
-
-    deleteBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      taskItems.splice(index, 1);
-      renderModalDeliverableTaskList(card, container);
-    });
-
-    item.append(iconSpan, textSpan, deleteBtn);
-    item.addEventListener("click", (e) => {
-      if (e.target === deleteBtn) return;
-      e.stopPropagation();
-      task.done = !task.done;
-      renderModalDeliverableTaskList(card, container);
-    });
-    container.appendChild(item);
-  });
-
-  const addTaskRow = el("div", { className: "task-add-row modal-task-add-row" });
-  const bulletSpan = el("span", {
-    className: "task-icon task-add-bullet",
-    textContent: "○",
-  });
-  const taskInput = el("input", {
-    className: "task-add-input",
-    type: "text",
-    placeholder: "Add a task...",
-  });
-
-  taskInput.addEventListener("keydown", (e) => {
-    if (e.key !== "Enter") return;
-    e.preventDefault();
-    e.stopPropagation();
-    commitPendingModalDeliverableTask(card, container, {
-      refocus: true,
-      rerender: true,
-      ensureInputVisible: true,
-    });
-  });
-  taskInput.addEventListener("blur", () => {
-    if (!taskInput.value.trim()) return;
-    setTimeout(() => {
-      commitPendingModalDeliverableTask(card, container, {
-        refocus: false,
-        rerender: true,
-        ensureInputVisible: true,
-      });
-    }, 0);
-  });
-  taskInput.addEventListener("click", (e) => {
-    e.stopPropagation();
-  });
-
-  addTaskRow.append(bulletSpan, taskInput);
-  container.appendChild(addTaskRow);
-
-  if (focusInput) {
-    setTimeout(() => {
-      focusModalTaskInput(container);
-    }, 0);
-  } else if (ensureInputVisible) {
-    scrollElementIntoNearestModalBody(taskInput);
-  }
-}
-
-function commitPendingModalDeliverableTask(card, container, options = {}) {
-  const {
-    refocus = false,
-    rerender = true,
-    ensureInputVisible = true,
-  } = options;
-  const taskInput = container?.querySelector(".task-add-input");
-  if (!card || !container || !taskInput) return false;
-
-  const taskText = taskInput.value.trim();
-  if (!taskText) return false;
-
-  taskInput.value = "";
-  const taskItems = getModalDeliverableTaskItems(card);
-  taskItems.push({ text: taskText, done: false, links: [] });
-
-  if (rerender) {
-    renderModalDeliverableTaskList(card, container, {
-      focusInput: refocus,
-      ensureInputVisible,
-    });
-  }
-  return true;
-}
-
-function flushPendingModalDeliverableTasks() {
-  document.querySelectorAll("#deliverableList .deliverable-card").forEach((card) => {
-    const taskList = card.querySelector(".deliverable-task-list");
-    commitPendingModalDeliverableTask(card, taskList, {
-      refocus: false,
-      rerender: false,
-      ensureInputVisible: false,
-    });
-  });
-}
-
-function renderModalDeliverableTaskList(card, container, options = {}) {
-  if (!card || !container) return;
-  const { focusInput = false, ensureInputVisible = false } = options;
-  const taskItems = getModalDeliverableTaskItems(card);
   const modalDeliverable = getModalDeliverableCardContext(card);
   container.innerHTML = "";
 
@@ -26854,250 +26386,6 @@ function flushPendingModalDeliverableTasks() {
   });
 }
 
-function createNoteDueDateControl({ value = "", allowAdd = true, onCommit } = {}) {
-  const wrap = el("span", { className: "note-due-wrap" });
-  const currentValue = normalizeDeliverableNoteDueDate(value);
-  const commitValue = (nextValue) => {
-    if (typeof onCommit === "function") onCommit(nextValue);
-  };
-
-  const renderEditor = () => {
-    wrap.innerHTML = "";
-    const input = el("input", {
-      className: "note-due-input",
-      type: "text",
-      placeholder: "MM/DD/YYYY",
-      value: currentValue,
-    });
-    input.setAttribute("aria-label", "Note due date");
-    let cancelled = false;
-    input.addEventListener("keydown", (e) => {
-      e.stopPropagation();
-      if (e.key === "Enter") {
-        e.preventDefault();
-        input.blur();
-      } else if (e.key === "Escape") {
-        e.preventDefault();
-        cancelled = true;
-        input.blur();
-      }
-    });
-    input.addEventListener("blur", () => {
-      setTimeout(() => {
-        // Calendar picker click also blurs the input; let its callback commit.
-        if (document.getElementById("inlineCalendarPicker")) return;
-        if (cancelled) {
-          commitValue(currentValue);
-          return;
-        }
-        autoFormatDateInput(input);
-        commitValue(normalizeDeliverableNoteDueDate(input.value));
-      }, 0);
-    });
-    input.addEventListener("click", (e) => {
-      e.stopPropagation();
-      showCalendarForInput(input, () => {
-        commitValue(normalizeDeliverableNoteDueDate(input.value));
-      });
-    });
-    wrap.appendChild(input);
-    setTimeout(() => {
-      input.focus();
-      input.select();
-    }, 0);
-  };
-
-  if (currentValue) {
-    const ds = dueState(currentValue);
-    const badge = el("button", {
-      className: `note-due-badge ${ds === "overdue" ? "overdue" : ds === "dueSoon" ? "due-soon" : "ok"}`,
-      type: "button",
-      title: "Click to edit due date",
-      textContent: humanDate(currentValue),
-    });
-    badge.setAttribute("aria-label", "Edit note due date");
-    badge.addEventListener("click", (e) => {
-      e.stopPropagation();
-      renderEditor();
-    });
-    wrap.appendChild(badge);
-  } else if (allowAdd) {
-    const addBtn = el("button", {
-      className: "note-due-add-btn",
-      type: "button",
-      title: "Add due date",
-      textContent: "+ due",
-    });
-    addBtn.setAttribute("aria-label", "Add note due date");
-    addBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      renderEditor();
-    });
-    wrap.appendChild(addBtn);
-  }
-
-  return wrap;
-}
-
-function renderModalDeliverableNoteList(card, container, options = {}) {
-  if (!card || !container) return;
-  const { focusInput = false, ensureInputVisible = false } = options;
-  const noteItems = getModalDeliverableNoteItems(card);
-  const modalDeliverable = getModalDeliverableCardContext(card);
-  container.innerHTML = "";
-
-  getDeliverableNoteSortEntries(noteItems).forEach(
-    ({ item: noteItem, index }) => {
-      noteItems[index] = normalizeDeliverableNoteItem(noteItems[index]);
-      const liveNote = noteItems[index];
-      const item = el("div", { className: "deliverable-note-item" });
-      const iconSpan = el("span", {
-        className: "note-icon",
-        "aria-hidden": "true",
-      });
-      iconSpan.appendChild(createIcon(NOTE_ICON_PATH, 12));
-      const content = el("div", { className: "work-item-content" });
-      const textControl = createInlineWorkItemTextControl({
-        textClassName: "note-text",
-        value: liveNote.text || "",
-        fallbackText: "Note",
-        title: "Click to edit note",
-        ariaLabel: "Edit note text",
-        onCommit: async (nextText) => {
-          liveNote.text = nextText;
-          renderModalDeliverableNoteList(card, container);
-        },
-      });
-      const attachments = createWorkItemAttachmentControls({
-        kind: "note",
-        owner: liveNote,
-        deliverable: modalDeliverable,
-        project: getModalProjectDraft(),
-        modalCard: card,
-        persistNow: false,
-        scope: "edit-modal",
-      });
-      const dueControl = createNoteDueDateControl({
-        value: liveNote.dueDate || "",
-        allowAdd: true,
-        onCommit: (nextDueDate) => {
-          liveNote.dueDate = nextDueDate;
-          renderModalDeliverableNoteList(card, container);
-        },
-      });
-      const deleteBtn = el("button", {
-        className: "task-delete-btn",
-        type: "button",
-        title: "Remove note",
-        textContent: "×",
-      });
-      const actions = el("div", { className: "work-item-actions" });
-
-      deleteBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        void (async () => {
-          await clearAttachmentOwnerEmailRefs(liveNote, { modalCard: card });
-          noteItems.splice(index, 1);
-          renderModalDeliverableNoteList(card, container);
-        })();
-      });
-
-      actions.append(dueControl, attachments, deleteBtn);
-      content.append(textControl);
-      item.append(iconSpan, content, actions);
-      container.appendChild(item);
-    }
-  );
-
-  const addNoteRow = el("div", { className: "task-add-row modal-task-add-row" });
-  const noteBullet = el("span", {
-    className: "note-icon note-add-bullet",
-    "aria-hidden": "true",
-  });
-  noteBullet.appendChild(createIcon(NOTE_ICON_PATH, 12));
-  const noteInput = el("input", {
-    className: "task-add-input note-add-input",
-    type: "text",
-    placeholder: "Add a note...",
-  });
-
-  noteInput.addEventListener("keydown", (e) => {
-    if (e.key !== "Enter") return;
-    e.preventDefault();
-    e.stopPropagation();
-    commitPendingModalDeliverableNote(card, container, {
-      refocus: true,
-      rerender: true,
-      ensureInputVisible: true,
-    });
-  });
-  noteInput.addEventListener("blur", () => {
-    if (!noteInput.value.trim()) return;
-    setTimeout(() => {
-      commitPendingModalDeliverableNote(card, container, {
-        refocus: false,
-        rerender: true,
-        ensureInputVisible: true,
-      });
-    }, 0);
-  });
-  noteInput.addEventListener("click", (e) => {
-    e.stopPropagation();
-  });
-
-  addNoteRow.append(noteBullet, noteInput);
-  container.appendChild(addNoteRow);
-
-  if (focusInput) {
-    setTimeout(() => {
-      focusModalNoteInput(container);
-    }, 0);
-  } else if (ensureInputVisible) {
-    scrollElementIntoNearestModalBody(noteInput);
-  }
-}
-
-function commitPendingModalDeliverableNote(card, container, options = {}) {
-  const {
-    refocus = false,
-    rerender = true,
-    ensureInputVisible = true,
-  } = options;
-  const noteInput = container?.querySelector(".note-add-input");
-  if (!card || !container || !noteInput) return false;
-
-  const noteText = noteInput.value.trim();
-  if (!noteText) return false;
-
-  noteInput.value = "";
-  const noteItems = getModalDeliverableNoteItems(card);
-  noteItems.push({
-    text: noteText,
-    pinned: false,
-    dueDate: "",
-    attachments: [],
-  });
-
-  if (rerender) {
-    renderModalDeliverableNoteList(card, container, {
-      focusInput: refocus,
-      ensureInputVisible,
-    });
-  }
-  return true;
-}
-
-function flushPendingModalDeliverableNotes() {
-  document.querySelectorAll("#deliverableList .deliverable-card").forEach((card) => {
-    const noteList = card.querySelector(".deliverable-note-list");
-    commitPendingModalDeliverableNote(card, noteList, {
-      refocus: false,
-      rerender: false,
-      ensureInputVisible: false,
-    });
-  });
-}
-
 function readForm() {
   const baseSchedule =
     editIndex >= 0 && db[editIndex] ? db[editIndex].lightingSchedule : null;
@@ -27114,9 +26402,12 @@ function readForm() {
     nick: val("f_nick"),
     notes: existingProject?.notes || "",
     page: existingProject?.page,
+    subpages: existingProject?.subpages || [],
     notesMigratedToPage: existingProject?.notesMigratedToPage === true,
     coordinationMigratedToPage:
       existingProject?.coordinationMigratedToPage === true,
+    deliverablePagesMigratedToProjectSubpages:
+      existingProject?.deliverablePagesMigratedToProjectSubpages === true,
     path: normalizeProjectPath(val("f_path")),
     localProjectPath: normalizeWindowsPath(existingProject?.localProjectPath || ""),
     workroomRootPath: normalizeWindowsPath(existingProject?.workroomRootPath || ""),
@@ -27163,7 +26454,13 @@ function readForm() {
         };
       })
       .filter(Boolean);
-    const noteItems = getModalDeliverableNoteItems(card)
+    const sourceNoteItems = existingDeliverable
+      ? normalizeDeliverableNoteItems(
+          existingDeliverable.noteItems,
+          existingDeliverable.notes || ""
+        )
+      : getModalDeliverableNoteItems(card);
+    const noteItems = sourceNoteItems
       .map((noteItem) => {
         const normalizedNoteItem = normalizeDeliverableNoteItem(noteItem);
         const text = String(normalizedNoteItem.text || "").trim();
@@ -27184,6 +26481,7 @@ function readForm() {
       name,
       due,
       page: existingDeliverable?.page,
+      notes: existingDeliverable?.notes || buildDeliverableNotesText(noteItems, ""),
       noteItems,
       tasks,
       tasksMigratedToNotes: existingDeliverable?.tasksMigratedToNotes === true,
@@ -27385,6 +26683,36 @@ function hasActiveChecklistSelection() {
   return Boolean(getChecklistById(activeChecklistTabId));
 }
 
+function getGlobalPageSearchText(page) {
+  const title = String(page?.title || "");
+  const body = pageHtmlToPlainText(page?.page?.html || "");
+  return `${title}\n${body}`;
+}
+
+function globalPageMatchesSearch(page, query) {
+  const q = String(query || "").trim().toLowerCase();
+  if (!q) return true;
+  return getGlobalPageSearchText(page).toLowerCase().includes(q);
+}
+
+function createGlobalPageSearchSnippet(text, query, fallbackLength = 140) {
+  const raw = String(text || "").trim();
+  if (!raw) return "";
+  const q = String(query || "").trim().toLowerCase();
+  if (!q) {
+    return raw.slice(0, fallbackLength) + (raw.length > fallbackLength ? "..." : "");
+  }
+  const lower = raw.toLowerCase();
+  const idx = lower.indexOf(q);
+  if (idx === -1) {
+    return raw.slice(0, fallbackLength) + (raw.length > fallbackLength ? "..." : "");
+  }
+  const contextChars = 70;
+  const start = Math.max(0, idx - contextChars);
+  const end = Math.min(raw.length, idx + q.length + contextChars);
+  return `${start > 0 ? "..." : ""}${raw.slice(start, end)}${end < raw.length ? "..." : ""}`;
+}
+
 function renderGlobalPagesView() {
   const listEl = document.getElementById("globalPagesList");
   const emptyState = document.getElementById("notesEmptyState");
@@ -27393,17 +26721,16 @@ function renderGlobalPagesView() {
   const hasPages = pages.length > 0;
   if (emptyState) emptyState.hidden = hasPages;
   if (listEl) listEl.hidden = !hasPages;
-  if (searchInput) searchInput.disabled = !hasPages;
+  if (searchInput) {
+    searchInput.disabled = !hasPages;
+    if (searchInput.value !== notesSearchQuery) {
+      searchInput.value = notesSearchQuery;
+    }
+  }
   if (!listEl) return;
   listEl.innerHTML = "";
   const query = String(notesSearchQuery || "").trim().toLowerCase();
-  const visible = query
-    ? pages.filter((p) => {
-        const title = String(p.title || "").toLowerCase();
-        const text = pageHtmlToPlainText(p.page?.html || "").toLowerCase();
-        return title.includes(query) || text.includes(query);
-      })
-    : pages;
+  const visible = pages.filter((p) => globalPageMatchesSearch(p, query));
   if (!visible.length) {
     listEl.appendChild(
       el("div", {
@@ -27413,24 +26740,27 @@ function renderGlobalPagesView() {
     );
     return;
   }
-  visible.forEach((page) => listEl.appendChild(createGlobalPageCard(page)));
+  visible.forEach((page) => listEl.appendChild(createGlobalPageCard(page, query)));
 }
 
-function createGlobalPageCard(page) {
+function createGlobalPageCard(page, searchQuery = "") {
+  const query = String(searchQuery || "").trim().toLowerCase();
   const card = el("button", {
     className: "global-page-card",
     type: "button",
     onclick: () => openGlobalPage(page),
   });
+  const titleText = page.title || "Untitled";
   const title = el("div", {
     className: "global-page-card-title",
-    textContent: page.title || "Untitled",
   });
+  title.appendChild(highlightText(titleText, query));
   const previewText = pageHtmlToPlainText(page.page?.html || "");
   const preview = el("div", {
     className: "global-page-card-preview muted",
-    textContent: previewText ? previewText.slice(0, 140) : "Empty page",
   });
+  const previewSnippet = createGlobalPageSearchSnippet(previewText, query);
+  preview.appendChild(highlightText(previewSnippet || "Empty page", query));
   const del = createTabDeleteIcon("Delete page", (e) => {
     e.stopPropagation();
     deleteGlobalPage(page);
@@ -35099,8 +34429,6 @@ function initEventListeners() {
     });
   }
 
-  initWorkflowsUi();
-
   const copyProjectLocallyBtn = document.getElementById("toolCopyProjectLocally");
   if (copyProjectLocallyBtn) {
     const handler = async () => {
@@ -35889,40 +35217,6 @@ function initEventListeners() {
       };
     });
 
-  const workflowCadBindings = [
-    [
-      "settings_workflowCad_manageLayersElectricalTopLevel",
-      (checked) => ({
-        manageLayersDwgSource: checked ? "electricalTopLevel" : "manual",
-      }),
-    ],
-    [
-      "settings_workflowCad_cleanXrefsElectricalXrefsToNewestArch",
-      (checked) => ({
-        cleanXrefsDwgSource: checked ? "electricalXrefsToNewestArch" : "manual",
-      }),
-    ],
-    [
-      "settings_workflowCad_cleanXrefsSearchZipArchives",
-      (checked) => ({ cleanXrefsSearchZipArchives: checked }),
-    ],
-  ];
-  workflowCadBindings.forEach(([id, buildPatch]) => {
-    const checkbox = document.getElementById(id);
-    if (!checkbox) return;
-    checkbox.onchange = (e) => {
-      userSettings.workflowCadDefaults = {
-        ...normalizeWorkflowCadDefaults(userSettings.workflowCadDefaults),
-        ...buildPatch(e.target.checked),
-      };
-      userSettings.workflowCadDefaults = normalizeWorkflowCadDefaults(
-        userSettings.workflowCadDefaults
-      );
-      syncWorkflowCadDefaultInputs();
-      debouncedSaveUserSettings();
-    };
-  });
-
   const underConstructionToolsCheckbox = document.getElementById(
     "settings_enableUnderConstructionTools"
   );
@@ -36193,15 +35487,176 @@ async function init() {
   }
 }
 
-// ===================== NOTION-STYLE PROJECT / DELIVERABLE PAGES =====================
+// ===================== NOTION-STYLE PROJECT NOTES PAGES =====================
 let pageViewInitialized = false;
-let pageNav = { project: null, deliverable: null, globalPage: null };
+let pageNav = { project: null, subpage: null, globalPage: null };
 let pageEditorTarget = null; // reference to the {html, updatedAt} object being edited
 let pageEditorOwnerKey = "";
 let pageSaveTimer = null;
 let pageMiscSaveTimer = null;
 let pageSelectionRange = null;
 let pageSelectedImage = null;
+let pageFindRefreshTimer = null;
+let pageFindState = {
+  query: "",
+  matchCount: 0,
+  activeIndex: -1,
+};
+let pageSlashState = {
+  open: false,
+  query: "",
+  range: null,
+  selectedIndex: 0,
+  preservedSelection: null,
+};
+// Obsidian-style "[[" page-link picker. The "[[query" text in the editor is the
+// query region (range), removed when a page is chosen. Shared by both the "[["
+// trigger and the "/link to page" slash command.
+let pageLinkState = {
+  open: false,
+  query: "",
+  range: null,
+  selectedIndex: 0,
+};
+const PAGE_SLASH_COLORS = ["#2f6fed", "#16a34a", "#dc2626", "#9333ea", "#ca8a04", "#111827"];
+const PAGE_SLASH_COMMANDS = Object.freeze([
+  {
+    id: "text",
+    label: "Text",
+    hint: "Turn the current line into normal text",
+    icon: "T",
+    group: "block",
+    aliases: ["text", "normal", "paragraph", "p"],
+    action: { type: "block", tag: "p" },
+  },
+  {
+    id: "h1",
+    label: "Heading 1",
+    hint: "Large section heading",
+    icon: "H1",
+    group: "block",
+    aliases: ["h1", "heading1", "heading 1"],
+    action: { type: "block", tag: "h1" },
+  },
+  {
+    id: "h2",
+    label: "Heading 2",
+    hint: "Medium section heading",
+    icon: "H2",
+    group: "block",
+    aliases: ["h2", "heading2", "heading 2"],
+    action: { type: "block", tag: "h2" },
+  },
+  {
+    id: "h3",
+    label: "Heading 3",
+    hint: "Small section heading",
+    icon: "H3",
+    group: "block",
+    aliases: ["h3", "heading3", "heading 3"],
+    action: { type: "block", tag: "h3" },
+  },
+  {
+    id: "bullet",
+    label: "Bulleted list",
+    hint: "Start a bulleted list",
+    icon: "*",
+    group: "block",
+    aliases: ["bullet", "bullets", "ul", "list"],
+    action: { type: "command", command: "insertUnorderedList" },
+  },
+  {
+    id: "numbered",
+    label: "Numbered list",
+    hint: "Start a numbered list",
+    icon: "1.",
+    group: "block",
+    aliases: ["numbered", "number", "ol", "ordered"],
+    action: { type: "command", command: "insertOrderedList" },
+  },
+  {
+    id: "todo",
+    label: "Todo",
+    hint: "Create a completable checkbox item",
+    icon: "[]",
+    group: "block",
+    aliases: ["todo", "to-do", "checkbox", "checklist", "task"],
+    action: { type: "todo" },
+  },
+  {
+    id: "bold",
+    label: "Bold",
+    hint: "Bold selected text or future typed text",
+    icon: "B",
+    group: "inline",
+    aliases: ["bold", "b"],
+    action: { type: "command", command: "bold" },
+  },
+  {
+    id: "italic",
+    label: "Italic",
+    hint: "Italicize selected text or future typed text",
+    icon: "I",
+    group: "inline",
+    aliases: ["italic", "italics", "i"],
+    action: { type: "command", command: "italic" },
+  },
+  {
+    id: "underline",
+    label: "Underline",
+    hint: "Underline selected text or future typed text",
+    icon: "U",
+    group: "inline",
+    aliases: ["underline", "u"],
+    action: { type: "command", command: "underline" },
+  },
+  {
+    id: "link",
+    label: "Link",
+    hint: "Create a link from selected text or insert a URL",
+    icon: "->",
+    group: "inline",
+    aliases: ["link", "url", "href"],
+    action: { type: "link" },
+  },
+  {
+    id: "color",
+    label: "Text color",
+    hint: "Color selected text or future typed text",
+    icon: "A",
+    group: "inline",
+    aliases: ["color", "colour", "textcolor", "text color"],
+    action: { type: "color" },
+  },
+  {
+    id: "image",
+    label: "Image",
+    hint: "Insert an image into this page",
+    icon: "Img",
+    group: "media",
+    aliases: ["image", "img", "photo", "picture"],
+    action: { type: "image" },
+  },
+  {
+    id: "page",
+    label: "Page",
+    hint: "Create and open a child subpage",
+    icon: "+",
+    group: "page",
+    aliases: ["page", "subpage", "new page"],
+    action: { type: "page" },
+    projectOnly: true,
+  },
+  {
+    id: "pageref",
+    label: "Link to page",
+    hint: "Search and link to a page from the Pages tab",
+    icon: "[[",
+    group: "page",
+    aliases: ["page link", "link to page", "wiki", "wikilink", "mention"],
+    action: { type: "pageLink" },
+  },
+]);
 const PAGE_IMAGE_MIN_PERCENT = 10;
 const PAGE_IMAGE_MAX_PERCENT = 100;
 const PAGE_IMAGE_STEP_PERCENT = 5;
@@ -36213,6 +35668,218 @@ function getPageEditorEl() {
 function setPageSaveStatus(text) {
   const el = document.getElementById("pageSaveStatus");
   if (el) el.textContent = text || "";
+}
+
+const PAGE_FIND_MATCH_SELECTOR = 'mark.page-find-match[data-page-find-match="true"]';
+
+function getPageFindRoots() {
+  return [document.getElementById("pageTitle"), getPageEditorEl()].filter(Boolean);
+}
+
+function unwrapPageFindHighlights(root) {
+  if (!root?.querySelectorAll) return;
+  const doc = root.ownerDocument || document;
+  root.querySelectorAll(PAGE_FIND_MATCH_SELECTOR).forEach((mark) => {
+    mark.replaceWith(doc.createTextNode(mark.textContent || ""));
+  });
+  try {
+    root.normalize();
+  } catch (_) {}
+}
+
+function clearPageFindHighlights({ updateUi = true } = {}) {
+  getPageFindRoots().forEach(unwrapPageFindHighlights);
+  pageFindState.matchCount = 0;
+  pageFindState.activeIndex = -1;
+  if (updateUi) updatePageFindUi();
+}
+
+function collectPageFindTextParts(root) {
+  const parts = [];
+  let text = "";
+  if (!root) return { text, parts };
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      const value = String(node.nodeValue || "");
+      if (!value) return NodeFilter.FILTER_REJECT;
+      if (node.parentElement?.closest?.(PAGE_FIND_MATCH_SELECTOR)) {
+        return NodeFilter.FILTER_REJECT;
+      }
+      return NodeFilter.FILTER_ACCEPT;
+    },
+  });
+  let node = walker.nextNode();
+  while (node) {
+    const value = String(node.nodeValue || "");
+    parts.push({ node, start: text.length, end: text.length + value.length });
+    text += value;
+    node = walker.nextNode();
+  }
+  return { text, parts };
+}
+
+function getPageFindRanges(text, query, startIndex = 0) {
+  const q = String(query || "").trim().toLowerCase();
+  if (!q) return [];
+  const lower = String(text || "").toLowerCase();
+  const ranges = [];
+  let idx = lower.indexOf(q);
+  while (idx !== -1) {
+    ranges.push({
+      start: idx,
+      end: idx + q.length,
+      index: startIndex + ranges.length,
+    });
+    idx = lower.indexOf(q, idx + q.length);
+  }
+  return ranges;
+}
+
+function wrapPageFindTextRange(node, start, end, matchIndex) {
+  if (!node || start >= end || !node.parentNode) return null;
+  let target = node;
+  if (end < target.nodeValue.length) target.splitText(end);
+  if (start > 0) target = target.splitText(start);
+  const mark = (target.ownerDocument || document).createElement("mark");
+  mark.className = "page-find-match";
+  mark.dataset.pageFindMatch = "true";
+  mark.dataset.pageFindIndex = String(matchIndex);
+  target.parentNode.insertBefore(mark, target);
+  mark.appendChild(target);
+  return mark;
+}
+
+function highlightPageFindMatchesInRoot(root, query, startIndex = 0) {
+  const { text, parts } = collectPageFindTextParts(root);
+  const ranges = getPageFindRanges(text, query, startIndex);
+  ranges
+    .slice()
+    .reverse()
+    .forEach((range) => {
+      parts
+        .filter((part) => part.end > range.start && part.start < range.end)
+        .reverse()
+        .forEach((part) => {
+          wrapPageFindTextRange(
+            part.node,
+            Math.max(range.start, part.start) - part.start,
+            Math.min(range.end, part.end) - part.start,
+            range.index
+          );
+        });
+    });
+  return startIndex + ranges.length;
+}
+
+function getPageFindMatchElements(index = pageFindState.activeIndex) {
+  if (index < 0) return [];
+  return Array.from(
+    document.querySelectorAll(
+      `${PAGE_FIND_MATCH_SELECTOR}[data-page-find-index="${index}"]`
+    )
+  );
+}
+
+function updatePageFindUi() {
+  const input = document.getElementById("pageFindInput");
+  const countEl = document.getElementById("pageFindCount");
+  const prevBtn = document.getElementById("pageFindPrevBtn");
+  const nextBtn = document.getElementById("pageFindNextBtn");
+  if (input && input.value !== pageFindState.query) {
+    input.value = pageFindState.query;
+  }
+  const hasQuery = String(pageFindState.query || "").trim().length > 0;
+  if (countEl) {
+    countEl.textContent = hasQuery
+      ? pageFindState.matchCount
+        ? `${pageFindState.activeIndex + 1} / ${pageFindState.matchCount}`
+        : "0 / 0"
+      : "";
+  }
+  const disabled = !pageFindState.matchCount;
+  if (prevBtn) prevBtn.disabled = disabled;
+  if (nextBtn) nextBtn.disabled = disabled;
+}
+
+function setPageFindActiveMatch(index, { scroll = true } = {}) {
+  document
+    .querySelectorAll(PAGE_FIND_MATCH_SELECTOR)
+    .forEach((mark) => mark.classList.remove("is-active"));
+  if (!pageFindState.matchCount) {
+    pageFindState.activeIndex = -1;
+    updatePageFindUi();
+    return;
+  }
+  const count = pageFindState.matchCount;
+  pageFindState.activeIndex = (index + count) % count;
+  const active = getPageFindMatchElements(pageFindState.activeIndex);
+  active.forEach((mark) => mark.classList.add("is-active"));
+  if (scroll && active[0]) {
+    active[0].scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+  }
+  updatePageFindUi();
+}
+
+function applyPageFindHighlights({ preserveIndex = true, scroll = false } = {}) {
+  const previousIndex = pageFindState.activeIndex;
+  clearPageFindHighlights({ updateUi: false });
+  const query = String(pageFindState.query || "").trim();
+  if (!query) {
+    updatePageFindUi();
+    return;
+  }
+  let nextIndex = 0;
+  getPageFindRoots().forEach((root) => {
+    nextIndex = highlightPageFindMatchesInRoot(root, query, nextIndex);
+  });
+  pageFindState.matchCount = nextIndex;
+  const activeIndex =
+    preserveIndex && previousIndex >= 0
+      ? Math.min(previousIndex, pageFindState.matchCount - 1)
+      : 0;
+  setPageFindActiveMatch(activeIndex, { scroll: scroll && pageFindState.matchCount > 0 });
+}
+
+function stepPageFindMatch(delta) {
+  if (!pageFindState.matchCount) return;
+  setPageFindActiveMatch(pageFindState.activeIndex + delta, { scroll: true });
+}
+
+function queuePageFindRefresh() {
+  if (!String(pageFindState.query || "").trim()) return;
+  if (pageFindRefreshTimer) clearTimeout(pageFindRefreshTimer);
+  pageFindRefreshTimer = setTimeout(() => {
+    pageFindRefreshTimer = null;
+    applyPageFindHighlights({ preserveIndex: true, scroll: false });
+  }, 100);
+}
+
+function handlePageFindInput(event) {
+  pageFindState.query = String(event?.target?.value || "");
+  applyPageFindHighlights({ preserveIndex: false, scroll: true });
+}
+
+function handlePageFindKeydown(event) {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    stepPageFindMatch(event.shiftKey ? -1 : 1);
+  } else if (event.key === "Escape") {
+    event.preventDefault();
+    event.stopPropagation();
+    if (String(pageFindState.query || "").trim()) {
+      pageFindState.query = "";
+      clearPageFindHighlights();
+    } else {
+      event.currentTarget?.blur?.();
+    }
+  }
+}
+
+function focusPageFindInput() {
+  const input = document.getElementById("pageFindInput");
+  if (!input) return;
+  input.focus();
+  input.select();
 }
 
 // --- Selection helpers (scoped to the page editor) ---
@@ -36293,20 +35960,24 @@ function movePageCaretToPoint(editor, x, y) {
 // --- Serialization & save ---
 function serializePageHtml(editor) {
   if (!editor) return "";
-  // Ensure every tagged item has a stable id so the roll-up can address it.
-  editor.querySelectorAll(".page-item").forEach((item) => {
-    if (!item.dataset.itemId) item.dataset.itemId = createId("pi");
-  });
+  syncPageChecklistItems(editor);
   const clone = editor.cloneNode(true);
+  unwrapPageFindHighlights(clone);
   clone.querySelectorAll("img").forEach((img) => {
     img.classList.add("page-inline-image");
     img.classList.remove("is-selected");
     if (img.dataset.asset) img.removeAttribute("src");
   });
+  // Strip transient hydration state from wiki links; data-page-id is the source of
+  // truth and the title/broken state are recomputed on load.
+  clone.querySelectorAll("a.page-wiki-link").forEach((link) => {
+    link.classList.remove("is-broken");
+    link.removeAttribute("title");
+  });
   return clone.innerHTML;
 }
 // Route page persistence to the correct store: global pages -> notes.json,
-// project/deliverable pages -> tasks.json.
+// project notes and subpages -> tasks.json.
 async function persistActivePage() {
   if (pageNav.globalPage) return saveGlobalPages({ silent: true });
   return save({ silent: true });
@@ -36316,7 +35987,7 @@ function queuePageSave() {
   if (!editor || !pageEditorTarget) return;
   pageEditorTarget.html = serializePageHtml(editor);
   pageEditorTarget.updatedAt = new Date().toISOString();
-  setPageSaveStatus("Saving…");
+  setPageSaveStatus("Saving...");
   if (pageSaveTimer) clearTimeout(pageSaveTimer);
   pageSaveTimer = setTimeout(async () => {
     pageSaveTimer = null;
@@ -36486,6 +36157,593 @@ function syncPageSelectionState(editor) {
   else clearPageSelectedImage();
 }
 
+// --- Page checklist/todo blocks ---
+function createPageChecklistItem({ checked = false, text = "" } = {}) {
+  const item = document.createElement("div");
+  item.className = "page-checklist-item";
+  item.dataset.pageTodo = "true";
+  const checkbox = document.createElement("input");
+  checkbox.className = "page-checklist-checkbox";
+  checkbox.type = "checkbox";
+  checkbox.contentEditable = "false";
+  checkbox.checked = !!checked;
+  if (checkbox.checked) checkbox.setAttribute("checked", "checked");
+  const textEl = document.createElement("span");
+  textEl.className = "page-checklist-text";
+  textEl.contentEditable = "true";
+  textEl.spellcheck = true;
+  textEl.setAttribute("role", "textbox");
+  textEl.setAttribute("aria-label", "Todo text");
+  if (String(text || "").trim()) textEl.textContent = text;
+  else textEl.appendChild(document.createElement("br"));
+  item.append(checkbox, textEl);
+  syncPageChecklistItem(item);
+  return item;
+}
+
+function syncPageChecklistItem(item) {
+  if (!item) return;
+  const checkbox = item.querySelector?.("input.page-checklist-checkbox");
+  if (!checkbox) return;
+  checkbox.contentEditable = "false";
+  if (checkbox.checked) {
+    checkbox.setAttribute("checked", "checked");
+    item.dataset.checked = "true";
+    item.classList.add("is-complete");
+  } else {
+    checkbox.removeAttribute("checked");
+    item.dataset.checked = "false";
+    item.classList.remove("is-complete");
+  }
+}
+
+function syncPageChecklistItems(root) {
+  root?.querySelectorAll?.(".page-checklist-item").forEach(syncPageChecklistItem);
+}
+
+function normalizePageChecklistItems(editor) {
+  if (!editor) return;
+  editor.querySelectorAll(".page-checklist-item").forEach((item) => {
+    item.dataset.pageTodo = "true";
+    let checkbox = item.querySelector("input.page-checklist-checkbox");
+    if (!checkbox) {
+      checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.className = "page-checklist-checkbox";
+      item.prepend(checkbox);
+    }
+    checkbox.type = "checkbox";
+    checkbox.classList.add("page-checklist-checkbox");
+    checkbox.contentEditable = "false";
+    checkbox.checked = checkbox.checked || checkbox.hasAttribute("checked") || item.dataset.checked === "true";
+    let textEl = item.querySelector(".page-checklist-text");
+    if (!textEl) {
+      textEl = document.createElement("span");
+      textEl.className = "page-checklist-text";
+      textEl.innerHTML = item.textContent.trim() ? escapeHtml(item.textContent.trim()) : "<br>";
+      item.appendChild(textEl);
+    }
+    textEl.contentEditable = "true";
+    textEl.spellcheck = true;
+    textEl.setAttribute("role", "textbox");
+    textEl.setAttribute("aria-label", "Todo text");
+    syncPageChecklistItem(item);
+  });
+}
+
+function placePageCaretInChecklistText(textEl) {
+  const editor = getPageEditorEl();
+  if (!editor || !textEl) return;
+  const range = document.createRange();
+  range.selectNodeContents(textEl);
+  range.collapse(false);
+  const sel = window.getSelection?.();
+  if (sel) {
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+  editor.focus();
+  savePageSelection(editor);
+}
+
+function isPageChecklistTextEmpty(textEl) {
+  return !String(textEl?.textContent || "").trim();
+}
+
+function isPageSelectionAtChecklistTextEnd(textEl) {
+  const selection = window.getSelection?.();
+  if (!selection || selection.rangeCount === 0 || !textEl) return false;
+  const range = selection.getRangeAt(0);
+  if (!range.collapsed || !textEl.contains(range.commonAncestorContainer)) return false;
+  const after = range.cloneRange();
+  try {
+    after.selectNodeContents(textEl);
+    after.setStart(range.endContainer, range.endOffset);
+    return after.toString().length === 0;
+  } catch (_) {
+    return false;
+  }
+}
+
+function replacePageChecklistItemWithParagraph(item) {
+  const editor = getPageEditorEl();
+  if (!editor || !item || !editor.contains(item)) return;
+  const line = document.createElement("div");
+  line.appendChild(document.createElement("br"));
+  item.replaceWith(line);
+  const range = document.createRange();
+  range.setStart(line, 0);
+  range.collapse(true);
+  const selection = window.getSelection?.();
+  if (selection) {
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+  editor.focus();
+  savePageSelection(editor);
+  queuePageSave();
+}
+
+function insertPageTodo() {
+  const editor = getPageEditorEl();
+  if (!editor) return;
+  const range = restorePageSelection(editor) || getPageSelectionRange(editor);
+  if (!range) return;
+  const block = getPageSlashBlockForRange(range, editor);
+  const item = createPageChecklistItem();
+  const canReplaceBlock =
+    block &&
+    block !== editor &&
+    editor.contains(block) &&
+    !String(block.textContent || "").trim() &&
+    !block.querySelector("img");
+  if (canReplaceBlock) {
+    block.replaceWith(item);
+  } else {
+    range.deleteContents();
+    range.insertNode(item);
+  }
+  placePageCaretInChecklistText(item.querySelector(".page-checklist-text"));
+  queuePageSave();
+}
+
+function handlePageChecklistKeydown(event) {
+  if (event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) {
+    return false;
+  }
+  const textEl = event.target?.closest?.(".page-checklist-text");
+  const item = textEl?.closest?.(".page-checklist-item");
+  const editor = getPageEditorEl();
+  if (!editor || !item || !editor.contains(item)) return false;
+  if (isPageChecklistTextEmpty(textEl)) {
+    event.preventDefault();
+    replacePageChecklistItemWithParagraph(item);
+    return true;
+  }
+  if (!isPageSelectionAtChecklistTextEnd(textEl)) return false;
+  event.preventDefault();
+  const next = createPageChecklistItem();
+  item.insertAdjacentElement("afterend", next);
+  placePageCaretInChecklistText(next.querySelector(".page-checklist-text"));
+  queuePageSave();
+  return true;
+}
+
+function handlePageListIndentKeydown(event) {
+  if (event.key !== "Tab" || event.ctrlKey || event.metaKey || event.altKey) {
+    return false;
+  }
+  const editor = getPageEditorEl();
+  if (!editor) return false;
+  const range = getPageSelectionRange(editor);
+  if (!range) return false;
+  const startNode = range.startContainer;
+  const element =
+    startNode?.nodeType === Node.ELEMENT_NODE ? startNode : startNode?.parentElement;
+  const item = element?.closest?.("li");
+  const list = item?.closest?.("ul,ol");
+  if (!item || !list || !editor.contains(item) || !editor.contains(list)) {
+    return false;
+  }
+  event.preventDefault();
+  try {
+    document.execCommand(event.shiftKey ? "outdent" : "indent", false, null);
+  } catch (_) {}
+  editor.focus();
+  savePageSelection(editor);
+  queuePageSave();
+  return true;
+}
+
+// --- Slash commands ---
+function getPageSlashMenuEl() {
+  return document.getElementById("pageSlashMenu");
+}
+
+function getRangeTextBeforeCaret(range, editor) {
+  if (!range || !editor) return "";
+  const before = range.cloneRange();
+  before.selectNodeContents(editor);
+  before.setEnd(range.startContainer, range.startOffset);
+  return before.toString();
+}
+
+function getPageSlashBlockForRange(range, editor) {
+  if (!range || !editor) return editor;
+  let node = range.startContainer;
+  if (node?.nodeType === Node.TEXT_NODE) node = node.parentElement;
+  while (node && node !== editor) {
+    if (node.nodeType === Node.ELEMENT_NODE && node.matches?.("p,div,h1,h2,h3,li,blockquote,pre")) {
+      return node;
+    }
+    node = node.parentElement;
+  }
+  return editor;
+}
+
+function getRangeTextBeforeCaretInSlashBlock(range, editor) {
+  if (!range || !editor) return "";
+  const block = getPageSlashBlockForRange(range, editor);
+  const before = range.cloneRange();
+  try {
+    before.selectNodeContents(block || editor);
+    before.setEnd(range.startContainer, range.startOffset);
+    return before.toString();
+  } catch (_) {
+    return getRangeTextBeforeCaret(range, editor);
+  }
+}
+
+function getPageSlashRangeFromCaret(editor, { allowInlineTrigger = false } = {}) {
+  const selection = window.getSelection?.();
+  if (!editor || !selection || selection.rangeCount === 0) return null;
+  const range = selection.getRangeAt(0);
+  if (!range.collapsed || !pageNodeInEditor(range.commonAncestorContainer, editor)) return null;
+  const textBefore = getRangeTextBeforeCaretInSlashBlock(range, editor);
+  const slashIndex = textBefore.lastIndexOf("/");
+  if (slashIndex < 0) return null;
+  const prefix = textBefore.slice(0, slashIndex);
+  const query = textBefore.slice(slashIndex + 1);
+  if (/\s/.test(query)) return null;
+  if (prefix && !/[\s\n]$/.test(prefix) && !allowInlineTrigger) return null;
+  const slashRange = range.cloneRange();
+  try {
+    slashRange.setStart(range.startContainer, Math.max(0, range.startOffset - query.length - 1));
+  } catch (_) {
+    return null;
+  }
+  return { range: slashRange, query };
+}
+
+function getPageSlashCommands(query = "") {
+  const normalized = String(query || "").trim().toLowerCase();
+  return PAGE_SLASH_COMMANDS.filter((command) => {
+    if (command.projectOnly && !pageNav.project) return false;
+    if (!normalized) return true;
+    return command.aliases.some((alias) =>
+      String(alias || "").toLowerCase().replace(/\s+/g, "").includes(normalized)
+    );
+  });
+}
+
+function positionPageSlashMenu(menu, range) {
+  const fallback = getPageEditorEl()?.getBoundingClientRect();
+  let rect = null;
+  try {
+    rect = range?.getBoundingClientRect?.();
+  } catch (_) {}
+  const anchor = rect && (rect.width || rect.height) ? rect : fallback;
+  if (!menu || !anchor) return;
+  const margin = 12;
+  const gap = 6;
+  const menuWidth = menu.offsetWidth;
+  const menuHeight = menu.offsetHeight;
+  const left = Math.min(
+    window.innerWidth - menuWidth - margin,
+    Math.max(margin, anchor.left)
+  );
+  // Prefer opening below the caret, but flip above when there isn't room so the
+  // menu stays fully on screen near the bottom of the viewport.
+  const spaceBelow = window.innerHeight - anchor.bottom - gap;
+  const spaceAbove = anchor.top - gap;
+  let top;
+  if (spaceBelow >= menuHeight || spaceBelow >= spaceAbove) {
+    top = anchor.bottom + gap;
+  } else {
+    top = anchor.top - gap - menuHeight;
+  }
+  // Final clamp keeps the menu within the viewport vertically.
+  top = Math.max(margin, Math.min(top, window.innerHeight - menuHeight - margin));
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+}
+
+function closePageSlashMenu() {
+  const menu = getPageSlashMenuEl();
+  if (menu) {
+    menu.hidden = true;
+    menu.innerHTML = "";
+  }
+  pageSlashState = {
+    open: false,
+    query: "",
+    range: null,
+    selectedIndex: 0,
+    preservedSelection: null,
+  };
+}
+
+function openPageSlashMenu({ range, query = "", preservedSelection = null } = {}) {
+  const menu = getPageSlashMenuEl();
+  if (!menu || !range) return;
+  pageSlashState.open = true;
+  pageSlashState.query = query;
+  pageSlashState.range = clonePageRange(range);
+  pageSlashState.preservedSelection = clonePageRange(preservedSelection);
+  pageSlashState.selectedIndex = 0;
+  renderPageSlashMenu();
+}
+
+function updatePageSlashMenuFromCaret() {
+  const editor = getPageEditorEl();
+  if (!editor) return;
+  const slash = getPageSlashRangeFromCaret(editor, {
+    allowInlineTrigger: pageSlashState.open && !!pageSlashState.preservedSelection,
+  });
+  if (!slash) {
+    if (pageSlashState.open) closePageSlashMenu();
+    return;
+  }
+  if (!pageSlashState.open) pageSlashState.preservedSelection = null;
+  pageSlashState.open = true;
+  pageSlashState.query = slash.query;
+  pageSlashState.range = clonePageRange(slash.range);
+  const matches = getPageSlashCommands(slash.query);
+  pageSlashState.selectedIndex = Math.min(pageSlashState.selectedIndex, Math.max(0, matches.length - 1));
+  renderPageSlashMenu();
+}
+
+function getPageSlashCommandShortcut(command) {
+  const alias = String(command?.aliases?.[0] || command?.id || "").replace(/\s+/g, "");
+  return `/${alias}`;
+}
+
+function renderPageSlashMenu() {
+  const menu = getPageSlashMenuEl();
+  if (!menu || !pageSlashState.open) return;
+  const commands = getPageSlashCommands(pageSlashState.query);
+  menu.innerHTML = "";
+  menu.hidden = false;
+  menu.appendChild(
+    el("div", { className: "page-slash-menu-header" }, [
+      el("span", { className: "page-slash-menu-title", textContent: "Commands" }),
+      el("span", {
+        className: "page-slash-menu-query",
+        textContent: pageSlashState.query ? `/${pageSlashState.query}` : "Type a command",
+      }),
+    ])
+  );
+  commands.forEach((command, index) => {
+    const item = el("button", {
+      className: `page-slash-menu-item ${index === pageSlashState.selectedIndex ? "is-active" : ""}`.trim(),
+      type: "button",
+      role: "option",
+      "aria-selected": String(index === pageSlashState.selectedIndex),
+      onclick: (event) => {
+        event.preventDefault();
+        executePageSlashCommand(command);
+      },
+    });
+    item.append(
+      el("span", { className: "page-slash-menu-icon", textContent: command.icon }),
+      el("span", {}, [
+        el("span", { className: "page-slash-menu-line" }, [
+          el("span", { className: "page-slash-menu-label", textContent: command.label }),
+          el("span", {
+            className: "page-slash-menu-shortcut",
+            textContent: getPageSlashCommandShortcut(command),
+          }),
+        ]),
+        el("span", { className: "page-slash-menu-hint", textContent: command.hint }),
+      ])
+    );
+    menu.appendChild(item);
+  });
+  if (!commands.length) {
+    menu.appendChild(el("div", { className: "page-slash-menu-empty", textContent: "No commands found" }));
+  }
+  const colorCommand = commands.find((command) => command.id === "color");
+  if (colorCommand) renderPageSlashColorRow(menu);
+  requestAnimationFrame(() => positionPageSlashMenu(menu, pageSlashState.range));
+}
+
+function renderPageSlashColorRow(menu) {
+  const row = el("div", { className: "page-slash-color-row" });
+  PAGE_SLASH_COLORS.forEach((color) => {
+    row.appendChild(
+      el("button", {
+        className: "page-slash-color-swatch",
+        type: "button",
+        title: color,
+        "aria-label": `Text color ${color}`,
+        style: `background: ${color};`,
+        onclick: (event) => {
+          event.preventDefault();
+          executePageSlashCommand(PAGE_SLASH_COMMANDS.find((command) => command.id === "color"), { color });
+        },
+      })
+    );
+  });
+  const custom = el("input", {
+    className: "page-slash-color-custom",
+    type: "color",
+    value: "#2f6fed",
+    title: "Custom color",
+    "aria-label": "Custom text color",
+  });
+  custom.addEventListener("input", () => {
+    executePageSlashCommand(PAGE_SLASH_COMMANDS.find((command) => command.id === "color"), {
+      color: custom.value,
+    });
+  });
+  row.appendChild(custom);
+  menu.appendChild(row);
+}
+
+function deletePageSlashQuery() {
+  const editor = getPageEditorEl();
+  if (!editor || !pageSlashState.range) return;
+  const range = clonePageRange(pageSlashState.range);
+  if (!range) return;
+  const selection = window.getSelection?.();
+  const block = getPageSlashBlockForRange(range, editor);
+  range.deleteContents();
+  range.collapse(true);
+  // Deleting the whole "/query" can leave the block empty. A truly-empty block
+  // can't hold the caret, so a collapsed caret resolves into the PREVIOUS block —
+  // which made commands like /h2 reformat the previous line. Anchor the caret with
+  // a <br> placeholder so block/list commands apply to the current line.
+  if (block && block !== editor && !block.textContent && !block.querySelector("br, img")) {
+    block.appendChild(document.createElement("br"));
+    range.setStart(block, 0);
+    range.collapse(true);
+  }
+  if (selection) {
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+  savePageSelection(editor);
+}
+
+function executePageSlashCommand(command, options = {}) {
+  if (!command) return;
+  const editor = getPageEditorEl();
+  if (!editor) return;
+  const preservedSelection = clonePageRange(pageSlashState.preservedSelection);
+  deletePageSlashQuery();
+  closePageSlashMenu();
+  if (preservedSelection) {
+    const selection = window.getSelection?.();
+    if (selection) {
+      selection.removeAllRanges();
+      selection.addRange(preservedSelection);
+    }
+    savePageSelection(editor);
+  }
+  if (command.action.type === "block") {
+    applyPageBlock(command.action.tag);
+  } else if (command.action.type === "command") {
+    applyPageCommand(command.action.command);
+  } else if (command.action.type === "todo") {
+    insertPageTodo();
+  } else if (command.action.type === "link") {
+    insertPageLink();
+  } else if (command.action.type === "color") {
+    applyPageTextColor(options.color || PAGE_SLASH_COLORS[0]);
+  } else if (command.action.type === "image") {
+    openPageImagePicker();
+  } else if (command.action.type === "page") {
+    createProjectSubpageFromSlash();
+  } else if (command.action.type === "pageLink") {
+    openPageLinkMenuFromSlash();
+  }
+}
+
+function createProjectSubpageFromSlash() {
+  const { project, subpage } = pageNav;
+  if (!project) return;
+  const editor = getPageEditorEl();
+  if (editor && pageEditorTarget) {
+    pageEditorTarget.html = serializePageHtml(editor);
+    pageEditorTarget.updatedAt = new Date().toISOString();
+  }
+  const subpages = getProjectSubpages(project);
+  const child = createProjectSubpage({
+    title: "Untitled",
+    parentId: subpage?.id || null,
+    order: subpages.length,
+  });
+  subpages.push(child);
+  void save({ silent: true });
+  openProjectPage(project, child);
+}
+
+function deleteProjectSubpage(project, subpage) {
+  if (!project || !subpage) return;
+  const descendantIds = getProjectSubpageDescendantIds(project, subpage.id);
+  const title = subpage.title || "Untitled";
+  const message = descendantIds.size
+    ? `Permanently delete "${title}" and its ${descendantIds.size} nested subpage${descendantIds.size === 1 ? "" : "s"}?`
+    : `Permanently delete page "${title}"?`;
+  if (!confirm(message)) return;
+  const removeIds = new Set([subpage.id, ...descendantIds]);
+  const viewingRemoved = pageNav.subpage && removeIds.has(pageNav.subpage.id);
+  project.subpages = getProjectSubpages(project).filter((sp) => !removeIds.has(sp.id));
+  void save({ silent: true });
+  if (viewingRemoved) {
+    openProjectPage(project, getProjectSubpageById(project, subpage.parentId));
+  } else {
+    render();
+    renderPageChildLinks(project, pageNav.subpage);
+  }
+}
+
+function handlePageSlashBeforeInput(event) {
+  const editor = getPageEditorEl();
+  if (!editor || event.inputType !== "insertText" || event.data !== "/") return;
+  const selection = window.getSelection?.();
+  if (!selection || selection.rangeCount === 0) return;
+  const range = selection.getRangeAt(0);
+  if (!pageNodeInEditor(range.commonAncestorContainer, editor)) return;
+  if (!range.collapsed) {
+    event.preventDefault();
+    const preservedSelection = clonePageRange(range);
+    const slashRange = range.cloneRange();
+    slashRange.collapse(false);
+    const slashNode = document.createTextNode("/");
+    slashRange.insertNode(slashNode);
+    const queryRange = document.createRange();
+    queryRange.setStart(slashNode, 0);
+    queryRange.setEnd(slashNode, 1);
+    const caretRange = document.createRange();
+    caretRange.setStart(slashNode, 1);
+    caretRange.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(caretRange);
+    openPageSlashMenu({ range: queryRange, preservedSelection });
+    return;
+  }
+  const textBefore = getRangeTextBeforeCaretInSlashBlock(range, editor);
+  if (textBefore && !/[\s\n]$/.test(textBefore)) return;
+  setTimeout(() => updatePageSlashMenuFromCaret(), 0);
+}
+
+function handlePageSlashKeydown(event) {
+  if (!pageSlashState.open) return false;
+  const commands = getPageSlashCommands(pageSlashState.query);
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closePageSlashMenu();
+    return true;
+  }
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    if (commands.length) {
+      const delta = event.key === "ArrowDown" ? 1 : -1;
+      pageSlashState.selectedIndex =
+        (pageSlashState.selectedIndex + delta + commands.length) % commands.length;
+      renderPageSlashMenu();
+    }
+    return true;
+  }
+  if (event.key === "Enter" || event.key === "Tab") {
+    event.preventDefault();
+    executePageSlashCommand(commands[pageSlashState.selectedIndex]);
+    return true;
+  }
+  return false;
+}
+
 // --- Image insertion / hydration (files-on-disk via backend) ---
 function insertPageImage(dataUrl, assetPath, altText = "Image") {
   const editor = getPageEditorEl();
@@ -36586,199 +36844,20 @@ function getPageClipboardImageFiles(clipboardData) {
     .filter((f) => String(f?.type || "").toLowerCase().startsWith("image/"));
 }
 
-// --- Tagged item blocks (action / coordination) ---
-const PAGE_ITEM_TAGS = {
-  action: { label: "Action" },
-  coordination: { label: "Coordination" },
-};
-function normalizePageItemTag(tag) {
-  const key = String(tag || "").trim().toLowerCase();
-  // Legacy "todo" lines map to action items.
-  if (key === "todo") return "action";
-  return PAGE_ITEM_TAGS[key] ? key : "action";
-}
-function createPageItemElement(tag = "action", id = "") {
-  const itemTag = normalizePageItemTag(tag);
-  const item = document.createElement("div");
-  item.className = "page-item";
-  item.dataset.tag = itemTag;
-  item.dataset.itemId = id || createId("pi");
-  item.dataset.checked = "false";
-  const box = document.createElement("span");
-  box.className = "page-item-box";
-  box.setAttribute("contenteditable", "false");
-  box.setAttribute("role", "checkbox");
-  box.setAttribute("aria-checked", "false");
-  const badge = document.createElement("span");
-  badge.className = "page-item-badge";
-  badge.setAttribute("contenteditable", "false");
-  badge.dataset.tag = itemTag;
-  badge.textContent = PAGE_ITEM_TAGS[itemTag].label;
-  const text = document.createElement("div");
-  text.className = "page-item-text";
-  text.appendChild(document.createElement("br"));
-  item.appendChild(box);
-  item.appendChild(badge);
-  item.appendChild(text);
-  return item;
-}
-function setPageItemTag(item, tag) {
-  const itemTag = normalizePageItemTag(tag);
-  item.dataset.tag = itemTag;
-  if (!item.dataset.itemId) item.dataset.itemId = createId("pi");
-  const badge = item.querySelector(".page-item-badge");
-  if (badge) {
-    badge.dataset.tag = itemTag;
-    badge.textContent = PAGE_ITEM_TAGS[itemTag].label;
-  }
-}
-function placePageCaretAtStart(node) {
-  if (!node) return;
-  const range = document.createRange();
-  range.setStart(node, 0);
-  range.collapse(true);
-  const sel = window.getSelection?.();
-  if (sel) {
-    sel.removeAllRanges();
-    sel.addRange(range);
-  }
-  pageSelectionRange = clonePageRange(range);
-}
-// Resolve the block-level element (direct child of the editor) containing a node.
-function getPageBlockElement(editor, node) {
-  if (!editor || !node) return null;
-  let el = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
-  if (!el || !editor.contains(el) || el === editor) return null;
-  while (el.parentElement && el.parentElement !== editor) {
-    el = el.parentElement;
-  }
-  return el.parentElement === editor ? el : null;
-}
-// Tag the current line. Smart behavior: retag an existing item, convert a normal
-// line (keeping its text), or insert a fresh empty tagged item.
-function insertPageItem(tag) {
-  const editor = getPageEditorEl();
+// --- Legacy tagged item compatibility ---
+function flattenLegacyPageItems(editor) {
   if (!editor) return;
-  const itemTag = normalizePageItemTag(tag);
-  const range = restorePageSelection(editor);
-  if (!range) return;
-  const host =
-    range.startContainer.nodeType === Node.TEXT_NODE
-      ? range.startContainer.parentElement
-      : range.startContainer;
-  const existing = host?.closest?.(".page-item");
-  if (existing && editor.contains(existing)) {
-    setPageItemTag(existing, itemTag);
-    placePageCaretAtStart(existing.querySelector(".page-item-text"));
-    queuePageSave();
-    return;
-  }
-  const block = getPageBlockElement(editor, range.startContainer);
-  if (block && String(block.textContent || "").trim()) {
-    const item = createPageItemElement(itemTag);
-    const textEl = item.querySelector(".page-item-text");
-    textEl.innerHTML = block.innerHTML;
-    block.replaceWith(item);
-    placePageCaretAtStart(textEl);
-    queuePageSave();
-    return;
-  }
-  const item = createPageItemElement(itemTag);
-  range.deleteContents();
-  range.insertNode(item);
-  placePageCaretAtStart(item.querySelector(".page-item-text"));
-  queuePageSave();
-}
-// Enter inside a tagged item must not split the flex row (which renders as "columns").
-// Non-empty item -> start a new item below (same tag); empty item -> exit to a normal line.
-function handlePageItemEnter(editor) {
-  const sel = window.getSelection?.();
-  if (!sel || sel.rangeCount === 0) return false;
-  const start = sel.getRangeAt(0).startContainer;
-  const host = start.nodeType === Node.TEXT_NODE ? start.parentElement : start;
-  const item = host?.closest?.(".page-item");
-  if (!item || !editor.contains(item)) return false;
-  const textEl = item.querySelector(".page-item-text");
-  const isEmpty = !String(textEl?.textContent || "").trim();
-  if (isEmpty) {
+  const flatten = (node, textSelector) => {
     const line = document.createElement("div");
-    line.appendChild(document.createElement("br"));
-    item.replaceWith(line);
-    placePageCaretAtStart(line);
-  } else {
-    const nextItem = createPageItemElement(item.dataset.tag || "action");
-    item.after(nextItem);
-    placePageCaretAtStart(nextItem.querySelector(".page-item-text"));
-  }
-  queuePageSave();
-  return true;
-}
-function togglePageItem(box) {
-  const item = box.closest(".page-item");
-  if (!item) return;
-  const checked = item.dataset.checked === "true";
-  item.dataset.checked = checked ? "false" : "true";
-  item.classList.toggle("done", !checked);
-  box.setAttribute("aria-checked", checked ? "false" : "true");
-  queuePageSave();
-}
-// Untag the current item back to a normal line, preserving its text.
-function clearPageItemTag(editor) {
-  if (!editor) return;
-  const range = restorePageSelection(editor);
-  if (!range) return;
-  const host =
-    range.startContainer.nodeType === Node.TEXT_NODE
-      ? range.startContainer.parentElement
-      : range.startContainer;
-  const item = host?.closest?.(".page-item");
-  if (!item || !editor.contains(item)) return;
-  const textEl = item.querySelector(".page-item-text");
-  const line = document.createElement("div");
-  line.innerHTML = textEl ? textEl.innerHTML : "<br>";
-  item.replaceWith(line);
-  placePageCaretAtStart(line);
-  queuePageSave();
-}
-// Upgrade legacy .page-todo markup to the tagged-item model and backfill ids/badges.
-function upgradeLegacyPageTodos(editor) {
-  if (!editor) return;
+    const textEl = node.querySelector(textSelector);
+    line.innerHTML = textEl ? textEl.innerHTML : "<br>";
+    node.replaceWith(line);
+  };
   editor.querySelectorAll(".page-todo").forEach((todo) => {
-    const checked = todo.dataset.checked === "true";
-    const oldText = todo.querySelector(".page-todo-text");
-    const item = createPageItemElement("action", todo.dataset.itemId || "");
-    item.dataset.checked = checked ? "true" : "false";
-    if (checked) item.classList.add("done");
-    const box = item.querySelector(".page-item-box");
-    if (box) box.setAttribute("aria-checked", checked ? "true" : "false");
-    const text = item.querySelector(".page-item-text");
-    if (text) text.innerHTML = oldText ? oldText.innerHTML : "<br>";
-    todo.replaceWith(item);
+    flatten(todo, ".page-todo-text");
   });
   editor.querySelectorAll(".page-item").forEach((item) => {
-    if (!item.dataset.itemId) item.dataset.itemId = createId("pi");
-    const tag = normalizePageItemTag(item.dataset.tag);
-    item.dataset.tag = tag;
-    const checked = item.dataset.checked === "true";
-    item.classList.toggle("done", checked);
-    let box = item.querySelector(".page-item-box");
-    if (!box) {
-      box = document.createElement("span");
-      box.className = "page-item-box";
-      box.setAttribute("contenteditable", "false");
-      box.setAttribute("role", "checkbox");
-      item.insertBefore(box, item.firstChild);
-    }
-    box.setAttribute("aria-checked", checked ? "true" : "false");
-    let badge = item.querySelector(".page-item-badge");
-    if (!badge) {
-      badge = document.createElement("span");
-      badge.className = "page-item-badge";
-      badge.setAttribute("contenteditable", "false");
-      box.after(badge);
-    }
-    badge.dataset.tag = tag;
-    badge.textContent = PAGE_ITEM_TAGS[tag].label;
+    flatten(item, ".page-item-text");
   });
 }
 
@@ -36804,6 +36883,23 @@ function applyPageBlock(tag) {
   editor.focus();
   savePageSelection(editor);
   queuePageSave();
+}
+function resetPageBlockAfterHeading(event) {
+  const editor = getPageEditorEl();
+  if (!editor || event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) {
+    return;
+  }
+  const selection = window.getSelection?.();
+  if (!selection || selection.rangeCount === 0) return;
+  const node = selection.getRangeAt(0).startContainer;
+  const element = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
+  const block = element?.closest?.("h1,h2,h3");
+  if (!block || !editor.contains(block)) return;
+  setTimeout(() => {
+    try {
+      document.execCommand("formatBlock", false, "p");
+    } catch (_) {}
+  }, 0);
 }
 function applyPageTextColor(color) {
   const editor = getPageEditorEl();
@@ -36857,6 +36953,290 @@ function insertPageLink() {
   queuePageSave();
 }
 
+// --- Page links ("[[" picker) ---
+function getPageLinkMenuEl() {
+  return document.getElementById("pageLinkMenu");
+}
+
+// Build the suggestion list for the picker: pages whose title contains the query
+// (or all pages when empty), capped for readability, plus a "create" row when the
+// typed title doesn't already exist.
+function getPageLinkMatches(query = "") {
+  const q = String(query || "").trim().toLowerCase();
+  const pages = Array.isArray(globalPages) ? globalPages : [];
+  const matched = q
+    ? pages.filter((page) => String(page.title || "").toLowerCase().includes(q))
+    : pages.slice();
+  const rows = matched.slice(0, 8).map((page) => ({ type: "page", page }));
+  const exists = pages.some(
+    (page) => String(page.title || "").trim().toLowerCase() === q
+  );
+  if (q && !exists) rows.push({ type: "create", title: query.trim() });
+  return rows;
+}
+
+// Find an open "[[" before the caret in the current block. The returned range spans
+// from the first "[" through the caret so deleting it removes the whole "[[query".
+function getPageLinkRangeFromCaret(editor) {
+  const selection = window.getSelection?.();
+  if (!editor || !selection || selection.rangeCount === 0) return null;
+  const range = selection.getRangeAt(0);
+  if (!range.collapsed || !pageNodeInEditor(range.commonAncestorContainer, editor)) return null;
+  const textBefore = getRangeTextBeforeCaretInSlashBlock(range, editor);
+  const openIndex = textBefore.lastIndexOf("[[");
+  if (openIndex < 0) return null;
+  const query = textBefore.slice(openIndex + 2);
+  // A closing bracket or newline ends/cancels the link; titles may contain spaces.
+  if (/[[\]\n]/.test(query)) return null;
+  const linkRange = range.cloneRange();
+  try {
+    linkRange.setStart(
+      range.startContainer,
+      Math.max(0, range.startOffset - query.length - 2)
+    );
+  } catch (_) {
+    return null;
+  }
+  return { range: linkRange, query };
+}
+
+function closePageLinkMenu() {
+  const menu = getPageLinkMenuEl();
+  if (menu) {
+    menu.hidden = true;
+    menu.innerHTML = "";
+  }
+  pageLinkState = { open: false, query: "", range: null, selectedIndex: 0 };
+}
+
+function openPageLinkMenu({ range, query = "" } = {}) {
+  const menu = getPageLinkMenuEl();
+  if (!menu || !range) return;
+  pageLinkState.open = true;
+  pageLinkState.query = query;
+  pageLinkState.range = clonePageRange(range);
+  pageLinkState.selectedIndex = 0;
+  renderPageLinkMenu();
+}
+
+// The "/link to page" slash command funnels into the same bracket-anchored flow by
+// inserting "[[" at the caret; the editor input handler then opens the picker.
+function openPageLinkMenuFromSlash() {
+  const editor = getPageEditorEl();
+  if (!editor) return;
+  // Restore the caret the slash query occupied (the menu button stole focus), then
+  // insert "[[" so the input handler opens the picker via the shared bracket flow.
+  restorePageSelection(editor);
+  document.execCommand("insertText", false, "[[");
+  editor.focus();
+  updatePageLinkMenuFromCaret();
+}
+
+function updatePageLinkMenuFromCaret() {
+  const editor = getPageEditorEl();
+  if (!editor) return;
+  const link = getPageLinkRangeFromCaret(editor);
+  if (!link) {
+    if (pageLinkState.open) closePageLinkMenu();
+    return;
+  }
+  pageLinkState.open = true;
+  pageLinkState.query = link.query;
+  pageLinkState.range = clonePageRange(link.range);
+  const matches = getPageLinkMatches(link.query);
+  pageLinkState.selectedIndex = Math.min(
+    pageLinkState.selectedIndex,
+    Math.max(0, matches.length - 1)
+  );
+  renderPageLinkMenu();
+}
+
+function renderPageLinkMenu() {
+  const menu = getPageLinkMenuEl();
+  if (!menu || !pageLinkState.open) return;
+  const matches = getPageLinkMatches(pageLinkState.query);
+  const q = String(pageLinkState.query || "").trim().toLowerCase();
+  menu.innerHTML = "";
+  menu.hidden = false;
+  menu.appendChild(
+    el("div", { className: "page-slash-menu-header" }, [
+      el("span", { className: "page-slash-menu-title", textContent: "Link to page" }),
+      el("span", {
+        className: "page-slash-menu-query",
+        textContent: pageLinkState.query ? `[[${pageLinkState.query}` : "Type a page title",
+      }),
+    ])
+  );
+  matches.forEach((match, index) => {
+    const isActive = index === pageLinkState.selectedIndex;
+    const item = el("button", {
+      className: `page-slash-menu-item ${match.type === "create" ? "page-link-create" : ""} ${isActive ? "is-active" : ""}`
+        .replace(/\s+/g, " ")
+        .trim(),
+      type: "button",
+      role: "option",
+      "aria-selected": String(isActive),
+      onclick: (event) => {
+        event.preventDefault();
+        choosePageLinkMatch(match);
+      },
+    });
+    if (match.type === "create") {
+      item.append(
+        el("span", { className: "page-slash-menu-icon page-link-menu-icon", textContent: "+" }),
+        el("span", {}, [
+          el("span", { className: "page-slash-menu-line" }, [
+            el("span", { className: "page-slash-menu-label", textContent: `Create "${match.title}"` }),
+          ]),
+          el("span", {
+            className: "page-slash-menu-hint",
+            textContent: "Add a new page to the Pages tab and link it",
+          }),
+        ])
+      );
+    } else {
+      const page = match.page;
+      const labelEl = el("span", { className: "page-slash-menu-label" });
+      labelEl.appendChild(highlightText(page.title || "Untitled", q));
+      const previewText = pageHtmlToPlainText(page.page?.html || "");
+      item.append(
+        el("span", { className: "page-slash-menu-icon page-link-menu-icon", textContent: "[[" }),
+        el("span", {}, [
+          el("span", { className: "page-slash-menu-line" }, [labelEl]),
+          el("span", {
+            className: "page-slash-menu-hint",
+            textContent: previewText ? previewText.slice(0, 80) : "Empty page",
+          }),
+        ])
+      );
+    }
+    menu.appendChild(item);
+  });
+  if (!matches.length) {
+    menu.appendChild(
+      el("div", { className: "page-slash-menu-empty", textContent: "No pages found" })
+    );
+  }
+  requestAnimationFrame(() => positionPageSlashMenu(menu, pageLinkState.range));
+}
+
+function handlePageLinkKeydown(event) {
+  if (!pageLinkState.open) return false;
+  const matches = getPageLinkMatches(pageLinkState.query);
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closePageLinkMenu();
+    return true;
+  }
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    if (matches.length) {
+      const delta = event.key === "ArrowDown" ? 1 : -1;
+      pageLinkState.selectedIndex =
+        (pageLinkState.selectedIndex + delta + matches.length) % matches.length;
+      renderPageLinkMenu();
+    }
+    return true;
+  }
+  if (event.key === "Enter" || event.key === "Tab") {
+    event.preventDefault();
+    if (matches.length) {
+      choosePageLinkMatch(matches[pageLinkState.selectedIndex] || matches[0]);
+    } else {
+      closePageLinkMenu();
+    }
+    return true;
+  }
+  return false;
+}
+
+function choosePageLinkMatch(match) {
+  if (!match) return;
+  if (match.type === "create") {
+    createGlobalPageAndLink(match.title);
+  } else {
+    insertPageWikiLink(match.page);
+  }
+}
+
+// Remove the "[[query" text so the inserted anchor replaces it. Mirrors
+// deletePageSlashQuery, leaving the caret where the brackets started.
+function deletePageLinkQuery() {
+  const editor = getPageEditorEl();
+  if (!editor || !pageLinkState.range) return;
+  const range = clonePageRange(pageLinkState.range);
+  if (!range) return;
+  const selection = window.getSelection?.();
+  range.deleteContents();
+  range.collapse(true);
+  if (selection) {
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+  savePageSelection(editor);
+}
+
+function insertPageWikiLink(page) {
+  const editor = getPageEditorEl();
+  if (!editor || !page) return;
+  deletePageLinkQuery();
+  closePageLinkMenu();
+  const range = getPageSelectionRange(editor) || restorePageSelection(editor);
+  const anchor = document.createElement("a");
+  anchor.className = "page-wiki-link";
+  anchor.dataset.pageId = page.id;
+  anchor.setAttribute("contenteditable", "false");
+  anchor.textContent = page.title || "Untitled";
+  anchor.title = `Open page: ${page.title || "Untitled"}`;
+  // Trailing space gives the caret a stable home after the atomic link token.
+  const trailing = document.createTextNode(" ");
+  // Insert as one fragment so order is always [anchor][space], regardless of how a
+  // browser adjusts a collapsed range across multiple insertNode calls.
+  const fragment = document.createDocumentFragment();
+  fragment.appendChild(anchor);
+  fragment.appendChild(trailing);
+  if (range) {
+    range.deleteContents();
+    range.insertNode(fragment);
+  } else {
+    editor.appendChild(fragment);
+  }
+  placePageCaretAfterNode(editor, trailing);
+  editor.focus();
+  savePageSelection(editor);
+  queuePageSave();
+}
+
+// "Create" picker option: make a new Pages-tab page, persist it to notes.json, then
+// link it in one step.
+function createGlobalPageAndLink(title) {
+  const page = createGlobalPage({ title: String(title || "").trim() || "Untitled" });
+  globalPages.push(page);
+  saveGlobalPages({ silent: true });
+  try {
+    renderGlobalPagesView();
+  } catch (_) {}
+  insertPageWikiLink(page);
+}
+
+// Re-derive each wiki link's visible text from its target page so renames stay in
+// sync, and flag links whose target page was deleted. Mirrors hydratePageImages.
+function hydratePageWikiLinks(editor) {
+  if (!editor) return;
+  editor.querySelectorAll("a.page-wiki-link[data-page-id]").forEach((link) => {
+    link.setAttribute("contenteditable", "false");
+    const page = getGlobalPageById(link.dataset.pageId);
+    if (page) {
+      link.classList.remove("is-broken");
+      link.textContent = page.title || "Untitled";
+      link.title = `Open page: ${page.title || "Untitled"}`;
+    } else {
+      link.classList.add("is-broken");
+      link.title = "Page deleted";
+    }
+  });
+}
+
 // --- Navigation state & rendering ---
 function showPageView() {
   const view = document.getElementById("pageView");
@@ -36868,10 +37248,16 @@ function showPageView() {
 }
 async function closePageView() {
   await flushPageSave();
+  if (pageFindRefreshTimer) {
+    clearTimeout(pageFindRefreshTimer);
+    pageFindRefreshTimer = null;
+  }
+  pageFindState.query = "";
+  clearPageFindHighlights();
   const view = document.getElementById("pageView");
   if (view) view.hidden = true;
   delete document.body.dataset.pageOpen;
-  pageNav = { project: null, deliverable: null, globalPage: null };
+  pageNav = { project: null, subpage: null, globalPage: null };
   pageEditorTarget = null;
   clearPageSelectedImage();
   try {
@@ -36880,41 +37266,41 @@ async function closePageView() {
   } catch (_) {}
 }
 function pageGoBack() {
-  const { project, deliverable } = pageNav;
-  if (deliverable && project) {
-    flushPageSave().then(() => openProjectPage(project));
+  const { project, subpage } = pageNav;
+  if (subpage && project) {
+    const parent = getProjectSubpageById(project, subpage.parentId);
+    flushPageSave().then(() => openProjectPage(project, parent));
   } else {
     closePageView();
   }
 }
-function openProjectPage(project) {
+function openProjectPage(project, subpage = null) {
   if (!project) return;
   ensurePageViewReady();
-  pageNav = { project, deliverable: null, globalPage: null };
-  renderPageView();
+  const activeSubpage = subpage
+    ? getProjectSubpageById(project, subpage.id || subpage)
+    : null;
+  pageNav = { project, subpage: activeSubpage, globalPage: null };
+  // Show the view first so the editor is laid out before renderPageView() sizes
+  // inline images against the editor's content width.
   showPageView();
-}
-function openDeliverablePage(project, deliverable) {
-  if (!project || !deliverable) return;
-  ensurePageViewReady();
-  pageNav = { project, deliverable, globalPage: null };
   renderPageView();
-  showPageView();
 }
 function openGlobalPage(globalPage) {
   if (!globalPage) return;
   ensurePageViewReady();
-  pageNav = { project: null, deliverable: null, globalPage };
+  pageNav = { project: null, subpage: null, globalPage };
   activeGlobalPageId = globalPage.id;
-  renderPageView();
+  // Show the view first so the editor is laid out before renderPageView() sizes
+  // inline images against the editor's content width.
   showPageView();
+  renderPageView();
 }
 function renderPageView() {
-  const { project, deliverable, globalPage } = pageNav;
+  const { project, subpage, globalPage } = pageNav;
   const editor = getPageEditorEl();
   const titleEl = document.getElementById("pageTitle");
-  const metaEl = document.getElementById("pageMeta");
-  const deliverablesEl = document.getElementById("pageDeliverables");
+  const childLinksEl = document.getElementById("pageChildLinks");
 
   if (globalPage) {
     if (!globalPage.page || typeof globalPage.page !== "object") {
@@ -36924,68 +37310,59 @@ function renderPageView() {
     pageEditorOwnerKey = `page_global_${globalPage.id || "x"}`;
     renderPageBreadcrumb(null, null);
     if (titleEl) titleEl.textContent = globalPage.title || "";
-    if (metaEl) {
-      metaEl.hidden = true;
-      metaEl.innerHTML = "";
+    if (childLinksEl) {
+      childLinksEl.hidden = true;
+      childLinksEl.innerHTML = "";
     }
-    if (deliverablesEl) deliverablesEl.hidden = true;
     clearPageSelectedImage();
     if (editor) {
       editor.innerHTML = globalPage.page.html || "";
-      upgradeLegacyPageTodos(editor);
+      flattenLegacyPageItems(editor);
+      normalizePageChecklistItems(editor);
       normalizePageEditorImages(editor);
       hydratePageImages(editor);
+      hydratePageWikiLinks(editor);
     }
     setPageSaveStatus("");
+    applyPageFindHighlights({ preserveIndex: false, scroll: false });
     return;
   }
 
   if (!project) return;
-  const target = deliverable || project;
+  project.subpages = normalizeProjectSubpages(project.subpages);
+  const activeSubpage = subpage ? getProjectSubpageById(project, subpage.id) : null;
+  pageNav.subpage = activeSubpage;
+  const target = activeSubpage || project;
   if (!target.page || typeof target.page !== "object") {
     target.page = { html: "", updatedAt: "" };
   }
   pageEditorTarget = target.page;
-  pageEditorOwnerKey = deliverable
-    ? `dlv_${project.id || "x"}_${deliverable.id || "x"}`
+  pageEditorOwnerKey = activeSubpage
+    ? `proj_${project.id || "x"}_subpage_${activeSubpage.id || "x"}`
     : `proj_${project.id || "x"}`;
 
-  renderPageBreadcrumb(project, deliverable);
+  renderPageBreadcrumb(project, activeSubpage);
 
   if (titleEl) {
-    titleEl.textContent = (deliverable ? deliverable.name : project.name) || "";
-  }
-
-  if (metaEl) {
-    if (deliverable) {
-      metaEl.hidden = false;
-      renderPageDeliverableMeta(metaEl, project, deliverable);
-    } else {
-      metaEl.hidden = true;
-      metaEl.innerHTML = "";
-    }
+    titleEl.textContent = (activeSubpage ? activeSubpage.title : project.name) || "";
   }
 
   clearPageSelectedImage();
   if (editor) {
     editor.innerHTML = target.page.html || "";
-    upgradeLegacyPageTodos(editor);
+    flattenLegacyPageItems(editor);
+    normalizePageChecklistItems(editor);
     normalizePageEditorImages(editor);
     hydratePageImages(editor);
+    hydratePageWikiLinks(editor);
   }
 
-  if (deliverablesEl) {
-    if (deliverable) {
-      deliverablesEl.hidden = true;
-    } else {
-      deliverablesEl.hidden = false;
-      renderPageDeliverablesGrid(project);
-    }
-  }
+  renderPageChildLinks(project, activeSubpage);
 
   setPageSaveStatus("");
+  applyPageFindHighlights({ preserveIndex: false, scroll: false });
 }
-function renderPageBreadcrumb(project, deliverable) {
+function renderPageBreadcrumb(project, subpage) {
   const nav = document.getElementById("pageBreadcrumb");
   if (!nav) return;
   nav.innerHTML = "";
@@ -37013,36 +37390,20 @@ function renderPageBreadcrumb(project, deliverable) {
   }
   addCrumb("Projects", () => closePageView(), false);
   addSep();
-  if (deliverable) {
+  if (subpage) {
     addCrumb(project.name || project.id || "Project", () => openProjectPage(project), false);
+    getProjectSubpageAncestors(project, subpage).forEach((ancestor) => {
+      addSep();
+      addCrumb(ancestor.title || "Untitled", () => openProjectPage(project, ancestor), false);
+    });
     addSep();
-    addCrumb(deliverable.name || "Deliverable", null, true);
+    addCrumb(subpage.title || "Untitled", null, true);
   } else {
     addCrumb(project.name || project.id || "Project", null, true);
   }
 }
-function toPageDateInputValue(due) {
-  const raw = String(due || "").trim();
-  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
-  try {
-    const d = parseDueStr(raw);
-    if (d instanceof Date && !isNaN(d)) {
-      const y = d.getFullYear();
-      const m = String(d.getMonth() + 1).padStart(2, "0");
-      const day = String(d.getDate()).padStart(2, "0");
-      return `${y}-${m}-${day}`;
-    }
-  } catch (_) {}
-  return "";
-}
-function setPageDeliverableStatus(deliverable, value) {
-  deliverable.status = value || "";
-  try {
-    syncStatusArrays(deliverable);
-  } catch (_) {}
-}
 function queuePageMiscSave() {
-  setPageSaveStatus("Saving…");
+  setPageSaveStatus("Saving...");
   if (pageMiscSaveTimer) clearTimeout(pageMiscSaveTimer);
   pageMiscSaveTimer = setTimeout(async () => {
     pageMiscSaveTimer = null;
@@ -37050,103 +37411,84 @@ function queuePageMiscSave() {
     setPageSaveStatus(ok ? "Saved" : "Save failed");
     try {
       if (pageNav.globalPage) renderGlobalPagesView();
-      else render();
+      else {
+        render();
+        renderPageChildLinks(pageNav.project, pageNav.subpage);
+      }
     } catch (_) {}
   }, 500);
 }
-function renderPageDeliverableMeta(metaEl, project, deliverable) {
-  metaEl.innerHTML = "";
-  const statusWrap = document.createElement("label");
-  statusWrap.className = "page-meta-field";
-  const statusLabel = document.createElement("span");
-  statusLabel.className = "page-meta-label";
-  statusLabel.textContent = "Status";
-  const statusSel = document.createElement("select");
-  statusSel.className = "page-meta-select";
-  const options = Array.isArray(STATUS_CANON) ? STATUS_CANON : [];
-  [""].concat(options).forEach((opt) => {
-    const o = document.createElement("option");
-    o.value = opt;
-    o.textContent = opt || "—";
-    if ((deliverable.status || "") === opt) o.selected = true;
-    statusSel.appendChild(o);
-  });
-  statusSel.addEventListener("change", () => {
-    setPageDeliverableStatus(deliverable, statusSel.value);
-    queuePageMiscSave();
-  });
-  statusWrap.appendChild(statusLabel);
-  statusWrap.appendChild(statusSel);
 
-  const dueWrap = document.createElement("label");
-  dueWrap.className = "page-meta-field";
-  const dueLabel = document.createElement("span");
-  dueLabel.className = "page-meta-label";
-  dueLabel.textContent = "Due";
-  const dueInput = document.createElement("input");
-  dueInput.type = "date";
-  dueInput.className = "page-meta-date";
-  dueInput.value = toPageDateInputValue(deliverable.due);
-  dueInput.addEventListener("change", () => {
-    deliverable.due = dueInput.value || "";
-    queuePageMiscSave();
-  });
-  dueWrap.appendChild(dueLabel);
-  dueWrap.appendChild(dueInput);
-
-  metaEl.appendChild(statusWrap);
-  metaEl.appendChild(dueWrap);
+function compareProjectSubpageOrder(a, b) {
+  const orderA = Number.isFinite(Number(a?.order)) ? Number(a.order) : 0;
+  const orderB = Number.isFinite(Number(b?.order)) ? Number(b.order) : 0;
+  if (orderA !== orderB) return orderA - orderB;
+  return String(a?.title || "").localeCompare(String(b?.title || ""));
 }
-function renderPageDeliverablesGrid(project) {
-  const grid = document.getElementById("pageDeliverablesGrid");
-  if (!grid) return;
-  grid.innerHTML = "";
-  const deliverables = getProjectDeliverables(project);
-  if (!deliverables.length) {
-    const empty = document.createElement("div");
-    empty.className = "page-deliverables-empty muted";
-    empty.textContent = "No deliverables yet. Add one to create a subpage.";
-    grid.appendChild(empty);
+
+function getProjectSubpagesByParent(project) {
+  const groups = new Map();
+  getProjectSubpages(project).forEach((subpage) => {
+    const key = subpage.parentId || "";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(subpage);
+  });
+  groups.forEach((items) => items.sort(compareProjectSubpageOrder));
+  return groups;
+}
+
+function renderPageChildLinks(project, activeSubpage = null) {
+  const container = document.getElementById("pageChildLinks");
+  if (!container) return;
+  container.innerHTML = "";
+  if (!project) {
+    container.hidden = true;
     return;
   }
-  deliverables.forEach((deliverable) => {
-    const card = document.createElement("button");
-    card.type = "button";
-    card.className = "page-deliverable-card";
-    const title = document.createElement("div");
-    title.className = "page-deliverable-card-title";
-    title.textContent = deliverable.name || "Untitled deliverable";
-    const meta = document.createElement("div");
-    meta.className = "page-deliverable-card-meta";
-    const status = deliverable.status || "—";
-    const due = deliverable.due ? `Due ${deliverable.due}` : "";
-    meta.textContent = [status, due].filter(Boolean).join(" · ");
-    card.appendChild(title);
-    card.appendChild(meta);
-    card.addEventListener("click", () => openDeliverablePage(project, deliverable));
-    grid.appendChild(card);
+  const groups = getProjectSubpagesByParent(project);
+  const parentKey = activeSubpage?.id || "";
+  const children = groups.get(parentKey) || [];
+  container.hidden = false;
+  container.appendChild(el("div", { className: "page-child-links-label", textContent: "Subpages" }));
+  children.forEach((child) => {
+    const childCount = (groups.get(child.id) || []).length;
+    const row = el("button", {
+      className: "page-child-link",
+      type: "button",
+      title: child.title || "Untitled",
+      onclick: () => openProjectPage(project, child),
+    });
+    const del = createTabDeleteIcon("Delete subpage", (e) => {
+      e.stopPropagation();
+      deleteProjectSubpage(project, child);
+    });
+    row.append(
+      el("span", { className: "page-child-link-icon", textContent: "Pg" }),
+      el("span", { className: "page-child-link-title", textContent: child.title || "Untitled" }),
+      el("span", {
+        className: "page-child-link-meta",
+        textContent: childCount ? `${childCount} subpage${childCount === 1 ? "" : "s"}` : "",
+      }),
+      del
+    );
+    container.appendChild(row);
   });
+  const addBtn = el("button", {
+    className: "page-child-link page-child-link-add",
+    type: "button",
+    textContent: "+ Add subpage",
+    onclick: () => createProjectSubpageFromSlash(),
+  });
+  container.appendChild(addBtn);
 }
-async function addDeliverableFromPage() {
-  const { project } = pageNav;
-  if (!project) return;
-  const deliverable = createDeliverable({ name: "New deliverable" });
-  if (!Array.isArray(project.deliverables)) project.deliverables = [];
-  project.deliverables.push(deliverable);
-  await save({ silent: true });
-  renderPageDeliverablesGrid(project);
-  try {
-    render();
-  } catch (_) {}
-  openDeliverablePage(project, deliverable);
-}
+
 function queuePageTitleSave() {
   const titleEl = document.getElementById("pageTitle");
   if (!titleEl) return;
   const value = (titleEl.textContent || "").trim();
-  const { project, deliverable, globalPage } = pageNav;
+  const { project, subpage, globalPage } = pageNav;
   if (globalPage) globalPage.title = value;
-  else if (deliverable) deliverable.name = value;
+  else if (subpage) subpage.title = value || "Untitled";
   else if (project) project.name = value;
   queuePageMiscSave();
 }
@@ -37158,29 +37500,42 @@ function ensurePageViewReady() {
   if (!view || !editor) return;
   pageViewInitialized = true;
 
+  editor.addEventListener("beforeinput", handlePageSlashBeforeInput);
   editor.addEventListener("input", () => {
     normalizePageEditorImages(editor);
+    updatePageSlashMenuFromCaret();
+    updatePageLinkMenuFromCaret();
+    queuePageSave();
+    queuePageFindRefresh();
+  });
+  editor.addEventListener("change", (e) => {
+    const checkbox = e.target?.closest?.("input.page-checklist-checkbox");
+    if (!checkbox || !editor.contains(checkbox)) return;
+    syncPageChecklistItem(checkbox.closest(".page-checklist-item"));
     queuePageSave();
   });
   editor.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
-      if (handlePageItemEnter(editor)) e.preventDefault();
-    }
+    if (handlePageLinkKeydown(e)) return;
+    if (handlePageSlashKeydown(e)) return;
+    if (handlePageListIndentKeydown(e)) return;
+    if (handlePageChecklistKeydown(e)) return;
+    resetPageBlockAfterHeading(e);
   });
   editor.addEventListener("keyup", () => syncPageSelectionState(editor));
   editor.addEventListener("mouseup", () => syncPageSelectionState(editor));
   editor.addEventListener("blur", () => savePageSelection(editor));
   editor.addEventListener("click", (e) => {
+    const wiki = e.target?.closest?.("a.page-wiki-link[data-page-id]");
+    if (wiki) {
+      e.preventDefault();
+      const target = getGlobalPageById(wiki.dataset.pageId);
+      if (target) flushPageSave().then(() => openGlobalPage(target));
+      return;
+    }
     const link = e.target?.closest?.("a[href]");
     if (link && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       openExternalUrl(link.getAttribute("href"));
-      return;
-    }
-    const box = e.target?.closest?.(".page-item-box");
-    if (box) {
-      e.preventDefault();
-      togglePageItem(box);
       return;
     }
     const img = e.target?.closest?.("img.page-inline-image");
@@ -37221,7 +37576,10 @@ function ensurePageViewReady() {
 
   const titleEl = document.getElementById("pageTitle");
   if (titleEl) {
-    titleEl.addEventListener("input", () => queuePageTitleSave());
+    titleEl.addEventListener("input", () => {
+      queuePageTitleSave();
+      queuePageFindRefresh();
+    });
     titleEl.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
         e.preventDefault();
@@ -37230,29 +37588,6 @@ function ensurePageViewReady() {
     });
   }
 
-  const toolbar = view.querySelector(".page-toolbar");
-  if (toolbar) {
-    toolbar.addEventListener("mousedown", (e) => {
-      if (e.target?.closest?.("button")) e.preventDefault();
-    });
-    toolbar.addEventListener("click", (e) => {
-      const btn = e.target?.closest?.("button");
-      if (!btn) return;
-      if (btn.dataset.pageCmd) applyPageCommand(btn.dataset.pageCmd);
-      else if (btn.dataset.pageBlock) applyPageBlock(btn.dataset.pageBlock);
-      else if (btn.dataset.pageAction === "action") insertPageItem("action");
-      else if (btn.dataset.pageAction === "coordination") insertPageItem("coordination");
-      else if (btn.dataset.pageAction === "todo") insertPageItem("action");
-      else if (btn.dataset.pageAction === "untag") clearPageItemTag(getPageEditorEl());
-      else if (btn.dataset.pageAction === "link") insertPageLink();
-    });
-  }
-  const colorInput = document.getElementById("pageTextColorInput");
-  if (colorInput) {
-    colorInput.addEventListener("input", () => applyPageTextColor(colorInput.value));
-  }
-
-  document.getElementById("pageInsertImageBtn")?.addEventListener("click", openPageImagePicker);
   document.getElementById("pageImageInput")?.addEventListener("change", (e) => {
     const files = e.target.files;
     if (files && files.length) handlePageImageFiles(files);
@@ -37276,11 +37611,20 @@ function ensurePageViewReady() {
   });
   document.getElementById("pageRemoveImageBtn")?.addEventListener("click", removePageSelectedImage);
 
+  document.getElementById("pageFindInput")?.addEventListener("input", handlePageFindInput);
+  document.getElementById("pageFindInput")?.addEventListener("keydown", handlePageFindKeydown);
+  document.getElementById("pageFindPrevBtn")?.addEventListener("click", () => stepPageFindMatch(-1));
+  document.getElementById("pageFindNextBtn")?.addEventListener("click", () => stepPageFindMatch(1));
+
   document.getElementById("pageViewBackBtn")?.addEventListener("click", pageGoBack);
   document.getElementById("pageViewCloseBtn")?.addEventListener("click", () => closePageView());
-  document.getElementById("pageAddDeliverableBtn")?.addEventListener("click", addDeliverableFromPage);
 
   view.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && String(e.key || "").toLowerCase() === "f") {
+      e.preventDefault();
+      focusPageFindInput();
+      return;
+    }
     if (e.key === "Escape") {
       e.preventDefault();
       pageGoBack();
@@ -37289,4 +37633,3 @@ function ensurePageViewReady() {
 }
 
 init();
-

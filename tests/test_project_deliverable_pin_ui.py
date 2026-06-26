@@ -53,7 +53,7 @@ class ProjectDeliverablePinUiTests(unittest.TestCase):
             script,
         )
         self.assertIn(
-            "card.append(actionRow, header, statusSection, notesSection);",
+            "card.append(actionRow, header, statusSection);",
             script,
         )
         self.assertIn("isDeliverablePinned(deliverable) ? \"is-pinned-deliverable\" : \"\"", script)

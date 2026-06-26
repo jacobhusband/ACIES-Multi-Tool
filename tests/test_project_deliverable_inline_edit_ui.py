@@ -10,7 +10,7 @@ STYLES_CSS_PATH = REPO_ROOT / "styles.css"
 class ProjectDeliverableInlineEditUiTests(unittest.TestCase):
     @staticmethod
     def _block(text: str, start_marker: str, end_marker: str) -> str:
-        start = text.rindex(start_marker)
+        start = text.index(start_marker)
         end = text.index(end_marker, start)
         return text[start:end]
 
@@ -25,7 +25,7 @@ class ProjectDeliverableInlineEditUiTests(unittest.TestCase):
         helper_block = self._block(
             script,
             "function createWorkItemDoneCheckbox({",
-            "function createNotesSection(deliverable, card, project = null) {",
+            "function createTasksPreview(deliverable, card, project = null) {",
         )
 
         for expected in (
@@ -44,54 +44,37 @@ class ProjectDeliverableInlineEditUiTests(unittest.TestCase):
         ):
             self.assertIn(expected, helper_block)
 
-    def test_projects_tab_work_item_inline_edit_script_wiring_exists(self):
+    def test_projects_tab_no_longer_renders_note_inline_editing(self):
         script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
-        notes_block = self._block(
-            script,
-            "function createNotesSection(deliverable, card, project = null) {",
-            "function createTasksPreview(deliverable, card, project = null) {",
-        )
         card_block = self._block(
             script,
             "function renderDeliverableCard(deliverable, isPrimary, project) {",
             "function normalizeProjectMatchValue(value) {",
         )
 
-        for expected in (
-            'const textControl = createInlineWorkItemTextControl({',
-            'title: "Click to edit note",',
-            "liveNote.text = nextText;",
-            "syncDeliverableNoteFields(deliverable);",
-            "await save();",
-        ):
-            self.assertIn(expected, notes_block)
-
-        self.assertIn("const notesSection = createNotesSection(deliverable, card, project);", card_block)
-        self.assertIn("card.append(actionRow, header, statusSection, notesSection);", card_block)
+        self.assertNotIn("function createNotesSection(", script)
+        self.assertNotIn("const notesSection", card_block)
+        self.assertIn("card.append(actionRow, header, statusSection);", card_block)
         self.assertNotIn("createTasksPreview(", card_block)
         self.assertNotIn("createProgressSection(", card_block)
 
-    def test_modal_work_item_inline_edit_script_wiring_exists(self):
+    def test_modal_task_inline_edit_script_wiring_exists_without_note_editor(self):
         script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
         modal_task_block = self._block(
             script,
             "function renderModalDeliverableTaskList(card, container, options = {}) {",
             "function commitPendingModalDeliverableTask(card, container, options = {}) {",
         )
-        modal_note_block = self._block(
-            script,
-            "function renderModalDeliverableNoteList(card, container, options = {}) {",
-            "function commitPendingModalDeliverableNote(card, container, options = {}) {",
-        )
 
         for expected in (
             'const textControl = createInlineWorkItemTextControl({',
-            'title: "Click to edit note",',
-            "liveNote.text = nextText;",
+            'title: "Click to edit task",',
+            "liveTask.text = nextText;",
         ):
-            self.assertIn(expected, modal_note_block)
+            self.assertIn(expected, modal_task_block)
 
-        self.assertNotIn("await save();", modal_note_block)
+        self.assertNotIn("function renderModalDeliverableNoteList(", script)
+        self.assertNotIn("function commitPendingModalDeliverableNote(", script)
 
     def test_inline_edit_styles_exist(self):
         css = STYLES_CSS_PATH.read_text(encoding="utf-8")
@@ -107,12 +90,10 @@ class ProjectDeliverableInlineEditUiTests(unittest.TestCase):
         ):
             self.assertIn(expected, css)
 
-        item_block = self._css_block(
-            css,
-            ".deliverable-task-item,\n.deliverable-note-item {",
-        )
+        item_block = self._css_block(css, ".deliverable-task-item {")
         self.assertNotIn("cursor: pointer;", item_block)
         self.assertNotIn("user-select: none;", item_block)
+        self.assertNotIn(".deliverable-note-item", css)
 
         text_trigger_block = self._css_block(css, ".work-item-text-trigger {")
         self.assertIn("cursor: text;", text_trigger_block)

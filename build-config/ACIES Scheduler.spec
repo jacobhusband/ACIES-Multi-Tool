@@ -30,7 +30,8 @@ a = Analysis(
             os.path.join(project_root, 'CircuitBreakerAI', 'ElectricalPanels', 'Template.xlsx'),
             os.path.join('CircuitBreakerAI', 'ElectricalPanels'),
         ),
-        (os.path.join(project_root, 'WireSizerApplication', 'dist'), 'WireSizerApplication\\dist')
+        (os.path.join(project_root, 'WireSizerApplication', 'dist'), 'WireSizerApplication\\dist'),
+        (os.path.join(project_root, 'project-pages-editor', 'dist'), 'project-pages-editor\\dist')
     ],
     hiddenimports=['pillow_heif', '_pillow_heif'],
     hookspath=[],

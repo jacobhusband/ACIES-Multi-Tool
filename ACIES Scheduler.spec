@@ -5,7 +5,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('VERSION', '.'), ('index.html', '.'), ('styles.css', '.'), ('script.js', '.'), ('.env', '.'), ('assets\\acies.png', '.'), ('scripts\\merge_pdfs.py', 'scripts'), ('scripts\\strip_pdf_layers.py', 'scripts'), ('scripts\\detect_pdf_size.py', 'scripts'), ('scripts\\PlotDWGs.ps1', 'scripts'), ('scripts\\ManageLayersDWGs.ps1', 'scripts'), ('scripts\\ListDwgXrefs.ps1', 'scripts'),('scripts\\removeXREFPaths.ps1', 'scripts'), ('scripts\\StripRefPaths.dll', 'scripts'), ('templates', 'templates'), ('CircuitBreakerAI\\ElectricalPanels\\Template.xlsx', 'CircuitBreakerAI\\ElectricalPanels'), ('WireSizerApplication\\\\dist', 'WireSizerApplication\\\\dist')],
+    datas=[('VERSION', '.'), ('index.html', '.'), ('styles.css', '.'), ('script.js', '.'), ('.env', '.'), ('assets\\acies.png', '.'), ('scripts\\merge_pdfs.py', 'scripts'), ('scripts\\strip_pdf_layers.py', 'scripts'), ('scripts\\detect_pdf_size.py', 'scripts'), ('scripts\\PlotDWGs.ps1', 'scripts'), ('scripts\\ManageLayersDWGs.ps1', 'scripts'), ('scripts\\ListDwgXrefs.ps1', 'scripts'),('scripts\\removeXREFPaths.ps1', 'scripts'), ('scripts\\StripRefPaths.dll', 'scripts'), ('templates', 'templates'), ('CircuitBreakerAI\\ElectricalPanels\\Template.xlsx', 'CircuitBreakerAI\\ElectricalPanels'), ('WireSizerApplication\\\\dist', 'WireSizerApplication\\\\dist'), ('project-pages-editor\\\\dist', 'project-pages-editor\\\\dist')],
     hiddenimports=['pillow_heif', '_pillow_heif'],
     hookspath=[],
     hooksconfig={},

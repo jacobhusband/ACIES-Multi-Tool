@@ -112,8 +112,14 @@ try {
     $wireSizerPackageJson = Join-Path $wireSizerDir "package.json"
     $wireSizerDist = Join-Path $wireSizerDir "dist"
     $wireSizerIndex = Join-Path $wireSizerDist "index.html"
+    $projectPagesEditorDir = Join-Path $projectRoot "project-pages-editor"
+    $projectPagesEditorPackageJson = Join-Path $projectPagesEditorDir "package.json"
+    $projectPagesEditorDist = Join-Path $projectPagesEditorDir "dist"
+    $projectPagesEditorBundle = Join-Path $projectPagesEditorDist "project-pages-editor.js"
     Assert-PathExists -Path $wireSizerDir -Message "WireSizerApplication folder not found at $wireSizerDir."
     Assert-PathExists -Path $wireSizerPackageJson -Message "Wire Sizer package.json not found at $wireSizerPackageJson."
+    Assert-PathExists -Path $projectPagesEditorDir -Message "Project Pages editor folder not found at $projectPagesEditorDir."
+    Assert-PathExists -Path $projectPagesEditorPackageJson -Message "Project Pages editor package.json not found at $projectPagesEditorPackageJson."
 
     $npmCmd = Get-Command npm -ErrorAction SilentlyContinue
     if (-not $npmCmd) {
@@ -134,6 +140,19 @@ try {
     }
     Assert-PathExists -Path $wireSizerDist -Message "Wire Sizer build completed without producing $wireSizerDist."
     Assert-PathExists -Path $wireSizerIndex -Message "Wire Sizer build output is missing $wireSizerIndex."
+
+    Write-Host "`n[1b/3] Building Project Pages editor frontend..." -ForegroundColor Yellow
+    Push-Location $projectPagesEditorDir
+    try {
+        if (-not (Test-Path "node_modules")) {
+            Invoke-CheckedCommand -Description "npm install" -Command { & $npmExecutable install }
+        }
+        Invoke-CheckedCommand -Description "npm run build" -Command { & $npmExecutable run build }
+    } finally {
+        Pop-Location
+    }
+    Assert-PathExists -Path $projectPagesEditorDist -Message "Project Pages editor build completed without producing $projectPagesEditorDist."
+    Assert-PathExists -Path $projectPagesEditorBundle -Message "Project Pages editor build output is missing $projectPagesEditorBundle."
 
     Write-Host "`n[2/3] Bundling application with PyInstaller..." -ForegroundColor Yellow
 
@@ -178,7 +197,8 @@ try {
         (Join-Path $bundleInternal "styles.css"),
         (Join-Path $bundleInternal "script.js"),
         (Join-Path $bundleInternal "CircuitBreakerAI\ElectricalPanels\Template.xlsx"),
-        (Join-Path $bundleInternal "WireSizerApplication\dist\index.html")
+        (Join-Path $bundleInternal "WireSizerApplication\dist\index.html"),
+        (Join-Path $bundleInternal "project-pages-editor\dist\project-pages-editor.js")
     )
     foreach ($expectedPath in $expectedBundleFiles) {
         Assert-PathExists -Path $expectedPath -Message "PyInstaller bundle is missing expected output: $expectedPath"

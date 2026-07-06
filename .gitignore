@@ -19,6 +19,9 @@ __pycache__/
 # Node
 WireSizerApplication/node_modules/
 WireSizerApplication/dist/
+project-pages-editor/node_modules/
+!project-pages-editor/dist/
+!project-pages-editor/dist/**
 
 # OS
 .DS_Store

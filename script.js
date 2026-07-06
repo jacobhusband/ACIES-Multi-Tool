@@ -35665,6 +35665,36 @@ const PAGE_IMAGE_DEFAULT_PERCENT = 80;
 function getPageEditorEl() {
   return document.getElementById("pageEditor");
 }
+function getProjectPagesEditorRoot() {
+  return document.getElementById("projectPagesEditorRoot");
+}
+function isProjectPagesEditorAvailable() {
+  return !!window.ProjectPagesEditor?.mount;
+}
+function prepareProjectPagesEditorMount() {
+  const root = getProjectPagesEditorRoot();
+  if (!root) return null;
+  const parent = root.parentElement;
+  if (parent) {
+    Array.from(parent.children).forEach((child) => {
+      if (child !== root) child.remove();
+    });
+  }
+  return root;
+}
+function normalizeHtmlForProjectPagesEditor(html) {
+  const holder = document.createElement("div");
+  holder.innerHTML = html || "";
+  flattenLegacyPageItems(holder);
+  normalizePageChecklistItems(holder);
+  holder.querySelectorAll("img").forEach((img) => {
+    img.classList.add("page-inline-image");
+    if (!img.alt) img.alt = "Image";
+    if (img.dataset.asset) img.removeAttribute("src");
+  });
+  hydratePageWikiLinks(holder);
+  return holder.innerHTML;
+}
 function setPageSaveStatus(text) {
   const el = document.getElementById("pageSaveStatus");
   if (el) el.textContent = text || "";
@@ -35982,6 +36012,19 @@ async function persistActivePage() {
   if (pageNav.globalPage) return saveGlobalPages({ silent: true });
   return save({ silent: true });
 }
+function queueProjectPagesEditorSave(html, { persist = true } = {}) {
+  if (!pageEditorTarget) return;
+  pageEditorTarget.html = String(html || "");
+  pageEditorTarget.updatedAt = new Date().toISOString();
+  if (!persist) return;
+  setPageSaveStatus("Saving...");
+  if (pageSaveTimer) clearTimeout(pageSaveTimer);
+  pageSaveTimer = setTimeout(async () => {
+    pageSaveTimer = null;
+    const ok = await persistActivePage();
+    setPageSaveStatus(ok ? "Saved" : "Save failed");
+  }, 700);
+}
 function queuePageSave() {
   const editor = getPageEditorEl();
   if (!editor || !pageEditorTarget) return;
@@ -35996,6 +36039,13 @@ function queuePageSave() {
   }, 700);
 }
 async function flushPageSave() {
+  if (window.ProjectPagesEditor?.flushSave) {
+    try {
+      await window.ProjectPagesEditor.flushSave();
+    } catch (e) {
+      console.warn("React page editor flush failed:", e);
+    }
+  }
   if (pageSaveTimer) {
     clearTimeout(pageSaveTimer);
     pageSaveTimer = null;
@@ -36005,7 +36055,8 @@ async function flushPageSave() {
     pageMiscSaveTimer = null;
   }
   const editor = getPageEditorEl();
-  if (editor && pageEditorTarget) {
+  const reactEditorActive = !!getProjectPagesEditorRoot()?.querySelector("#pageEditor");
+  if (!reactEditorActive && editor && pageEditorTarget) {
     pageEditorTarget.html = serializePageHtml(editor);
     pageEditorTarget.updatedAt = new Date().toISOString();
   }
@@ -36684,7 +36735,8 @@ function deleteProjectSubpage(project, subpage) {
     openProjectPage(project, getProjectSubpageById(project, subpage.parentId));
   } else {
     render();
-    renderPageChildLinks(project, pageNav.subpage);
+    if (getProjectPagesEditorRoot()?.querySelector("#pageEditor")) renderPageView();
+    else renderPageChildLinks(project, pageNav.subpage);
   }
 }
 
@@ -37244,10 +37296,20 @@ function showPageView() {
   view.hidden = false;
   document.body.dataset.pageOpen = "1";
   const editor = getPageEditorEl();
-  setTimeout(() => editor?.focus(), 0);
+  setTimeout(() => {
+    const activeEditor = getPageEditorEl();
+    (activeEditor || editor)?.focus?.();
+  }, 0);
 }
 async function closePageView() {
   await flushPageSave();
+  if (window.ProjectPagesEditor?.unmount) {
+    try {
+      window.ProjectPagesEditor.unmount();
+    } catch (e) {
+      console.warn("React page editor unmount failed:", e);
+    }
+  }
   if (pageFindRefreshTimer) {
     clearTimeout(pageFindRefreshTimer);
     pageFindRefreshTimer = null;
@@ -37296,6 +37358,96 @@ function openGlobalPage(globalPage) {
   showPageView();
   renderPageView();
 }
+function getProjectPagesEditorChildren(project, activeSubpage = null) {
+  if (!project) return [];
+  const groups = getProjectSubpagesByParent(project);
+  const parentKey = activeSubpage?.id || "";
+  return (groups.get(parentKey) || []).map((child) => ({
+    id: child.id,
+    title: child.title || "Untitled",
+    childCount: (groups.get(child.id) || []).length,
+  }));
+}
+function handleProjectPagesEditorTitleChange(value) {
+  const title = String(value || "").trim();
+  const { project, subpage, globalPage } = pageNav;
+  if (globalPage) globalPage.title = title || "Untitled";
+  else if (subpage) subpage.title = title || "Untitled";
+  else if (project) project.name = title;
+  queuePageMiscSave();
+  renderPageBreadcrumb(project, subpage);
+}
+async function persistProjectPagesEditorNow() {
+  setPageSaveStatus("Saving...");
+  const ok = await persistActivePage();
+  setPageSaveStatus(ok ? "Saved" : "Save failed");
+  try {
+    if (pageNav.globalPage) renderGlobalPagesView();
+    else render();
+  } catch (_) {}
+}
+function createProjectSubpageFromEditor() {
+  const { project, subpage } = pageNav;
+  if (!project) return;
+  flushPageSave().then(() => {
+    const subpages = getProjectSubpages(project);
+    const child = createProjectSubpage({
+      title: "Untitled",
+      parentId: subpage?.id || null,
+      order: subpages.length,
+    });
+    subpages.push(child);
+    void save({ silent: true });
+    openProjectPage(project, child);
+  });
+}
+function createGlobalPageFromEditor(title) {
+  const page = createGlobalPage({ title: String(title || "").trim() || "Untitled" });
+  globalPages.push(page);
+  saveGlobalPages({ silent: true });
+  try {
+    renderGlobalPagesView();
+  } catch (_) {}
+  return { id: page.id, title: page.title };
+}
+function setProjectPagesEditorDocument(context) {
+  const root = prepareProjectPagesEditorMount();
+  if (!root || !isProjectPagesEditorAvailable()) return false;
+  window.ProjectPagesEditor.mount(root, {});
+  window.ProjectPagesEditor.setDocument({
+    ...context,
+    globalPages: (Array.isArray(globalPages) ? globalPages : []).map((page) => ({
+      id: page.id,
+      title: page.title || "Untitled",
+    })),
+    onHtmlChange: (html, options = {}) => {
+      queueProjectPagesEditorSave(html, { persist: options.immediate !== true });
+      if (options.immediate === true) return persistActivePage();
+      return true;
+    },
+    onTitleChange: handleProjectPagesEditorTitleChange,
+    onRequestPersist: persistProjectPagesEditorNow,
+    onCreateSubpage: createProjectSubpageFromEditor,
+    onOpenSubpage: (subpageId) => {
+      const child = getProjectSubpageById(pageNav.project, subpageId);
+      if (child) flushPageSave().then(() => openProjectPage(pageNav.project, child));
+    },
+    onDeleteSubpage: (subpageId) => {
+      const child = getProjectSubpageById(pageNav.project, subpageId);
+      if (child) deleteProjectSubpage(pageNav.project, child);
+    },
+    onOpenGlobalPage: (pageId) => {
+      const target = getGlobalPageById(pageId);
+      if (target) flushPageSave().then(() => openGlobalPage(target));
+    },
+    onCreateGlobalPage: createGlobalPageFromEditor,
+    onSaveAsset: (dataUrl, filename) =>
+      window.pywebview.api.save_page_asset(pageEditorOwnerKey, dataUrl, filename || ""),
+    onGetAsset: (assetPath) => window.pywebview.api.get_page_asset(assetPath),
+    onToast: (message) => toast(message),
+  });
+  return true;
+}
 function renderPageView() {
   const { project, subpage, globalPage } = pageNav;
   const editor = getPageEditorEl();
@@ -37309,6 +37461,19 @@ function renderPageView() {
     pageEditorTarget = globalPage.page;
     pageEditorOwnerKey = `page_global_${globalPage.id || "x"}`;
     renderPageBreadcrumb(null, null);
+    if (
+      setProjectPagesEditorDocument({
+        documentKey: `global:${globalPage.id || "x"}`,
+        kind: "global",
+        globalPage,
+        html: normalizeHtmlForProjectPagesEditor(globalPage.page.html || ""),
+        title: globalPage.title || "",
+      })
+    ) {
+      setPageSaveStatus("");
+      applyPageFindHighlights({ preserveIndex: false, scroll: false });
+      return;
+    }
     if (titleEl) titleEl.textContent = globalPage.title || "";
     if (childLinksEl) {
       childLinksEl.hidden = true;
@@ -37342,6 +37507,24 @@ function renderPageView() {
     : `proj_${project.id || "x"}`;
 
   renderPageBreadcrumb(project, activeSubpage);
+
+  if (
+    setProjectPagesEditorDocument({
+      documentKey: activeSubpage
+        ? `project:${project.id || "x"}:subpage:${activeSubpage.id || "x"}`
+        : `project:${project.id || "x"}:root`,
+      kind: activeSubpage ? "subpage" : "project",
+      project,
+      subpage: activeSubpage,
+      html: normalizeHtmlForProjectPagesEditor(target.page.html || ""),
+      title: (activeSubpage ? activeSubpage.title : project.name) || "",
+      childPages: getProjectPagesEditorChildren(project, activeSubpage),
+    })
+  ) {
+    setPageSaveStatus("");
+    applyPageFindHighlights({ preserveIndex: false, scroll: false });
+    return;
+  }
 
   if (titleEl) {
     titleEl.textContent = (activeSubpage ? activeSubpage.title : project.name) || "";
@@ -37497,82 +37680,85 @@ function ensurePageViewReady() {
   if (pageViewInitialized) return;
   const view = document.getElementById("pageView");
   const editor = getPageEditorEl();
-  if (!view || !editor) return;
+  const reactPageEditorEnabled = !!getProjectPagesEditorRoot();
+  if (!view || (!editor && !reactPageEditorEnabled)) return;
   pageViewInitialized = true;
 
-  editor.addEventListener("beforeinput", handlePageSlashBeforeInput);
-  editor.addEventListener("input", () => {
-    normalizePageEditorImages(editor);
-    updatePageSlashMenuFromCaret();
-    updatePageLinkMenuFromCaret();
-    queuePageSave();
-    queuePageFindRefresh();
-  });
-  editor.addEventListener("change", (e) => {
-    const checkbox = e.target?.closest?.("input.page-checklist-checkbox");
-    if (!checkbox || !editor.contains(checkbox)) return;
-    syncPageChecklistItem(checkbox.closest(".page-checklist-item"));
-    queuePageSave();
-  });
-  editor.addEventListener("keydown", (e) => {
-    if (handlePageLinkKeydown(e)) return;
-    if (handlePageSlashKeydown(e)) return;
-    if (handlePageListIndentKeydown(e)) return;
-    if (handlePageChecklistKeydown(e)) return;
-    resetPageBlockAfterHeading(e);
-  });
-  editor.addEventListener("keyup", () => syncPageSelectionState(editor));
-  editor.addEventListener("mouseup", () => syncPageSelectionState(editor));
-  editor.addEventListener("blur", () => savePageSelection(editor));
-  editor.addEventListener("click", (e) => {
-    const wiki = e.target?.closest?.("a.page-wiki-link[data-page-id]");
-    if (wiki) {
-      e.preventDefault();
-      const target = getGlobalPageById(wiki.dataset.pageId);
-      if (target) flushPageSave().then(() => openGlobalPage(target));
-      return;
-    }
-    const link = e.target?.closest?.("a[href]");
-    if (link && (e.ctrlKey || e.metaKey)) {
-      e.preventDefault();
-      openExternalUrl(link.getAttribute("href"));
-      return;
-    }
-    const img = e.target?.closest?.("img.page-inline-image");
-    if (img) setPageSelectedImage(img);
-    else clearPageSelectedImage();
-  });
-  editor.addEventListener("dblclick", (e) => {
-    const img = e.target?.closest?.("img.page-inline-image");
-    if (img && img.src) {
-      openImagePreviewDialog({
-        dataUrl: img.src,
-        filename: img.alt || "Image",
-        width: img.naturalWidth || 1,
-        height: img.naturalHeight || 1,
-      });
-    }
-  });
-  editor.addEventListener("paste", (e) => {
-    const files = getPageClipboardImageFiles(e.clipboardData);
-    if (files.length) {
-      e.preventDefault();
-      handlePageImageFiles(files);
-    }
-  });
-  editor.addEventListener("dragover", (e) => {
-    if (Array.from(e.dataTransfer?.types || []).includes("Files")) e.preventDefault();
-  });
-  editor.addEventListener("drop", (e) => {
-    const files = Array.from(e.dataTransfer?.files || []).filter((f) =>
-      String(f.type || "").toLowerCase().startsWith("image/")
-    );
-    if (files.length) {
-      e.preventDefault();
-      movePageCaretToPoint(editor, e.clientX, e.clientY);
-      handlePageImageFiles(files);
-    }
-  });
+  if (editor) {
+    editor.addEventListener("beforeinput", handlePageSlashBeforeInput);
+    editor.addEventListener("input", () => {
+      normalizePageEditorImages(editor);
+      updatePageSlashMenuFromCaret();
+      updatePageLinkMenuFromCaret();
+      queuePageSave();
+      queuePageFindRefresh();
+    });
+    editor.addEventListener("change", (e) => {
+      const checkbox = e.target?.closest?.("input.page-checklist-checkbox");
+      if (!checkbox || !editor.contains(checkbox)) return;
+      syncPageChecklistItem(checkbox.closest(".page-checklist-item"));
+      queuePageSave();
+    });
+    editor.addEventListener("keydown", (e) => {
+      if (handlePageLinkKeydown(e)) return;
+      if (handlePageSlashKeydown(e)) return;
+      if (handlePageListIndentKeydown(e)) return;
+      if (handlePageChecklistKeydown(e)) return;
+      resetPageBlockAfterHeading(e);
+    });
+    editor.addEventListener("keyup", () => syncPageSelectionState(editor));
+    editor.addEventListener("mouseup", () => syncPageSelectionState(editor));
+    editor.addEventListener("blur", () => savePageSelection(editor));
+    editor.addEventListener("click", (e) => {
+      const wiki = e.target?.closest?.("a.page-wiki-link[data-page-id]");
+      if (wiki) {
+        e.preventDefault();
+        const target = getGlobalPageById(wiki.dataset.pageId);
+        if (target) flushPageSave().then(() => openGlobalPage(target));
+        return;
+      }
+      const link = e.target?.closest?.("a[href]");
+      if (link && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        openExternalUrl(link.getAttribute("href"));
+        return;
+      }
+      const img = e.target?.closest?.("img.page-inline-image");
+      if (img) setPageSelectedImage(img);
+      else clearPageSelectedImage();
+    });
+    editor.addEventListener("dblclick", (e) => {
+      const img = e.target?.closest?.("img.page-inline-image");
+      if (img && img.src) {
+        openImagePreviewDialog({
+          dataUrl: img.src,
+          filename: img.alt || "Image",
+          width: img.naturalWidth || 1,
+          height: img.naturalHeight || 1,
+        });
+      }
+    });
+    editor.addEventListener("paste", (e) => {
+      const files = getPageClipboardImageFiles(e.clipboardData);
+      if (files.length) {
+        e.preventDefault();
+        handlePageImageFiles(files);
+      }
+    });
+    editor.addEventListener("dragover", (e) => {
+      if (Array.from(e.dataTransfer?.types || []).includes("Files")) e.preventDefault();
+    });
+    editor.addEventListener("drop", (e) => {
+      const files = Array.from(e.dataTransfer?.files || []).filter((f) =>
+        String(f.type || "").toLowerCase().startsWith("image/")
+      );
+      if (files.length) {
+        e.preventDefault();
+        movePageCaretToPoint(editor, e.clientX, e.clientY);
+        handlePageImageFiles(files);
+      }
+    });
+  }
 
   const titleEl = document.getElementById("pageTitle");
   if (titleEl) {

@@ -12806,6 +12806,28 @@ button.page-crumb:hover {
   background: var(--hover-overlay);
   border: 1px dashed var(--glass-border);
 }
+.page-editor table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.6rem 0;
+  table-layout: fixed;
+  overflow: hidden;
+}
+.page-editor table td,
+.page-editor table th {
+  border: 1px solid var(--glass-border);
+  padding: 0.4rem 0.6rem;
+  vertical-align: top;
+  text-align: left;
+  position: relative;
+}
+.page-editor table th {
+  background: var(--hover-overlay);
+  font-weight: 600;
+}
+.page-editor table p {
+  margin: 0;
+}
 .page-editor details.page-toggle {
   margin: 0.6rem 0;
 }

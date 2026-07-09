@@ -6,6 +6,7 @@ import { Details, DetailsContent, DetailsSummary } from "@tiptap/extension-detai
 import Highlight from "@tiptap/extension-highlight";
 import Image from "@tiptap/extension-image";
 import Link from "@tiptap/extension-link";
+import { TableKit } from "@tiptap/extension-table";
 import TaskItem from "@tiptap/extension-task-item";
 import TaskList from "@tiptap/extension-task-list";
 import { TextStyle } from "@tiptap/extension-text-style";
@@ -59,6 +60,13 @@ function stripTransientPageHtml(html) {
     link.setAttribute("contenteditable", "false");
   });
   return rootEl.innerHTML;
+}
+
+function getActiveBlockRect(editor, selector) {
+  const { $from } = editor.state.selection;
+  const domAt = editor.view.domAtPos($from.pos);
+  const element = domAt.node.nodeType === 1 ? domAt.node : domAt.node.parentElement;
+  return element?.closest?.(selector)?.getBoundingClientRect() || null;
 }
 
 function detectSlashQuery(editor) {
@@ -278,6 +286,7 @@ const SLASH_COMMANDS = [
   { id: "quote", label: "Quote", shortcut: ">", group: "block" },
   { id: "callout", label: "Callout", shortcut: "!", group: "block" },
   { id: "toggle", label: "Toggle", shortcut: ">v", group: "block" },
+  { id: "table", label: "Table", shortcut: "3x3", group: "block" },
   { id: "code", label: "Code block", shortcut: "```", group: "block" },
   { id: "divider", label: "Divider", shortcut: "---", group: "block" },
   { id: "bold", label: "Bold", shortcut: "B", group: "inline" },
@@ -316,6 +325,7 @@ function PageEditor({ context, options }) {
   const [pageLink, setPageLink] = useState({ open: false, query: "", selected: 0, range: null, pos: null });
   const [colorMenu, setColorMenu] = useState({ open: false, mode: "color", pos: null });
   const [calloutMenu, setCalloutMenu] = useState({ open: false, pos: null });
+  const [tableMenu, setTableMenu] = useState({ open: false, pos: null });
 
   const globalPages = Array.isArray(context.globalPages) ? context.globalPages : [];
   const pageLinkMatches = useMemo(() => {
@@ -356,6 +366,7 @@ function PageEditor({ context, options }) {
       TaskList,
       TaskItem.configure({ nested: true }),
       Highlight.configure({ multicolor: true }),
+      TableKit.configure({ table: { resizable: false } }),
       Details.configure({ persist: true, HTMLAttributes: { class: "page-toggle" } }),
       DetailsSummary,
       DetailsContent,
@@ -425,6 +436,12 @@ function PageEditor({ context, options }) {
           }
         }
         if (event.key === "Tab" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+          if (editor?.isActive("table")) {
+            event.preventDefault();
+            if (event.shiftKey) editor.chain().focus().goToPreviousCell().run();
+            else editor.chain().focus().goToNextCell().run();
+            return true;
+          }
           if (editor?.isActive("codeBlock")) {
             if (event.shiftKey) return false;
             event.preventDefault();
@@ -555,14 +572,17 @@ function PageEditor({ context, options }) {
     setColorMenu((state) => (state.open ? { ...state, open: false } : state));
 
     if (activeEditor.isActive("pageCallout")) {
-      const { $from } = activeEditor.state.selection;
-      const domAt = activeEditor.view.domAtPos($from.pos);
-      const element = domAt.node.nodeType === 1 ? domAt.node : domAt.node.parentElement;
-      const calloutEl = element?.closest?.(".page-callout");
-      const rect = calloutEl?.getBoundingClientRect();
+      const rect = getActiveBlockRect(activeEditor, ".page-callout");
       setCalloutMenu({ open: true, pos: rect ? { left: rect.left, top: rect.top } : null });
     } else {
       setCalloutMenu((state) => (state.open ? { ...state, open: false } : state));
+    }
+
+    if (activeEditor.isActive("table")) {
+      const rect = getActiveBlockRect(activeEditor, "table");
+      setTableMenu({ open: true, pos: rect ? { left: rect.left, top: rect.top } : null });
+    } else {
+      setTableMenu((state) => (state.open ? { ...state, open: false } : state));
     }
 
     const pageQuery = detectPageLinkQuery(activeEditor);
@@ -597,6 +617,7 @@ function PageEditor({ context, options }) {
     else if (command.id === "quote") chain.toggleBlockquote().run();
     else if (command.id === "callout") chain.setCallout().run();
     else if (command.id === "toggle") chain.setDetails().run();
+    else if (command.id === "table") chain.insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run();
     else if (command.id === "code") chain.toggleCodeBlock().run();
     else if (command.id === "divider") chain.setHorizontalRule().run();
     else if (command.id === "bold") chain.toggleBold().run();
@@ -799,6 +820,11 @@ function PageEditor({ context, options }) {
           onMouseDown: () => executeSlashCommand(command),
         }))}
       />
+      <TableMenu
+        open={tableMenu.open}
+        position={tableMenu.pos}
+        editor={editor}
+      />
       <CalloutMenu
         open={calloutMenu.open}
         position={calloutMenu.pos}
@@ -857,6 +883,46 @@ function CommandMenu({ id, open, position, header, rows }) {
         >
           <span className="page-slash-menu-label">{row.label}</span>
           <span className="page-slash-menu-shortcut">{row.shortcut}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+const TABLE_ACTIONS = [
+  { id: "rowAbove", label: "+Row ↑", title: "Add row above", run: (chain) => chain.addRowBefore() },
+  { id: "rowBelow", label: "+Row ↓", title: "Add row below", run: (chain) => chain.addRowAfter() },
+  { id: "colLeft", label: "+Col ←", title: "Add column left", run: (chain) => chain.addColumnBefore() },
+  { id: "colRight", label: "+Col →", title: "Add column right", run: (chain) => chain.addColumnAfter() },
+  { id: "delRow", label: "−Row", title: "Delete row", run: (chain) => chain.deleteRow() },
+  { id: "delCol", label: "−Col", title: "Delete column", run: (chain) => chain.deleteColumn() },
+  { id: "header", label: "Header", title: "Toggle header row", run: (chain) => chain.toggleHeaderRow() },
+  { id: "delTable", label: "✕", title: "Delete table", run: (chain) => chain.deleteTable() },
+];
+
+function TableMenu({ open, position, editor }) {
+  if (!open || !editor) return null;
+  const style = position
+    ? {
+        left: `${Math.max(16, position.left)}px`,
+        top: `${Math.max(16, position.top - 44)}px`,
+      }
+    : {};
+  return (
+    <div className="page-slash-menu project-pages-menu project-pages-table-menu" style={style}>
+      {TABLE_ACTIONS.map((action) => (
+        <button
+          key={action.id}
+          type="button"
+          className="project-pages-table-btn"
+          title={action.title}
+          aria-label={action.title}
+          onMouseDown={(event) => {
+            event.preventDefault();
+            action.run(editor.chain().focus()).run();
+          }}
+        >
+          {action.label}
         </button>
       ))}
     </div>

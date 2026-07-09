@@ -12806,6 +12806,16 @@ button.page-crumb:hover {
   background: var(--hover-overlay);
   border: 1px dashed var(--glass-border);
 }
+.page-editor details.page-toggle {
+  margin: 0.6rem 0;
+}
+.page-editor details.page-toggle > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.page-editor details.page-toggle > div[data-type="detailsContent"] {
+  padding: 0.15rem 0 0 1.2rem;
+}
 .page-editor .page-callout {
   position: relative;
   margin: 0.6rem 0;

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createRoot } from "react-dom/client";
 import { Node, mergeAttributes } from "@tiptap/core";
 import Color from "@tiptap/extension-color";
+import { Details, DetailsContent, DetailsSummary } from "@tiptap/extension-details";
 import Highlight from "@tiptap/extension-highlight";
 import Image from "@tiptap/extension-image";
 import Link from "@tiptap/extension-link";
@@ -276,6 +277,7 @@ const SLASH_COMMANDS = [
   { id: "todo", label: "Todo", shortcut: "[]", group: "block" },
   { id: "quote", label: "Quote", shortcut: ">", group: "block" },
   { id: "callout", label: "Callout", shortcut: "!", group: "block" },
+  { id: "toggle", label: "Toggle", shortcut: ">v", group: "block" },
   { id: "code", label: "Code block", shortcut: "```", group: "block" },
   { id: "divider", label: "Divider", shortcut: "---", group: "block" },
   { id: "bold", label: "Bold", shortcut: "B", group: "inline" },
@@ -354,6 +356,9 @@ function PageEditor({ context, options }) {
       TaskList,
       TaskItem.configure({ nested: true }),
       Highlight.configure({ multicolor: true }),
+      Details.configure({ persist: true, HTMLAttributes: { class: "page-toggle" } }),
+      DetailsSummary,
+      DetailsContent,
       PageCallout,
       PageImage,
       PageLink,
@@ -591,6 +596,7 @@ function PageEditor({ context, options }) {
     else if (command.id === "todo") chain.toggleTaskList().run();
     else if (command.id === "quote") chain.toggleBlockquote().run();
     else if (command.id === "callout") chain.setCallout().run();
+    else if (command.id === "toggle") chain.setDetails().run();
     else if (command.id === "code") chain.toggleCodeBlock().run();
     else if (command.id === "divider") chain.setHorizontalRule().run();
     else if (command.id === "bold") chain.toggleBold().run();

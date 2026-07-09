@@ -75,6 +75,61 @@
   justify-self: end;
 }
 
+.project-pages-editor-content [data-type="details"] {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.3rem;
+  margin: 0.6rem 0;
+}
+
+.project-pages-editor-content [data-type="details"] > button {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  margin-top: 0.25rem;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  font-size: 0.6rem;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--muted, inherit);
+}
+
+.project-pages-editor-content [data-type="details"] > button:hover {
+  background: var(--hover-overlay, rgba(128, 128, 128, 0.15));
+}
+
+.project-pages-editor-content [data-type="details"] > button::before {
+  content: "\25B6";
+  transition: transform 0.15s ease;
+}
+
+.project-pages-editor-content [data-type="details"].is-open > button::before {
+  transform: rotate(90deg);
+}
+
+.project-pages-editor-content [data-type="details"] > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.project-pages-editor-content [data-type="details"] summary {
+  list-style: none;
+  font-weight: 600;
+}
+
+.project-pages-editor-content [data-type="details"] summary::-webkit-details-marker {
+  display: none;
+}
+
+.project-pages-editor-content [data-type="detailsContent"] {
+  padding-top: 0.15rem;
+}
+
 .project-pages-callout-menu {
   display: flex;
   align-items: center;

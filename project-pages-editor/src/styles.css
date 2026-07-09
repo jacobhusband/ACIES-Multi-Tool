@@ -135,6 +135,20 @@
   background: rgba(96, 165, 250, 0.18);
 }
 
+.project-pages-code-menu {
+  padding: 5px 8px;
+}
+
+.project-pages-code-language {
+  font-size: 0.78rem;
+  padding: 2px 4px;
+  border-radius: 5px;
+  border: 1px solid var(--glass-border, rgba(128, 128, 128, 0.3));
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
 .project-pages-table-menu {
   display: flex;
   align-items: center;

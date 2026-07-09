@@ -12929,6 +12929,63 @@ button.page-crumb:hover {
   font-family: "Cascadia Code", Consolas, "Courier New", monospace;
   font-size: 0.88em;
 }
+.page-editor pre code .hljs-comment,
+.page-editor pre code .hljs-quote {
+  color: #8b949e;
+  font-style: italic;
+}
+.page-editor pre code .hljs-keyword,
+.page-editor pre code .hljs-selector-tag,
+.page-editor pre code .hljs-doctag,
+.page-editor pre code .hljs-meta-keyword {
+  color: #b96ad9;
+}
+.page-editor pre code .hljs-string,
+.page-editor pre code .hljs-regexp,
+.page-editor pre code .hljs-addition {
+  color: #44a463;
+}
+.page-editor pre code .hljs-number,
+.page-editor pre code .hljs-literal,
+.page-editor pre code .hljs-symbol,
+.page-editor pre code .hljs-bullet {
+  color: #c47f2a;
+}
+.page-editor pre code .hljs-title,
+.page-editor pre code .hljs-title.function_,
+.page-editor pre code .hljs-title.class_,
+.page-editor pre code .hljs-section {
+  color: #4d8ede;
+}
+.page-editor pre code .hljs-built_in,
+.page-editor pre code .hljs-type {
+  color: #0d9488;
+}
+.page-editor pre code .hljs-attr,
+.page-editor pre code .hljs-attribute,
+.page-editor pre code .hljs-property,
+.page-editor pre code .hljs-selector-attr,
+.page-editor pre code .hljs-selector-class,
+.page-editor pre code .hljs-selector-id {
+  color: #b0851f;
+}
+.page-editor pre code .hljs-variable,
+.page-editor pre code .hljs-template-variable,
+.page-editor pre code .hljs-tag,
+.page-editor pre code .hljs-name,
+.page-editor pre code .hljs-deletion {
+  color: #d05a63;
+}
+.page-editor pre code .hljs-meta,
+.page-editor pre code .hljs-link {
+  color: #8b949e;
+}
+.page-editor pre code .hljs-emphasis {
+  font-style: italic;
+}
+.page-editor pre code .hljs-strong {
+  font-weight: 700;
+}
 
 .global-pages {
   display: flex;

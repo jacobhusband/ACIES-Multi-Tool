@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Node, mergeAttributes } from "@tiptap/core";
+import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
 import Color from "@tiptap/extension-color";
 import { Details, DetailsContent, DetailsSummary } from "@tiptap/extension-details";
 import Highlight from "@tiptap/extension-highlight";
@@ -13,7 +14,31 @@ import { TextStyle } from "@tiptap/extension-text-style";
 import Underline from "@tiptap/extension-underline";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
+import { createLowlight } from "lowlight";
+import bash from "highlight.js/lib/languages/bash";
+import css from "highlight.js/lib/languages/css";
+import javascript from "highlight.js/lib/languages/javascript";
+import json from "highlight.js/lib/languages/json";
+import python from "highlight.js/lib/languages/python";
+import sql from "highlight.js/lib/languages/sql";
+import typescript from "highlight.js/lib/languages/typescript";
+import xml from "highlight.js/lib/languages/xml";
 import "./styles.css";
+
+const lowlight = createLowlight();
+lowlight.register({ bash, css, javascript, json, python, sql, typescript, xml });
+
+const CODE_LANGUAGES = [
+  { label: "Plain text", value: "" },
+  { label: "Bash", value: "bash" },
+  { label: "CSS", value: "css" },
+  { label: "HTML/XML", value: "xml" },
+  { label: "JavaScript", value: "javascript" },
+  { label: "JSON", value: "json" },
+  { label: "Python", value: "python" },
+  { label: "SQL", value: "sql" },
+  { label: "TypeScript", value: "typescript" },
+];
 
 let root = null;
 let mountedContainer = null;
@@ -326,6 +351,7 @@ function PageEditor({ context, options }) {
   const [colorMenu, setColorMenu] = useState({ open: false, mode: "color", pos: null });
   const [calloutMenu, setCalloutMenu] = useState({ open: false, pos: null });
   const [tableMenu, setTableMenu] = useState({ open: false, pos: null });
+  const [codeMenu, setCodeMenu] = useState({ open: false, pos: null, language: "" });
 
   const globalPages = Array.isArray(context.globalPages) ? context.globalPages : [];
   const pageLinkMatches = useMemo(() => {
@@ -354,7 +380,9 @@ function PageEditor({ context, options }) {
         heading: { levels: [1, 2, 3] },
         link: false,
         underline: false,
+        codeBlock: false,
       }),
+      CodeBlockLowlight.configure({ lowlight, defaultLanguage: null }),
       Underline,
       TextStyle,
       Color,
@@ -583,6 +611,17 @@ function PageEditor({ context, options }) {
       setTableMenu({ open: true, pos: rect ? { left: rect.left, top: rect.top } : null });
     } else {
       setTableMenu((state) => (state.open ? { ...state, open: false } : state));
+    }
+
+    if (activeEditor.isActive("codeBlock")) {
+      const rect = getActiveBlockRect(activeEditor, "pre");
+      setCodeMenu({
+        open: true,
+        pos: rect ? { left: rect.left, top: rect.top } : null,
+        language: activeEditor.getAttributes("codeBlock").language || "",
+      });
+    } else {
+      setCodeMenu((state) => (state.open ? { ...state, open: false } : state));
     }
 
     const pageQuery = detectPageLinkQuery(activeEditor);
@@ -820,6 +859,14 @@ function PageEditor({ context, options }) {
           onMouseDown: () => executeSlashCommand(command),
         }))}
       />
+      <CodeMenu
+        open={codeMenu.open}
+        position={codeMenu.pos}
+        language={codeMenu.language}
+        onLanguage={(language) =>
+          editor?.chain().focus().updateAttributes("codeBlock", { language: language || null }).run()
+        }
+      />
       <TableMenu
         open={tableMenu.open}
         position={tableMenu.pos}
@@ -885,6 +932,32 @@ function CommandMenu({ id, open, position, header, rows }) {
           <span className="page-slash-menu-shortcut">{row.shortcut}</span>
         </button>
       ))}
+    </div>
+  );
+}
+
+function CodeMenu({ open, position, language, onLanguage }) {
+  if (!open) return null;
+  const style = position
+    ? {
+        left: `${Math.max(16, position.left)}px`,
+        top: `${Math.max(16, position.top - 44)}px`,
+      }
+    : {};
+  return (
+    <div className="page-slash-menu project-pages-menu project-pages-code-menu" style={style}>
+      <select
+        className="project-pages-code-language"
+        aria-label="Code block language"
+        value={language || ""}
+        onChange={(event) => onLanguage(event.target.value)}
+      >
+        {CODE_LANGUAGES.map((item) => (
+          <option key={item.value} value={item.value}>
+            {item.label}
+          </option>
+        ))}
+      </select>
     </div>
   );
 }

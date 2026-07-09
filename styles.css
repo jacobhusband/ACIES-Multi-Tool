@@ -12806,6 +12806,11 @@ button.page-crumb:hover {
   background: var(--hover-overlay);
   border: 1px dashed var(--glass-border);
 }
+.page-editor mark {
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 0.1em;
+}
 .page-editor hr {
   border: none;
   border-top: 1px solid var(--glass-border);

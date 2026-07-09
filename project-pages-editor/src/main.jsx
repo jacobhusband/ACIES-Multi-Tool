@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createRoot } from "react-dom/client";
 import { Node, mergeAttributes } from "@tiptap/core";
 import Color from "@tiptap/extension-color";
+import Highlight from "@tiptap/extension-highlight";
 import Image from "@tiptap/extension-image";
 import Link from "@tiptap/extension-link";
 import TaskItem from "@tiptap/extension-task-item";
@@ -173,6 +174,32 @@ const PageLink = Node.create({
   },
 });
 
+const TEXT_COLORS = [
+  { label: "Default", value: null },
+  { label: "Gray", value: "#9b9a97" },
+  { label: "Brown", value: "#a8775c" },
+  { label: "Orange", value: "#d9730d" },
+  { label: "Yellow", value: "#c29343" },
+  { label: "Green", value: "#4d9968" },
+  { label: "Blue", value: "#3f83c8" },
+  { label: "Purple", value: "#9d68d3" },
+  { label: "Pink", value: "#d5598f" },
+  { label: "Red", value: "#e03e3e" },
+];
+
+const HIGHLIGHT_COLORS = [
+  { label: "Default", value: null },
+  { label: "Gray", value: "rgba(148, 163, 184, 0.35)" },
+  { label: "Brown", value: "rgba(180, 130, 90, 0.35)" },
+  { label: "Orange", value: "rgba(251, 146, 60, 0.35)" },
+  { label: "Yellow", value: "rgba(250, 204, 21, 0.4)" },
+  { label: "Green", value: "rgba(74, 222, 128, 0.35)" },
+  { label: "Blue", value: "rgba(96, 165, 250, 0.35)" },
+  { label: "Purple", value: "rgba(192, 132, 252, 0.35)" },
+  { label: "Pink", value: "rgba(244, 114, 182, 0.35)" },
+  { label: "Red", value: "rgba(248, 113, 113, 0.35)" },
+];
+
 const SLASH_COMMANDS = [
   { id: "text", label: "Text", shortcut: "P", group: "block" },
   { id: "h1", label: "Heading 1", shortcut: "H1", group: "block" },
@@ -189,6 +216,7 @@ const SLASH_COMMANDS = [
   { id: "underline", label: "Underline", shortcut: "U", group: "inline" },
   { id: "link", label: "Link", shortcut: "->", group: "inline" },
   { id: "color", label: "Text color", shortcut: "A", group: "inline" },
+  { id: "highlight", label: "Highlight", shortcut: "==", group: "inline" },
   { id: "image", label: "Image", shortcut: "Img", group: "media" },
   { id: "page", label: "Page", shortcut: "+", group: "page", projectOnly: true },
   { id: "pageref", label: "Link to page", shortcut: "[[", group: "page" },
@@ -217,6 +245,7 @@ function PageEditor({ context, options }) {
   const [title, setTitle] = useState(context.title || "");
   const [slash, setSlash] = useState({ open: false, query: "", selected: 0, range: null, pos: null });
   const [pageLink, setPageLink] = useState({ open: false, query: "", selected: 0, range: null, pos: null });
+  const [colorMenu, setColorMenu] = useState({ open: false, mode: "color", pos: null });
 
   const globalPages = Array.isArray(context.globalPages) ? context.globalPages : [];
   const pageLinkMatches = useMemo(() => {
@@ -256,6 +285,7 @@ function PageEditor({ context, options }) {
       }),
       TaskList,
       TaskItem.configure({ nested: true }),
+      Highlight.configure({ multicolor: true }),
       PageImage,
       PageLink,
     ],
@@ -271,6 +301,11 @@ function PageEditor({ context, options }) {
         "data-placeholder": "Type here - add headings, images, links, and notes...",
       },
       handleKeyDown(view, event) {
+        if (colorMenu.open && event.key === "Escape") {
+          event.preventDefault();
+          setColorMenu((state) => ({ ...state, open: false }));
+          return true;
+        }
         if (pageLink.open) {
           if (event.key === "Escape") {
             event.preventDefault();
@@ -443,6 +478,8 @@ function PageEditor({ context, options }) {
       setSlash((state) => (state.open ? { ...state, open: false } : state));
     }
 
+    setColorMenu((state) => (state.open ? { ...state, open: false } : state));
+
     const pageQuery = detectPageLinkQuery(activeEditor);
     if (pageQuery) {
       setPageLink((state) => ({
@@ -478,7 +515,13 @@ function PageEditor({ context, options }) {
     else if (command.id === "bold") chain.toggleBold().run();
     else if (command.id === "italic") chain.toggleItalic().run();
     else if (command.id === "underline") chain.toggleUnderline().run();
-    else if (command.id === "color") chain.setColor("#2f6fed").run();
+    else if (command.id === "color" || command.id === "highlight") {
+      const pos = slash.pos;
+      chain.run();
+      requestAnimationFrame(() =>
+        setColorMenu({ open: true, mode: command.id === "highlight" ? "highlight" : "color", pos })
+      );
+    }
     else if (command.id === "link") {
       chain.run();
       const url = window.prompt("Link URL", "https://");
@@ -495,6 +538,19 @@ function PageEditor({ context, options }) {
       chain.insertContent("[[").run();
     }
     setSlash((state) => ({ ...state, open: false }));
+  }
+
+  function applyColorChoice(value) {
+    if (!editor) return;
+    const chain = editor.chain().focus();
+    if (colorMenu.mode === "highlight") {
+      if (value) chain.setHighlight({ color: value }).run();
+      else chain.unsetHighlight().run();
+    } else {
+      if (value) chain.setColor(value).run();
+      else chain.unsetColor().run();
+    }
+    setColorMenu((state) => ({ ...state, open: false }));
   }
 
   function choosePageLinkMatch(match) {
@@ -656,6 +712,13 @@ function PageEditor({ context, options }) {
           onMouseDown: () => executeSlashCommand(command),
         }))}
       />
+      <ColorMenu
+        open={colorMenu.open}
+        mode={colorMenu.mode}
+        position={colorMenu.pos}
+        colors={colorMenu.mode === "highlight" ? HIGHLIGHT_COLORS : TEXT_COLORS}
+        onPick={applyColorChoice}
+      />
       <CommandMenu
         id="pageLinkMenu"
         open={pageLink.open}
@@ -703,6 +766,47 @@ function CommandMenu({ id, open, position, header, rows }) {
           <span className="page-slash-menu-shortcut">{row.shortcut}</span>
         </button>
       ))}
+    </div>
+  );
+}
+
+function ColorMenu({ open, mode, position, colors, onPick }) {
+  if (!open) return null;
+  const style = position
+    ? {
+        left: `${Math.max(16, position.left)}px`,
+        top: `${Math.max(16, position.bottom + 8)}px`,
+      }
+    : {};
+  return (
+    <div className="page-slash-menu project-pages-menu project-pages-color-menu" role="listbox" style={style}>
+      <div className="page-slash-menu-header">
+        <span>{mode === "highlight" ? "Highlight" : "Text color"}</span>
+        <span>Esc to close</span>
+      </div>
+      <div className="project-pages-color-grid">
+        {colors.map((color) => (
+          <button
+            key={color.label}
+            type="button"
+            role="option"
+            className="project-pages-color-swatch"
+            title={color.label}
+            aria-label={`${mode === "highlight" ? "Highlight" : "Text color"}: ${color.label}`}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              onPick(color.value);
+            }}
+          >
+            <span
+              className="project-pages-color-chip"
+              style={mode === "highlight" ? { background: color.value || "transparent" } : { color: color.value || "inherit" }}
+            >
+              {color.value ? "A" : "×"}
+            </span>
+          </button>
+        ))}
+      </div>
     </div>
   );
 }

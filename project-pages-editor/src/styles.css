@@ -74,3 +74,35 @@
 .project-pages-menu .page-slash-menu-shortcut {
   justify-self: end;
 }
+
+.project-pages-color-grid {
+  display: grid;
+  grid-template-columns: repeat(5, auto);
+  gap: 4px;
+  padding: 6px;
+}
+
+.project-pages-color-swatch {
+  appearance: none;
+  background: none;
+  border: 1px solid var(--glass-border, rgba(128, 128, 128, 0.3));
+  border-radius: 6px;
+  padding: 2px;
+  cursor: pointer;
+}
+
+.project-pages-color-swatch:hover {
+  border-color: var(--accent, #3f83c8);
+}
+
+.project-pages-color-chip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  line-height: 1;
+}

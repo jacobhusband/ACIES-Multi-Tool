@@ -12806,6 +12806,52 @@ button.page-crumb:hover {
   background: var(--hover-overlay);
   border: 1px dashed var(--glass-border);
 }
+.page-editor .page-callout {
+  position: relative;
+  margin: 0.6rem 0;
+  padding: 0.75rem 1rem 0.75rem 2.6rem;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: var(--hover-overlay);
+}
+.page-editor .page-callout::before {
+  content: attr(data-callout-emoji);
+  position: absolute;
+  left: 0.9rem;
+  top: 0.75rem;
+  font-size: 1.05rem;
+  line-height: 1.5;
+}
+.page-editor .page-callout > p:first-child {
+  margin-top: 0;
+}
+.page-editor .page-callout > p:last-child {
+  margin-bottom: 0;
+}
+.page-editor .page-callout[data-callout-color="gray"] {
+  background: rgba(148, 163, 184, 0.14);
+  border-color: rgba(148, 163, 184, 0.4);
+}
+.page-editor .page-callout[data-callout-color="blue"] {
+  background: rgba(96, 165, 250, 0.14);
+  border-color: rgba(96, 165, 250, 0.45);
+}
+.page-editor .page-callout[data-callout-color="green"] {
+  background: rgba(74, 222, 128, 0.14);
+  border-color: rgba(74, 222, 128, 0.45);
+}
+.page-editor .page-callout[data-callout-color="yellow"] {
+  background: rgba(250, 204, 21, 0.14);
+  border-color: rgba(250, 204, 21, 0.45);
+}
+.page-editor .page-callout[data-callout-color="red"] {
+  background: rgba(248, 113, 113, 0.14);
+  border-color: rgba(248, 113, 113, 0.45);
+}
+.page-editor .page-callout[data-callout-color="purple"] {
+  background: rgba(192, 132, 252, 0.14);
+  border-color: rgba(192, 132, 252, 0.45);
+}
 .page-editor mark {
   color: inherit;
   border-radius: 3px;

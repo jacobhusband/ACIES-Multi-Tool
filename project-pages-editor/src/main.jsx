@@ -174,6 +174,72 @@ const PageLink = Node.create({
   },
 });
 
+const CALLOUT_EMOJIS = ["💡", "📌", "⚠️", "✅", "❓", "🔥"];
+const CALLOUT_COLORS = ["gray", "blue", "green", "yellow", "red", "purple"];
+
+const PageCallout = Node.create({
+  name: "pageCallout",
+  group: "block",
+  content: "paragraph+",
+  defining: true,
+
+  addAttributes() {
+    return {
+      color: {
+        default: "gray",
+        parseHTML: (element) => element.getAttribute("data-callout-color") || "gray",
+        renderHTML: (attributes) => ({ "data-callout-color": attributes.color || "gray" }),
+      },
+      emoji: {
+        default: "💡",
+        parseHTML: (element) => element.getAttribute("data-callout-emoji") || "💡",
+        renderHTML: (attributes) => ({ "data-callout-emoji": attributes.emoji || "💡" }),
+      },
+    };
+  },
+
+  parseHTML() {
+    return [{ tag: "div.page-callout" }];
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    return ["div", mergeAttributes({ class: "page-callout" }, HTMLAttributes), 0];
+  },
+
+  addCommands() {
+    return {
+      setCallout:
+        (attrs = {}) =>
+        ({ commands }) =>
+          commands.wrapIn(this.name, attrs),
+      updateCalloutAttrs:
+        (attrs) =>
+        ({ commands }) =>
+          commands.updateAttributes(this.name, attrs),
+    };
+  },
+
+  addKeyboardShortcuts() {
+    return {
+      "Mod-Enter": () => {
+        const { state } = this.editor;
+        const { $from } = state.selection;
+        for (let depth = $from.depth; depth > 0; depth -= 1) {
+          if ($from.node(depth).type.name === this.name) {
+            const pos = $from.after(depth);
+            return this.editor
+              .chain()
+              .insertContentAt(pos, { type: "paragraph" })
+              .focus(pos + 1)
+              .run();
+          }
+        }
+        return false;
+      },
+    };
+  },
+});
+
 const TEXT_COLORS = [
   { label: "Default", value: null },
   { label: "Gray", value: "#9b9a97" },
@@ -209,6 +275,7 @@ const SLASH_COMMANDS = [
   { id: "numbered", label: "Numbered list", shortcut: "1.", group: "block" },
   { id: "todo", label: "Todo", shortcut: "[]", group: "block" },
   { id: "quote", label: "Quote", shortcut: ">", group: "block" },
+  { id: "callout", label: "Callout", shortcut: "!", group: "block" },
   { id: "code", label: "Code block", shortcut: "```", group: "block" },
   { id: "divider", label: "Divider", shortcut: "---", group: "block" },
   { id: "bold", label: "Bold", shortcut: "B", group: "inline" },
@@ -246,6 +313,7 @@ function PageEditor({ context, options }) {
   const [slash, setSlash] = useState({ open: false, query: "", selected: 0, range: null, pos: null });
   const [pageLink, setPageLink] = useState({ open: false, query: "", selected: 0, range: null, pos: null });
   const [colorMenu, setColorMenu] = useState({ open: false, mode: "color", pos: null });
+  const [calloutMenu, setCalloutMenu] = useState({ open: false, pos: null });
 
   const globalPages = Array.isArray(context.globalPages) ? context.globalPages : [];
   const pageLinkMatches = useMemo(() => {
@@ -286,6 +354,7 @@ function PageEditor({ context, options }) {
       TaskList,
       TaskItem.configure({ nested: true }),
       Highlight.configure({ multicolor: true }),
+      PageCallout,
       PageImage,
       PageLink,
     ],
@@ -480,6 +549,17 @@ function PageEditor({ context, options }) {
 
     setColorMenu((state) => (state.open ? { ...state, open: false } : state));
 
+    if (activeEditor.isActive("pageCallout")) {
+      const { $from } = activeEditor.state.selection;
+      const domAt = activeEditor.view.domAtPos($from.pos);
+      const element = domAt.node.nodeType === 1 ? domAt.node : domAt.node.parentElement;
+      const calloutEl = element?.closest?.(".page-callout");
+      const rect = calloutEl?.getBoundingClientRect();
+      setCalloutMenu({ open: true, pos: rect ? { left: rect.left, top: rect.top } : null });
+    } else {
+      setCalloutMenu((state) => (state.open ? { ...state, open: false } : state));
+    }
+
     const pageQuery = detectPageLinkQuery(activeEditor);
     if (pageQuery) {
       setPageLink((state) => ({
@@ -510,6 +590,7 @@ function PageEditor({ context, options }) {
     else if (command.id === "numbered") chain.toggleOrderedList().run();
     else if (command.id === "todo") chain.toggleTaskList().run();
     else if (command.id === "quote") chain.toggleBlockquote().run();
+    else if (command.id === "callout") chain.setCallout().run();
     else if (command.id === "code") chain.toggleCodeBlock().run();
     else if (command.id === "divider") chain.setHorizontalRule().run();
     else if (command.id === "bold") chain.toggleBold().run();
@@ -712,6 +793,12 @@ function PageEditor({ context, options }) {
           onMouseDown: () => executeSlashCommand(command),
         }))}
       />
+      <CalloutMenu
+        open={calloutMenu.open}
+        position={calloutMenu.pos}
+        onEmoji={(emoji) => editor?.chain().focus().updateCalloutAttrs({ emoji }).run()}
+        onColor={(color) => editor?.chain().focus().updateCalloutAttrs({ color }).run()}
+      />
       <ColorMenu
         open={colorMenu.open}
         mode={colorMenu.mode}
@@ -765,6 +852,48 @@ function CommandMenu({ id, open, position, header, rows }) {
           <span className="page-slash-menu-label">{row.label}</span>
           <span className="page-slash-menu-shortcut">{row.shortcut}</span>
         </button>
+      ))}
+    </div>
+  );
+}
+
+function CalloutMenu({ open, position, onEmoji, onColor }) {
+  if (!open) return null;
+  const style = position
+    ? {
+        left: `${Math.max(16, position.left)}px`,
+        top: `${Math.max(16, position.top - 44)}px`,
+      }
+    : {};
+  return (
+    <div className="page-slash-menu project-pages-menu project-pages-callout-menu" style={style}>
+      {CALLOUT_EMOJIS.map((emoji) => (
+        <button
+          key={emoji}
+          type="button"
+          className="project-pages-callout-btn"
+          title="Callout icon"
+          onMouseDown={(event) => {
+            event.preventDefault();
+            onEmoji(emoji);
+          }}
+        >
+          {emoji}
+        </button>
+      ))}
+      <span className="project-pages-callout-sep" />
+      {CALLOUT_COLORS.map((color) => (
+        <button
+          key={color}
+          type="button"
+          className={`project-pages-callout-dot callout-dot-${color}`}
+          title={`${color} callout`}
+          aria-label={`${color} callout`}
+          onMouseDown={(event) => {
+            event.preventDefault();
+            onColor(color);
+          }}
+        />
       ))}
     </div>
   );

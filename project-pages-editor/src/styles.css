@@ -75,6 +75,73 @@
   justify-self: end;
 }
 
+.project-pages-callout-menu {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 8px;
+}
+
+.project-pages-callout-btn {
+  appearance: none;
+  background: none;
+  border: none;
+  border-radius: 5px;
+  padding: 2px 4px;
+  font-size: 0.95rem;
+  line-height: 1.3;
+  cursor: pointer;
+}
+
+.project-pages-callout-btn:hover {
+  background: var(--hover-overlay, rgba(128, 128, 128, 0.15));
+}
+
+.project-pages-callout-sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--glass-border, rgba(128, 128, 128, 0.3));
+}
+
+.project-pages-callout-dot {
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid var(--glass-border, rgba(128, 128, 128, 0.3));
+  padding: 0;
+  cursor: pointer;
+}
+
+.project-pages-callout-dot:hover {
+  border-color: var(--accent, #3f83c8);
+}
+
+.callout-dot-gray {
+  background: rgba(148, 163, 184, 0.7);
+}
+
+.callout-dot-blue {
+  background: rgba(96, 165, 250, 0.7);
+}
+
+.callout-dot-green {
+  background: rgba(74, 222, 128, 0.7);
+}
+
+.callout-dot-yellow {
+  background: rgba(250, 204, 21, 0.7);
+}
+
+.callout-dot-red {
+  background: rgba(248, 113, 113, 0.7);
+}
+
+.callout-dot-purple {
+  background: rgba(192, 132, 252, 0.7);
+}
+
 .project-pages-color-grid {
   display: grid;
   grid-template-columns: repeat(5, auto);

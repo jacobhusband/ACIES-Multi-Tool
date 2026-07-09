@@ -181,6 +181,9 @@ const SLASH_COMMANDS = [
   { id: "bullet", label: "Bulleted list", shortcut: "*", group: "block" },
   { id: "numbered", label: "Numbered list", shortcut: "1.", group: "block" },
   { id: "todo", label: "Todo", shortcut: "[]", group: "block" },
+  { id: "quote", label: "Quote", shortcut: ">", group: "block" },
+  { id: "code", label: "Code block", shortcut: "```", group: "block" },
+  { id: "divider", label: "Divider", shortcut: "---", group: "block" },
   { id: "bold", label: "Bold", shortcut: "B", group: "inline" },
   { id: "italic", label: "Italic", shortcut: "I", group: "inline" },
   { id: "underline", label: "Underline", shortcut: "U", group: "inline" },
@@ -313,6 +316,12 @@ function PageEditor({ context, options }) {
           }
         }
         if (event.key === "Tab" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+          if (editor?.isActive("codeBlock")) {
+            if (event.shiftKey) return false;
+            event.preventDefault();
+            editor.chain().focus().insertContent("  ").run();
+            return true;
+          }
           const chain = editor?.chain().focus();
           if (chain) {
             event.preventDefault();
@@ -463,6 +472,9 @@ function PageEditor({ context, options }) {
     else if (command.id === "bullet") chain.toggleBulletList().run();
     else if (command.id === "numbered") chain.toggleOrderedList().run();
     else if (command.id === "todo") chain.toggleTaskList().run();
+    else if (command.id === "quote") chain.toggleBlockquote().run();
+    else if (command.id === "code") chain.toggleCodeBlock().run();
+    else if (command.id === "divider") chain.setHorizontalRule().run();
     else if (command.id === "bold") chain.toggleBold().run();
     else if (command.id === "italic") chain.toggleItalic().run();
     else if (command.id === "underline") chain.toggleUnderline().run();

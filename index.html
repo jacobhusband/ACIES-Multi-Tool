@@ -50,6 +50,8 @@
                 <button class="main-tab-btn" data-tab="checklists">Checklists</button>
                 <button class="main-tab-btn" data-tab="tools">Tools</button>
                 <button class="main-tab-btn" data-tab="timesheets">Timesheets</button>
+                <button class="main-tab-btn" data-tab="email">Email <span id="emailTabBadge" class="tab-badge"
+                        hidden></span></button>
             </nav>
         </div>
         <div class="header-actions">
@@ -1007,6 +1009,40 @@
                 </div>
             </section>
         </div>
+        <div id="email-panel" class="tab-panel" hidden>
+            <section class="panel stack">
+                <div class="panel-toolbar">
+                    <div class="email-inbox-filters" id="emailInboxFilters" role="group" aria-label="Email filters">
+                        <button class="btn tiny email-filter-btn active" data-email-filter="new">New</button>
+                        <button class="btn tiny email-filter-btn" data-email-filter="cc">CC &amp; Other</button>
+                        <button class="btn tiny email-filter-btn" data-email-filter="accepted">Accepted</button>
+                        <button class="btn tiny email-filter-btn" data-email-filter="dismissed">Dismissed</button>
+                    </div>
+                    <div class="toolbar-actions">
+                        <span class="tiny muted" id="emailCaptureLastScan"></span>
+                        <button class="btn tiny" id="emailCaptureRescanBtn">Scan Now</button>
+                    </div>
+                </div>
+                <div id="emailCaptureProgress" class="tiny muted email-capture-progress" aria-live="polite" hidden>
+                </div>
+                <div id="emailInboxList" class="email-inbox-list stack"></div>
+            </section>
+            <section class="panel stack" id="followUpsSection">
+                <div class="panel-toolbar">
+                    <div class="follow-ups-heading">
+                        <span class="label">Follow-ups</span>
+                        <span class="tiny muted" id="followUpsSummary"></span>
+                    </div>
+                    <div class="toolbar-actions">
+                        <button class="btn tiny follow-up-filter-btn active" data-follow-up-filter="open">Open</button>
+                        <button class="btn tiny follow-up-filter-btn"
+                            data-follow-up-filter="resolved">Resolved</button>
+                        <button class="btn tiny" id="addFollowUpBtn">+ Follow-up</button>
+                    </div>
+                </div>
+                <div id="followUpsList" class="follow-ups-list stack"></div>
+            </section>
+        </div>
     </main>
     <aside id="scratchpadPanel" class="scratchpad-panel" hidden aria-label="Scratchpad" data-viewport-docked="true">
         <div class="scratchpad-panel-header">
@@ -1407,6 +1443,37 @@
                         Project</button>
                 </div>
             </div>
+        </div>
+    </dialog>
+    <dialog id="followUpDlg">
+        <div class="modal-header">
+            <div class="title" id="followUpDlgTitle">Flag Follow-up</div>
+            <button class="btn ghost" onclick="closeDlg('followUpDlg')">Cancel</button>
+        </div>
+        <div class="modal-body stack">
+            <div class="tiny muted" id="followUpDlgContext" hidden></div>
+            <label class="label" for="followUpTitleInput">Title</label>
+            <input id="followUpTitleInput" type="text" placeholder="What needs a follow-up?" />
+            <label class="label" for="followUpWaitingOnInput">Waiting on</label>
+            <input id="followUpWaitingOnInput" type="text" placeholder="Person or company you are waiting on" />
+            <label class="label" for="followUpDueInput">Follow up by</label>
+            <input id="followUpDueInput" type="date" />
+            <label class="label" for="followUpNoteInput">Note</label>
+            <textarea id="followUpNoteInput" rows="3" placeholder="Optional context..."></textarea>
+            <div class="modal-footer">
+                <button class="btn-primary" id="followUpSaveBtn">Save Follow-up</button>
+            </div>
+        </div>
+    </dialog>
+    <dialog id="emailProjectPickerDlg">
+        <div class="modal-header">
+            <div class="title">Link Email to Project</div>
+            <button class="btn ghost" onclick="closeDlg('emailProjectPickerDlg')">Cancel</button>
+        </div>
+        <div class="modal-body stack">
+            <p class="tiny muted">Pick the project this email belongs to. A new deliverable will be created there.</p>
+            <input id="emailProjectPickerSearch" type="search" placeholder="Search by project name or nickname..." />
+            <div id="emailProjectPickerList" class="timesheet-project-list"></div>
         </div>
     </dialog>
     <!-- Paste CSV Modal -->
@@ -2734,6 +2801,9 @@
                         <select id="lightingScheduleProjectSelect"></select>
                     </div>
                     <div class="lighting-schedule-actions">
+                        <button class="btn tiny" id="lightingScheduleInsertResidentialStarter" type="button">
+                            Insert CA Residential Starter
+                        </button>
                         <button class="btn tiny" id="lightingScheduleAddRow" type="button">Add Row</button>
                     </div>
                 </div>
@@ -2770,10 +2840,11 @@
                     <table class="lighting-schedule-table" aria-label="Lighting fixture schedule">
                         <thead>
                             <tr>
-                                <th colspan="8" class="lighting-schedule-title-cell">LIGHTING FIXTURE SCHEDULE</th>
+                                <th colspan="9" class="lighting-schedule-title-cell">LIGHTING FIXTURE SCHEDULE</th>
                             </tr>
                             <tr>
                                 <th>MARK</th>
+                                <th>SYMBOL</th>
                                 <th>DESCRIPTION</th>
                                 <th>MANUFACTURER</th>
                                 <th>MODEL NUMBER</th>
@@ -2786,7 +2857,7 @@
                         <tbody id="lightingScheduleRows"></tbody>
                         <tfoot>
                             <tr>
-                                <td colspan="8" class="lighting-schedule-notes-cell">
+                                <td colspan="9" class="lighting-schedule-notes-cell">
                                     <div class="lighting-schedule-notes">
                                         <div class="lighting-schedule-notes-label">GENERAL NOTES:</div>
                                         <textarea id="lightingScheduleGeneralNotes" rows="6"></textarea>
@@ -2794,7 +2865,7 @@
                                 </td>
                             </tr>
                             <tr>
-                                <td colspan="8" class="lighting-schedule-notes-cell">
+                                <td colspan="9" class="lighting-schedule-notes-cell">
                                     <div class="lighting-schedule-notes">
                                         <div class="lighting-schedule-notes-label">NOTES:</div>
                                         <textarea id="lightingScheduleNotes" rows="4"></textarea>

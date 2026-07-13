@@ -15,9 +15,20 @@ CAD_SCRIPT_PATHS = (
     REPO_ROOT / "scripts" / "ManageLayersDWGs.ps1",
 )
 CLEAN_XREF_SCRIPT_PATH = REPO_ROOT / "scripts" / "removeXREFPaths.ps1"
+DETECT_PDF_SIZE_PATH = REPO_ROOT / "scripts" / "detect_pdf_size.py"
 
 
 class PowerShellCadWrapperTests(unittest.TestCase):
+    def test_publish_supports_arch_full_bleed_e_paper_size(self):
+        paper_size = "ARCH full bleed E (36.00 x 48.00 Inches)"
+        plot_script = (REPO_ROOT / "scripts" / "PlotDWGs.ps1").read_text(
+            encoding="utf-8"
+        )
+        detector = DETECT_PDF_SIZE_PATH.read_text(encoding="utf-8")
+
+        self.assertIn(paper_size, plot_script)
+        self.assertIn(f'"{paper_size}": (36 * 72, 48 * 72)', detector)
+
     def test_backend_trace_messages_are_logged_but_not_forwarded_to_ui(self):
         text = MAIN_PY_PATH.read_text(encoding="utf-8")
         self.assertIn('if message.startswith("TRACE"):', text)

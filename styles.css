@@ -4463,8 +4463,16 @@ dialog.lighting-schedule-dialog {
 .lighting-schedule-table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 980px;
+  min-width: 1160px;
   table-layout: fixed;
+}
+
+.lighting-schedule-table thead tr:nth-child(2) th:nth-child(1) {
+  width: 70px;
+}
+
+.lighting-schedule-table thead tr:nth-child(2) th:nth-child(2) {
+  width: 118px;
 }
 
 .lighting-schedule-table th,
@@ -4496,6 +4504,72 @@ dialog.lighting-schedule-dialog {
   width: 100%;
   font-size: 12px;
   padding: 0.35rem 0.45rem;
+}
+
+.lighting-schedule-symbol-cell {
+  min-width: 118px;
+  outline: none;
+}
+
+.lighting-schedule-symbol-cell:focus,
+.lighting-schedule-symbol-cell.is-paste-target {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.lighting-schedule-symbol-preview {
+  width: 92px;
+  height: 58px;
+  margin: 0 auto 0.35rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border: 1px dashed var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: #ffffff;
+  color: var(--muted);
+  font-size: 10px;
+  text-align: center;
+}
+
+.lighting-schedule-symbol-preview img {
+  display: block;
+  max-width: 84px;
+  max-height: 50px;
+  object-fit: contain;
+}
+
+.lighting-schedule-symbol-preview.is-empty {
+  background: var(--bg-tertiary);
+}
+
+.lighting-symbol-missing {
+  display: none;
+}
+
+.lighting-schedule-symbol-actions {
+  display: flex;
+  justify-content: center;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+}
+
+.lighting-schedule-symbol-button {
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text);
+  padding: 0.2rem 0.35rem;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.lighting-schedule-symbol-button:hover {
+  border-color: var(--accent);
+}
+
+.lighting-schedule-symbol-button.danger {
+  color: var(--danger);
 }
 
 .lighting-schedule-row-notes {
@@ -11365,6 +11439,136 @@ input:checked+.slider:before {
   align-items: center;
   justify-content: center;
   font-weight: 600;
+}
+
+/* ===================== EMAIL CAPTURE INBOX & FOLLOW-UPS ===================== */
+
+.tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  margin-left: 6px;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  background: var(--danger);
+  color: #fff;
+}
+
+.email-inbox-filters {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.email-filter-btn.active,
+.follow-up-filter-btn.active {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.email-capture-progress {
+  padding: 4px 2px;
+}
+
+.email-capture-progress.active {
+  color: var(--accent);
+}
+
+.email-inbox-empty {
+  padding: 12px 4px;
+}
+
+.email-inbox-list,
+.follow-ups-list {
+  gap: 8px;
+}
+
+.email-inbox-card,
+.follow-up-card {
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--surface);
+}
+
+.email-inbox-card-head,
+.follow-up-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.email-inbox-subject,
+.follow-up-title {
+  font-weight: 600;
+}
+
+.email-inbox-meta {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.email-directedness-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border: 1px solid transparent;
+}
+
+.email-directedness-pill.direct {
+  background: var(--accent-dim);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.email-directedness-pill.cc {
+  background: var(--surface-hover);
+  color: var(--muted, inherit);
+  border-color: var(--glass-border);
+}
+
+.email-inbox-ai {
+  color: var(--accent);
+}
+
+.email-inbox-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.follow-up-card.overdue {
+  border-color: var(--danger);
+}
+
+.pill.none {
+  background: var(--surface-hover);
+  border-color: var(--glass-border);
+}
+
+.follow-ups-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.email-project-pick {
+  text-align: left;
 }
 
 .checklist-add-item .btn:hover {

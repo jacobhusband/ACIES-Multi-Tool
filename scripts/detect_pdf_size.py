@@ -16,6 +16,7 @@ PAPER_SIZES = {
     "ANSI full bleed D (22.00 x 34.00 Inches)": (22 * 72, 34 * 72),   # 1584 x 2448
     "ARCH full bleed D (24.00 x 36.00 Inches)": (24 * 72, 36 * 72),   # 1728 x 2592
     "ARCH full bleed E1 (30.00 x 42.00 Inches)": (30 * 72, 42 * 72),  # 2160 x 3024
+    "ARCH full bleed E (36.00 x 48.00 Inches)": (36 * 72, 48 * 72),   # 2592 x 3456
 }
 
 # Tolerance in points (0.5 inch = 36 points)

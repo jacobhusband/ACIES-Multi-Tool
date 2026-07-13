@@ -232,6 +232,7 @@ $MaxCombinedPdfFullPathLength = 240
 
 # --- DEFINE AVAILABLE PAPER SIZES ---
 $paperSizes = @(
+  "ARCH full bleed E (36.00 x 48.00 Inches)",
   "ARCH full bleed E1 (30.00 x 42.00 Inches)",
   "ARCH full bleed D (24.00 x 36.00 Inches)",
   "ANSI full bleed D (22.00 x 34.00 Inches)"

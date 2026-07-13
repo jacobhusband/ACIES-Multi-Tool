@@ -164,6 +164,84 @@ class PageAssetBackendTests(unittest.TestCase):
                 result = self.api.save_page_asset("proj_x", "not-a-data-url", "x.png")
                 self.assertEqual("error", result["status"])
 
+    def test_lighting_schedule_normalization_preserves_symbol_metadata(self):
+        payload = {
+            "rows": [{
+                "mark": "L1",
+                "description": "Recessed light",
+                "symbolAssetPath": "page_assets/lighting_260243/symbol.png",
+                "symbolAlt": "Recessed light symbol",
+                "starterFixtureKey": "ca-2025-res-l1",
+            }],
+            "generalNotes": "Residential notes",
+            "notes": "Fixture notes",
+            "includeSymbolColumn": True,
+        }
+        normalized = main_module._normalize_lighting_schedule_payload(payload)
+        row = normalized["rows"][0]
+        self.assertEqual("L1", row["mark"])
+        self.assertEqual(
+            "page_assets/lighting_260243/symbol.png",
+            row["symbolAssetPath"],
+        )
+        self.assertEqual("Recessed light symbol", row["symbolAlt"])
+        self.assertEqual("ca-2025-res-l1", row["starterFixtureKey"])
+        self.assertTrue(normalized["includeSymbolColumn"])
+
+    def test_legacy_lighting_schedule_rows_gain_empty_symbol_metadata(self):
+        normalized = main_module._normalize_lighting_schedule_payload({
+            "rows": [{"mark": "A", "description": "Legacy fixture"}],
+        })
+        row = normalized["rows"][0]
+        self.assertEqual("", row["symbolAssetPath"])
+        self.assertEqual("", row["symbolAlt"])
+        self.assertEqual("", row["starterFixtureKey"])
+        self.assertFalse(normalized["includeSymbolColumn"])
+
+    def test_lighting_schedule_symbol_row_forces_symbol_column(self):
+        normalized = main_module._normalize_lighting_schedule_payload({
+            "rows": [
+                {"mark": "A", "description": "Plain fixture"},
+                {
+                    "mark": "B",
+                    "description": "Pasted symbol fixture",
+                    "symbolAssetPath": "page_assets/lighting_260243/symbol.png",
+                },
+            ],
+        })
+        self.assertTrue(normalized["includeSymbolColumn"])
+
+    def test_lighting_schedule_starter_row_forces_symbol_column(self):
+        normalized = main_module._normalize_lighting_schedule_payload({
+            "rows": [{
+                "mark": "L1",
+                "description": "Starter fixture",
+                "starterFixtureKey": "ca-2025-res-l1",
+            }],
+            "includeSymbolColumn": False,
+        })
+        self.assertTrue(normalized["includeSymbolColumn"])
+
+    def test_autocad_pascal_case_schedule_restores_starter_symbol_metadata(self):
+        normalized = main_module._normalize_lighting_schedule_payload({
+            "Rows": [{
+                "Mark": "L4",
+                "Description": "4-inch adjustable LED spotlight",
+                "ModelNumber": "WF4 ADJ SWW5 90CRI MW M6",
+            }],
+            "GeneralNotes": "Residential notes",
+            "Notes": "Fixture notes",
+            "IncludeSymbolColumn": True,
+        })
+        row = normalized["rows"][0]
+        self.assertEqual("L4", row["mark"])
+        self.assertEqual("ca-2025-res-l4", row["starterFixtureKey"])
+        self.assertEqual(
+            "assets/lighting/ca-residential-l4.png",
+            row["symbolAssetPath"],
+        )
+        self.assertTrue(normalized["includeSymbolColumn"])
+
 
 if __name__ == "__main__":
     unittest.main()

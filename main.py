@@ -226,6 +226,7 @@ GOOGLE_OAUTH_TIMEOUT_SECONDS = 180
 OUTLOOK_SCAN_SOURCE_DESKTOP = "desktop-outlook"
 OUTLOOK_MAPI_INBOX_FOLDER_ID = 6
 OUTLOOK_MAPI_PR_INTERNET_MESSAGE_ID = "http://schemas.microsoft.com/mapi/proptag/0x1035001F"
+OUTLOOK_MAPI_PR_SMTP_ADDRESS = "http://schemas.microsoft.com/mapi/proptag/0x39FE001F"
 OUTLOOK_SCAN_DEDUPE_SKIP_REASON_THREAD = (
     "Removed from the AI batch because this reply only repeated thread history already seen in newer emails."
 )
@@ -1103,6 +1104,12 @@ SYNC_METADATA_FILE = get_app_data_path("local_project_sync_metadata.json")
 LIGHTING_SCHEDULE_SYNC_FILE = "T24LightingFixtureSchedule.sync.json"
 LIGHTING_SCHEDULE_DB_FILE = get_app_data_path("lighting_schedules.db")
 PROJECT_CHECKLIST_DB_FILE = get_app_data_path("project_checklists.db")
+EMAIL_CAPTURE_DB_FILE = get_app_data_path("email_capture.db")
+EMAIL_CAPTURE_SCHEMA_VERSION = 1
+EMAIL_CAPTURE_FIRST_SCAN_DAYS = 7
+EMAIL_CAPTURE_MAX_WINDOW_DAYS = 14
+EMAIL_CAPTURE_SCAN_OVERLAP_MINUTES = 60
+EMAIL_CAPTURE_MAX_MESSAGES_PER_SCAN = 600
 SYNC_TRACKED_FILES = {
     "settings": SETTINGS_FILE,
     "tasks": TASKS_FILE,
@@ -1121,6 +1128,24 @@ LIGHTING_SCHEDULE_FIELDS = [
     "watts",
     "notes",
 ]
+LIGHTING_SCHEDULE_ROW_META_FIELDS = [
+    "symbolAssetPath",
+    "symbolAlt",
+    "starterFixtureKey",
+]
+LIGHTING_SCHEDULE_CA_STARTER_MODELS = {
+    "L1": "IC1JBPF 07LM 30K 90CRI 120 FRPC",
+    "L2": "6020EN3-15",
+    "L3": "49119EN3-962",
+    "L4": "WF4 ADJ SWW5 90CRI MW M6",
+    "L5": "8909PEN3-12",
+    "L6": "WF4 REG SWW5 90CRI MW M6",
+    "L7": "T24M-2C-TUBS-SP-30K-WH",
+    "L8": "JSBC 6IN 30K 90CRI WH",
+    "L9": "TR24M-2C-WH",
+    "L10": "T24M LINEA",
+    "L11": "HTLHD-WW-16",
+}
 LIGHTING_SCHEDULE_DEFAULT_GENERAL_NOTES = "\n".join([
     "A.  VERIFY ALL CEILING TYPES PRIOR TO ORDERING FIXTURES.",
     "B.  VERIFY ALL OPERATING VOLTAGE PRIOR TO ORDERING FIXTURES.",
@@ -1410,11 +1435,39 @@ def _normalize_lighting_schedule_text(value):
     return str(value or "").replace("\r\n", "\n").replace("\r", "\n")
 
 
+def _get_lighting_schedule_json_value(payload, field, default=None):
+    if not isinstance(payload, dict):
+        return default
+    if field in payload:
+        return payload[field]
+    pascal_field = field[:1].upper() + field[1:]
+    return payload.get(pascal_field, default)
+
+
 def _create_default_lighting_schedule_row(seed=None):
     seed = seed or {}
     row = {}
     for field in LIGHTING_SCHEDULE_FIELDS:
-        row[field] = _normalize_lighting_schedule_text(seed.get(field))
+        row[field] = _normalize_lighting_schedule_text(
+            _get_lighting_schedule_json_value(seed, field)
+        )
+    for field in LIGHTING_SCHEDULE_ROW_META_FIELDS:
+        row[field] = _normalize_lighting_schedule_text(
+            _get_lighting_schedule_json_value(seed, field)
+        )
+    if not row["symbolAssetPath"] and not row["starterFixtureKey"]:
+        expected_model = LIGHTING_SCHEDULE_CA_STARTER_MODELS.get(row["mark"].upper())
+        if expected_model and expected_model.casefold() in row["modelNumber"].casefold():
+            fixture_number = row["mark"][1:]
+            row["starterFixtureKey"] = f"ca-2025-res-l{fixture_number}"
+            row["symbolAssetPath"] = (
+                f"assets/lighting/ca-residential-l{fixture_number}.png"
+            )
+            row["symbolAlt"] = row["symbolAlt"] or (
+                f"{row['description']} symbol"
+                if row["description"]
+                else f"Fixture {row['mark']} symbol"
+            )
     return row
 
 
@@ -1423,6 +1476,7 @@ def _create_default_lighting_schedule():
         "rows": [_create_default_lighting_schedule_row()],
         "generalNotes": LIGHTING_SCHEDULE_DEFAULT_GENERAL_NOTES,
         "notes": LIGHTING_SCHEDULE_DEFAULT_NOTES,
+        "includeSymbolColumn": False,
         "targetDwgPath": "",
     }
 
@@ -1433,7 +1487,7 @@ def _normalize_lighting_schedule_payload(schedule):
         if isinstance(schedule, dict)
         else _create_default_lighting_schedule()
     )
-    rows = normalized.get("rows")
+    rows = _get_lighting_schedule_json_value(normalized, "rows")
     if not isinstance(rows, list) or not rows:
         normalized["rows"] = [_create_default_lighting_schedule_row()]
     else:
@@ -1444,14 +1498,21 @@ def _normalize_lighting_schedule_payload(schedule):
         ] or [_create_default_lighting_schedule_row()]
 
     normalized["generalNotes"] = _normalize_lighting_schedule_text(
-        normalized.get("generalNotes")
-        if normalized.get("generalNotes") is not None
+        _get_lighting_schedule_json_value(normalized, "generalNotes")
+        if _get_lighting_schedule_json_value(normalized, "generalNotes") is not None
         else LIGHTING_SCHEDULE_DEFAULT_GENERAL_NOTES
     )
     normalized["notes"] = _normalize_lighting_schedule_text(
-        normalized.get("notes")
-        if normalized.get("notes") is not None
+        _get_lighting_schedule_json_value(normalized, "notes")
+        if _get_lighting_schedule_json_value(normalized, "notes") is not None
         else LIGHTING_SCHEDULE_DEFAULT_NOTES
+    )
+    normalized["includeSymbolColumn"] = (
+        _get_lighting_schedule_json_value(normalized, "includeSymbolColumn") is True
+        or any(
+            row.get("symbolAssetPath") or row.get("starterFixtureKey")
+            for row in normalized["rows"]
+        )
     )
     normalized["targetDwgPath"] = os.path.normpath(
         str(normalized.get("targetDwgPath") or "").strip()
@@ -1717,6 +1778,7 @@ def _save_lighting_schedule_record(
             "rows": normalized_schedule["rows"],
             "generalNotes": normalized_schedule["generalNotes"],
             "notes": normalized_schedule["notes"],
+            "includeSymbolColumn": normalized_schedule["includeSymbolColumn"],
         },
         ensure_ascii=False,
         separators=(",", ":"),
@@ -2575,6 +2637,344 @@ def cb_update_excel_workbook(panel_data: PanelData, workbook_path: str, use_extr
 # --- API Class ---
 
 
+def _open_email_capture_db():
+    conn = sqlite3.connect(EMAIL_CAPTURE_DB_FILE, timeout=5)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode = WAL;")
+    conn.execute("PRAGMA foreign_keys = ON;")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS email_capture_meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL DEFAULT ''
+        );
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS captured_emails (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entry_id TEXT NOT NULL DEFAULT '',
+            internet_message_id TEXT NOT NULL DEFAULT '',
+            conversation_id TEXT NOT NULL DEFAULT '',
+            subject TEXT NOT NULL DEFAULT '',
+            sender_name TEXT NOT NULL DEFAULT '',
+            sender_address TEXT NOT NULL DEFAULT '',
+            received_at_utc TEXT NOT NULL DEFAULT '',
+            body_preview TEXT NOT NULL DEFAULT '',
+            to_recipients_json TEXT NOT NULL DEFAULT '[]',
+            cc_recipients_json TEXT NOT NULL DEFAULT '[]',
+            directedness TEXT NOT NULL DEFAULT 'unknown',
+            ai_status TEXT NOT NULL DEFAULT 'pending',
+            ai_project_json TEXT NOT NULL DEFAULT '',
+            ai_suggestion_json TEXT NOT NULL DEFAULT '',
+            ai_skip_reason TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'new',
+            status_changed_at_utc TEXT NOT NULL DEFAULT '',
+            accepted_project_id TEXT NOT NULL DEFAULT '',
+            accepted_deliverable_id TEXT NOT NULL DEFAULT '',
+            first_seen_at_utc TEXT NOT NULL,
+            last_scan_at_utc TEXT NOT NULL DEFAULT ''
+        );
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_captured_emails_imid
+            ON captured_emails(internet_message_id) WHERE internet_message_id <> '';
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_captured_emails_status ON captured_emails(status);"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_captured_emails_received ON captured_emails(received_at_utc);"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_captured_emails_conversation ON captured_emails(conversation_id);"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS follow_ups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            kind TEXT NOT NULL DEFAULT 'email',
+            captured_email_id INTEGER,
+            project_id TEXT NOT NULL DEFAULT '',
+            deliverable_id TEXT NOT NULL DEFAULT '',
+            title TEXT NOT NULL DEFAULT '',
+            note TEXT NOT NULL DEFAULT '',
+            waiting_on TEXT NOT NULL DEFAULT '',
+            due_date TEXT NOT NULL DEFAULT '',
+            snoozed_until TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'open',
+            created_at_utc TEXT NOT NULL,
+            resolved_at_utc TEXT NOT NULL DEFAULT '',
+            FOREIGN KEY(captured_email_id) REFERENCES captured_emails(id) ON DELETE SET NULL
+        );
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_follow_ups_status ON follow_ups(status);"
+    )
+    row = conn.execute(
+        "SELECT value FROM email_capture_meta WHERE key = 'schema_version'"
+    ).fetchone()
+    if row is None:
+        conn.execute(
+            "INSERT INTO email_capture_meta (key, value) VALUES ('schema_version', ?)",
+            (str(EMAIL_CAPTURE_SCHEMA_VERSION),),
+        )
+    conn.commit()
+    return conn
+
+
+def _get_email_capture_meta(conn, key, default=""):
+    row = conn.execute(
+        "SELECT value FROM email_capture_meta WHERE key = ?",
+        (str(key or ""),),
+    ).fetchone()
+    if row is None:
+        return default
+    return str(row["value"] or "")
+
+
+def _set_email_capture_meta(conn, key, value):
+    conn.execute(
+        """
+        INSERT INTO email_capture_meta (key, value) VALUES (?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        """,
+        (str(key or ""), str(value or "")),
+    )
+
+
+def _parse_email_capture_json(raw, fallback):
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        return fallback
+    if fallback is None:
+        return parsed
+    return parsed if isinstance(parsed, type(fallback)) else fallback
+
+
+def _normalize_captured_email_record(row):
+    if row is None:
+        return None
+    return {
+        "id": int(row["id"]),
+        "entryId": str(row["entry_id"] or "").strip(),
+        "internetMessageId": str(row["internet_message_id"] or "").strip(),
+        "conversationId": str(row["conversation_id"] or "").strip(),
+        "subject": str(row["subject"] or "").strip(),
+        "senderName": str(row["sender_name"] or "").strip(),
+        "senderAddress": str(row["sender_address"] or "").strip(),
+        "receivedAtUtc": str(row["received_at_utc"] or "").strip(),
+        "bodyPreview": str(row["body_preview"] or ""),
+        "toRecipients": _parse_email_capture_json(row["to_recipients_json"], []),
+        "ccRecipients": _parse_email_capture_json(row["cc_recipients_json"], []),
+        "directedness": str(row["directedness"] or "unknown"),
+        "aiStatus": str(row["ai_status"] or "pending"),
+        "aiProject": _parse_email_capture_json(row["ai_project_json"], None),
+        "aiSuggestion": _parse_email_capture_json(row["ai_suggestion_json"], None),
+        "aiSkipReason": str(row["ai_skip_reason"] or ""),
+        "status": str(row["status"] or "new"),
+        "statusChangedAtUtc": str(row["status_changed_at_utc"] or ""),
+        "acceptedProjectId": str(row["accepted_project_id"] or ""),
+        "acceptedDeliverableId": str(row["accepted_deliverable_id"] or ""),
+        "firstSeenAtUtc": str(row["first_seen_at_utc"] or ""),
+        "lastScanAtUtc": str(row["last_scan_at_utc"] or ""),
+    }
+
+
+def _normalize_follow_up_record(row):
+    if row is None:
+        return None
+    record = {
+        "id": int(row["id"]),
+        "kind": str(row["kind"] or "email"),
+        "capturedEmailId": row["captured_email_id"],
+        "projectId": str(row["project_id"] or ""),
+        "deliverableId": str(row["deliverable_id"] or ""),
+        "title": str(row["title"] or "").strip(),
+        "note": str(row["note"] or ""),
+        "waitingOn": str(row["waiting_on"] or "").strip(),
+        "dueDate": str(row["due_date"] or "").strip(),
+        "snoozedUntil": str(row["snoozed_until"] or "").strip(),
+        "status": str(row["status"] or "open"),
+        "createdAtUtc": str(row["created_at_utc"] or ""),
+        "resolvedAtUtc": str(row["resolved_at_utc"] or ""),
+    }
+    keys = row.keys() if hasattr(row, "keys") else []
+    if "email_subject" in keys:
+        record["emailSubject"] = str(row["email_subject"] or "").strip()
+    if "email_entry_id" in keys:
+        record["emailEntryId"] = str(row["email_entry_id"] or "").strip()
+    if "email_sender_name" in keys:
+        record["emailSenderName"] = str(row["email_sender_name"] or "").strip()
+    return record
+
+
+def _normalize_email_capture_recipient_list(raw_list):
+    recipients = []
+    if not isinstance(raw_list, list):
+        return recipients
+    for entry in raw_list:
+        if isinstance(entry, dict):
+            name = str(entry.get("name") or "").strip()
+            address = str(entry.get("address") or "").strip()
+        else:
+            name = ""
+            address = str(entry or "").strip()
+        if name or address:
+            recipients.append({"name": name, "address": address})
+    return recipients
+
+
+def _classify_email_directedness(summary, owner_identity):
+    """Pure classification: 'to' | 'named' | 'cc' | 'unknown'.
+
+    owner_identity = {"addresses": [...], "names": [...]}
+    """
+    summary = summary if isinstance(summary, dict) else {}
+    identity = owner_identity if isinstance(owner_identity, dict) else {}
+    addresses = {
+        str(address or "").strip().lower()
+        for address in identity.get("addresses") or []
+        if str(address or "").strip()
+    }
+    names = [
+        str(name or "").strip()
+        for name in identity.get("names") or []
+        if str(name or "").strip()
+    ]
+    names_lower = {name.lower() for name in names}
+
+    def _recipient_matches(recipient):
+        address = str(recipient.get("address") or "").strip().lower()
+        name = str(recipient.get("name") or "").strip().lower()
+        if address and address in addresses:
+            return True
+        if name and name in names_lower:
+            return True
+        return False
+
+    to_recipients = _normalize_email_capture_recipient_list(summary.get("toRecipients"))
+    cc_recipients = _normalize_email_capture_recipient_list(summary.get("ccRecipients"))
+
+    if any(_recipient_matches(recipient) for recipient in to_recipients):
+        return "to"
+
+    body_head = str(summary.get("bodyPreview") or "")[:1200]
+    if body_head:
+        name_patterns = set()
+        for name in names:
+            if len(name) >= 3:
+                name_patterns.add(name)
+            first_token = name.split()[0] if name.split() else ""
+            if len(first_token) >= 3:
+                name_patterns.add(first_token)
+        for pattern in name_patterns:
+            if re.search(r"\b" + re.escape(pattern) + r"\b", body_head, re.IGNORECASE):
+                return "named"
+
+    if any(_recipient_matches(recipient) for recipient in cc_recipients):
+        return "cc"
+    return "unknown"
+
+
+def _upsert_captured_email(conn, summary, directedness, now_iso):
+    """Insert or refresh a captured email row. Returns 'inserted' or 'updated'.
+
+    Dedupe: internet_message_id first, entry_id fallback. Never regresses
+    status or ai_status on re-see; refreshes entry_id (EntryIDs change when
+    messages move folders) and last_scan_at_utc.
+    """
+    summary = summary if isinstance(summary, dict) else {}
+    entry_id = str(summary.get("id") or "").strip()
+    internet_message_id = str(summary.get("internetMessageId") or "").strip()
+    sender = summary.get("from") if isinstance(summary.get("from"), dict) else {}
+    to_recipients = _normalize_email_capture_recipient_list(summary.get("toRecipients"))
+    cc_recipients = _normalize_email_capture_recipient_list(summary.get("ccRecipients"))
+
+    existing = None
+    if internet_message_id:
+        existing = conn.execute(
+            "SELECT id FROM captured_emails WHERE internet_message_id = ?",
+            (internet_message_id,),
+        ).fetchone()
+    if existing is None and entry_id:
+        existing = conn.execute(
+            "SELECT id FROM captured_emails WHERE entry_id = ? AND entry_id <> ''",
+            (entry_id,),
+        ).fetchone()
+
+    if existing is not None:
+        conn.execute(
+            """
+            UPDATE captured_emails
+            SET entry_id = ?, last_scan_at_utc = ?
+            WHERE id = ?
+            """,
+            (entry_id, str(now_iso or ""), int(existing["id"])),
+        )
+        return "updated"
+
+    conn.execute(
+        """
+        INSERT INTO captured_emails (
+            entry_id, internet_message_id, conversation_id, subject,
+            sender_name, sender_address, received_at_utc, body_preview,
+            to_recipients_json, cc_recipients_json, directedness,
+            first_seen_at_utc, last_scan_at_utc
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            entry_id,
+            internet_message_id,
+            str(summary.get("conversationId") or "").strip(),
+            str(summary.get("subject") or "").strip(),
+            str(sender.get("name") or "").strip(),
+            str(sender.get("address") or "").strip(),
+            str(summary.get("receivedDateTime") or "").strip(),
+            str(summary.get("bodyPreview") or ""),
+            json.dumps(to_recipients, ensure_ascii=True),
+            json.dumps(cc_recipients, ensure_ascii=True),
+            str(directedness or "unknown"),
+            str(now_iso or ""),
+            str(now_iso or ""),
+        ),
+    )
+    return "inserted"
+
+
+def _captured_email_row_to_summary(record):
+    """Rebuild an Outlook-scan message summary dict from a normalized record."""
+    record = record if isinstance(record, dict) else {}
+    return {
+        "id": str(record.get("entryId") or ""),
+        "subject": str(record.get("subject") or ""),
+        "bodyPreview": str(record.get("bodyPreview") or ""),
+        "receivedDateTime": str(record.get("receivedAtUtc") or ""),
+        "webLink": "",
+        "internetMessageId": str(record.get("internetMessageId") or ""),
+        "conversationId": str(record.get("conversationId") or ""),
+        "hasAttachments": False,
+        "source": OUTLOOK_SCAN_SOURCE_DESKTOP,
+        "from": {
+            "name": str(record.get("senderName") or ""),
+            "address": str(record.get("senderAddress") or ""),
+        },
+        "toRecipients": record.get("toRecipients") or [],
+        "ccRecipients": record.get("ccRecipients") or [],
+    }
+
+
+def _follow_up_effective_due(record):
+    record = record if isinstance(record, dict) else {}
+    return str(record.get("snoozedUntil") or "").strip() or str(record.get("dueDate") or "").strip()
+
+
 class Api:
     # --- FIX: Removed self.window from __init__ to prevent circular reference ---
     def __init__(self):
@@ -2602,6 +3002,8 @@ class Api:
         self._panel_schedule_thread = None
         self._panel_schedule_job_record = None
         self._panel_schedule_job_lock = threading.Lock()
+        self._email_capture_scan_running = False
+        self._email_capture_scan_lock = threading.Lock()
         if self.test_mode:
             logging.info(
                 "Api initialized in ACIES_TEST_MODE. CAD tools run in deterministic validation mode.")
@@ -4061,11 +4463,54 @@ class Api:
         except Exception:
             return ""
 
+    def _extract_desktop_outlook_recipients(self, mail_item):
+        to_recipients = []
+        cc_recipients = []
+        try:
+            recipients = getattr(mail_item, "Recipients", None)
+            count = int(getattr(recipients, "Count", 0) or 0)
+        except Exception:
+            return to_recipients, cc_recipients
+
+        for index in range(1, count + 1):
+            try:
+                recipient = recipients.Item(index)
+            except Exception:
+                continue
+            try:
+                recipient_type = int(getattr(recipient, "Type", 1) or 1)
+            except Exception:
+                recipient_type = 1
+            name = str(getattr(recipient, "Name", "") or "").strip()
+            address = ""
+            try:
+                accessor = getattr(recipient, "PropertyAccessor", None)
+                if accessor is not None:
+                    address = str(
+                        accessor.GetProperty(OUTLOOK_MAPI_PR_SMTP_ADDRESS) or ""
+                    ).strip()
+            except Exception:
+                address = ""
+            if not address:
+                try:
+                    address = str(getattr(recipient, "Address", "") or "").strip()
+                except Exception:
+                    address = ""
+            if not name and not address:
+                continue
+            entry = {"name": name, "address": address}
+            if recipient_type == 2:
+                cc_recipients.append(entry)
+            else:
+                to_recipients.append(entry)
+        return to_recipients, cc_recipients
+
     def _build_desktop_outlook_message_summary(self, mail_item):
         body_text = str(getattr(mail_item, "Body", "") or "").strip()
         preview = re.sub(r"\s+", " ", body_text).strip()
         if len(preview) > 500:
             preview = preview[:497].rstrip() + "..."
+        to_recipients, cc_recipients = self._extract_desktop_outlook_recipients(mail_item)
         return {
             "id": str(getattr(mail_item, "EntryID", "") or "").strip(),
             "subject": str(getattr(mail_item, "Subject", "") or "").strip(),
@@ -4080,6 +4525,8 @@ class Api:
                 "name": str(getattr(mail_item, "SenderName", "") or "").strip(),
                 "address": str(getattr(mail_item, "SenderEmailAddress", "") or "").strip(),
             },
+            "toRecipients": to_recipients,
+            "ccRecipients": cc_recipients,
         }
 
     def _list_desktop_outlook_inbox_messages(
@@ -4087,10 +4534,13 @@ class Api:
         timeframe="week",
         limit=OUTLOOK_SCAN_FETCH_LIMIT,
         scan_date="",
+        start_utc=None,
+        end_utc=None,
     ):
-        scan_range = self._build_outlook_scan_range(timeframe=timeframe, scan_date=scan_date)
-        start_utc = scan_range["startUtc"]
-        end_utc = scan_range["endUtc"]
+        if start_utc is None or end_utc is None:
+            scan_range = self._build_outlook_scan_range(timeframe=timeframe, scan_date=scan_date)
+            start_utc = scan_range["startUtc"]
+            end_utc = scan_range["endUtc"]
         max_items = max(int(limit or 0), 1)
 
         def _read_messages():
@@ -5127,7 +5577,10 @@ CURRENT_DELIVERABLES_IN_PERIOD:
         source,
         has_more=False,
         scan_date="",
+        progress_sender=None,
     ):
+        if progress_sender is None:
+            progress_sender = self._send_outlook_scan_progress
         hydrated_entries = []
         skipped_messages = []
         relevant_email_count = 0
@@ -5136,7 +5589,7 @@ CURRENT_DELIVERABLES_IN_PERIOD:
             project_context
         )
 
-        self._send_outlook_scan_progress(
+        progress_sender(
             "hydrating",
             "Reading Outlook emails...",
             source=source,
@@ -5180,7 +5633,7 @@ CURRENT_DELIVERABLES_IN_PERIOD:
                 })
             processed_emails = idx + 1
             if processed_emails == 1 or processed_emails % 10 == 0 or processed_emails == total_emails:
-                self._send_outlook_scan_progress(
+                progress_sender(
                     "hydrating",
                     f"Processed {processed_emails} of {total_emails} emails.",
                     source=source,
@@ -5212,7 +5665,7 @@ CURRENT_DELIVERABLES_IN_PERIOD:
         skipped_messages.extend(trimmed_messages)
         skipped_messages = self._dedupe_outlook_scan_skipped_messages(skipped_messages)
 
-        self._send_outlook_scan_progress(
+        progress_sender(
             "preparing_ai",
             "Preparing the batched AI review...",
             source=source,
@@ -5231,7 +5684,7 @@ CURRENT_DELIVERABLES_IN_PERIOD:
 
         batch_suggestions = []
         if included_emails:
-            self._send_outlook_scan_progress(
+            progress_sender(
                 "reviewing_ai",
                 "Reviewing the included emails with AI...",
                 source=source,
@@ -5275,7 +5728,7 @@ CURRENT_DELIVERABLES_IN_PERIOD:
                 skipped_messages.extend(retry_trimmed_messages)
                 skipped_messages = self._dedupe_outlook_scan_skipped_messages(skipped_messages)
                 prompt_truncated = prompt_truncated or retry_prompt_truncated
-                self._send_outlook_scan_progress(
+                progress_sender(
                     "reviewing_ai",
                     "AI request timed out. Retrying with a reduced text-only batch...",
                     source=source,
@@ -5312,7 +5765,7 @@ CURRENT_DELIVERABLES_IN_PERIOD:
                         ) from retry_exc
                     raise
 
-        self._send_outlook_scan_progress(
+        progress_sender(
             "matching",
             "Matching scan results to your current projects...",
             source=source,
@@ -5396,7 +5849,7 @@ CURRENT_DELIVERABLES_IN_PERIOD:
             completion_message += f" Day: {selected_label}."
         if prompt_truncated:
             completion_message += " Prompt trimmed to keep the scan bounded."
-        self._send_outlook_scan_progress(
+        progress_sender(
             "done",
             completion_message,
             active=False,
@@ -5547,6 +6000,729 @@ CURRENT_DELIVERABLES_IN_PERIOD:
                 source=source,
                 scan_date=scan_date,
             )
+
+    # --- Email capture inbox & follow-ups ---
+
+    def _notify_email_capture_progress(self, payload):
+        try:
+            if not webview.windows:
+                return
+            payload_json = json.dumps(payload or {}, ensure_ascii=True)
+            webview.windows[0].evaluate_js(
+                f"window.updateEmailCaptureProgress({payload_json})"
+            )
+        except Exception as exc:
+            logging.debug(f"_notify_email_capture_progress failed: {exc}")
+
+    def _send_email_capture_progress(self, stage, message="", **kwargs):
+        payload = {
+            "stage": str(stage or "").strip(),
+            "message": str(message or "").strip(),
+        }
+        for key, value in (kwargs or {}).items():
+            if value is None:
+                continue
+            payload[key] = value
+        if "active" not in payload:
+            payload["active"] = payload["stage"] not in {"done", "error", "skipped"}
+        self._notify_email_capture_progress(payload)
+
+    def _resolve_outlook_current_user_smtp(self):
+        def _read_identity():
+            _, namespace = self._get_desktop_outlook_namespace()
+            current_user = getattr(namespace, "CurrentUser", None)
+            address_entry = getattr(current_user, "AddressEntry", None)
+            if address_entry is None:
+                return ""
+            try:
+                exchange_user = address_entry.GetExchangeUser()
+            except Exception:
+                exchange_user = None
+            if exchange_user is not None:
+                address = str(getattr(exchange_user, "PrimarySmtpAddress", "") or "").strip()
+                if address:
+                    return address
+            return str(getattr(address_entry, "Address", "") or "").strip()
+
+        try:
+            return str(self._run_with_outlook_com(_read_identity) or "").strip()
+        except Exception:
+            return ""
+
+    def _get_email_capture_owner_identity(self, cached_smtp=""):
+        addresses = []
+        names = []
+        try:
+            settings = self.get_user_settings()
+        except Exception:
+            settings = {}
+        if not isinstance(settings, dict):
+            settings = {}
+        user_name = str(settings.get("userName") or "").strip()
+        if user_name:
+            names.append(user_name)
+        google_auth = settings.get("googleAuth")
+        if isinstance(google_auth, dict):
+            google_email = str(google_auth.get("email") or "").strip()
+            if google_email:
+                addresses.append(google_email)
+        smtp = str(cached_smtp or "").strip()
+        if smtp:
+            addresses.append(smtp)
+        return {"addresses": addresses, "names": names}
+
+    def _resolve_email_capture_scan_window(self, conn):
+        now_utc = datetime.datetime.now(datetime.timezone.utc)
+        watermark_raw = _get_email_capture_meta(conn, "last_scan_completed_at_utc")
+        watermark = parse_utc_iso(watermark_raw)
+        if watermark is None:
+            start_utc = now_utc - datetime.timedelta(days=EMAIL_CAPTURE_FIRST_SCAN_DAYS)
+        else:
+            start_utc = watermark - datetime.timedelta(
+                minutes=EMAIL_CAPTURE_SCAN_OVERLAP_MINUTES
+            )
+        earliest_allowed = now_utc - datetime.timedelta(days=EMAIL_CAPTURE_MAX_WINDOW_DAYS)
+        if start_utc < earliest_allowed:
+            start_utc = earliest_allowed
+        return start_utc, now_utc
+
+    def run_email_capture_scan(self, payload, api_key="", user_name="", discipline=None):
+        try:
+            request_payload = payload or {}
+            if isinstance(request_payload, str):
+                request_payload = json.loads(request_payload)
+            if not isinstance(request_payload, dict):
+                request_payload = {}
+        except json.JSONDecodeError:
+            return {"status": "error", "message": "Invalid email capture scan payload."}
+
+        mode = str(request_payload.get("mode") or "manual").strip().lower()
+        if mode not in {"auto", "manual"}:
+            mode = "manual"
+        project_context = self._normalize_outlook_scan_project_context(
+            request_payload.get("projectContext")
+        )
+
+        with self._email_capture_scan_lock:
+            if self._email_capture_scan_running:
+                return {"status": "skipped", "reason": "scan-in-progress"}
+            self._email_capture_scan_running = True
+
+        try:
+            return self._run_email_capture_scan_locked(
+                mode, project_context, api_key, user_name, discipline
+            )
+        except Exception as exc:
+            logging.error(f"Email capture scan failed: {exc}")
+            self._send_email_capture_progress("error", str(exc), mode=mode)
+            return {"status": "error", "message": str(exc), "mode": mode}
+        finally:
+            with self._email_capture_scan_lock:
+                self._email_capture_scan_running = False
+
+    def _run_email_capture_scan_locked(self, mode, project_context, api_key, user_name, discipline):
+        desktop_available, desktop_reason = self._get_desktop_outlook_availability()
+        if not desktop_available:
+            message = desktop_reason or "Desktop Outlook is unavailable on this machine."
+            conn = _open_email_capture_db()
+            try:
+                _set_email_capture_meta(conn, "last_scan_status", "unavailable")
+                _set_email_capture_meta(
+                    conn,
+                    "last_scan_summary_json",
+                    json.dumps({"status": "error", "message": message}, ensure_ascii=True),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            self._send_email_capture_progress("error", message, mode=mode)
+            return {"status": "error", "message": message, "mode": mode}
+
+        self._send_email_capture_progress(
+            "listing", "Checking Outlook for new emails...", mode=mode
+        )
+
+        conn = _open_email_capture_db()
+        try:
+            start_utc, end_utc = self._resolve_email_capture_scan_window(conn)
+
+            cached_smtp = _get_email_capture_meta(conn, "owner_smtp_address")
+            if not cached_smtp:
+                cached_smtp = self._resolve_outlook_current_user_smtp()
+                if cached_smtp:
+                    _set_email_capture_meta(conn, "owner_smtp_address", cached_smtp)
+                    conn.commit()
+            owner_identity = self._get_email_capture_owner_identity(cached_smtp)
+
+            message_summaries, has_more = self._list_desktop_outlook_inbox_messages(
+                limit=EMAIL_CAPTURE_MAX_MESSAGES_PER_SCAN,
+                start_utc=start_utc,
+                end_utc=end_utc,
+            )
+
+            now_iso = utc_now_iso()
+            new_count = 0
+            cc_count = 0
+            for summary in message_summaries:
+                directedness = _classify_email_directedness(summary, owner_identity)
+                outcome = _upsert_captured_email(conn, summary, directedness, now_iso)
+                if outcome == "inserted":
+                    new_count += 1
+                    if directedness in ("cc", "unknown"):
+                        cc_count += 1
+
+            _set_email_capture_meta(conn, "last_scan_completed_at_utc", now_iso)
+            _set_email_capture_meta(conn, "last_scan_status", "success")
+            conn.commit()
+
+            self._send_email_capture_progress(
+                "capturing",
+                f"Captured {new_count} new email{'s' if new_count != 1 else ''}.",
+                mode=mode,
+                newCount=new_count,
+            )
+
+            pending_rows = conn.execute(
+                """
+                SELECT * FROM captured_emails
+                WHERE ai_status = 'pending' AND status = 'new'
+                ORDER BY received_at_utc DESC
+                LIMIT ?
+                """,
+                (OUTLOOK_SCAN_AI_LIMIT,),
+            ).fetchall()
+            pending_records = [_normalize_captured_email_record(row) for row in pending_rows]
+        finally:
+            conn.close()
+
+        matched_count = 0
+        ai_error = ""
+        try:
+            resolved_api_key = self._resolve_google_ai_api_key(api_key)
+        except Exception:
+            resolved_api_key = ""
+
+        if pending_records and resolved_api_key:
+            try:
+                matched_count = self._run_email_capture_ai_stage(
+                    pending_records,
+                    project_context,
+                    resolved_api_key,
+                    user_name,
+                    discipline,
+                    mode,
+                )
+            except Exception as exc:
+                logging.error(f"Email capture AI stage failed: {exc}")
+                ai_error = str(exc)
+
+        conn = _open_email_capture_db()
+        try:
+            pending_ai_count = conn.execute(
+                "SELECT COUNT(*) FROM captured_emails WHERE ai_status = 'pending' AND status = 'new'"
+            ).fetchone()[0]
+            result = {
+                "status": "success",
+                "mode": mode,
+                "newCount": new_count,
+                "ccCount": cc_count,
+                "matchedCount": matched_count,
+                "pendingAiCount": int(pending_ai_count or 0),
+                "truncated": bool(has_more),
+                "windowStartUtc": start_utc.isoformat().replace("+00:00", "Z"),
+                "windowEndUtc": end_utc.isoformat().replace("+00:00", "Z"),
+            }
+            if ai_error:
+                result["aiError"] = ai_error
+            _set_email_capture_meta(
+                conn, "last_scan_summary_json", json.dumps(result, ensure_ascii=True)
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        completion_message = (
+            f"Email scan complete. {new_count} new email{'s' if new_count != 1 else ''} captured."
+        )
+        self._send_email_capture_progress(
+            "done",
+            completion_message,
+            mode=mode,
+            newCount=new_count,
+            matchedCount=matched_count,
+        )
+        return result
+
+    def _run_email_capture_ai_stage(
+        self, pending_records, project_context, api_key, user_name, discipline, mode
+    ):
+        summaries = [_captured_email_row_to_summary(record) for record in pending_records]
+        record_ids_by_entry = {
+            str(record.get("entryId") or ""): int(record.get("id"))
+            for record in pending_records
+            if str(record.get("entryId") or "")
+        }
+
+        analysis = self._analyze_outlook_scan_batch(
+            summaries,
+            lambda summary: self._get_desktop_outlook_message_body_text(summary.get("id")),
+            project_context,
+            api_key,
+            user_name,
+            discipline,
+            "week",
+            OUTLOOK_SCAN_SOURCE_DESKTOP,
+            has_more=False,
+            progress_sender=self._send_email_capture_progress,
+        )
+
+        retryable_skip_reasons = {
+            OUTLOOK_SCAN_PROMPT_SKIP_REASON,
+            OUTLOOK_SCAN_RETRY_SKIP_REASON,
+        }
+        matched_count = 0
+        conn = _open_email_capture_db()
+        try:
+            for suggestion in analysis.get("suggestions") or []:
+                project_json = json.dumps(suggestion.get("project") or {}, ensure_ascii=True)
+                suggestion_json = json.dumps(
+                    suggestion.get("deliverable") or {}, ensure_ascii=True
+                )
+                for entry_id in suggestion.get("supportingMessageIds") or []:
+                    record_id = record_ids_by_entry.get(str(entry_id or ""))
+                    if record_id is None:
+                        continue
+                    cursor = conn.execute(
+                        """
+                        UPDATE captured_emails
+                        SET ai_status = 'matched', ai_project_json = ?, ai_suggestion_json = ?
+                        WHERE id = ? AND ai_status = 'pending'
+                        """,
+                        (project_json, suggestion_json, record_id),
+                    )
+                    if cursor.rowcount:
+                        matched_count += 1
+
+            for skipped in analysis.get("skippedMessages") or []:
+                message = skipped.get("message") if isinstance(skipped, dict) else {}
+                reason = str(skipped.get("reason") or "") if isinstance(skipped, dict) else ""
+                entry_id = str((message or {}).get("id") or "")
+                record_id = record_ids_by_entry.get(entry_id)
+                if record_id is None or reason in retryable_skip_reasons:
+                    continue
+                conn.execute(
+                    """
+                    UPDATE captured_emails
+                    SET ai_status = 'skipped', ai_skip_reason = ?
+                    WHERE id = ? AND ai_status = 'pending'
+                    """,
+                    (reason, record_id),
+                )
+
+            batch_ids = list(record_ids_by_entry.values())
+            if batch_ids:
+                skipped_entry_ids = {
+                    str(((skipped or {}).get("message") or {}).get("id") or "")
+                    for skipped in analysis.get("skippedMessages") or []
+                    if isinstance(skipped, dict)
+                    and str(skipped.get("reason") or "") in retryable_skip_reasons
+                }
+                retryable_ids = {
+                    record_ids_by_entry[entry_id]
+                    for entry_id in skipped_entry_ids
+                    if entry_id in record_ids_by_entry
+                }
+                no_match_ids = [
+                    record_id for record_id in batch_ids if record_id not in retryable_ids
+                ]
+                if no_match_ids:
+                    placeholders = ",".join("?" for _ in no_match_ids)
+                    conn.execute(
+                        f"""
+                        UPDATE captured_emails
+                        SET ai_status = 'no_match'
+                        WHERE id IN ({placeholders}) AND ai_status = 'pending'
+                        """,
+                        no_match_ids,
+                    )
+            conn.commit()
+        finally:
+            conn.close()
+        return matched_count
+
+    def list_captured_emails(self, payload=None):
+        request = payload if isinstance(payload, dict) else {}
+        status_filter = str(request.get("status") or "new").strip().lower()
+        if status_filter not in {"new", "accepted", "dismissed", "all"}:
+            status_filter = "new"
+        directedness_filter = str(request.get("directedness") or "all").strip().lower()
+        try:
+            limit = max(1, min(int(request.get("limit") or 200), 500))
+        except (TypeError, ValueError):
+            limit = 200
+        try:
+            offset = max(0, int(request.get("offset") or 0))
+        except (TypeError, ValueError):
+            offset = 0
+
+        conditions = []
+        params = []
+        if status_filter != "all":
+            conditions.append("status = ?")
+            params.append(status_filter)
+        if directedness_filter == "directed":
+            conditions.append("directedness IN ('to', 'named')")
+        elif directedness_filter == "cc":
+            conditions.append("directedness IN ('cc', 'unknown')")
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
+        try:
+            conn = _open_email_capture_db()
+            try:
+                rows = conn.execute(
+                    f"""
+                    SELECT * FROM captured_emails
+                    {where_clause}
+                    ORDER BY received_at_utc DESC
+                    LIMIT ? OFFSET ?
+                    """,
+                    (*params, limit, offset),
+                ).fetchall()
+                counts_row = conn.execute(
+                    """
+                    SELECT
+                        SUM(CASE WHEN status = 'new' THEN 1 ELSE 0 END) AS new_count,
+                        SUM(CASE WHEN status = 'new' AND directedness IN ('to', 'named')
+                            THEN 1 ELSE 0 END) AS new_directed,
+                        SUM(CASE WHEN status = 'new' AND directedness IN ('cc', 'unknown')
+                            THEN 1 ELSE 0 END) AS new_cc,
+                        SUM(CASE WHEN status = 'new' AND ai_status = 'pending'
+                            THEN 1 ELSE 0 END) AS pending_ai
+                    FROM captured_emails
+                    """
+                ).fetchone()
+                return {
+                    "status": "success",
+                    "items": [_normalize_captured_email_record(row) for row in rows],
+                    "counts": {
+                        "new": int(counts_row["new_count"] or 0),
+                        "newDirected": int(counts_row["new_directed"] or 0),
+                        "newCc": int(counts_row["new_cc"] or 0),
+                        "pendingAi": int(counts_row["pending_ai"] or 0),
+                    },
+                }
+            finally:
+                conn.close()
+        except Exception as exc:
+            logging.error(f"Error listing captured emails: {exc}")
+            return {"status": "error", "message": str(exc)}
+
+    def update_captured_email_status(self, payload):
+        request = payload if isinstance(payload, dict) else {}
+        try:
+            record_id = int(request.get("id"))
+        except (TypeError, ValueError):
+            return {"status": "error", "message": "Missing captured email id."}
+        new_status = str(request.get("status") or "").strip().lower()
+        allowed_transitions = {
+            ("new", "accepted"),
+            ("new", "dismissed"),
+            ("dismissed", "new"),
+        }
+
+        try:
+            conn = _open_email_capture_db()
+            try:
+                row = conn.execute(
+                    "SELECT * FROM captured_emails WHERE id = ?",
+                    (record_id,),
+                ).fetchone()
+                if row is None:
+                    return {"status": "error", "message": "Captured email not found."}
+                current_status = str(row["status"] or "new")
+                if (current_status, new_status) not in allowed_transitions:
+                    return {
+                        "status": "error",
+                        "message": f"Cannot change email status from '{current_status}' to '{new_status}'.",
+                    }
+                conn.execute(
+                    """
+                    UPDATE captured_emails
+                    SET status = ?, status_changed_at_utc = ?,
+                        accepted_project_id = ?, accepted_deliverable_id = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        new_status,
+                        utc_now_iso(),
+                        str(request.get("acceptedProjectId") or "").strip(),
+                        str(request.get("acceptedDeliverableId") or "").strip(),
+                        record_id,
+                    ),
+                )
+                conn.commit()
+                updated = conn.execute(
+                    "SELECT * FROM captured_emails WHERE id = ?",
+                    (record_id,),
+                ).fetchone()
+                return {
+                    "status": "success",
+                    "item": _normalize_captured_email_record(updated),
+                }
+            finally:
+                conn.close()
+        except Exception as exc:
+            logging.error(f"Error updating captured email status: {exc}")
+            return {"status": "error", "message": str(exc)}
+
+    def _normalize_follow_up_date(self, value):
+        raw = str(value or "").strip()
+        if not raw:
+            return ""
+        try:
+            return datetime.date.fromisoformat(raw).isoformat()
+        except ValueError:
+            return ""
+
+    def create_follow_up(self, payload):
+        request = payload if isinstance(payload, dict) else {}
+        kind = str(request.get("kind") or "email").strip().lower()
+        if kind not in {"email", "deliverable", "custom"}:
+            kind = "email"
+        captured_email_id = request.get("capturedEmailId")
+        try:
+            captured_email_id = int(captured_email_id) if captured_email_id is not None else None
+        except (TypeError, ValueError):
+            captured_email_id = None
+        title = str(request.get("title") or "").strip()
+
+        try:
+            conn = _open_email_capture_db()
+            try:
+                if captured_email_id is not None:
+                    email_row = conn.execute(
+                        "SELECT subject FROM captured_emails WHERE id = ?",
+                        (captured_email_id,),
+                    ).fetchone()
+                    if email_row is None:
+                        return {"status": "error", "message": "Captured email not found."}
+                    if not title:
+                        title = str(email_row["subject"] or "").strip()
+                if not title:
+                    return {"status": "error", "message": "Follow-up needs a title."}
+                cursor = conn.execute(
+                    """
+                    INSERT INTO follow_ups (
+                        kind, captured_email_id, project_id, deliverable_id,
+                        title, note, waiting_on, due_date, created_at_utc
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        kind,
+                        captured_email_id,
+                        str(request.get("projectId") or "").strip(),
+                        str(request.get("deliverableId") or "").strip(),
+                        title,
+                        str(request.get("note") or "").strip(),
+                        str(request.get("waitingOn") or "").strip(),
+                        self._normalize_follow_up_date(request.get("dueDate")),
+                        utc_now_iso(),
+                    ),
+                )
+                conn.commit()
+                row = conn.execute(
+                    "SELECT * FROM follow_ups WHERE id = ?",
+                    (cursor.lastrowid,),
+                ).fetchone()
+                return {"status": "success", "item": _normalize_follow_up_record(row)}
+            finally:
+                conn.close()
+        except Exception as exc:
+            logging.error(f"Error creating follow-up: {exc}")
+            return {"status": "error", "message": str(exc)}
+
+    def list_follow_ups(self, payload=None):
+        request = payload if isinstance(payload, dict) else {}
+        status_filter = str(request.get("status") or "open").strip().lower()
+        if status_filter not in {"open", "resolved", "all"}:
+            status_filter = "open"
+
+        conditions = ""
+        params = []
+        if status_filter != "all":
+            conditions = "WHERE f.status = ?"
+            params.append(status_filter)
+
+        try:
+            conn = _open_email_capture_db()
+            try:
+                rows = conn.execute(
+                    f"""
+                    SELECT f.*,
+                        e.subject AS email_subject,
+                        e.entry_id AS email_entry_id,
+                        e.sender_name AS email_sender_name
+                    FROM follow_ups f
+                    LEFT JOIN captured_emails e ON e.id = f.captured_email_id
+                    {conditions}
+                    ORDER BY f.created_at_utc DESC
+                    """,
+                    params,
+                ).fetchall()
+                items = [_normalize_follow_up_record(row) for row in rows]
+                items.sort(
+                    key=lambda item: (
+                        item["status"] != "open",
+                        _follow_up_effective_due(item) == "",
+                        _follow_up_effective_due(item),
+                        item["createdAtUtc"],
+                    )
+                )
+                return {"status": "success", "items": items}
+            finally:
+                conn.close()
+        except Exception as exc:
+            logging.error(f"Error listing follow-ups: {exc}")
+            return {"status": "error", "message": str(exc)}
+
+    def update_follow_up(self, payload):
+        request = payload if isinstance(payload, dict) else {}
+        try:
+            follow_up_id = int(request.get("id"))
+        except (TypeError, ValueError):
+            return {"status": "error", "message": "Missing follow-up id."}
+        action = str(request.get("action") or "").strip().lower()
+
+        try:
+            conn = _open_email_capture_db()
+            try:
+                row = conn.execute(
+                    "SELECT * FROM follow_ups WHERE id = ?",
+                    (follow_up_id,),
+                ).fetchone()
+                if row is None:
+                    return {"status": "error", "message": "Follow-up not found."}
+
+                if action == "resolve":
+                    conn.execute(
+                        "UPDATE follow_ups SET status = 'resolved', resolved_at_utc = ? WHERE id = ?",
+                        (utc_now_iso(), follow_up_id),
+                    )
+                elif action == "reopen":
+                    conn.execute(
+                        "UPDATE follow_ups SET status = 'open', resolved_at_utc = '' WHERE id = ?",
+                        (follow_up_id,),
+                    )
+                elif action == "snooze":
+                    try:
+                        days = max(1, int(request.get("days") or 3))
+                    except (TypeError, ValueError):
+                        days = 3
+                    snoozed_until = (
+                        datetime.date.today() + datetime.timedelta(days=days)
+                    ).isoformat()
+                    conn.execute(
+                        "UPDATE follow_ups SET snoozed_until = ? WHERE id = ?",
+                        (snoozed_until, follow_up_id),
+                    )
+                else:
+                    updates = []
+                    params = []
+                    if "title" in request:
+                        title = str(request.get("title") or "").strip()
+                        if not title:
+                            return {"status": "error", "message": "Follow-up needs a title."}
+                        updates.append("title = ?")
+                        params.append(title)
+                    if "note" in request:
+                        updates.append("note = ?")
+                        params.append(str(request.get("note") or "").strip())
+                    if "waitingOn" in request:
+                        updates.append("waiting_on = ?")
+                        params.append(str(request.get("waitingOn") or "").strip())
+                    if "dueDate" in request:
+                        updates.append("due_date = ?")
+                        params.append(self._normalize_follow_up_date(request.get("dueDate")))
+                        updates.append("snoozed_until = ''")
+                    if not updates:
+                        return {"status": "error", "message": "No follow-up changes provided."}
+                    params.append(follow_up_id)
+                    conn.execute(
+                        f"UPDATE follow_ups SET {', '.join(updates)} WHERE id = ?",
+                        params,
+                    )
+                conn.commit()
+                updated = conn.execute(
+                    "SELECT * FROM follow_ups WHERE id = ?",
+                    (follow_up_id,),
+                ).fetchone()
+                return {"status": "success", "item": _normalize_follow_up_record(updated)}
+            finally:
+                conn.close()
+        except Exception as exc:
+            logging.error(f"Error updating follow-up: {exc}")
+            return {"status": "error", "message": str(exc)}
+
+    def get_email_capture_badge_counts(self):
+        try:
+            conn = _open_email_capture_db()
+            try:
+                email_counts = conn.execute(
+                    """
+                    SELECT
+                        SUM(CASE WHEN status = 'new' AND directedness IN ('to', 'named')
+                            THEN 1 ELSE 0 END) AS new_directed,
+                        SUM(CASE WHEN status = 'new' AND directedness IN ('cc', 'unknown')
+                            THEN 1 ELSE 0 END) AS new_cc
+                    FROM captured_emails
+                    """
+                ).fetchone()
+                follow_up_rows = conn.execute(
+                    "SELECT * FROM follow_ups WHERE status = 'open'"
+                ).fetchall()
+            finally:
+                conn.close()
+            today = datetime.date.today().isoformat()
+            open_follow_ups = len(follow_up_rows)
+            overdue = 0
+            for row in follow_up_rows:
+                effective_due = _follow_up_effective_due(_normalize_follow_up_record(row))
+                if effective_due and effective_due < today:
+                    overdue += 1
+            return {
+                "status": "success",
+                "newDirected": int(email_counts["new_directed"] or 0),
+                "newCc": int(email_counts["new_cc"] or 0),
+                "openFollowUps": open_follow_ups,
+                "overdueFollowUps": overdue,
+            }
+        except Exception as exc:
+            logging.error(f"Error loading email capture badge counts: {exc}")
+            return {"status": "error", "message": str(exc)}
+
+    def get_email_capture_scan_state(self):
+        try:
+            conn = _open_email_capture_db()
+            try:
+                last_scan = _get_email_capture_meta(conn, "last_scan_completed_at_utc")
+                last_status = _get_email_capture_meta(conn, "last_scan_status")
+                summary = _parse_email_capture_json(
+                    _get_email_capture_meta(conn, "last_scan_summary_json"), None
+                )
+            finally:
+                conn.close()
+            with self._email_capture_scan_lock:
+                running = self._email_capture_scan_running
+            return {
+                "status": "success",
+                "running": running,
+                "lastScanCompletedAtUtc": last_scan,
+                "lastScanStatus": last_status,
+                "lastScanSummary": summary if isinstance(summary, dict) else None,
+            }
+        except Exception as exc:
+            logging.error(f"Error loading email capture scan state: {exc}")
+            return {"status": "error", "message": str(exc)}
 
     def get_installed_autocad_versions(self):
         """Scans for installed AutoCAD versions in the typical directory."""

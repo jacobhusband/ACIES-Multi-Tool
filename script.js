@@ -46,6 +46,12 @@ const LIGHTING_SCHEDULE_FIELDS = [
   "watts",
   "notes",
 ];
+const LIGHTING_SCHEDULE_ROW_META_FIELDS = [
+  "symbolAssetPath",
+  "symbolAlt",
+  "starterFixtureKey",
+];
+const LIGHTING_SCHEDULE_SYMBOL_MAX_BYTES = 2 * 1024 * 1024;
 const LIGHTING_SCHEDULE_DEFAULT_GENERAL_NOTES = [
   "A.  VERIFY ALL CEILING TYPES PRIOR TO ORDERING FIXTURES.",
   "B.  VERIFY ALL OPERATING VOLTAGE PRIOR TO ORDERING FIXTURES.",
@@ -57,6 +63,164 @@ const LIGHTING_SCHEDULE_DEFAULT_NOTES = [
   "1.  CONFIRM THE DRIVER TYPE WITH VENDOR. LIGHT DRIVER SHALL BE COMPATIBLE WITH THE DIMMER. REFER TO THE SENSOR SCHEDULE FOR DETAILS.",
   "2.  COORDINATE THE FINAL MANUFACTURER AND MODEL WITH ARCHITECT.",
 ].join("\n");
+const LIGHTING_SCHEDULE_CA_RESIDENTIAL_GENERAL_NOTES = [
+  "A.  BASIS OF DESIGN: 2025 CALIFORNIA ENERGY CODE FOR SINGLE-FAMILY RESIDENTIAL PERMITS FILED ON OR AFTER JANUARY 1, 2026.",
+  "B.  PERMANENTLY INSTALLED INDOOR LUMINAIRES AND LIGHT SOURCES SHALL BE HIGH EFFICACY AND BEAR THE APPLICABLE JA8-2025 OR JA8-2025-E MARKING. VERIFY THE EXACT ORDERING CODE IN THE CURRENT CEC APPLIANCE DATABASE BEFORE PURCHASE.",
+  "C.  PROVIDE 3000 K, 90 CRI MINIMUM LIGHT SOURCES UNLESS SPECIFICALLY NOTED OTHERWISE.",
+  "D.  RECESSED LUMINAIRES IN INSULATED CEILINGS SHALL BE IC RATED, AIRTIGHT, AND SEALED AT THE CEILING. PROVIDE DAMP- OR WET-LOCATION LISTING AS REQUIRED BY THE INSTALLATION.",
+  "E.  PROVIDE LISTED DIMMERS AND DRIVERS COMPATIBLE WITH THE EXACT LUMINAIRE. COORDINATE REQUIRED DIMMERS, VACANCY SENSORS, AND OTHER RESIDENTIAL LIGHTING CONTROLS WITH THE LIGHTING PLAN.",
+  "F.  OUTDOOR BUILDING-MOUNTED LIGHTING SHALL HAVE MANUAL ON/OFF CONTROL AND THE REQUIRED PHOTOCONTROL WITH MOTION SENSOR, AUTOMATIC TIME SWITCH, OR ASTRONOMICAL TIME CLOCK. OVERRIDES SHALL RETURN TO AUTOMATIC OPERATION WITHIN SIX HOURS.",
+].join("\n");
+const LIGHTING_SCHEDULE_CA_RESIDENTIAL_NOTES = [
+  "1.  BASIS-OF-DESIGN PRODUCTS AND FINISHES SHALL BE CONFIRMED WITH THE OWNER AND ARCHITECT BEFORE ORDERING.",
+  "2.  SUBMIT THE COMPLETE MODEL NUMBER, CEC JA8 LISTING, DIMMER COMPATIBILITY, AND DAMP/WET LOCATION LISTING FOR REVIEW.",
+  "3.  LOW-VOLTAGE TRACK AND TAPE SYSTEM VOLTAGES SHOWN ARE SECONDARY VOLTAGES; PROVIDE A LISTED 120 VAC INPUT POWER SUPPLY SIZED FOR THE CONNECTED LOAD.",
+].join("\n");
+const LIGHTING_SCHEDULE_CA_RESIDENTIAL_STARTER = [
+  {
+    starterFixtureKey: "ca-2025-res-l1",
+    mark: "L1",
+    symbolAssetPath: "assets/lighting/ca-residential-l1.png",
+    symbolAlt: "Recessed ceiling light symbol",
+    description: "4-inch recessed LED downlight, 3000 K, 90+ CRI",
+    manufacturer: "Juno",
+    modelNumber: "IC1JBPF 07LM 30K 90CRI 120 FRPC with 4JBLDT trim",
+    mounting: "Recessed, IC/airtight",
+    volts: "120",
+    watts: "15 W",
+    notes: "JA8; phase dimmable",
+  },
+  {
+    starterFixtureKey: "ca-2025-res-l2",
+    mark: "L2",
+    symbolAssetPath: "assets/lighting/ca-residential-l2.png",
+    symbolAlt: "Pendant light symbol",
+    description: "Opal-glass LED pendant, 800 lm, 3000 K",
+    manufacturer: "Generation Lighting",
+    modelNumber: "6020EN3-15",
+    mounting: "Suspended from ceiling box",
+    volts: "120",
+    watts: "9 W",
+    notes: "Included JA8 lamp; final finish by owner/architect",
+  },
+  {
+    starterFixtureKey: "ca-2025-res-l3",
+    mark: "L3",
+    symbolAssetPath: "assets/lighting/ca-residential-l3.png",
+    symbolAlt: "Wall-mounted LED light symbol",
+    description: "LED wall/bath sconce, 800 lm, 3000 K",
+    manufacturer: "Generation Lighting",
+    modelNumber: "49119EN3-962",
+    mounting: "Wall junction box",
+    volts: "120",
+    watts: "9 W",
+    notes: "Damp-location; included JA8 lamp",
+  },
+  {
+    starterFixtureKey: "ca-2025-res-l4",
+    mark: "L4",
+    symbolAssetPath: "assets/lighting/ca-residential-l4.png",
+    symbolAlt: "Recessed spotlight symbol",
+    description: "4-inch adjustable LED spotlight, 3000 K, 90+ CRI",
+    manufacturer: "Juno",
+    modelNumber: "WF4 ADJ SWW5 90CRI MW M6",
+    mounting: "Recessed adjustable, IC/airtight",
+    volts: "120",
+    watts: "9.99 W",
+    notes: "JA8; wet-location; phase dimmable",
+  },
+  {
+    starterFixtureKey: "ca-2025-res-l5",
+    mark: "L5",
+    symbolAssetPath: "assets/lighting/ca-residential-l5.png",
+    symbolAlt: "Exterior wall light symbol",
+    description: "Exterior LED wall lantern, photocell, 800 lm, 3000 K",
+    manufacturer: "Generation Lighting",
+    modelNumber: "8909PEN3-12",
+    mounting: "Exterior wall box",
+    volts: "120",
+    watts: "9 W",
+    notes: "Wet-location; coordinate required motion/time control",
+  },
+  {
+    starterFixtureKey: "ca-2025-res-l6",
+    mark: "L6",
+    symbolAssetPath: "assets/lighting/ca-residential-l6.png",
+    symbolAlt: "Waterproof recessed light symbol",
+    description: "4-inch waterproof regressed LED downlight, 3000 K",
+    manufacturer: "Juno",
+    modelNumber: "WF4 REG SWW5 90CRI MW M6",
+    mounting: "Recessed, IC/airtight",
+    volts: "120",
+    watts: "8.99 W",
+    notes: "Wet-location; JA8; GFCI where required",
+  },
+  {
+    starterFixtureKey: "ca-2025-res-l7",
+    mark: "L7",
+    symbolAssetPath: "assets/lighting/ca-residential-l7.png",
+    symbolAlt: "Magnetic track spotlight symbol",
+    description: "Magnetic adjustable track spotlight, 25-degree beam, 3000 K",
+    manufacturer: "PureEdge",
+    modelNumber: "T24M-2C-TUBS-SP-30K-WH",
+    mounting: "Magnetic track head",
+    volts: "120 input / 24 VDC",
+    watts: "9 W",
+    notes: "JA8 only with listed universal power supply",
+  },
+  {
+    starterFixtureKey: "ca-2025-res-l8",
+    mark: "L8",
+    symbolAssetPath: "assets/lighting/ca-residential-l8.png",
+    symbolAlt: "Surface-mounted ceiling light symbol",
+    description: "6-inch low-profile surface LED ceiling light, 3000 K, 90+ CRI",
+    manufacturer: "Juno",
+    modelNumber: "JSBC 6IN 30K 90CRI WH",
+    mounting: "Surface junction box",
+    volts: "120",
+    watts: "12.6 W",
+    notes: "JA8; wet-location; phase dimmable",
+  },
+  {
+    starterFixtureKey: "ca-2025-res-l9",
+    mark: "L9",
+    symbolAssetPath: "assets/lighting/ca-residential-l9.png",
+    symbolAlt: "Magnetic track symbol",
+    description: "Two-circuit recessed magnetic track and power supply",
+    manufacturer: "PureEdge",
+    modelNumber: "TR24M-2C-WH with PSB-96W-UNI-24VDC-T",
+    mounting: "Recessed plaster-in track",
+    volts: "120 input / 24 VDC",
+    watts: "96 W max",
+    notes: "Connected load must remain within power-supply rating",
+  },
+  {
+    starterFixtureKey: "ca-2025-res-l10",
+    mark: "L10",
+    symbolAssetPath: "assets/lighting/ca-residential-l10.png",
+    symbolAlt: "Magnetic recessed linear panel symbol",
+    description: "Recessed magnetic linear panel/module, 3000 K",
+    manufacturer: "PureEdge",
+    modelNumber: "T24M Linea, 5 W/ft configuration",
+    mounting: "Magnetic recessed track",
+    volts: "120 input / 24 VDC",
+    watts: "5 W/ft",
+    notes: "Coordinate final length and power-supply capacity",
+  },
+  {
+    starterFixtureKey: "ca-2025-res-l11",
+    mark: "L11",
+    symbolAssetPath: "assets/lighting/ca-residential-l11.png",
+    symbolAlt: "LED strip light symbol",
+    description: "Concealed LED strip, 3000 K, 90+ CRI",
+    manufacturer: "American Lighting",
+    modelNumber: "HTLHD-WW-16 with compatible listed driver",
+    mounting: "Aluminum channel, concealed surface",
+    volts: "120 input / 24 VDC",
+    watts: "3.65 W/ft",
+    notes: "JA8; damp-location; size driver for installed length",
+  },
+];
 const LIGHTING_SCHEDULE_SYNC_SCHEMA_VERSION = "1.0.0";
 const LIGHTING_SCHEDULE_SYNC_FILE_NAME = "T24LightingFixtureSchedule.sync.json";
 const PROJECT_ROOT_SEGMENT_REGEX =
@@ -6708,6 +6872,11 @@ const debounce = (fn, delay) => {
     timeoutId = undefined;
     fn(...(lastArgs || []));
   };
+  debounced.cancel = () => {
+    clearTimeout(timeoutId);
+    timeoutId = undefined;
+    lastArgs = undefined;
+  };
   return debounced;
 };
 
@@ -9571,6 +9740,9 @@ let lightingScheduleSyncStatusMessage = "";
 let lightingScheduleSyncPollTimer = null;
 let lightingScheduleSyncDirty = false;
 let lightingScheduleSyncSaving = false;
+let lightingScheduleEditRevision = 0;
+let lightingScheduleSavePending = false;
+let lightingScheduleSymbolPasteTarget = null;
 let title24ProjectIndex = null;
 let title24ProjectQuery = "";
 let title24ScopeOptionsDataset = null;
@@ -11493,6 +11665,743 @@ async function acceptOutlookScanSuggestion(suggestionKey) {
     }.`
   );
   return true;
+}
+
+// ===================== EMAIL CAPTURE INBOX & FOLLOW-UPS =====================
+
+let emailCaptureState = {
+  loaded: false,
+  loading: false,
+  items: [],
+  counts: { new: 0, newDirected: 0, newCc: 0, pendingAi: 0 },
+  filter: "new",
+  scan: { running: false, stage: "", message: "", lastResult: null },
+  lastScanCompletedAtUtc: "",
+  followUps: [],
+  followUpFilter: "open",
+  autoScanStarted: false,
+};
+
+let followUpDialogState = { followUpId: null, capturedEmailId: null };
+let emailProjectPickerState = { capturedEmailId: null };
+
+window.updateEmailCaptureProgress = function (payload = {}) {
+  const stage = String(payload.stage || "").trim();
+  emailCaptureState.scan.stage = stage;
+  emailCaptureState.scan.message = String(payload.message || "").trim();
+  emailCaptureState.scan.running = payload.active !== false;
+  renderEmailCaptureProgress();
+  if (stage === "done") {
+    const newCount = Number(payload.newCount || 0);
+    if (newCount > 0) {
+      toast(
+        `Email scan: ${newCount} new email${newCount === 1 ? "" : "s"} captured.`
+      );
+    }
+    refreshEmailCaptureData({ silent: true });
+  }
+};
+
+function isEmailTabActive() {
+  return document.body.dataset.activeTab === "email";
+}
+
+function emailCaptureDirectednessBadge(directedness) {
+  const value = String(directedness || "unknown");
+  if (value === "to") return { label: "To you", cls: "direct" };
+  if (value === "named") return { label: "Named", cls: "direct" };
+  if (value === "cc") return { label: "CC", cls: "cc" };
+  return { label: "Other", cls: "cc" };
+}
+
+function buildEmailCaptureProjectContext() {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() - 14);
+  const end = new Date();
+  end.setHours(23, 59, 59, 999);
+  end.setDate(end.getDate() + 60);
+  return db
+    .map((rawProject) => normalizeProject(rawProject))
+    .filter(Boolean)
+    .map((project) => ({
+      id: String(project.id || "").trim(),
+      name: String(project.name || "").trim(),
+      nick: String(project.nick || "").trim(),
+      path: String(project.path || "").trim(),
+      deliverables: getProjectDeliverables(project)
+        .filter((deliverable) => {
+          const due = parseDueStr(deliverable?.due);
+          return due && due >= start && due <= end;
+        })
+        .map((deliverable) => ({
+          name: String(deliverable?.name || "").trim(),
+          due: String(deliverable?.due || "").trim(),
+          status: String(deliverable?.status || "").trim(),
+        })),
+    }))
+    .filter(
+      (project) => project.id || project.name || project.nick || project.path
+    );
+}
+
+async function refreshEmailCaptureData({ silent = false } = {}) {
+  if (!window.pywebview?.api?.list_captured_emails) return;
+  emailCaptureState.loading = true;
+  if (!silent && isEmailTabActive()) renderEmailInboxView();
+  try {
+    const statusFilter =
+      emailCaptureState.filter === "cc" ? "new" : emailCaptureState.filter;
+    const directedness = emailCaptureState.filter === "cc" ? "cc" : "all";
+    const listing = await window.pywebview.api.list_captured_emails({
+      status: statusFilter,
+      directedness,
+    });
+    if (listing?.status === "success") {
+      let items = listing.items || [];
+      if (emailCaptureState.filter === "new") {
+        items = items.filter((item) =>
+          ["to", "named"].includes(String(item.directedness || ""))
+        );
+      }
+      emailCaptureState.items = items;
+      emailCaptureState.counts = listing.counts || emailCaptureState.counts;
+      emailCaptureState.loaded = true;
+    }
+    const followUps = await window.pywebview.api.list_follow_ups({
+      status: emailCaptureState.followUpFilter,
+    });
+    if (followUps?.status === "success") {
+      emailCaptureState.followUps = followUps.items || [];
+    }
+    const scanState = await window.pywebview.api.get_email_capture_scan_state();
+    if (scanState?.status === "success") {
+      emailCaptureState.lastScanCompletedAtUtc =
+        scanState.lastScanCompletedAtUtc || "";
+    }
+  } catch (err) {
+    console.warn("Could not load email capture data:", err);
+  } finally {
+    emailCaptureState.loading = false;
+  }
+  updateEmailTabBadge();
+  if (isEmailTabActive()) {
+    renderEmailInboxView();
+    renderFollowUpsView();
+  }
+}
+
+async function updateEmailTabBadge() {
+  const badge = document.getElementById("emailTabBadge");
+  if (!badge || !window.pywebview?.api?.get_email_capture_badge_counts) return;
+  try {
+    const counts = await window.pywebview.api.get_email_capture_badge_counts();
+    if (counts?.status !== "success") return;
+    const total =
+      Number(counts.newDirected || 0) + Number(counts.overdueFollowUps || 0);
+    badge.textContent = total > 99 ? "99+" : String(total);
+    badge.hidden = total <= 0;
+  } catch (err) {
+    console.warn("Could not load email badge counts:", err);
+  }
+}
+
+function renderEmailCaptureProgress() {
+  const progressEl = document.getElementById("emailCaptureProgress");
+  if (!progressEl) return;
+  const { running, message } = emailCaptureState.scan;
+  progressEl.hidden = !running && !message;
+  progressEl.textContent = message || "";
+  progressEl.classList.toggle("active", !!running);
+  const rescanBtn = document.getElementById("emailCaptureRescanBtn");
+  if (rescanBtn) {
+    rescanBtn.disabled = !!running;
+    rescanBtn.textContent = running ? "Scanning..." : "Scan Now";
+  }
+  const lastScanEl = document.getElementById("emailCaptureLastScan");
+  if (lastScanEl) {
+    const lastScan = emailCaptureState.lastScanCompletedAtUtc;
+    lastScanEl.textContent = lastScan
+      ? `Last scan ${new Date(lastScan).toLocaleString(undefined, {
+          month: "numeric",
+          day: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+        })}`
+      : "";
+  }
+}
+
+function renderEmailInboxView() {
+  const list = document.getElementById("emailInboxList");
+  if (!list) return;
+
+  document.querySelectorAll("#emailInboxFilters .email-filter-btn").forEach(
+    (btn) =>
+      btn.classList.toggle(
+        "active",
+        btn.dataset.emailFilter === emailCaptureState.filter
+      )
+  );
+  renderEmailCaptureProgress();
+
+  if (emailCaptureState.loading && !emailCaptureState.loaded) {
+    list.innerHTML = '<div class="tiny muted email-inbox-empty">Loading captured emails...</div>';
+    return;
+  }
+  if (!emailCaptureState.items.length) {
+    const emptyByFilter = {
+      new: "No new captured emails directed at you. Run a scan or check CC & Other.",
+      cc: "No CC or distribution-list emails waiting for review.",
+      accepted: "No accepted emails yet.",
+      dismissed: "No dismissed emails.",
+    };
+    list.innerHTML = `<div class="tiny muted email-inbox-empty">${
+      emptyByFilter[emailCaptureState.filter] || "Nothing here yet."
+    }</div>`;
+    return;
+  }
+
+  list.innerHTML = emailCaptureState.items
+    .map((item) => {
+      const badge = emailCaptureDirectednessBadge(item.directedness);
+      const received = item.receivedAtUtc
+        ? new Date(item.receivedAtUtc).toLocaleString(undefined, {
+            month: "numeric",
+            day: "numeric",
+            hour: "numeric",
+            minute: "2-digit",
+          })
+        : "";
+      const sender = item.senderName || item.senderAddress || "Unknown sender";
+      let aiLine = "";
+      if (item.aiStatus === "matched" && item.aiProject) {
+        const projectLabel =
+          item.aiProject.nick || item.aiProject.name || item.aiProject.id || "";
+        const suggestionName = item.aiSuggestion?.name || "";
+        aiLine = `<div class="email-inbox-ai tiny">&rarr; ${escapeHtml(
+          projectLabel
+        )}${suggestionName ? ` &middot; ${escapeHtml(suggestionName)}` : ""}</div>`;
+      } else if (item.aiStatus === "pending") {
+        aiLine = '<div class="email-inbox-ai tiny muted">AI review pending</div>';
+      } else if (item.aiStatus === "no_match") {
+        aiLine = '<div class="email-inbox-ai tiny muted">No project match</div>';
+      }
+      const isNew = item.status === "new";
+      const actions = [];
+      if (isNew) {
+        actions.push(
+          `<button class="btn tiny btn-primary" data-email-action="accept" data-email-id="${item.id}">${
+            item.aiStatus === "matched" ? "Accept" : "Link to project..."
+          }</button>`
+        );
+        actions.push(
+          `<button class="btn tiny" data-email-action="follow-up" data-email-id="${item.id}">Follow up</button>`
+        );
+        actions.push(
+          `<button class="btn tiny ghost" data-email-action="dismiss" data-email-id="${item.id}">Dismiss</button>`
+        );
+      } else if (item.status === "dismissed") {
+        actions.push(
+          `<button class="btn tiny" data-email-action="restore" data-email-id="${item.id}">Restore</button>`
+        );
+      }
+      actions.push(
+        `<button class="btn tiny ghost" data-email-action="open" data-email-id="${item.id}">Open in Outlook</button>`
+      );
+      return `
+        <article class="email-inbox-card" data-email-card="${item.id}">
+          <div class="email-inbox-card-head">
+            <span class="email-directedness-pill ${badge.cls}">${badge.label}</span>
+            <span class="email-inbox-subject">${escapeHtml(
+              item.subject || "(no subject)"
+            )}</span>
+            <span class="email-inbox-meta tiny muted">${escapeHtml(sender)}${
+              received ? ` &middot; ${received}` : ""
+            }</span>
+          </div>
+          ${
+            item.bodyPreview
+              ? `<div class="email-inbox-preview tiny muted">${escapeHtml(
+                  String(item.bodyPreview).slice(0, 180)
+                )}</div>`
+              : ""
+          }
+          ${aiLine}
+          <div class="email-inbox-actions">${actions.join("")}</div>
+        </article>`;
+    })
+    .join("");
+}
+
+function followUpDueState(item) {
+  return dueState(item?.snoozedUntil || item?.dueDate || "");
+}
+
+function renderFollowUpsView() {
+  const list = document.getElementById("followUpsList");
+  if (!list) return;
+
+  document
+    .querySelectorAll("#followUpsSection .follow-up-filter-btn")
+    .forEach((btn) =>
+      btn.classList.toggle(
+        "active",
+        btn.dataset.followUpFilter === emailCaptureState.followUpFilter
+      )
+    );
+
+  const summary = document.getElementById("followUpsSummary");
+  if (summary) {
+    const open = emailCaptureState.followUps.filter(
+      (item) => item.status === "open"
+    );
+    const overdue = open.filter(
+      (item) => followUpDueState(item) === "overdue"
+    ).length;
+    summary.textContent =
+      emailCaptureState.followUpFilter === "open" && open.length
+        ? `${open.length} open${overdue ? `, ${overdue} overdue` : ""}`
+        : "";
+  }
+
+  if (!emailCaptureState.followUps.length) {
+    list.innerHTML =
+      emailCaptureState.followUpFilter === "resolved"
+        ? '<div class="tiny muted email-inbox-empty">No resolved follow-ups yet.</div>'
+        : '<div class="tiny muted email-inbox-empty">No open follow-ups. Flag an email or add one manually to get nudged.</div>';
+    return;
+  }
+
+  list.innerHTML = emailCaptureState.followUps
+    .map((item) => {
+      const effectiveDue = item.snoozedUntil || item.dueDate || "";
+      const state = followUpDueState(item);
+      const duePill = effectiveDue
+        ? `<span class="pill ${state}">${
+            item.snoozedUntil ? "Snoozed to " : "Due "
+          }${humanDate(effectiveDue)}</span>`
+        : '<span class="pill none">No date</span>';
+      const context = [];
+      if (item.waitingOn) context.push(`Waiting on ${escapeHtml(item.waitingOn)}`);
+      if (item.emailSenderName) context.push(`From ${escapeHtml(item.emailSenderName)}`);
+      const actions = [];
+      if (item.status === "open") {
+        actions.push(
+          `<button class="btn tiny" data-follow-up-action="snooze3" data-follow-up-id="${item.id}">+3d</button>`
+        );
+        actions.push(
+          `<button class="btn tiny" data-follow-up-action="snooze7" data-follow-up-id="${item.id}">+7d</button>`
+        );
+        actions.push(
+          `<button class="btn tiny btn-primary" data-follow-up-action="resolve" data-follow-up-id="${item.id}">Resolve</button>`
+        );
+      } else {
+        actions.push(
+          `<button class="btn tiny" data-follow-up-action="reopen" data-follow-up-id="${item.id}">Reopen</button>`
+        );
+      }
+      if (item.capturedEmailId && item.emailEntryId) {
+        actions.push(
+          `<button class="btn tiny ghost" data-follow-up-action="open-email" data-follow-up-id="${item.id}">Open email</button>`
+        );
+      }
+      return `
+        <article class="follow-up-card ${state}" data-follow-up-card="${item.id}">
+          <div class="follow-up-card-head">
+            ${duePill}
+            <span class="follow-up-title">${escapeHtml(item.title || "Follow-up")}</span>
+          </div>
+          ${
+            context.length
+              ? `<div class="tiny muted">${context.join(" &middot; ")}</div>`
+              : ""
+          }
+          ${item.note ? `<div class="tiny muted">${escapeHtml(item.note)}</div>` : ""}
+          <div class="email-inbox-actions">${actions.join("")}</div>
+        </article>`;
+    })
+    .join("");
+}
+
+async function acceptCapturedEmail(recordId) {
+  const item = emailCaptureState.items.find((entry) => entry.id === recordId);
+  if (!item) return false;
+  const match =
+    item.aiStatus === "matched" && item.aiProject
+      ? findBestProjectMatch(item.aiProject)
+      : null;
+  if (!match) {
+    openEmailProjectPicker(recordId);
+    return false;
+  }
+  return acceptCapturedEmailIntoProject(recordId, match.index);
+}
+
+async function acceptCapturedEmailIntoProject(recordId, projectIndex) {
+  const item = emailCaptureState.items.find((entry) => entry.id === recordId);
+  if (!item || !db[projectIndex]) return false;
+
+  const snapshot = deepCloneJson(db[projectIndex], null);
+  const project = normalizeProject(db[projectIndex]);
+  const emailRef = buildOutlookEmailRefFromMessage({
+    id: item.entryId,
+    subject: item.subject,
+    internetMessageId: item.internetMessageId,
+    receivedDateTime: item.receivedAtUtc,
+    source: "desktop-outlook",
+  });
+  const suggestion = item.aiSuggestion || {};
+  const deliverable = createDeliverable({
+    name: String(suggestion.name || item.subject || "Email follow-up").trim(),
+    due: suggestion.due || "",
+    notes: suggestion.notes || "",
+    tasks: suggestion.tasks || [],
+    emailRefs: emailRef ? [emailRef] : [],
+    emailRef: emailRef || null,
+  });
+  project.deliverables.push(deliverable);
+  syncProjectActiveDeliverables(project, { fallbackActiveId: deliverable.id });
+  db[projectIndex] = project;
+
+  const saved = await save({ silent: true });
+  if (!saved) {
+    if (snapshot) db[projectIndex] = snapshot;
+    render();
+    toast("Could not save the new deliverable.");
+    return false;
+  }
+
+  try {
+    await window.pywebview.api.update_captured_email_status({
+      id: recordId,
+      status: "accepted",
+      acceptedProjectId: String(project.id || ""),
+      acceptedDeliverableId: String(deliverable.id || ""),
+    });
+  } catch (err) {
+    console.warn("Could not mark captured email accepted:", err);
+  }
+  render();
+  toast(
+    `Added ${deliverable.name || "deliverable"} to ${
+      project.nick || project.name || "project"
+    }.`
+  );
+  await refreshEmailCaptureData({ silent: true });
+  return true;
+}
+
+function openEmailProjectPicker(recordId) {
+  emailProjectPickerState.capturedEmailId = recordId;
+  const searchInput = document.getElementById("emailProjectPickerSearch");
+  if (searchInput) searchInput.value = "";
+  renderEmailProjectPickerList("");
+  document.getElementById("emailProjectPickerDlg")?.showModal();
+}
+
+function renderEmailProjectPickerList(query = "") {
+  const list = document.getElementById("emailProjectPickerList");
+  if (!list) return;
+  const needle = String(query || "").trim().toLowerCase();
+  const matches = db
+    .map((rawProject, index) => ({
+      project: normalizeProject(rawProject),
+      index,
+    }))
+    .filter(({ project }) => {
+      if (!project) return false;
+      if (!needle) return true;
+      return [project.name, project.nick, project.id]
+        .some((value) => String(value || "").toLowerCase().includes(needle));
+    })
+    .slice(0, 25);
+  if (!matches.length) {
+    list.innerHTML = '<div class="tiny muted">No matching projects.</div>';
+    return;
+  }
+  list.innerHTML = matches
+    .map(
+      ({ project, index }) => `
+        <button type="button" class="btn block email-project-pick" data-project-index="${index}">
+          ${escapeHtml(project.nick || project.name || project.id || "Project")}
+          ${
+            project.nick && project.name
+              ? `<span class="tiny muted"> &middot; ${escapeHtml(project.name)}</span>`
+              : ""
+          }
+        </button>`
+    )
+    .join("");
+}
+
+function openFollowUpDialog({ capturedEmailId = null, followUpId = null } = {}) {
+  followUpDialogState = { capturedEmailId, followUpId };
+  const titleInput = document.getElementById("followUpTitleInput");
+  const waitingOnInput = document.getElementById("followUpWaitingOnInput");
+  const dueInput = document.getElementById("followUpDueInput");
+  const noteInput = document.getElementById("followUpNoteInput");
+  const contextEl = document.getElementById("followUpDlgContext");
+  if (titleInput) titleInput.value = "";
+  if (waitingOnInput) waitingOnInput.value = "";
+  if (dueInput) dueInput.value = "";
+  if (noteInput) noteInput.value = "";
+  if (contextEl) {
+    contextEl.hidden = true;
+    contextEl.textContent = "";
+  }
+
+  if (capturedEmailId != null) {
+    const item = emailCaptureState.items.find(
+      (entry) => entry.id === capturedEmailId
+    );
+    if (item) {
+      if (titleInput) titleInput.value = item.subject || "";
+      if (waitingOnInput)
+        waitingOnInput.value = item.senderName || item.senderAddress || "";
+      if (contextEl) {
+        contextEl.hidden = false;
+        contextEl.textContent = `From email: ${item.subject || "(no subject)"}`;
+      }
+    }
+  }
+  document.getElementById("followUpDlg")?.showModal();
+}
+
+async function submitFollowUp() {
+  const title = val("followUpTitleInput");
+  const waitingOn = val("followUpWaitingOnInput");
+  const dueDate = val("followUpDueInput");
+  const note = val("followUpNoteInput");
+  if (!title) {
+    toast("Follow-up needs a title.");
+    return;
+  }
+  try {
+    const payload = {
+      title,
+      waitingOn,
+      dueDate,
+      note,
+    };
+    if (followUpDialogState.capturedEmailId != null) {
+      payload.kind = "email";
+      payload.capturedEmailId = followUpDialogState.capturedEmailId;
+    } else {
+      payload.kind = "custom";
+    }
+    const result = await window.pywebview.api.create_follow_up(payload);
+    if (result?.status !== "success") {
+      toast(result?.message || "Could not save the follow-up.");
+      return;
+    }
+    closeDlg("followUpDlg");
+    toast("Follow-up saved.");
+    await refreshEmailCaptureData({ silent: true });
+  } catch (err) {
+    console.warn("Could not save follow-up:", err);
+    toast("Could not save the follow-up.");
+  }
+}
+
+async function snoozeFollowUp(followUpId, days) {
+  try {
+    await window.pywebview.api.update_follow_up({
+      id: followUpId,
+      action: "snooze",
+      days,
+    });
+    await refreshEmailCaptureData({ silent: true });
+  } catch (err) {
+    console.warn("Could not snooze follow-up:", err);
+  }
+}
+
+async function resolveFollowUp(followUpId) {
+  try {
+    await window.pywebview.api.update_follow_up({
+      id: followUpId,
+      action: "resolve",
+    });
+    await refreshEmailCaptureData({ silent: true });
+  } catch (err) {
+    console.warn("Could not resolve follow-up:", err);
+  }
+}
+
+async function reopenFollowUp(followUpId) {
+  try {
+    await window.pywebview.api.update_follow_up({
+      id: followUpId,
+      action: "reopen",
+    });
+    await refreshEmailCaptureData({ silent: true });
+  } catch (err) {
+    console.warn("Could not reopen follow-up:", err);
+  }
+}
+
+async function dismissCapturedEmail(recordId) {
+  try {
+    await window.pywebview.api.update_captured_email_status({
+      id: recordId,
+      status: "dismissed",
+    });
+    await refreshEmailCaptureData({ silent: true });
+  } catch (err) {
+    console.warn("Could not dismiss captured email:", err);
+  }
+}
+
+async function restoreCapturedEmail(recordId) {
+  try {
+    await window.pywebview.api.update_captured_email_status({
+      id: recordId,
+      status: "new",
+    });
+    await refreshEmailCaptureData({ silent: true });
+  } catch (err) {
+    console.warn("Could not restore captured email:", err);
+  }
+}
+
+async function openCapturedEmailInOutlook(recordId) {
+  const item =
+    emailCaptureState.items.find((entry) => entry.id === recordId) ||
+    emailCaptureState.followUps.find(
+      (entry) => entry.capturedEmailId === recordId
+    );
+  const entryId = item?.entryId || item?.emailEntryId || "";
+  if (!entryId) {
+    toast("Could not open this Outlook message.");
+    return;
+  }
+  await openOutlookScanMessage({
+    id: entryId,
+    subject: item?.subject || item?.emailSubject || "",
+    internetMessageId: item?.internetMessageId || "",
+    receivedDateTime: item?.receivedAtUtc || "",
+    source: "desktop-outlook",
+  });
+}
+
+async function runEmailCaptureScan(mode = "manual") {
+  if (!window.pywebview?.api?.run_email_capture_scan) return;
+  if (emailCaptureState.scan.running) return;
+  emailCaptureState.scan.running = true;
+  emailCaptureState.scan.stage = "starting";
+  emailCaptureState.scan.message = "Starting email scan...";
+  renderEmailCaptureProgress();
+  try {
+    const response = await window.pywebview.api.run_email_capture_scan(
+      { mode, projectContext: buildEmailCaptureProjectContext() },
+      userSettings.apiKey || "",
+      userSettings.userName || "",
+      getActiveDisciplineList()
+    );
+    emailCaptureState.scan.lastResult = response || null;
+    if (response?.status === "error" && mode !== "auto") {
+      toast(response.message || "Email scan failed.");
+    }
+    if (response?.status === "error") {
+      emailCaptureState.scan.message = String(response.message || "").trim();
+    }
+  } catch (err) {
+    console.warn("Email capture scan failed:", err);
+  } finally {
+    emailCaptureState.scan.running = false;
+    renderEmailCaptureProgress();
+    await refreshEmailCaptureData({ silent: true });
+  }
+}
+
+function startEmailCaptureAutoScan() {
+  if (emailCaptureState.autoScanStarted) return;
+  emailCaptureState.autoScanStarted = true;
+  Promise.resolve()
+    .then(() => runEmailCaptureScan("auto"))
+    .catch((err) => console.warn("Email capture auto-scan failed:", err));
+}
+
+function initEmailCaptureUi() {
+  document
+    .getElementById("emailInboxFilters")
+    ?.addEventListener("click", (e) => {
+      const btn = e.target.closest(".email-filter-btn");
+      if (!btn) return;
+      emailCaptureState.filter = btn.dataset.emailFilter || "new";
+      refreshEmailCaptureData();
+    });
+
+  document
+    .getElementById("emailCaptureRescanBtn")
+    ?.addEventListener("click", () => runEmailCaptureScan("manual"));
+
+  document.getElementById("emailInboxList")?.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-email-action]");
+    if (!btn) return;
+    const recordId = Number(btn.dataset.emailId);
+    const action = btn.dataset.emailAction;
+    if (action === "accept") acceptCapturedEmail(recordId);
+    else if (action === "dismiss") dismissCapturedEmail(recordId);
+    else if (action === "restore") restoreCapturedEmail(recordId);
+    else if (action === "follow-up")
+      openFollowUpDialog({ capturedEmailId: recordId });
+    else if (action === "open") openCapturedEmailInOutlook(recordId);
+  });
+
+  document
+    .querySelectorAll("#followUpsSection .follow-up-filter-btn")
+    .forEach((btn) =>
+      btn.addEventListener("click", () => {
+        emailCaptureState.followUpFilter = btn.dataset.followUpFilter || "open";
+        refreshEmailCaptureData();
+      })
+    );
+
+  document
+    .getElementById("addFollowUpBtn")
+    ?.addEventListener("click", () => openFollowUpDialog({}));
+
+  document
+    .getElementById("followUpSaveBtn")
+    ?.addEventListener("click", () => submitFollowUp());
+
+  document.getElementById("followUpsList")?.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-follow-up-action]");
+    if (!btn) return;
+    const followUpId = Number(btn.dataset.followUpId);
+    const action = btn.dataset.followUpAction;
+    if (action === "snooze3") snoozeFollowUp(followUpId, 3);
+    else if (action === "snooze7") snoozeFollowUp(followUpId, 7);
+    else if (action === "resolve") resolveFollowUp(followUpId);
+    else if (action === "reopen") reopenFollowUp(followUpId);
+    else if (action === "open-email") {
+      const item = emailCaptureState.followUps.find(
+        (entry) => entry.id === followUpId
+      );
+      if (item?.capturedEmailId) openCapturedEmailInOutlook(item.capturedEmailId);
+    }
+  });
+
+  document
+    .getElementById("emailProjectPickerSearch")
+    ?.addEventListener("input", (e) =>
+      renderEmailProjectPickerList(e.target.value)
+    );
+
+  document
+    .getElementById("emailProjectPickerList")
+    ?.addEventListener("click", (e) => {
+      const btn = e.target.closest(".email-project-pick");
+      if (!btn) return;
+      const projectIndex = Number(btn.dataset.projectIndex);
+      const recordId = emailProjectPickerState.capturedEmailId;
+      closeDlg("emailProjectPickerDlg");
+      if (recordId != null && Number.isFinite(projectIndex)) {
+        acceptCapturedEmailIntoProject(recordId, projectIndex);
+      }
+    });
 }
 
 // ===================== CLOUD SYNC =====================
@@ -29807,6 +30716,22 @@ function createLightingScheduleRow(seed = {}) {
   LIGHTING_SCHEDULE_FIELDS.forEach((field) => {
     row[field] = normalizeLightingScheduleText(seed[field]);
   });
+  LIGHTING_SCHEDULE_ROW_META_FIELDS.forEach((field) => {
+    row[field] = normalizeLightingScheduleText(seed[field]);
+  });
+  return row;
+}
+
+// Normalizes a row without replacing it: rendered cells and the symbol paste
+// target hold references to these row objects, so identity must survive the
+// repeated normalization triggered by the sync poll and debounced saves.
+function normalizeLightingScheduleRowInPlace(row) {
+  LIGHTING_SCHEDULE_FIELDS.forEach((field) => {
+    row[field] = normalizeLightingScheduleText(row[field]);
+  });
+  LIGHTING_SCHEDULE_ROW_META_FIELDS.forEach((field) => {
+    row[field] = normalizeLightingScheduleText(row[field]);
+  });
   return row;
 }
 
@@ -29815,6 +30740,7 @@ function createDefaultLightingSchedule() {
     rows: [createLightingScheduleRow()],
     generalNotes: LIGHTING_SCHEDULE_DEFAULT_GENERAL_NOTES,
     notes: LIGHTING_SCHEDULE_DEFAULT_NOTES,
+    includeSymbolColumn: false,
     ...createDefaultLightingScheduleSyncMeta(),
   };
 }
@@ -29825,7 +30751,11 @@ function normalizeLightingSchedule(schedule) {
   if (!Array.isArray(normalized.rows) || normalized.rows.length === 0) {
     normalized.rows = [createLightingScheduleRow()];
   } else {
-    normalized.rows = normalized.rows.map((row) => createLightingScheduleRow(row));
+    normalized.rows = normalized.rows.map((row) =>
+      row && typeof row === "object"
+        ? normalizeLightingScheduleRowInPlace(row)
+        : createLightingScheduleRow(row)
+    );
   }
   if (normalized.generalNotes == null) {
     normalized.generalNotes = LIGHTING_SCHEDULE_DEFAULT_GENERAL_NOTES;
@@ -29839,6 +30769,7 @@ function normalizeLightingSchedule(schedule) {
   } else {
     normalized.notes = normalizeLightingScheduleText(normalized.notes);
   }
+  normalized.includeSymbolColumn = normalized.includeSymbolColumn === true;
   Object.keys(syncDefaults).forEach((key) => {
     normalized[key] = normalizeLightingScheduleText(normalized[key] ?? "");
   });
@@ -29851,6 +30782,9 @@ function buildCanonicalLightingSchedule(schedule) {
     rows: normalized.rows.map((row) => createLightingScheduleRow(row)),
     generalNotes: normalizeLightingScheduleText(normalized.generalNotes),
     notes: normalizeLightingScheduleText(normalized.notes),
+    includeSymbolColumn:
+      normalized.includeSymbolColumn === true ||
+      normalized.rows.some((row) => row.symbolAssetPath || row.starterFixtureKey),
   };
 }
 
@@ -30018,6 +30952,19 @@ function getLightingScheduleLoadedVersion(schedule) {
   return Number.isFinite(value) && value > 0 ? value : 0;
 }
 
+function markLightingScheduleDirty() {
+  lightingScheduleEditRevision += 1;
+  lightingScheduleSyncDirty = true;
+}
+
+function applyLightingScheduleRecordMetadata(schedule, record) {
+  if (!schedule || !record) return;
+  schedule._storeVersion = Number(record.version || 0);
+  schedule._storeUpdatedAtUtc = String(record.updatedAtUtc || "").trim();
+  schedule._storeUpdatedBy = String(record.updatedBy || "").trim();
+  schedule._tableHandle = String(record.tableHandle || "").trim();
+}
+
 function applyLightingScheduleRecordToProject(project, record) {
   if (!project || !record?.schedule) return null;
   const schedule = ensureLightingSchedule(project).schedule;
@@ -30025,11 +30972,9 @@ function applyLightingScheduleRecordToProject(project, record) {
   schedule.rows = canonical.rows.map((row) => createLightingScheduleRow(row));
   schedule.generalNotes = canonical.generalNotes;
   schedule.notes = canonical.notes;
+  schedule.includeSymbolColumn = canonical.includeSymbolColumn === true;
   schedule.targetDwgPath = normalizeLightingSchedulePath(record.targetDwgPath);
-  schedule._storeVersion = Number(record.version || 0);
-  schedule._storeUpdatedAtUtc = String(record.updatedAtUtc || "").trim();
-  schedule._storeUpdatedBy = String(record.updatedBy || "").trim();
-  schedule._tableHandle = String(record.tableHandle || "").trim();
+  applyLightingScheduleRecordMetadata(schedule, record);
   return schedule;
 }
 
@@ -30040,6 +30985,7 @@ async function loadLightingScheduleFromCentralStore(
   const schedule = project ? ensureLightingSchedule(project).schedule : null;
   if (!project || !schedule) return null;
   if (!window.pywebview?.api?.get_lighting_schedule_record) return schedule;
+  const requestedRevision = lightingScheduleEditRevision;
 
   const projectId = getLightingScheduleProjectId(project, schedule);
   if (!projectId) {
@@ -30057,6 +31003,14 @@ async function loadLightingScheduleFromCentralStore(
     );
     if (response?.status !== "success") {
       throw new Error(response?.message || "Could not load lighting schedule.");
+    }
+    if (
+      getActiveLightingScheduleProject() !== project ||
+      getActiveLightingSchedule() !== schedule ||
+      lightingScheduleSyncDirty ||
+      lightingScheduleEditRevision !== requestedRevision
+    ) {
+      return schedule;
     }
     if (!response.exists || !response.data) {
       schedule._storeVersion = 0;
@@ -30152,7 +31106,7 @@ function buildLightingScheduleSyncDefaultMessage(project, schedule) {
   } else {
     segments.push("Choose Target DWG to bind a drawing for AutoCAD table updates.");
   }
-  segments.push("Run LFSOPEN in AutoCAD to edit the same schedule inside AutoCAD.");
+  segments.push("Run LFS in AutoCAD to place, link, or edit the same schedule (LFSOPEN is an alias in updated plugins).");
   return segments.join(" ");
 }
 
@@ -30274,6 +31228,10 @@ async function persistActiveLightingSchedule({
   const schedule = getActiveLightingSchedule();
   if (!project || !schedule) return null;
   if (!window.pywebview?.api?.save_lighting_schedule_record) return schedule;
+  if (lightingScheduleSyncSaving) {
+    lightingScheduleSavePending = true;
+    return null;
+  }
 
   const projectId = getLightingScheduleProjectId(project, schedule);
   if (!projectId) {
@@ -30284,13 +31242,15 @@ async function persistActiveLightingSchedule({
     return null;
   }
 
+  const savedRevision = lightingScheduleEditRevision;
+  const canonicalSchedule = buildCanonicalLightingSchedule(schedule);
   try {
     lightingScheduleSyncSaving = true;
     renderLightingScheduleSyncControls(project, schedule);
     const response = await window.pywebview.api.save_lighting_schedule_record(
       projectId,
       {
-        schedule: buildCanonicalLightingSchedule(schedule),
+        schedule: canonicalSchedule,
         targetDwgPath: normalizeLightingSchedulePath(schedule.targetDwgPath),
         tableHandle: String(schedule._tableHandle || "").trim(),
         expectedVersion: getLightingScheduleLoadedVersion(schedule),
@@ -30301,9 +31261,18 @@ async function persistActiveLightingSchedule({
       throw new Error(response?.message || "Could not save lighting schedule.");
     }
 
-    applyLightingScheduleRecordToProject(project, response.data);
-    lightingScheduleSyncDirty = false;
-    renderLightingSchedule(schedule);
+    applyLightingScheduleRecordMetadata(schedule, response.data);
+    if (
+      getActiveLightingScheduleProject() === project &&
+      getActiveLightingSchedule() === schedule
+    ) {
+      if (lightingScheduleEditRevision === savedRevision) {
+        lightingScheduleSyncDirty = false;
+      } else {
+        lightingScheduleSavePending = true;
+      }
+      renderLightingScheduleSyncControls(project, schedule);
+    }
 
     if (showStatus) {
       const conflictMessage = response.data.conflict
@@ -30331,6 +31300,12 @@ async function persistActiveLightingSchedule({
   } finally {
     lightingScheduleSyncSaving = false;
     renderLightingScheduleSyncControls(project, schedule);
+    if (lightingScheduleSavePending) {
+      lightingScheduleSavePending = false;
+      setTimeout(() => {
+        persistActiveLightingSchedule({ reason: "pending edit" });
+      }, 0);
+    }
   }
 }
 
@@ -30398,6 +31373,8 @@ async function pullLightingScheduleFromAutoCAD() {
       "You have unsaved desktop edits.\n\nPress OK to discard them and reload the central schedule."
     );
     if (!overwrite) return;
+    debouncedSaveLightingSchedule.cancel();
+    lightingScheduleSyncDirty = false;
   }
   await loadLightingScheduleFromCentralStore(project, { quiet: false });
   toast("Lighting schedule reloaded from the central store.");
@@ -30449,7 +31426,7 @@ function addLightingTemplateToSchedule(template) {
   if (!schedule) return;
   schedule.rows.push(createLightingScheduleRow(template));
   renderLightingScheduleRows(schedule);
-  lightingScheduleSyncDirty = true;
+  markLightingScheduleDirty();
   debouncedSaveLightingSchedule();
 }
 
@@ -30508,13 +31485,205 @@ function renderLightingTemplateList(filterText = "") {
   });
 }
 
+function getLightingScheduleSymbolOwnerKey() {
+  const project = getActiveLightingScheduleProject();
+  const schedule = getActiveLightingSchedule();
+  const projectId = getLightingScheduleProjectId(project, schedule);
+  return `lighting_${projectId || "shared"}`;
+}
+
+function getLightingScheduleClipboardImageFiles(clipboardData) {
+  if (!clipboardData) return [];
+  const files = Array.from(clipboardData.files || []).filter((file) =>
+    String(file?.type || "").toLowerCase().startsWith("image/")
+  );
+  if (files.length) return files;
+  return Array.from(clipboardData.items || [])
+    .map((item) => item.getAsFile?.())
+    .filter((file) => String(file?.type || "").toLowerCase().startsWith("image/"));
+}
+
+function clearLightingScheduleSymbolPasteTarget() {
+  lightingScheduleSymbolPasteTarget?.cell?.classList.remove("is-paste-target");
+  lightingScheduleSymbolPasteTarget = null;
+}
+
+// The user pasted an image while the dialog is open but no symbol cell is
+// armed; without feedback the paste looks like a silent failure.
+function notifyLightingScheduleSymbolPasteWithoutTarget(event) {
+  if (event.target?.closest?.("textarea, input")) return;
+  const files = getLightingScheduleClipboardImageFiles(event.clipboardData);
+  if (!files.length) return;
+  toast("Click a symbol cell first, then press Ctrl+V to paste the image.");
+}
+
+function activateLightingScheduleSymbolPasteTarget(row, cell) {
+  if (!row || !cell) return;
+  if (lightingScheduleSymbolPasteTarget?.cell !== cell) {
+    clearLightingScheduleSymbolPasteTarget();
+  }
+  lightingScheduleSymbolPasteTarget = { row, cell };
+  cell.classList.add("is-paste-target");
+  cell.focus({ preventScroll: true });
+}
+
+function handleLightingScheduleSymbolPaste(event) {
+  if (event.defaultPrevented) return;
+  const dialog = document.getElementById("lightingScheduleDlg");
+  if (!dialog?.open) return;
+  if (!lightingScheduleSymbolPasteTarget) {
+    notifyLightingScheduleSymbolPasteWithoutTarget(event);
+    return;
+  }
+  const { row, cell } = lightingScheduleSymbolPasteTarget;
+  const schedule = getActiveLightingSchedule();
+  if (!cell?.isConnected || !schedule?.rows?.includes(row)) {
+    clearLightingScheduleSymbolPasteTarget();
+    notifyLightingScheduleSymbolPasteWithoutTarget(event);
+    return;
+  }
+
+  const files = getLightingScheduleClipboardImageFiles(event.clipboardData);
+  if (!files.length) {
+    toast("The clipboard does not contain a supported image.");
+    return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+  saveLightingScheduleSymbol(row, files[0]);
+}
+
+async function saveLightingScheduleSymbol(row, file) {
+  if (!row || !file) return;
+  const mime = String(file.type || "").toLowerCase();
+  const supported = ["image/png", "image/jpeg", "image/jpg", "image/bmp", "image/webp"];
+  if (!supported.includes(mime)) {
+    toast("Use a PNG, JPEG, BMP, or WebP symbol image.");
+    return;
+  }
+  if (Number(file.size || 0) > LIGHTING_SCHEDULE_SYMBOL_MAX_BYTES) {
+    toast("Symbol images must be 2 MB or smaller.");
+    return;
+  }
+  if (!window.pywebview?.api?.save_page_asset) {
+    toast("Image storage is unavailable.");
+    return;
+  }
+
+  try {
+    const dataUrl = await readFileAsDataUrl(file);
+    const result = await window.pywebview.api.save_page_asset(
+      getLightingScheduleSymbolOwnerKey(),
+      dataUrl,
+      file.name || "lighting-symbol.png"
+    );
+    if (result?.status !== "success" || !result.assetPath) {
+      throw new Error(result?.message || "Could not save symbol image.");
+    }
+    row.symbolAssetPath = result.assetPath;
+    row.symbolAlt = String(file.name || "Lighting symbol").trim();
+    markLightingScheduleDirty();
+    renderLightingScheduleRows(getActiveLightingSchedule());
+    debouncedSaveLightingSchedule();
+    toast("Symbol image added.");
+  } catch (error) {
+    reportClientError("Failed to save lighting symbol", error);
+    toast(error?.message || "Could not save symbol image.");
+  }
+}
+
+async function hydrateLightingScheduleSymbol(img, assetPath) {
+  if (!img || !assetPath) return;
+  if (assetPath.startsWith("assets/")) {
+    img.src = assetPath;
+    return;
+  }
+  if (!window.pywebview?.api?.get_page_asset) return;
+  try {
+    const result = await window.pywebview.api.get_page_asset(assetPath, 320);
+    if (result?.status === "success" && result.dataUrl) {
+      img.src = result.dataUrl;
+      return;
+    }
+    img.alt = "Symbol unavailable";
+    img.classList.add("lighting-symbol-missing");
+  } catch (error) {
+    console.warn("Lighting symbol hydration failed:", error);
+    img.alt = "Symbol unavailable";
+    img.classList.add("lighting-symbol-missing");
+  }
+}
+
+function renderLightingScheduleSymbolCell(row) {
+  const td = document.createElement("td");
+  td.className = "lighting-schedule-symbol-cell";
+  td.tabIndex = 0;
+  td.title = "Click this symbol, then press Ctrl+V to paste a screenshot.";
+
+  const preview = document.createElement("div");
+  preview.className = "lighting-schedule-symbol-preview";
+  if (row.symbolAssetPath) {
+    const img = document.createElement("img");
+    img.alt = row.symbolAlt || `${row.mark || "Fixture"} symbol`;
+    preview.appendChild(img);
+    hydrateLightingScheduleSymbol(img, row.symbolAssetPath);
+  } else {
+    preview.textContent = "Click + Ctrl+V";
+    preview.classList.add("is-empty");
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "lighting-schedule-symbol-actions";
+  const fileInput = document.createElement("input");
+  fileInput.type = "file";
+  fileInput.accept = "image/png,image/jpeg,image/bmp,image/webp";
+  fileInput.hidden = true;
+  fileInput.addEventListener("change", () => {
+    const file = fileInput.files?.[0];
+    if (file) saveLightingScheduleSymbol(row, file);
+    fileInput.value = "";
+  });
+  const chooseBtn = document.createElement("button");
+  chooseBtn.type = "button";
+  chooseBtn.className = "lighting-schedule-symbol-button";
+  chooseBtn.textContent = row.symbolAssetPath ? "Replace" : "Choose";
+  chooseBtn.addEventListener("click", () => fileInput.click());
+  actions.appendChild(chooseBtn);
+  if (row.symbolAssetPath) {
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "lighting-schedule-symbol-button danger";
+    removeBtn.textContent = "Remove";
+    removeBtn.addEventListener("click", () => {
+      row.symbolAssetPath = "";
+      row.symbolAlt = "";
+      markLightingScheduleDirty();
+      renderLightingScheduleRows(getActiveLightingSchedule());
+      debouncedSaveLightingSchedule();
+    });
+    actions.appendChild(removeBtn);
+  }
+
+  td.addEventListener("click", (event) => {
+    if (event.target.closest("button, input")) return;
+    activateLightingScheduleSymbolPasteTarget(row, td);
+  });
+  td.addEventListener("focus", () => activateLightingScheduleSymbolPasteTarget(row, td));
+  td.append(preview, actions, fileInput);
+  return td;
+}
+
 function renderLightingScheduleRows(schedule) {
   const body = document.getElementById("lightingScheduleRows");
   if (!body) return;
+  clearLightingScheduleSymbolPasteTarget();
   body.innerHTML = "";
   schedule.rows.forEach((row, rowIndex) => {
     const tr = document.createElement("tr");
     LIGHTING_SCHEDULE_FIELDS.forEach((field) => {
+      if (field === "description") {
+        tr.appendChild(renderLightingScheduleSymbolCell(row));
+      }
       const td = document.createElement("td");
       const input = document.createElement("textarea");
       input.rows = 1;
@@ -30522,7 +31691,7 @@ function renderLightingScheduleRows(schedule) {
       input.addEventListener("input", (e) => {
         row[field] = e.target.value;
         autoResizeTextarea(input);
-        lightingScheduleSyncDirty = true;
+        markLightingScheduleDirty();
         debouncedSaveLightingSchedule();
       });
       requestAnimationFrame(() => autoResizeTextarea(input));
@@ -30569,6 +31738,9 @@ function renderLightingSchedule(
   const emptyState = document.getElementById("lightingScheduleEmptyState");
   const tableWrap = document.getElementById("lightingScheduleTableWrap");
   const addRowBtn = document.getElementById("lightingScheduleAddRow");
+  const starterBtn = document.getElementById(
+    "lightingScheduleInsertResidentialStarter"
+  );
   const generalNotes = document.getElementById("lightingScheduleGeneralNotes");
   const notes = document.getElementById("lightingScheduleNotes");
 
@@ -30579,6 +31751,7 @@ function renderLightingSchedule(
     }
     if (tableWrap) tableWrap.hidden = true;
     if (addRowBtn) addRowBtn.disabled = true;
+    if (starterBtn) starterBtn.disabled = true;
     if (generalNotes) {
       generalNotes.value = "";
       autoResizeTextarea(generalNotes);
@@ -30594,6 +31767,7 @@ function renderLightingSchedule(
   if (emptyState) emptyState.hidden = true;
   if (tableWrap) tableWrap.hidden = false;
   if (addRowBtn) addRowBtn.disabled = false;
+  if (starterBtn) starterBtn.disabled = false;
   if (generalNotes) {
     generalNotes.value = schedule.generalNotes ?? "";
     autoResizeTextarea(generalNotes);
@@ -30625,12 +31799,65 @@ async function setLightingScheduleProject(index) {
   await loadLightingScheduleFromCentralStore(db[index], { quiet: false });
 }
 
+function isLightingScheduleRowBlank(row) {
+  if (!row || row.symbolAssetPath) return false;
+  return LIGHTING_SCHEDULE_FIELDS.every(
+    (field) => !String(row[field] || "").trim()
+  );
+}
+
+function insertCaliforniaResidentialLightingStarter() {
+  const schedule = getActiveLightingSchedule();
+  if (!schedule) {
+    toast("Select a project first.");
+    return;
+  }
+
+  const existingKeys = new Set(
+    schedule.rows
+      .map((row) => String(row?.starterFixtureKey || "").trim())
+      .filter(Boolean)
+  );
+  const rowsToInsert = LIGHTING_SCHEDULE_CA_RESIDENTIAL_STARTER.filter(
+    (row) => !existingKeys.has(row.starterFixtureKey)
+  );
+  if (!rowsToInsert.length) {
+    toast("The CA residential starter is already in this schedule.");
+    return;
+  }
+
+  const hasOnlyBlankRow =
+    schedule.rows.length === 1 && isLightingScheduleRowBlank(schedule.rows[0]);
+  if (!hasOnlyBlankRow) {
+    const approved = confirm(
+      `Append ${rowsToInsert.length} CA residential fixture rows to this schedule? Existing rows will not be changed.`
+    );
+    if (!approved) return;
+  }
+
+  const starterRows = rowsToInsert.map((row) => createLightingScheduleRow(row));
+  if (hasOnlyBlankRow) schedule.rows = starterRows;
+  else schedule.rows.push(...starterRows);
+
+  if (schedule.generalNotes === LIGHTING_SCHEDULE_DEFAULT_GENERAL_NOTES) {
+    schedule.generalNotes = LIGHTING_SCHEDULE_CA_RESIDENTIAL_GENERAL_NOTES;
+  }
+  if (schedule.notes === LIGHTING_SCHEDULE_DEFAULT_NOTES) {
+    schedule.notes = LIGHTING_SCHEDULE_CA_RESIDENTIAL_NOTES;
+  }
+
+  markLightingScheduleDirty();
+  renderLightingSchedule(schedule);
+  debouncedSaveLightingSchedule();
+  toast(`Added ${starterRows.length} CA residential fixtures.`);
+}
+
 function addLightingScheduleRow() {
   const schedule = getActiveLightingSchedule();
   if (!schedule) return;
   schedule.rows.push(createLightingScheduleRow());
   renderLightingScheduleRows(schedule);
-  lightingScheduleSyncDirty = true;
+  markLightingScheduleDirty();
   debouncedSaveLightingSchedule();
 }
 
@@ -30643,7 +31870,7 @@ function removeLightingScheduleRow(rowIndex) {
     schedule.rows.splice(rowIndex, 1);
   }
   renderLightingScheduleRows(schedule);
-  lightingScheduleSyncDirty = true;
+  markLightingScheduleDirty();
   debouncedSaveLightingSchedule();
 }
 
@@ -32528,6 +33755,10 @@ function initTabbedInterfaces() {
       renderTimesheets();
     } else if (tab === "templates") {
       renderTemplates();
+    } else if (tab === "email") {
+      renderEmailInboxView();
+      renderFollowUpsView();
+      refreshEmailCaptureData();
     }
     updateProjectsBackToTopVisibility();
   });
@@ -34697,8 +35928,18 @@ function initEventListeners() {
   const lightingScheduleDlg = document.getElementById("lightingScheduleDlg");
   if (lightingScheduleDlg) {
     lightingScheduleDlg.addEventListener("close", () => {
+      clearLightingScheduleSymbolPasteTarget();
       stopLightingScheduleSyncWatcher();
       save();
+    });
+    document.addEventListener("paste", handleLightingScheduleSymbolPaste);
+    document.addEventListener("pointerdown", (event) => {
+      if (
+        lightingScheduleSymbolPasteTarget &&
+        !event.target.closest?.(".lighting-schedule-symbol-cell")
+      ) {
+        clearLightingScheduleSymbolPasteTarget();
+      }
     });
   }
 
@@ -34727,6 +35968,16 @@ function initEventListeners() {
   );
   if (lightingScheduleAddRowBtn) {
     lightingScheduleAddRowBtn.addEventListener("click", addLightingScheduleRow);
+  }
+
+  const lightingScheduleStarterBtn = document.getElementById(
+    "lightingScheduleInsertResidentialStarter"
+  );
+  if (lightingScheduleStarterBtn) {
+    lightingScheduleStarterBtn.addEventListener(
+      "click",
+      insertCaliforniaResidentialLightingStarter
+    );
   }
 
   const lightingScheduleBrowseDwgBtn = document.getElementById(
@@ -34788,7 +36039,7 @@ function initEventListeners() {
       if (!schedule) return;
       schedule.generalNotes = e.target.value;
       autoResizeTextarea(lightingScheduleGeneralNotes);
-      lightingScheduleSyncDirty = true;
+      markLightingScheduleDirty();
       debouncedSaveLightingSchedule();
     });
   }
@@ -34802,7 +36053,7 @@ function initEventListeners() {
       if (!schedule) return;
       schedule.notes = e.target.value;
       autoResizeTextarea(lightingScheduleNotes);
-      lightingScheduleSyncDirty = true;
+      markLightingScheduleDirty();
       debouncedSaveLightingSchedule();
     });
   }
@@ -35412,6 +36663,7 @@ async function init() {
       await new Promise((r) => window.addEventListener("pywebviewready", r));
     initEventListeners();
     initTabbedInterfaces();
+    initEmailCaptureUi();
     initProjectsBackToTop();
     updateStickyOffsets();
     refreshAppUpdateStatus();
@@ -35476,6 +36728,8 @@ async function init() {
       updateTimesheetsDuplicateIndicator(
         getWeekEntries(formatWeekKey(currentTimesheetWeek))
       );
+      updateEmailTabBadge();
+      startEmailCaptureAutoScan();
 
       if (userSettings.showSetupHelp !== false) {
         setTimeout(() => showSetupHelpBanner(), 1000);

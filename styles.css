@@ -12521,6 +12521,29 @@ body[data-page-open="1"] {
 .page-view-back:hover {
   background: var(--surface-hover);
 }
+.page-view-publish {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.38rem;
+  padding: 0.4rem 0.72rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--glass-border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 13%, var(--surface));
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.page-view-publish:hover {
+  background: color-mix(in srgb, var(--accent) 20%, var(--surface));
+}
+.page-view-publish:disabled,
+.page-view-publish.is-busy {
+  cursor: wait;
+  opacity: 0.62;
+}
 .page-view-spacer {
   flex: 1;
 }

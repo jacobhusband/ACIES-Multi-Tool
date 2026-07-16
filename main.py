@@ -15,6 +15,7 @@ import stat as stat_module
 import sqlite3
 import http.server
 import html
+from html.parser import HTMLParser
 from pathlib import Path
 from copy import copy, deepcopy
 from dotenv import load_dotenv
@@ -105,6 +106,238 @@ except AttributeError as _exc:
 from openpyxl.worksheet.copier import WorksheetCopy
 from pydantic import BaseModel, Field
 from PIL import Image as PILImage, ImageOps, UnidentifiedImageError
+
+
+_PROJECT_PAGE_PDF_VOID_TAGS = frozenset({
+    "area", "base", "br", "col", "embed", "hr", "img", "input",
+    "link", "meta", "param", "source", "track", "wbr",
+})
+
+
+class _ProjectPagePdfHtmlRenderer(HTMLParser):
+    """Normalizes editor HTML into the subset supported by PyMuPDF Story."""
+
+    def __init__(self, image_resolver):
+        super().__init__(convert_charrefs=False)
+        self._image_resolver = image_resolver
+        self._output = []
+        self._stack = []
+        self._blocked_depth = 0
+
+    @staticmethod
+    def _attribute_map(attrs):
+        return {
+            str(name or "").lower(): "" if value is None else str(value)
+            for name, value in attrs
+        }
+
+    @staticmethod
+    def _attribute_text(attrs):
+        parts = []
+        for name, value in attrs:
+            safe_name = html.escape(str(name or ""), quote=True)
+            if not safe_name:
+                continue
+            if value is None or value == "":
+                parts.append(f" {safe_name}")
+            else:
+                parts.append(
+                    f' {safe_name}="{html.escape(str(value), quote=True)}"'
+                )
+        return "".join(parts)
+
+    def _push(self, source_tag, close_html="", kind="", **extra):
+        self._stack.append({
+            "source": source_tag,
+            "close": close_html,
+            "kind": kind,
+            **extra,
+        })
+
+    def _start_tag(self, tag, attrs, self_closing=False):
+        source_tag = str(tag or "").lower()
+        attr_map = self._attribute_map(attrs)
+
+        if self._blocked_depth:
+            if source_tag not in _PROJECT_PAGE_PDF_VOID_TAGS and not self_closing:
+                self._blocked_depth += 1
+            return
+        if source_tag in {"script", "style"}:
+            if not self_closing:
+                self._blocked_depth = 1
+            return
+
+        if source_tag == "input":
+            return
+        if source_tag in {"button", "label"}:
+            if not self_closing:
+                self._push(source_tag)
+            return
+
+        if source_tag == "ul" and attr_map.get("data-type", "").lower() == "tasklist":
+            self._output.append('<div class="pdf-task-list">')
+            if not self_closing:
+                self._push(source_tag, "</div>", "task-list")
+            else:
+                self._output.append("</div>")
+            return
+
+        if source_tag == "li" and attr_map.get("data-type", "").lower() == "taskitem":
+            checked = (
+                attr_map.get("data-checked", "").lower() == "true"
+                or "checked" in attr_map
+            )
+            css_class = "pdf-task-item is-complete" if checked else "pdf-task-item"
+            marker = "[x]" if checked else "[ ]"
+            self._output.append(
+                f'<table class="{css_class}"><tr>'
+                f'<td class="pdf-task-state">{marker}</td>'
+                '<td class="pdf-task-content">'
+            )
+            if not self_closing:
+                self._push(
+                    source_tag,
+                    "</td></tr></table>",
+                    "task-item",
+                    content_wrapper_skipped=False,
+                )
+            else:
+                self._output.append("</td></tr></table>")
+            return
+
+        if (
+            source_tag == "div"
+            and self._stack
+            and self._stack[-1].get("kind") == "task-item"
+            and not self._stack[-1].get("content_wrapper_skipped")
+        ):
+            self._stack[-1]["content_wrapper_skipped"] = True
+            if not self_closing:
+                self._push(source_tag)
+            return
+
+        if source_tag == "details":
+            self._output.append('<div class="page-toggle">')
+            if not self_closing:
+                self._push(source_tag, "</div>", "toggle")
+            else:
+                self._output.append("</div>")
+            return
+
+        if source_tag == "summary":
+            self._output.append('<div class="page-toggle-summary">')
+            if not self_closing:
+                self._push(source_tag, "</div>", "toggle-summary")
+            else:
+                self._output.append("</div>")
+            return
+
+        if source_tag == "img":
+            image = self._image_resolver(attr_map)
+            if not image:
+                self._output.append(
+                    '<div class="pdf-image-missing">[Image unavailable]</div>'
+                )
+                return
+            image_source, width_percent = image
+            image_attrs = [
+                (name, value)
+                for name, value in attrs
+                if str(name or "").lower() not in {
+                    "src", "data-asset", "data-width-percent",
+                    "contenteditable", "spellcheck", "style",
+                }
+            ]
+            image_attrs.extend([
+                ("src", image_source),
+                (
+                    "style",
+                    f"width:{width_percent}%; max-width:100%; height:auto;",
+                ),
+            ])
+            self._output.append(
+                f'<div class="pdf-image-wrap"><img'
+                f'{self._attribute_text(image_attrs)}></div>'
+            )
+            return
+
+        output_tag = source_tag
+        if (
+            source_tag == "mark"
+            and "page-find-match" in attr_map.get("class", "").split()
+        ):
+            output_tag = "span"
+
+        filtered_attrs = [
+            (name, value)
+            for name, value in attrs
+            if str(name or "").lower() not in {"contenteditable", "spellcheck"}
+        ]
+        if source_tag == "a" and attr_map.get("href") == "#":
+            filtered_attrs = [
+                (name, value)
+                for name, value in filtered_attrs
+                if str(name or "").lower() != "href"
+            ]
+
+        self._output.append(
+            f"<{output_tag}{self._attribute_text(filtered_attrs)}>"
+        )
+        close_html = f"</{output_tag}>"
+        if output_tag not in _PROJECT_PAGE_PDF_VOID_TAGS:
+            if self_closing:
+                self._output.append(close_html)
+            else:
+                self._push(source_tag, close_html)
+
+        if (
+            source_tag == "div"
+            and "page-callout" in attr_map.get("class", "").split()
+        ):
+            self._output.append(
+                '<div class="pdf-callout-label">NOTE</div>'
+            )
+
+    def handle_starttag(self, tag, attrs):
+        self._start_tag(tag, attrs)
+
+    def handle_startendtag(self, tag, attrs):
+        self._start_tag(tag, attrs, self_closing=True)
+
+    def handle_endtag(self, tag):
+        source_tag = str(tag or "").lower()
+        if self._blocked_depth:
+            self._blocked_depth = max(0, self._blocked_depth - 1)
+            return
+
+        match_index = -1
+        for index in range(len(self._stack) - 1, -1, -1):
+            if self._stack[index].get("source") == source_tag:
+                match_index = index
+                break
+        if match_index < 0:
+            return
+        while len(self._stack) > match_index:
+            entry = self._stack.pop()
+            self._output.append(entry.get("close", ""))
+
+    def handle_data(self, data):
+        if not self._blocked_depth:
+            self._output.append(html.escape(str(data or ""), quote=False))
+
+    def handle_entityref(self, name):
+        if not self._blocked_depth:
+            self._output.append(f"&{name};")
+
+    def handle_charref(self, name):
+        if not self._blocked_depth:
+            self._output.append(f"&#{name};")
+
+    def rendered_html(self):
+        while self._stack:
+            self._output.append(self._stack.pop().get("close", ""))
+        return "".join(self._output)
+
 
 HEIF_IMAGE_EXTENSIONS = {".heic", ".heics", ".heif", ".heifs", ".hif"}
 HEIF_SUPPORT_ENABLED = False
@@ -8901,6 +9134,451 @@ Return ONLY the JSON object.
         except Exception as e:
             logging.error(f"Error generating page asset preview: {e}")
             return {'status': 'error', 'message': str(e)}
+
+    def _resolve_project_page_pdf_image(self, attrs):
+        """Returns a browser-safe image source and printable width percentage."""
+        raw_width = str(attrs.get("data-width-percent") or "80").strip().rstrip("%")
+        try:
+            width_percent = int(round(float(raw_width)))
+        except (TypeError, ValueError):
+            width_percent = 80
+        width_percent = max(10, min(100, width_percent))
+
+        asset_path = str(attrs.get("data-asset") or "").strip()
+        if not asset_path:
+            source = str(attrs.get("src") or "").strip()
+            if source.startswith("data:image/"):
+                return source, width_percent
+            if source.startswith("page_assets/"):
+                asset_path = source
+            else:
+                return None
+
+        preview = self.get_page_asset(asset_path, max_size=2400)
+        if preview.get("status") != "success" or not preview.get("dataUrl"):
+            return None
+
+        try:
+            image_width = float(preview.get("width") or 0)
+            image_height = float(preview.get("height") or 0)
+            if image_width > 0 and image_height > image_width:
+                aspect_ratio = image_height / image_width
+                portrait_width_cap = max(15, min(100, int(100 / aspect_ratio)))
+                width_percent = min(width_percent, portrait_width_cap)
+        except (TypeError, ValueError, ZeroDivisionError):
+            pass
+
+        return str(preview["dataUrl"]), width_percent
+
+    def _prepare_project_page_pdf_html(self, raw_html):
+        renderer = _ProjectPagePdfHtmlRenderer(
+            self._resolve_project_page_pdf_image
+        )
+        renderer.feed(str(raw_html or ""))
+        renderer.close()
+        return renderer.rendered_html()
+
+    @staticmethod
+    def _project_page_pdf_css():
+        return """
+            body {
+                color: #172033;
+                font-family: "Segoe UI", Arial, sans-serif;
+                font-size: 10.5pt;
+                font-variant-ligatures: none;
+                line-height: 1.48;
+            }
+            .pdf-kicker {
+                color: #64748b;
+                font-size: 7.5pt;
+                font-weight: 700;
+                letter-spacing: 1.15px;
+                margin: 0 0 3px;
+            }
+            .pdf-title {
+                color: #111827;
+                font-size: 27pt;
+                line-height: 1.12;
+                margin: 0 0 5px;
+            }
+            .pdf-context {
+                color: #64748b;
+                font-size: 9pt;
+                margin: 0 0 18px;
+            }
+            .pdf-empty {
+                color: #64748b;
+                font-style: italic;
+            }
+            h1 {
+                color: #243b66;
+                font-size: 18pt;
+                line-height: 1.2;
+                margin: 18px 0 6px;
+            }
+            h2 {
+                color: #243b66;
+                font-size: 15pt;
+                line-height: 1.25;
+                margin: 15px 0 5px;
+            }
+            h3 {
+                color: #334155;
+                font-size: 12pt;
+                line-height: 1.3;
+                margin: 12px 0 4px;
+            }
+            p {
+                margin: 5px 0;
+            }
+            ul, ol {
+                margin: 6px 0;
+                padding-left: 22px;
+            }
+            a, .page-wiki-link {
+                color: #2563eb;
+                text-decoration: underline;
+            }
+            blockquote {
+                border-left: 3px solid #94a3b8;
+                color: #475569;
+                margin: 9px 0;
+                padding: 2px 0 2px 11px;
+            }
+            hr {
+                border: 0;
+                border-top: 1px solid #cbd5e1;
+                margin: 14px 0;
+            }
+            table {
+                border-collapse: collapse;
+                margin: 9px 0;
+                width: 100%;
+            }
+            th, td {
+                border: 1px solid #cbd5e1;
+                padding: 5px 7px;
+                text-align: left;
+                vertical-align: top;
+            }
+            th {
+                background: #f1f5f9;
+                color: #1e293b;
+                font-weight: 700;
+            }
+            pre {
+                background: #f1f5f9;
+                border: 1px solid #dbe3ee;
+                color: #172033;
+                font-family: Consolas, "Courier New", monospace;
+                font-size: 9pt;
+                line-height: 1.42;
+                margin: 9px 0;
+                padding: 9px 11px;
+                white-space: pre-wrap;
+            }
+            code {
+                background: #f1f5f9;
+                font-family: Consolas, "Courier New", monospace;
+                font-size: 9pt;
+            }
+            mark {
+                background: #fef08a;
+                color: inherit;
+            }
+            .pdf-task-list {
+                margin: 6px 0;
+            }
+            .pdf-task-item {
+                border: 0;
+                margin: 2px 0;
+                width: 100%;
+            }
+            .pdf-task-item td {
+                border: 0;
+                padding: 1px 0;
+                vertical-align: top;
+            }
+            .pdf-task-state {
+                color: #2563eb;
+                font-family: Consolas, "Courier New", monospace;
+                width: 27px;
+            }
+            .pdf-task-content p {
+                margin: 0;
+            }
+            .pdf-task-item.is-complete .pdf-task-content {
+                color: #64748b;
+                text-decoration: line-through;
+            }
+            .page-callout {
+                background: #f1f5f9;
+                border-left: 4px solid #64748b;
+                margin: 9px 0;
+                padding: 8px 11px;
+            }
+            .page-callout[data-callout-color="blue"] {
+                background: #eff6ff;
+                border-left-color: #3b82f6;
+            }
+            .page-callout[data-callout-color="green"] {
+                background: #f0fdf4;
+                border-left-color: #22c55e;
+            }
+            .page-callout[data-callout-color="yellow"] {
+                background: #fefce8;
+                border-left-color: #eab308;
+            }
+            .page-callout[data-callout-color="red"] {
+                background: #fef2f2;
+                border-left-color: #ef4444;
+            }
+            .page-callout[data-callout-color="purple"] {
+                background: #faf5ff;
+                border-left-color: #a855f7;
+            }
+            .pdf-callout-label {
+                color: #475569;
+                font-size: 7pt;
+                font-weight: 700;
+                letter-spacing: 0.7px;
+                margin-bottom: 2px;
+            }
+            .page-toggle {
+                border-left: 2px solid #cbd5e1;
+                margin: 9px 0;
+                padding-left: 11px;
+            }
+            .page-toggle-summary {
+                color: #1e293b;
+                font-weight: 700;
+                margin-bottom: 3px;
+            }
+            .pdf-image-wrap {
+                margin: 11px 0;
+            }
+            .pdf-image-wrap img {
+                height: auto;
+                max-width: 100%;
+            }
+            .pdf-image-missing {
+                border: 1px dashed #94a3b8;
+                color: #64748b;
+                margin: 9px 0;
+                padding: 10px;
+            }
+        """
+
+    def publish_project_page_pdf(self, payload):
+        """Publishes the current project/global page as a polished PDF."""
+        pdf_document = None
+        content_pdf_path = ""
+        temp_pdf_path = ""
+        try:
+            if not isinstance(payload, dict):
+                return {'status': 'error', 'message': 'Invalid page export payload.'}
+
+            import fitz
+
+            title = str(payload.get("title") or "Untitled").strip() or "Untitled"
+            project_name = str(payload.get("projectName") or "").strip()
+            kind = str(payload.get("kind") or "project").strip().lower()
+            kind_labels = {
+                "project": "Project page",
+                "subpage": "Project subpage",
+                "global": "Page",
+            }
+            kind_label = kind_labels.get(kind, "Project page")
+
+            output_path = payload.get("outputPath") or payload.get("filePath")
+            if not output_path:
+                default_directory = self._resolve_dialog_directory(
+                    payload.get("defaultDirectory")
+                )
+                safe_title = self._sanitize_template_filename_stem(
+                    title, "Project Page"
+                )
+                window = webview.windows[0]
+                output_path = window.create_file_dialog(
+                    webview.FileDialog.SAVE,
+                    directory=default_directory,
+                    save_filename=f"{safe_title}.pdf",
+                    file_types=("PDF Files (*.pdf)",),
+                )
+                if not output_path:
+                    return {'status': 'cancelled'}
+
+            if isinstance(output_path, (list, tuple)):
+                output_path = output_path[0] if output_path else ""
+            output_path = os.path.abspath(os.path.normpath(str(output_path or "")))
+            if not output_path:
+                return {'status': 'cancelled'}
+            if not output_path.lower().endswith(".pdf"):
+                output_path = f"{output_path}.pdf"
+
+            output_directory = os.path.dirname(output_path)
+            if not os.path.isdir(output_directory):
+                return {
+                    'status': 'error',
+                    'message': 'The selected output folder does not exist.',
+                }
+
+            body_html = self._prepare_project_page_pdf_html(
+                payload.get("html") or ""
+            ).strip()
+            if not body_html:
+                body_html = '<p class="pdf-empty">This page has no content.</p>'
+
+            context_html = ""
+            if project_name and project_name.casefold() != title.casefold():
+                context_html = (
+                    f'<div class="pdf-context">'
+                    f'{html.escape(project_name)}</div>'
+                )
+            document_html = (
+                f'<div class="pdf-kicker">{html.escape(kind_label.upper())}</div>'
+                f'<h1 class="pdf-title">{html.escape(title)}</h1>'
+                f'{context_html}{body_html}'
+            )
+
+            page_rect = fitz.paper_rect("letter")
+            content_rect = fitz.Rect(
+                54,
+                58,
+                page_rect.width - 54,
+                page_rect.height - 58,
+            )
+
+            def rect_function(_rect_number, _filled):
+                return page_rect, content_rect, fitz.Identity
+
+            story = fitz.Story(
+                html=document_html,
+                user_css=self._project_page_pdf_css(),
+            )
+            pdf_document = story.write_with_links(rect_function)
+            page_count = len(pdf_document)
+
+            content_pdf_path = os.path.join(
+                output_directory,
+                f".acies-project-page-content-{uuid.uuid4().hex}.tmp.pdf",
+            )
+            pdf_document.save(
+                content_pdf_path,
+                garbage=4,
+                deflate=True,
+            )
+            pdf_document.close()
+            pdf_document = fitz.open(content_pdf_path)
+
+            running_font_path = os.path.join(
+                os.environ.get("WINDIR", r"C:\Windows"),
+                "Fonts",
+                "segoeui.ttf",
+            )
+            has_running_font_file = os.path.isfile(running_font_path)
+
+            for page_number, page in enumerate(pdf_document, start=1):
+                running_font_kwargs = (
+                    {
+                        "fontname": f"aciespdfsans{page_number}",
+                        "fontfile": running_font_path,
+                    }
+                    if has_running_font_file
+                    else {"fontname": "helv"}
+                )
+                page.draw_line(
+                    fitz.Point(54, 42),
+                    fitz.Point(page_rect.width - 54, 42),
+                    color=(0.80, 0.84, 0.89),
+                    width=0.6,
+                )
+                page.insert_text(
+                    fitz.Point(54, 33),
+                    "ACIES",
+                    fontsize=7,
+                    color=(0.30, 0.36, 0.45),
+                    **running_font_kwargs,
+                )
+                page.insert_textbox(
+                    fitz.Rect(page_rect.width - 240, 22, page_rect.width - 54, 35),
+                    kind_label.upper(),
+                    fontsize=7,
+                    color=(0.39, 0.45, 0.55),
+                    align=fitz.TEXT_ALIGN_RIGHT,
+                    **running_font_kwargs,
+                )
+                page.draw_line(
+                    fitz.Point(54, page_rect.height - 42),
+                    fitz.Point(page_rect.width - 54, page_rect.height - 42),
+                    color=(0.80, 0.84, 0.89),
+                    width=0.6,
+                )
+                page.insert_textbox(
+                    fitz.Rect(
+                        54,
+                        page_rect.height - 34,
+                        page_rect.width - 54,
+                        page_rect.height - 20,
+                    ),
+                    f"Page {page_number} of {page_count}",
+                    fontsize=7.5,
+                    color=(0.39, 0.45, 0.55),
+                    align=fitz.TEXT_ALIGN_RIGHT,
+                    **running_font_kwargs,
+                )
+
+            metadata = dict(pdf_document.metadata or {})
+            metadata.update({
+                "title": title,
+                "author": "ACIES",
+                "subject": kind_label,
+                "creator": "ACIES Desktop Application",
+            })
+            pdf_document.set_metadata(metadata)
+
+            temp_pdf_path = os.path.join(
+                output_directory,
+                f".acies-project-page-{uuid.uuid4().hex}.tmp.pdf",
+            )
+            pdf_document.save(
+                temp_pdf_path,
+                garbage=4,
+                deflate=True,
+            )
+            pdf_document.close()
+            pdf_document = None
+            os.replace(temp_pdf_path, output_path)
+            temp_pdf_path = ""
+            os.remove(content_pdf_path)
+            content_pdf_path = ""
+
+            return {
+                'status': 'success',
+                'path': output_path,
+                'fileName': os.path.basename(output_path),
+                'pageCount': page_count,
+                'sizeBytes': os.path.getsize(output_path),
+            }
+        except Exception as e:
+            logging.error(f"Error publishing project page PDF: {e}")
+            return {'status': 'error', 'message': str(e)}
+        finally:
+            if pdf_document is not None:
+                try:
+                    pdf_document.close()
+                except Exception:
+                    pass
+            if temp_pdf_path and os.path.isfile(temp_pdf_path):
+                try:
+                    os.remove(temp_pdf_path)
+                except Exception:
+                    pass
+            if content_pdf_path and os.path.isfile(content_pdf_path):
+                try:
+                    os.remove(content_pdf_path)
+                except Exception:
+                    pass
 
     def export_expense_sheet_excel(self, data):
         """Exports expense sheet data to an Excel file with images."""

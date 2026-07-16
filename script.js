@@ -37319,6 +37319,73 @@ async function flushPageSave() {
   } catch (_) {}
 }
 
+function getActivePagePdfPayload() {
+  const { project, subpage, globalPage } = pageNav;
+  if (globalPage) {
+    return {
+      kind: "global",
+      title: globalPage.title || "Untitled",
+      projectName: "",
+      html: pageEditorTarget?.html || globalPage.page?.html || "",
+      defaultDirectory: "",
+    };
+  }
+  if (!project) return null;
+  return {
+    kind: subpage ? "subpage" : "project",
+    title: (subpage ? subpage.title : project.name) || "Untitled",
+    projectName: project.name || "",
+    html: pageEditorTarget?.html || (subpage ? subpage.page?.html : project.page?.html) || "",
+    defaultDirectory: project.path || "",
+  };
+}
+
+async function publishActivePagePdf() {
+  const button = document.getElementById("pagePublishPdfBtn");
+  if (!window.pywebview?.api?.publish_project_page_pdf) {
+    toast("PDF publishing is unavailable.");
+    return;
+  }
+
+  try {
+    if (button) {
+      button.disabled = true;
+      button.classList.add("is-busy");
+      button.setAttribute("aria-busy", "true");
+    }
+    setPageSaveStatus("Preparing PDF...");
+    await flushPageSave();
+    const payload = getActivePagePdfPayload();
+    if (!payload) {
+      setPageSaveStatus("Save failed");
+      toast("No page is open.");
+      return;
+    }
+
+    setPageSaveStatus("Publishing...");
+    const result = await window.pywebview.api.publish_project_page_pdf(payload);
+    if (result?.status === "success") {
+      setPageSaveStatus("Published");
+      toast(`Published ${result.fileName || "page PDF"}.`);
+    } else if (result?.status === "cancelled") {
+      setPageSaveStatus("Saved");
+    } else {
+      setPageSaveStatus("Publish failed");
+      toast(result?.message || "Could not publish this page as a PDF.");
+    }
+  } catch (error) {
+    console.error("Page PDF publishing failed:", error);
+    setPageSaveStatus("Publish failed");
+    toast(error?.message || "Could not publish this page as a PDF.");
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.classList.remove("is-busy");
+      button.removeAttribute("aria-busy");
+    }
+  }
+}
+
 // --- Inline image sizing/selection ---
 function normalizePageImagePercent(value, fallback = PAGE_IMAGE_DEFAULT_PERCENT) {
   const numeric = Number(value);
@@ -39057,6 +39124,7 @@ function ensurePageViewReady() {
   document.getElementById("pageFindNextBtn")?.addEventListener("click", () => stepPageFindMatch(1));
 
   document.getElementById("pageViewBackBtn")?.addEventListener("click", pageGoBack);
+  document.getElementById("pagePublishPdfBtn")?.addEventListener("click", publishActivePagePdf);
   document.getElementById("pageViewCloseBtn")?.addEventListener("click", () => closePageView());
 
   view.addEventListener("keydown", (e) => {

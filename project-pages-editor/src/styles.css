@@ -54,6 +54,292 @@
   max-width: 100%;
 }
 
+.project-pages-editor-content .page-workbook {
+  align-items: center;
+  background: var(--bg-secondary, #fff);
+  border: 1px solid color-mix(in srgb, var(--accent, #16a34a) 46%, var(--glass-border, #cbd5e1));
+  border-left: 4px solid var(--accent, #16a34a);
+  border-radius: 10px;
+  color: var(--text, #1a2420);
+  display: flex;
+  gap: 12px;
+  margin: 0.8rem 0;
+  padding: 10px 12px;
+  white-space: normal;
+}
+
+.project-pages-editor-content .page-workbook-icon,
+.page-workbook-dialog-icon {
+  align-items: center;
+  background: var(--accent, #16a34a);
+  border-radius: 7px;
+  color: var(--btn-text-on-accent, #fff);
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 0.8rem;
+  font-weight: 800;
+  height: 34px;
+  justify-content: center;
+  width: 34px;
+}
+
+.project-pages-editor-content .page-workbook-copy {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.project-pages-editor-content .page-workbook-name {
+  color: var(--text, #1a2420);
+  font-size: 0.9rem;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-pages-editor-content .page-workbook-status {
+  color: var(--text-secondary, #3d5248);
+  font-size: 0.73rem;
+  margin-top: 1px;
+}
+
+.project-pages-editor-content .page-workbook-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
+.project-pages-editor-content .page-workbook-action {
+  appearance: none;
+  background: var(--bg-tertiary, #eef3f0);
+  border: 1px solid var(--input-border, var(--glass-border, #cbd5e1));
+  border-radius: 6px;
+  color: var(--text, #1a2420);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.76rem;
+  padding: 5px 9px;
+}
+
+.project-pages-editor-content .page-workbook-action:hover:not(:disabled) {
+  background: var(--surface-hover, #f0f7f3);
+  border-color: var(--accent, #16a34a);
+}
+
+.project-pages-editor-content .page-workbook-delete:hover:not(:disabled) {
+  background: var(--danger-bg, #fef2f2);
+  border-color: var(--danger, #dc2626);
+  color: var(--danger, #dc2626);
+}
+
+.project-pages-editor-content .page-workbook-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.project-pages-editor-content .page-workbook.is-unavailable {
+  background: var(--bg-tertiary, #eef3f0);
+  border-color: var(--glass-border, #cbd5e1);
+}
+
+.project-pages-editor-content .page-workbook.is-unavailable .page-workbook-icon {
+  background: var(--muted, #64748b);
+  color: var(--bg, #fff);
+}
+
+.page-workbook-dialog-backdrop {
+  align-items: center;
+  background: rgba(15, 23, 42, 0.42);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: 24px;
+  position: fixed;
+  z-index: 5000;
+}
+
+.page-workbook-dialog {
+  align-items: flex-start;
+  background: var(--modal-bg, var(--bg-secondary, #fff));
+  border: 1px solid var(--glass-border, rgba(100, 116, 139, 0.28));
+  border-radius: 14px;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.28);
+  color: var(--text, #1a2420);
+  display: flex;
+  gap: 14px;
+  max-width: 440px;
+  padding: 20px;
+  width: 100%;
+}
+
+.page-workbook-dialog-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.page-workbook-dialog h2 {
+  color: var(--text, #1a2420);
+  font-size: 1.05rem;
+  margin: 0;
+}
+
+.page-workbook-dialog p {
+  color: var(--text-secondary, #3d5248);
+  font-size: 0.8rem;
+  margin: 4px 0 14px;
+}
+
+.page-workbook-dialog-modes {
+  background: var(--bg-tertiary, #eef3f0);
+  border: 1px solid var(--input-border, var(--glass-border, #cbd5e1));
+  border-radius: 8px;
+  display: grid;
+  gap: 3px;
+  grid-template-columns: 1fr 1fr;
+  margin: 12px 0 14px;
+  padding: 3px;
+}
+
+.page-workbook-dialog-modes button {
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text-secondary, #3d5248);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 650;
+  padding: 6px 8px;
+}
+
+.page-workbook-dialog-modes button.is-active {
+  background: var(--bg-secondary, #fff);
+  box-shadow: var(--shadow-sm, 0 1px 3px rgba(0, 0, 0, 0.08));
+  color: var(--text, #1a2420);
+}
+
+.page-workbook-dialog label {
+  color: var(--text, #1a2420);
+  display: block;
+  font-size: 0.77rem;
+  font-weight: 650;
+  margin-bottom: 5px;
+}
+
+.page-workbook-name-field,
+.page-workbook-path-field {
+  align-items: center;
+  background: var(--input-bg, rgba(255, 255, 255, 0.45));
+  border: 1px solid var(--input-border, var(--glass-border, #cbd5e1));
+  border-radius: 8px;
+  display: flex;
+  overflow: hidden;
+}
+
+.page-workbook-name-field:focus-within,
+.page-workbook-path-field:focus-within {
+  border-color: var(--accent, #16a34a);
+  box-shadow: 0 0 0 2px var(--accent-dim, rgba(22, 163, 74, 0.15));
+}
+
+.page-workbook-name-field.has-error,
+.page-workbook-path-field.has-error {
+  border-color: #dc2626;
+}
+
+.page-workbook-name-field input,
+.page-workbook-path-field input {
+  background: transparent;
+  border: 0;
+  color: var(--text, #1a2420);
+  flex: 1;
+  font: inherit;
+  min-width: 0;
+  outline: 0;
+  padding: 8px 10px;
+}
+
+.page-workbook-name-field span {
+  color: var(--text-secondary, #3d5248);
+  font-size: 0.82rem;
+  padding-right: 10px;
+}
+
+.page-workbook-path-field button {
+  align-self: stretch;
+  background: var(--bg-tertiary, #eef3f0);
+  border: 0;
+  border-left: 1px solid var(--input-border, var(--glass-border, #cbd5e1));
+  color: var(--text, #1a2420);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 650;
+  padding: 0 11px;
+  white-space: nowrap;
+}
+
+.page-workbook-path-field button:hover:not(:disabled) {
+  background: var(--surface-hover, #f0f7f3);
+}
+
+.page-workbook-dialog .page-workbook-link-note {
+  font-size: 0.72rem;
+  margin: 6px 0 0;
+}
+
+.page-workbook-dialog-error {
+  color: #dc2626;
+  font-size: 0.75rem;
+  margin-top: 5px;
+}
+
+.page-workbook-dialog-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 18px;
+}
+
+.page-workbook-dialog-actions button {
+  border: 1px solid var(--glass-border, #cbd5e1);
+  border-radius: 7px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 7px 12px;
+}
+
+.page-workbook-dialog-cancel {
+  background: var(--bg-tertiary, #eef3f0);
+  color: var(--text, #1a2420);
+}
+
+.page-workbook-dialog-create {
+  background: var(--accent, #16a34a);
+  border-color: var(--accent, #16a34a) !important;
+  color: var(--btn-text-on-accent, #fff);
+}
+
+.page-workbook-dialog-actions button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+@media (max-width: 640px) {
+  .project-pages-editor-content .page-workbook {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .project-pages-editor-content .page-workbook-actions {
+    padding-left: 46px;
+    width: 100%;
+  }
+}
+
 .project-pages-menu {
   position: fixed;
   z-index: 3000;

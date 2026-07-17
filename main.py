@@ -167,6 +167,22 @@ class _ProjectPagePdfHtmlRenderer(HTMLParser):
                 self._blocked_depth = 1
             return
 
+        if (
+            source_tag == "div"
+            and "page-workbook" in attr_map.get("class", "").split()
+        ):
+            file_name = str(attr_map.get("data-file-name") or "").strip()
+            if not file_name:
+                file_ref = str(attr_map.get("data-page-file") or "").replace("\\", "/")
+                file_name = file_ref.rsplit("/", 1)[-1] if file_ref else "Workbook.xlsx"
+            self._output.append(
+                '<div class="pdf-workbook"><b>Excel workbook:</b> '
+                f'{html.escape(file_name, quote=False)}</div>'
+            )
+            if not self_closing:
+                self._blocked_depth = 1
+            return
+
         if source_tag == "input":
             return
         if source_tag in {"button", "label"}:
@@ -9135,6 +9151,299 @@ Return ONLY the JSON object.
             logging.error(f"Error generating page asset preview: {e}")
             return {'status': 'error', 'message': str(e)}
 
+    def _page_files_root(self):
+        """Absolute path to locally managed page file storage."""
+        root = get_app_data_path("page_files")
+        os.makedirs(root, exist_ok=True)
+        return os.path.realpath(root)
+
+    @staticmethod
+    def _page_file_links_path():
+        return get_app_data_path("page_file_links.json")
+
+    def _read_page_file_links(self):
+        path = self._page_file_links_path()
+        if not os.path.isfile(path):
+            return {}
+        payload = _read_json_file_strict(path)
+        if not isinstance(payload, dict) or not isinstance(payload.get("links", {}), dict):
+            raise ValueError("Managed page file link data is invalid.")
+        return payload.get("links", {})
+
+    def _write_page_file_links(self, links):
+        _atomic_write_json_file(self._page_file_links_path(), {
+            "version": 1,
+            "links": links if isinstance(links, dict) else {},
+        })
+
+    @staticmethod
+    def _page_file_link_id(file_ref):
+        match = re.fullmatch(
+            r"page_file_links/([A-Fa-f0-9]{32})",
+            str(file_ref or "").strip().replace("\\", "/"),
+        )
+        return match.group(1).lower() if match else ""
+
+    @staticmethod
+    def _normalize_external_workbook_path(path, require_exists=True):
+        raw = str(path or "").strip().strip('"').strip("'")
+        if not raw:
+            raise ValueError("Workbook path is required.")
+        expanded = os.path.expandvars(os.path.expanduser(raw))
+        normalized = os.path.normpath(expanded)
+        if not os.path.isabs(normalized):
+            raise ValueError("Enter an absolute workbook path.")
+        extension = os.path.splitext(normalized)[1].lower()
+        if extension not in {".xlsx", ".xlsm", ".xls", ".xlsb", ".csv"}:
+            raise ValueError("Choose an Excel workbook or CSV file.")
+        if require_exists and not os.path.isfile(normalized):
+            raise ValueError("Workbook file was not found.")
+        return os.path.abspath(normalized)
+
+    @staticmethod
+    def _safe_page_workbook_filename(filename):
+        """Return a safe .xlsx filename while retaining the user's readable name."""
+        raw = str(filename or "").strip()
+        if raw.lower().endswith(".xlsx"):
+            raw = raw[:-5]
+        raw = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", raw).strip(" .")
+        if not raw:
+            raise ValueError("Workbook name is required.")
+        reserved = {
+            "CON", "PRN", "AUX", "NUL",
+            *(f"COM{index}" for index in range(1, 10)),
+            *(f"LPT{index}" for index in range(1, 10)),
+        }
+        if raw.split(".", 1)[0].upper() in reserved:
+            raw = f"_{raw}"
+        raw = raw[:120].rstrip(" .")
+        if not raw:
+            raise ValueError("Workbook name is required.")
+        return f"{raw}.xlsx"
+
+    def _resolve_page_file_path(self, file_ref):
+        """Resolve a managed page file reference strictly inside page_files."""
+        raw = str(file_ref or "").strip().replace("\\", "/")
+        if not raw or raw.startswith("/") or re.match(r"^[A-Za-z]:", raw):
+            return ""
+        parts = raw.split("/")
+        if any(part in ("", ".", "..") for part in parts):
+            return ""
+        if len(parts) != 4 or parts[0] != "page_files":
+            return ""
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", parts[1]):
+            return ""
+        if not re.fullmatch(r"[A-Fa-f0-9]{32}", parts[2]):
+            return ""
+        if not parts[-1].lower().endswith(".xlsx"):
+            return ""
+        try:
+            if self._safe_page_workbook_filename(parts[-1]) != parts[-1]:
+                return ""
+        except ValueError:
+            return ""
+        root = self._page_files_root()
+        candidate = os.path.realpath(os.path.join(root, *parts[1:]))
+        try:
+            if os.path.commonpath([root, candidate]) != root:
+                return ""
+        except ValueError:
+            return ""
+        return candidate
+
+    def create_page_workbook(self, owner_key, name):
+        """Create a blank workbook in managed local page storage."""
+        target_dir = ""
+        try:
+            file_name = self._safe_page_workbook_filename(name)
+            owner = self._safe_page_owner_key(owner_key)
+            workbook_id = uuid.uuid4().hex
+            target_dir = os.path.join(self._page_files_root(), owner, workbook_id)
+            os.makedirs(target_dir, exist_ok=False)
+            target_path = os.path.join(target_dir, file_name)
+
+            workbook = openpyxl.Workbook()
+            workbook.active.title = "Sheet1"
+            workbook.save(target_path)
+            workbook.close()
+
+            return {
+                'status': 'success',
+                'fileRef': f"page_files/{owner}/{workbook_id}/{file_name}",
+                'fileName': file_name,
+            }
+        except ValueError as e:
+            return {'status': 'error', 'message': str(e)}
+        except Exception as e:
+            if target_dir:
+                shutil.rmtree(target_dir, ignore_errors=True)
+            logging.error(f"Error creating page workbook: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def link_page_workbook(self, path):
+        """Register an existing local workbook without copying or exposing its path in page HTML."""
+        try:
+            normalized_path = self._normalize_external_workbook_path(path, require_exists=True)
+            link_id = uuid.uuid4().hex
+            links = self._read_page_file_links()
+            links[link_id] = {
+                'path': normalized_path,
+                'fileName': os.path.basename(normalized_path),
+                'createdAt': datetime.datetime.now().isoformat(),
+            }
+            self._write_page_file_links(links)
+            return {
+                'status': 'success',
+                'fileRef': f"page_file_links/{link_id}",
+                'fileName': os.path.basename(normalized_path),
+                'storageType': 'external',
+            }
+        except ValueError as e:
+            return {'status': 'error', 'message': str(e)}
+        except Exception as e:
+            logging.error(f"Error linking page workbook: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def _get_page_file_reference(self, file_ref):
+        resolved_path = self._resolve_page_file_path(file_ref)
+        if resolved_path:
+            return {
+                'storageType': 'managed',
+                'path': resolved_path,
+                'fileName': os.path.basename(resolved_path),
+            }
+
+        link_id = self._page_file_link_id(file_ref)
+        if not link_id:
+            return None
+        links = self._read_page_file_links()
+        entry = links.get(link_id)
+        if not isinstance(entry, dict):
+            return {
+                'storageType': 'external',
+                'path': '',
+                'fileName': '',
+                'linkId': link_id,
+            }
+        try:
+            external_path = self._normalize_external_workbook_path(
+                entry.get('path'),
+                require_exists=False,
+            )
+        except ValueError:
+            external_path = ''
+        return {
+            'storageType': 'external',
+            'path': external_path,
+            'fileName': str(entry.get('fileName') or os.path.basename(external_path)).strip(),
+            'linkId': link_id,
+        }
+
+    def get_page_file_info(self, file_ref):
+        """Return local availability and metadata for a managed page file."""
+        try:
+            reference = self._get_page_file_reference(file_ref)
+            if not reference:
+                return {'status': 'error', 'message': 'Invalid managed page file reference.'}
+            resolved_path = reference.get('path') or ''
+            exists = os.path.isfile(resolved_path)
+            result = {
+                'status': 'success',
+                'exists': exists,
+                'fileName': reference.get('fileName') or os.path.basename(resolved_path),
+                'storageType': reference.get('storageType') or 'managed',
+            }
+            if exists:
+                stat = os.stat(resolved_path)
+                result.update({
+                    'sizeBytes': stat.st_size,
+                    'modified': datetime.datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                })
+            return result
+        except Exception as e:
+            logging.error(f"Error reading page file info: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def open_page_file(self, file_ref):
+        """Open a managed page file with the operating system's registered app."""
+        try:
+            reference = self._get_page_file_reference(file_ref)
+            if not reference:
+                return {'status': 'error', 'message': 'Invalid managed page file reference.'}
+            resolved_path = reference.get('path') or ''
+            if not os.path.isfile(resolved_path):
+                return {'status': 'error', 'message': 'Workbook is unavailable on this device.'}
+            return self.open_path(resolved_path)
+        except Exception as e:
+            logging.error(f"Error opening page file: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def delete_page_file(self, file_ref):
+        """Permanently delete one managed page file and its empty container folders."""
+        try:
+            link_id = self._page_file_link_id(file_ref)
+            if link_id:
+                links = self._read_page_file_links()
+                removed = links.pop(link_id, None)
+                if removed is not None:
+                    self._write_page_file_links(links)
+                return {
+                    'status': 'success',
+                    'deleted': removed is not None,
+                    'storageType': 'external',
+                    'externalFileDeleted': False,
+                }
+
+            resolved_path = self._resolve_page_file_path(file_ref)
+            if not resolved_path:
+                return {'status': 'error', 'message': 'Invalid managed page file reference.'}
+            deleted = False
+            if os.path.isfile(resolved_path):
+                os.remove(resolved_path)
+                deleted = True
+
+            root = self._page_files_root()
+            current = os.path.dirname(resolved_path)
+            while current != root:
+                try:
+                    if os.listdir(current):
+                        break
+                    os.rmdir(current)
+                except FileNotFoundError:
+                    pass
+                current = os.path.dirname(current)
+                if not current or os.path.commonpath([root, current]) != root:
+                    break
+            return {'status': 'success', 'deleted': deleted, 'storageType': 'managed'}
+        except Exception as e:
+            logging.error(f"Error deleting page file: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def delete_page_files(self, file_refs):
+        """Best-effort batch deletion used when pages or projects are removed."""
+        refs = file_refs if isinstance(file_refs, list) else []
+        deleted = 0
+        missing = 0
+        failed = []
+        for file_ref in dict.fromkeys(str(ref or "") for ref in refs if str(ref or "").strip()):
+            result = self.delete_page_file(file_ref)
+            if result.get('status') == 'success':
+                if result.get('deleted'):
+                    deleted += 1
+                else:
+                    missing += 1
+            else:
+                failed.append({
+                    'fileRef': file_ref,
+                    'message': result.get('message') or 'Could not delete workbook.',
+                })
+        return {
+            'status': 'success' if not failed else 'partial',
+            'deleted': deleted,
+            'missing': missing,
+            'failed': failed,
+        }
+
     def _resolve_project_page_pdf_image(self, attrs):
         """Returns a browser-safe image source and printable width percentage."""
         raw_width = str(attrs.get("data-width-percent") or "80").strip().rstrip("%")
@@ -9366,6 +9675,14 @@ Return ONLY the JSON object.
                 color: #64748b;
                 margin: 9px 0;
                 padding: 10px;
+            }
+            .pdf-workbook {
+                background: #eef8f1;
+                border: 1px solid #9fc9aa;
+                border-radius: 5px;
+                color: #1f5132;
+                margin: 9px 0;
+                padding: 8px 10px;
             }
         """
 

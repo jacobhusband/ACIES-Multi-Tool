@@ -26327,9 +26327,20 @@ function showModalFieldError(inputId, message) {
 }
 function removeProject(i) {
   if (!confirm("Delete this project?")) return;
-  db.splice(i, 1);
-  save();
-  render();
+  const project = db[i];
+  if (!project) return;
+  void (async () => {
+    const cleanupResult = await deleteManagedPageWorkbooks([
+      project,
+      ...getProjectSubpages(project),
+    ]);
+    const currentIndex = db.indexOf(project);
+    if (currentIndex < 0) return;
+    db.splice(currentIndex, 1);
+    save();
+    render();
+    reportPageWorkbookCleanup(cleanupResult);
+  })();
 }
 function removeDeliverable(project, deliverable) {
   if (!project || !deliverable) return;
@@ -27732,13 +27743,17 @@ function promptCreateGlobalPage() {
 function deleteGlobalPage(page) {
   if (!page) return;
   if (!confirm(`Permanently delete page "${page.title || "Untitled"}"?`)) return;
-  const idx = globalPages.indexOf(page);
-  if (idx > -1) globalPages.splice(idx, 1);
-  if (activeGlobalPageId === page.id) {
-    activeGlobalPageId = globalPages[0]?.id || null;
-  }
-  saveGlobalPages();
-  renderGlobalPagesView();
+  void (async () => {
+    const cleanupResult = await deleteManagedPageWorkbooks([page]);
+    const idx = globalPages.indexOf(page);
+    if (idx > -1) globalPages.splice(idx, 1);
+    if (activeGlobalPageId === page.id) {
+      activeGlobalPageId = globalPages[0]?.id || null;
+    }
+    saveGlobalPages();
+    renderGlobalPagesView();
+    reportPageWorkbookCleanup(cleanupResult);
+  })();
 }
 
 function createChecklistSearchResultItem(item, numberLookup) {
@@ -37242,6 +37257,48 @@ function movePageCaretToPoint(editor, x, y) {
 }
 
 // --- Serialization & save ---
+function getPageWorkbookRefs(pageTarget) {
+  const html = String(pageTarget?.page?.html || "");
+  if (!html || !html.includes("data-page-file")) return [];
+  const doc = new DOMParser().parseFromString(`<div>${html}</div>`, "text/html");
+  return Array.from(doc.querySelectorAll(".page-workbook[data-page-file]"))
+    .map((card) => String(card.getAttribute("data-page-file") || "").trim())
+    .filter(Boolean);
+}
+
+async function deleteManagedPageWorkbooks(pageTargets) {
+  const refs = Array.from(
+    new Set((Array.isArray(pageTargets) ? pageTargets : []).flatMap(getPageWorkbookRefs))
+  );
+  if (!refs.length) return { status: "success", deleted: 0, missing: 0, failed: [] };
+  if (!window.pywebview?.api?.delete_page_files) {
+    return {
+      status: "partial",
+      deleted: 0,
+      missing: 0,
+      failed: refs.map((fileRef) => ({ fileRef, message: "Managed file deletion is unavailable." })),
+    };
+  }
+  try {
+    return await window.pywebview.api.delete_page_files(refs);
+  } catch (error) {
+    return {
+      status: "partial",
+      deleted: 0,
+      missing: 0,
+      failed: refs.map((fileRef) => ({ fileRef, message: String(error?.message || error) })),
+    };
+  }
+}
+
+function reportPageWorkbookCleanup(result) {
+  const failedCount = Array.isArray(result?.failed) ? result.failed.length : 0;
+  if (!failedCount) return;
+  toast(
+    `Deletion completed, but ${failedCount} workbook${failedCount === 1 ? "" : "s"} could not be removed from local storage.`
+  );
+}
+
 function serializePageHtml(editor) {
   if (!editor) return "";
   syncPageChecklistItems(editor);
@@ -38050,15 +38107,22 @@ function deleteProjectSubpage(project, subpage) {
   if (!confirm(message)) return;
   const removeIds = new Set([subpage.id, ...descendantIds]);
   const viewingRemoved = pageNav.subpage && removeIds.has(pageNav.subpage.id);
-  project.subpages = getProjectSubpages(project).filter((sp) => !removeIds.has(sp.id));
-  void save({ silent: true });
-  if (viewingRemoved) {
-    openProjectPage(project, getProjectSubpageById(project, subpage.parentId));
-  } else {
-    render();
-    if (getProjectPagesEditorRoot()?.querySelector("#pageEditor")) renderPageView();
-    else renderPageChildLinks(project, pageNav.subpage);
-  }
+  const currentSubpages = getProjectSubpages(project);
+  void (async () => {
+    const cleanupResult = await deleteManagedPageWorkbooks(
+      currentSubpages.filter((sp) => removeIds.has(sp.id))
+    );
+    project.subpages = getProjectSubpages(project).filter((sp) => !removeIds.has(sp.id));
+    void save({ silent: true });
+    if (viewingRemoved) {
+      openProjectPage(project, getProjectSubpageById(project, subpage.parentId));
+    } else {
+      render();
+      if (getProjectPagesEditorRoot()?.querySelector("#pageEditor")) renderPageView();
+      else renderPageChildLinks(project, pageNav.subpage);
+    }
+    reportPageWorkbookCleanup(cleanupResult);
+  })();
 }
 
 function handlePageSlashBeforeInput(event) {
@@ -38765,6 +38829,17 @@ function setProjectPagesEditorDocument(context) {
     onSaveAsset: (dataUrl, filename) =>
       window.pywebview.api.save_page_asset(pageEditorOwnerKey, dataUrl, filename || ""),
     onGetAsset: (assetPath) => window.pywebview.api.get_page_asset(assetPath),
+    onCreateWorkbook: (name) =>
+      window.pywebview.api.create_page_workbook(pageEditorOwnerKey, name || ""),
+    onLinkWorkbook: (path) => window.pywebview.api.link_page_workbook(path || ""),
+    onChooseWorkbookFile: () =>
+      window.pywebview.api.select_files({
+        allow_multiple: false,
+        file_types: ["Excel Files (*.xlsx;*.xlsm;*.xls;*.xlsb;*.csv)"],
+      }),
+    onGetPageFileInfo: (fileRef) => window.pywebview.api.get_page_file_info(fileRef),
+    onOpenPageFile: (fileRef) => window.pywebview.api.open_page_file(fileRef),
+    onDeletePageFile: (fileRef) => window.pywebview.api.delete_page_file(fileRef),
     onToast: (message) => toast(message),
   });
   return true;

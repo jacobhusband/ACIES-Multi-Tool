@@ -105,6 +105,11 @@ class ProjectPagePdfExportTests(unittest.TestCase):
                         "<tr><td>Meter</td><td>Reviewed</td></tr></table>"
                         f'<img data-asset="{saved_image["assetPath"]}" '
                         'data-width-percent="65" alt="Diagram">'
+                        '<div class="page-workbook" '
+                        'data-page-file="page_files/proj_260243/id/Load Calculations.xlsx" '
+                        'data-file-name="Load Calculations.xlsx">'
+                        '<span>Load Calculations.xlsx</span>'
+                        '<button>Open</button><button>Delete</button></div>'
                     ),
                 })
 
@@ -124,6 +129,8 @@ class ProjectPagePdfExportTests(unittest.TestCase):
                 self.assertIn("Issue before permit.", text)
                 self.assertIn("Design notes", text)
                 self.assertIn("Keep working clearance.", text)
+                self.assertIn("Excel workbook: Load Calculations.xlsx", text)
+                self.assertNotIn("OpenDelete", text)
                 self.assertIn("Page 1 of", text)
                 self.assertTrue(
                     any(page.get_images(full=True) for page in document),

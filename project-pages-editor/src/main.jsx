@@ -24,6 +24,7 @@ import sql from "highlight.js/lib/languages/sql";
 import typescript from "highlight.js/lib/languages/typescript";
 import xml from "highlight.js/lib/languages/xml";
 import "./styles.css";
+import { selectionWouldDeleteWorkbook } from "./workbookProtection.js";
 
 const lowlight = createLowlight();
 lowlight.register({ bash, css, javascript, json, python, sql, typescript, xml });
@@ -208,6 +209,95 @@ const PageLink = Node.create({
   },
 });
 
+const PageWorkbook = Node.create({
+  name: "pageWorkbook",
+  group: "block",
+  atom: true,
+  selectable: false,
+  draggable: false,
+  isolating: true,
+
+  addAttributes() {
+    return {
+      fileRef: {
+        default: "",
+        parseHTML: (element) => element.getAttribute("data-page-file") || "",
+      },
+      fileName: {
+        default: "Workbook.xlsx",
+        parseHTML: (element) => element.getAttribute("data-file-name") || "Workbook.xlsx",
+      },
+      storageType: {
+        default: "managed",
+        parseHTML: (element) => element.getAttribute("data-file-storage") || "managed",
+      },
+    };
+  },
+
+  parseHTML() {
+    return [{ tag: "div.page-workbook[data-page-file]" }];
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    const fileRef = HTMLAttributes.fileRef || "";
+    const fileName = HTMLAttributes.fileName || "Workbook.xlsx";
+    const storageType = HTMLAttributes.storageType === "external" ? "external" : "managed";
+    return [
+      "div",
+      mergeAttributes({
+        class: "page-workbook",
+        "data-page-file": fileRef,
+        "data-file-name": fileName,
+        "data-file-storage": storageType,
+        contenteditable: "false",
+      }),
+      ["span", { class: "page-workbook-icon", "aria-hidden": "true" }, "X"],
+      [
+        "span",
+        { class: "page-workbook-copy" },
+        ["span", { class: "page-workbook-name" }, fileName],
+        [
+          "span",
+          { class: "page-workbook-status", "aria-live": "polite" },
+          storageType === "external" ? "Checking linked file..." : "Checking availability...",
+        ],
+      ],
+      [
+        "span",
+        { class: "page-workbook-actions" },
+        [
+          "button",
+          {
+            type: "button",
+            class: "page-workbook-action",
+            "data-workbook-action": "open",
+            disabled: "disabled",
+          },
+          "Open",
+        ],
+        [
+          "button",
+          {
+            type: "button",
+            class: "page-workbook-action page-workbook-delete",
+            "data-workbook-action": "delete",
+          },
+          storageType === "external" ? "Remove link" : "Delete",
+        ],
+      ],
+    ];
+  },
+
+  addCommands() {
+    return {
+      insertPageWorkbook:
+        (attrs) =>
+        ({ chain }) =>
+          chain().insertContent({ type: this.name, attrs }).run(),
+    };
+  },
+});
+
 const CALLOUT_EMOJIS = ["💡", "📌", "⚠️", "✅", "❓", "🔥"];
 const CALLOUT_COLORS = ["gray", "blue", "green", "yellow", "red", "purple"];
 
@@ -321,6 +411,7 @@ const SLASH_COMMANDS = [
   { id: "color", label: "Text color", shortcut: "A", group: "inline" },
   { id: "highlight", label: "Highlight", shortcut: "==", group: "inline" },
   { id: "image", label: "Image", shortcut: "Img", group: "media" },
+  { id: "excel", label: "Excel workbook", shortcut: "XLSX", group: "media" },
   { id: "page", label: "Page", shortcut: "+", group: "page", projectOnly: true },
   { id: "pageref", label: "Link to page", shortcut: "[[", group: "page" },
 ];
@@ -342,6 +433,9 @@ function PageEditorApp() {
 
 function PageEditor({ context, options }) {
   const fileInputRef = useRef(null);
+  const workbookInputRef = useRef(null);
+  const hydrateWorkbooksRef = useRef(async () => {});
+  const workbookHydrationFrameRef = useRef(null);
   const saveTimerRef = useRef(null);
   const titleTimerRef = useRef(null);
   const suppressUpdateRef = useRef(false);
@@ -352,6 +446,7 @@ function PageEditor({ context, options }) {
   const [calloutMenu, setCalloutMenu] = useState({ open: false, pos: null });
   const [tableMenu, setTableMenu] = useState({ open: false, pos: null });
   const [codeMenu, setCodeMenu] = useState({ open: false, pos: null, language: "" });
+  const [workbookDialog, setWorkbookDialog] = useState(createWorkbookDialogState);
 
   const globalPages = Array.isArray(context.globalPages) ? context.globalPages : [];
   const pageLinkMatches = useMemo(() => {
@@ -401,6 +496,7 @@ function PageEditor({ context, options }) {
       PageCallout,
       PageImage,
       PageLink,
+      PageWorkbook,
     ],
     content: context.html || "",
     editorProps: {
@@ -463,6 +559,11 @@ function PageEditor({ context, options }) {
             return true;
           }
         }
+        if (selectionWouldDeleteWorkbook(view.state, event.key)) {
+          event.preventDefault();
+          context.onToast?.("Use the workbook card's Delete or Remove link button.");
+          return true;
+        }
         if (event.key === "Tab" && !event.ctrlKey && !event.metaKey && !event.altKey) {
           if (editor?.isActive("table")) {
             event.preventDefault();
@@ -509,6 +610,7 @@ function PageEditor({ context, options }) {
       if (suppressUpdateRef.current) return;
       queueHtmlSave(activeEditor.getHTML());
       refreshMenus(activeEditor);
+      scheduleWorkbookHydration();
     },
     onSelectionUpdate({ editor: activeEditor }) {
       refreshMenus(activeEditor);
@@ -533,6 +635,45 @@ function PageEditor({ context, options }) {
       }
     }
   }, [context, editor]);
+
+  const hydrateWorkbooks = useCallback(async () => {
+    if (!editor || !context.onGetPageFileInfo) return;
+    const cards = Array.from(editor.view.dom.querySelectorAll(".page-workbook[data-page-file]"));
+    for (const card of cards) {
+      if (card.dataset.workbookHydrated === "true" || card.dataset.workbookHydrated === "pending") {
+        continue;
+      }
+      card.dataset.workbookHydrated = "pending";
+      const fileRef = card.getAttribute("data-page-file") || "";
+      const declaredStorageType = card.getAttribute("data-file-storage") || "managed";
+      const status = card.querySelector(".page-workbook-status");
+      const openButton = card.querySelector('[data-workbook-action="open"]');
+      const deleteButton = card.querySelector('[data-workbook-action="delete"]');
+      try {
+        const result = await context.onGetPageFileInfo(fileRef);
+        const available = result?.status === "success" && result.exists === true;
+        const storageType = result?.storageType || declaredStorageType;
+        card.classList.toggle("is-unavailable", !available);
+        if (status) {
+          status.textContent = available
+            ? storageType === "external"
+              ? "Linked to existing file"
+              : "Stored locally"
+            : "Unavailable on this device";
+        }
+        if (openButton) openButton.disabled = !available;
+        if (deleteButton) deleteButton.textContent = storageType === "external" ? "Remove link" : "Delete";
+      } catch (error) {
+        card.classList.add("is-unavailable");
+        if (status) status.textContent = "Unavailable on this device";
+        if (openButton) openButton.disabled = true;
+        console.warn("Page workbook hydrate failed:", error);
+      } finally {
+        card.dataset.workbookHydrated = "true";
+      }
+    }
+  }, [context, editor]);
+  hydrateWorkbooksRef.current = hydrateWorkbooks;
 
   const flushSave = useCallback(async () => {
     if (saveTimerRef.current) {
@@ -564,8 +705,10 @@ function PageEditor({ context, options }) {
     setTitle(context.title || "");
     setSlash({ open: false, query: "", selected: 0, range: null, pos: null });
     setPageLink({ open: false, query: "", selected: 0, range: null, pos: null });
+    setWorkbookDialog(createWorkbookDialogState());
     requestAnimationFrame(() => {
       void hydrateImages();
+      void hydrateWorkbooks();
       editor.commands.focus("end");
     });
   }, [context.documentKey, editor]);
@@ -573,6 +716,35 @@ function PageEditor({ context, options }) {
   useEffect(() => {
     void hydrateImages();
   }, [context.documentKey, hydrateImages]);
+
+  useEffect(() => {
+    void hydrateWorkbooks();
+  }, [context.documentKey, hydrateWorkbooks]);
+
+  useEffect(() => {
+    if (!workbookDialog.open) return;
+    requestAnimationFrame(() => {
+      workbookInputRef.current?.focus();
+      workbookInputRef.current?.select();
+    });
+  }, [workbookDialog.open, workbookDialog.mode]);
+
+  useEffect(
+    () => () => {
+      if (workbookHydrationFrameRef.current !== null) {
+        cancelAnimationFrame(workbookHydrationFrameRef.current);
+      }
+    },
+    []
+  );
+
+  function scheduleWorkbookHydration() {
+    if (workbookHydrationFrameRef.current !== null) return;
+    workbookHydrationFrameRef.current = requestAnimationFrame(() => {
+      workbookHydrationFrameRef.current = null;
+      void hydrateWorkbooksRef.current();
+    });
+  }
 
   function queueHtmlSave(html) {
     context.onHtmlChange?.(stripTransientPageHtml(html), { immediate: false });
@@ -678,6 +850,9 @@ function PageEditor({ context, options }) {
     } else if (command.id === "image") {
       chain.run();
       fileInputRef.current?.click();
+    } else if (command.id === "excel") {
+      chain.run();
+      setWorkbookDialog({ ...createWorkbookDialogState(), open: true });
     } else if (command.id === "page") {
       chain.run();
       context.onCreateSubpage?.();
@@ -742,6 +917,96 @@ function PageEditor({ context, options }) {
     }
   }
 
+  function closeWorkbookDialog() {
+    if (workbookDialog.creating || workbookDialog.browsing) return;
+    setWorkbookDialog(createWorkbookDialogState());
+    requestAnimationFrame(() => editor?.commands.focus());
+  }
+
+  async function submitWorkbookDialog() {
+    const isExternal = workbookDialog.mode === "link";
+    const name = String(workbookDialog.name || "").trim();
+    const path = String(workbookDialog.path || "").trim();
+    if (!isExternal && !name) {
+      setWorkbookDialog((state) => ({ ...state, error: "Workbook name is required." }));
+      return;
+    }
+    if (isExternal && !path) {
+      setWorkbookDialog((state) => ({ ...state, error: "Workbook path is required." }));
+      return;
+    }
+    const submit = isExternal ? context.onLinkWorkbook : context.onCreateWorkbook;
+    if (!submit) {
+      setWorkbookDialog((state) => ({
+        ...state,
+        error: isExternal ? "Workbook linking is unavailable." : "Workbook creation is unavailable.",
+      }));
+      return;
+    }
+
+    setWorkbookDialog((state) => ({ ...state, creating: true, error: "" }));
+    try {
+      const result = await submit(isExternal ? path : name);
+      if (result?.status !== "success" || !result.fileRef) {
+        setWorkbookDialog((state) => ({
+          ...state,
+          creating: false,
+          error: result?.message || (isExternal ? "Could not link workbook." : "Could not create workbook."),
+        }));
+        return;
+      }
+      editor
+        ?.chain()
+        .focus()
+        .insertPageWorkbook({
+          fileRef: result.fileRef,
+          fileName: result.fileName || `${name.replace(/\.xlsx$/i, "")}.xlsx`,
+          storageType: result.storageType || (isExternal ? "external" : "managed"),
+        })
+        .run();
+      setWorkbookDialog(createWorkbookDialogState());
+      requestAnimationFrame(() => void hydrateWorkbooks());
+    } catch (error) {
+      setWorkbookDialog((state) => ({
+        ...state,
+        creating: false,
+        error: error?.message || (isExternal ? "Could not link workbook." : "Could not create workbook."),
+      }));
+    }
+  }
+
+  async function chooseExistingWorkbook() {
+    if (!context.onChooseWorkbookFile) {
+      setWorkbookDialog((state) => ({ ...state, error: "File picker is unavailable." }));
+      return;
+    }
+    setWorkbookDialog((state) => ({ ...state, browsing: true, error: "" }));
+    try {
+      const result = await context.onChooseWorkbookFile();
+      if (result?.status === "success" && Array.isArray(result.paths) && result.paths[0]) {
+        setWorkbookDialog((state) => ({
+          ...state,
+          mode: "link",
+          path: result.paths[0],
+          browsing: false,
+          error: "",
+        }));
+      } else {
+        setWorkbookDialog((state) => ({
+          ...state,
+          browsing: false,
+          error: result?.status === "error" ? result?.message || "Could not choose workbook." : "",
+        }));
+      }
+    } catch (error) {
+      setWorkbookDialog((state) => ({
+        ...state,
+        browsing: false,
+        error: error?.message || "Could not choose workbook.",
+      }));
+    }
+  }
+
   function handleTitleInput(event) {
     const value = event.currentTarget.textContent || "";
     setTitle(value);
@@ -752,7 +1017,77 @@ function PageEditor({ context, options }) {
     }, 500);
   }
 
-  function handleEditorClick(event) {
+  async function handleEditorClick(event) {
+    const workbookAction = event.target.closest?.("[data-workbook-action]");
+    if (workbookAction) {
+      event.preventDefault();
+      event.stopPropagation();
+      const card = workbookAction.closest(".page-workbook[data-page-file]");
+      const fileRef = card?.getAttribute("data-page-file") || "";
+      const fileName = card?.getAttribute("data-file-name") || "Workbook.xlsx";
+      const external =
+        card?.getAttribute("data-file-storage") === "external" || fileRef.startsWith("page_file_links/");
+      if (!card || !fileRef) return;
+
+      if (workbookAction.dataset.workbookAction === "open") {
+        workbookAction.disabled = true;
+        try {
+          const result = await context.onOpenPageFile?.(fileRef);
+          if (result?.status !== "success") {
+            context.onToast?.(result?.message || "Could not open workbook.");
+            delete card.dataset.workbookHydrated;
+            void hydrateWorkbooks();
+          }
+        } catch (error) {
+          context.onToast?.(error?.message || "Could not open workbook.");
+          delete card.dataset.workbookHydrated;
+          void hydrateWorkbooks();
+        } finally {
+          if (!card.classList.contains("is-unavailable")) workbookAction.disabled = false;
+        }
+        return;
+      }
+
+      if (workbookAction.dataset.workbookAction === "delete") {
+        const confirmation = external
+          ? `Remove the link to "${fileName}"?\n\nThe original file will not be deleted.`
+          : `Permanently delete "${fileName}"?`;
+        if (!window.confirm(confirmation)) return;
+        workbookAction.disabled = true;
+        try {
+          const result = await context.onDeletePageFile?.(fileRef);
+          if (result?.status !== "success") {
+            context.onToast?.(result?.message || "Could not delete workbook.");
+            workbookAction.disabled = false;
+            return;
+          }
+          let workbookPos = null;
+          let workbookNode = null;
+          editor?.state.doc.descendants((node, pos) => {
+            if (node.type.name === "pageWorkbook" && node.attrs.fileRef === fileRef) {
+              workbookPos = pos;
+              workbookNode = node;
+              return false;
+            }
+            return true;
+          });
+          if (Number.isInteger(workbookPos) && workbookNode) {
+            editor.view.dispatch(
+              editor.state.tr
+                .delete(workbookPos, workbookPos + workbookNode.nodeSize)
+                .setMeta("addToHistory", false)
+            );
+            editor.commands.focus();
+          }
+          context.onToast?.(external ? `Removed link to ${fileName}.` : `Deleted ${fileName}.`);
+        } catch (error) {
+          context.onToast?.(error?.message || "Could not delete workbook.");
+          workbookAction.disabled = false;
+        }
+        return;
+      }
+    }
+
     const pageAnchor = event.target.closest?.("a.page-wiki-link[data-page-id]");
     if (pageAnchor) {
       event.preventDefault();
@@ -846,6 +1181,25 @@ function PageEditor({ context, options }) {
         }}
       />
 
+      <WorkbookDialog
+        open={workbookDialog.open}
+        mode={workbookDialog.mode}
+        name={workbookDialog.name}
+        path={workbookDialog.path}
+        error={workbookDialog.error}
+        creating={workbookDialog.creating}
+        browsing={workbookDialog.browsing}
+        inputRef={workbookInputRef}
+        onMode={(mode) => setWorkbookDialog((state) => ({ ...state, mode, error: "" }))}
+        onName={(name) =>
+          setWorkbookDialog((state) => ({ ...state, name, error: "" }))
+        }
+        onPath={(path) => setWorkbookDialog((state) => ({ ...state, path, error: "" }))}
+        onBrowse={chooseExistingWorkbook}
+        onCancel={closeWorkbookDialog}
+        onSubmit={submitWorkbookDialog}
+      />
+
       <CommandMenu
         id="pageSlashMenu"
         open={slash.open}
@@ -898,6 +1252,151 @@ function PageEditor({ context, options }) {
           onMouseDown: () => choosePageLinkMatch(match),
         }))}
       />
+    </div>
+  );
+}
+
+function createWorkbookDialogState() {
+  return {
+    open: false,
+    mode: "create",
+    name: "Workbook",
+    path: "",
+    error: "",
+    creating: false,
+    browsing: false,
+  };
+}
+
+function WorkbookDialog({
+  open,
+  mode,
+  name,
+  path,
+  error,
+  creating,
+  browsing,
+  inputRef,
+  onMode,
+  onName,
+  onPath,
+  onBrowse,
+  onCancel,
+  onSubmit,
+}) {
+  if (!open) return null;
+  const busy = creating || browsing;
+  const linking = mode === "link";
+  return (
+    <div
+      className="page-workbook-dialog-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onCancel();
+      }}
+    >
+      <form
+        className="page-workbook-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="pageWorkbookDialogTitle"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void onSubmit();
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            onCancel();
+          }
+        }}
+      >
+        <div className="page-workbook-dialog-icon" aria-hidden="true">X</div>
+        <div className="page-workbook-dialog-body">
+          <h2 id="pageWorkbookDialogTitle">Add Excel workbook</h2>
+          <div className="page-workbook-dialog-modes" role="group" aria-label="Workbook source">
+            <button
+              type="button"
+              className={!linking ? "is-active" : ""}
+              aria-pressed={!linking}
+              disabled={busy}
+              onClick={() => onMode("create")}
+            >
+              Create new
+            </button>
+            <button
+              type="button"
+              className={linking ? "is-active" : ""}
+              aria-pressed={linking}
+              disabled={busy}
+              onClick={() => onMode("link")}
+            >
+              Link existing
+            </button>
+          </div>
+          {linking ? (
+            <>
+              <p>Link to the original file without copying it into application storage.</p>
+              <label htmlFor="pageWorkbookPath">Workbook path</label>
+              <div className={`page-workbook-path-field ${error ? "has-error" : ""}`}>
+                <input
+                  ref={inputRef}
+                  id="pageWorkbookPath"
+                  type="text"
+                  value={path}
+                  disabled={busy}
+                  autoComplete="off"
+                  spellCheck={false}
+                  maxLength={2048}
+                  placeholder="C:\\Projects\\Budget.xlsx"
+                  aria-invalid={error ? "true" : "false"}
+                  aria-describedby={error ? "pageWorkbookDialogError" : "pageWorkbookLinkNote"}
+                  onChange={(event) => onPath(event.target.value)}
+                />
+                <button type="button" disabled={busy} onClick={() => void onBrowse()}>
+                  {browsing ? "Choosing..." : "Browse..."}
+                </button>
+              </div>
+              <p className="page-workbook-link-note" id="pageWorkbookLinkNote">
+                Removing this link will not delete the original file.
+              </p>
+            </>
+          ) : (
+            <>
+              <p>Create a blank workbook stored locally with this page.</p>
+              <label htmlFor="pageWorkbookName">Workbook name</label>
+              <div className={`page-workbook-name-field ${error ? "has-error" : ""}`}>
+                <input
+                  ref={inputRef}
+                  id="pageWorkbookName"
+                  type="text"
+                  value={name}
+                  disabled={busy}
+                  autoComplete="off"
+                  maxLength={125}
+                  aria-invalid={error ? "true" : "false"}
+                  aria-describedby={error ? "pageWorkbookDialogError" : undefined}
+                  onChange={(event) => onName(event.target.value.replace(/\.xlsx$/i, ""))}
+                />
+                <span>.xlsx</span>
+              </div>
+            </>
+          )}
+          {error && (
+            <div className="page-workbook-dialog-error" id="pageWorkbookDialogError" role="alert">
+              {error}
+            </div>
+          )}
+          <div className="page-workbook-dialog-actions">
+            <button type="button" className="page-workbook-dialog-cancel" disabled={busy} onClick={onCancel}>
+              Cancel
+            </button>
+            <button type="submit" className="page-workbook-dialog-create" disabled={busy}>
+              {creating ? (linking ? "Linking..." : "Creating...") : linking ? "Link file" : "Create"}
+            </button>
+          </div>
+        </div>
+      </form>
     </div>
   );
 }

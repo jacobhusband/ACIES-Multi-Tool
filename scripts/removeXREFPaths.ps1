@@ -333,16 +333,39 @@ function Invoke-AcadCoreScript {
   param(
     [Parameter(Mandatory = $true)][string]$AcadCorePath,
     [Parameter(Mandatory = $true)][string]$DwgPath,
-    [Parameter(Mandatory = $true)][string]$ScriptPath
+    [Parameter(Mandatory = $true)][string]$ScriptPath,
+    [int]$TimeoutSeconds = 600
   )
 
-  # The 2>&1 redirects stderr to stdout, so the Python wrapper can catch errors.
+  # accoreconsole blocks forever on any unanswered prompt, which would freeze
+  # the whole tool with no error surfaced, so run it through a killable process.
+  $psi = New-Object System.Diagnostics.ProcessStartInfo
+  $psi.FileName = $AcadCorePath
+  $psi.Arguments = ('/i "{0}" /s "{1}"' -f $DwgPath, $ScriptPath)
+  $psi.UseShellExecute = $false
+  $psi.RedirectStandardOutput = $true
+  $psi.RedirectStandardError = $true
+  $psi.CreateNoWindow = $true
+
+  $proc = [System.Diagnostics.Process]::Start($psi)
+  $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+  $stderrTask = $proc.StandardError.ReadToEndAsync()
+
+  $timedOut = $false
+  if (-not $proc.WaitForExit($TimeoutSeconds * 1000)) {
+    $timedOut = $true
+    try { $proc.Kill() } catch {}
+    $proc.WaitForExit()
+  }
+
+  # Stderr is merged into the output so the Python wrapper can catch errors.
   # accoreconsole emits UTF-16 output; strip embedded NULs so pattern matching works.
-  $output = @(
-    & $AcadCorePath /i "$DwgPath" /s "$ScriptPath" 2>&1 |
-      ForEach-Object { ([string]$_) -replace "`0", '' }
-  )
-  $exitCode = $LASTEXITCODE
+  $raw = ($stdoutTask.Result + "`n" + $stderrTask.Result) -replace "`0", ''
+  $output = @($raw -split "`r?`n" | Where-Object { $_.Length -gt 0 })
+  if ($timedOut) {
+    $output += "PROGRESS: ERROR: AutoCAD Core Console did not finish within $TimeoutSeconds second(s) for $([IO.Path]::GetFileName($DwgPath)) and was terminated."
+  }
+  $exitCode = if ($timedOut) { -1 } else { $proc.ExitCode }
   foreach ($line in $output) { Write-Host $line }
   return [pscustomobject]@{
     ExitCode = $exitCode
@@ -499,13 +522,17 @@ Set-Content -Encoding ASCII -Path $script -Value $scriptContent
 
 # Audit-only script used to verify each processed drawing reopens cleanly.
 # "N" answers "Fix any errors detected?" so verification never mutates the file.
+# Reopening alone can mark the database modified (xref re-resolution, regen),
+# so QUIT must be followed by "_Y" to answer the "Really want to discard all
+# changes?" prompt; without it accoreconsole waits on that prompt forever.
 $verifyScript = Join-Path $env:TEMP "verify_AUDIT.scr"
 $verifyContent = @(
   "CMDECHO 1",
   "FILEDIA 0",
   "_.AUDIT",
   "N",
-  "QUIT"
+  "_.QUIT",
+  "_Y"
 ) -join "`r`n"
 Set-Content -Encoding ASCII -Path $verifyScript -Value $verifyContent
 

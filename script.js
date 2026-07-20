@@ -9743,6 +9743,8 @@ let lightingScheduleSyncSaving = false;
 let lightingScheduleEditRevision = 0;
 let lightingScheduleSavePending = false;
 let lightingScheduleSymbolPasteTarget = null;
+let lightingPlanRecord = null;
+let lightingPlanLoading = false;
 let title24ProjectIndex = null;
 let title24ProjectQuery = "";
 let title24ScopeOptionsDataset = null;
@@ -28714,10 +28716,16 @@ const PLUGIN_DOC_OVERRIDES = {
   },
   LFSCommands: {
     replace: true,
-    order: ["LFS"],
+    order: ["LFS", "LIGHTPLANSCAN", "LPSCAN", "LIGHTPLANAPPLY", "LPAPPLY"],
     commands: {
       LFS:
         "Inserts the built-in lighting fixture schedule table template and applies local sync data when available.",
+      LIGHTPLANSCAN:
+        "Scans configured room-boundary polylines and light fixture blocks into ACIESLightingPlan.snapshot.json beside the active drawing.",
+      LPSCAN: "Alias for LIGHTPLANSCAN.",
+      LIGHTPLANAPPLY:
+        "Creates or updates reviewed fixture mark and circuit/control tags from ACIESLightingPlan.instructions.json without duplicating prior generated tags.",
+      LPAPPLY: "Alias for LIGHTPLANAPPLY.",
     },
     links: {
       LFS: buildPluginDocUrl(
@@ -31403,6 +31411,276 @@ async function pushLightingScheduleToAutoCAD() {
   });
 }
 
+function appendLightingPlanTableCell(row, value) {
+  const cell = document.createElement("td");
+  cell.textContent = String(value ?? "");
+  row.appendChild(cell);
+}
+
+function formatLightingPlanWatts(value) {
+  const watts = Number(value);
+  if (!Number.isFinite(watts)) return "—";
+  return `${watts.toLocaleString(undefined, { maximumFractionDigits: 2 })} W`;
+}
+
+function renderLightingPlanReview(record = lightingPlanRecord, message = "") {
+  const project = getActiveLightingScheduleProject();
+  const status = document.getElementById("lightingPlanStatus");
+  const review = document.getElementById("lightingPlanReview");
+  const metrics = document.getElementById("lightingPlanMetrics");
+  const fixtureBody = document.getElementById("lightingPlanFixtureCounts");
+  const circuitBody = document.getElementById("lightingPlanCircuits");
+  const warningsWrap = document.getElementById("lightingPlanWarnings");
+  const importBtn = document.getElementById("lightingPlanImportBtn");
+  const exportBtn = document.getElementById("lightingPlanExportBtn");
+
+  if (importBtn) importBtn.disabled = !project || lightingPlanLoading;
+  const analysis = record?.analysis;
+  const hasAnalysis = !!analysis && typeof analysis === "object";
+  if (exportBtn) {
+    exportBtn.disabled =
+      !project || lightingPlanLoading || !hasAnalysis || !analysis.canGenerate;
+  }
+
+  if (status) {
+    if (message) {
+      status.textContent = message;
+    } else if (!project) {
+      status.textContent = "Select a project to review a lighting plan scan.";
+    } else if (lightingPlanLoading) {
+      status.textContent = "Loading lighting plan analysis…";
+    } else if (!hasAnalysis) {
+      status.textContent =
+        "Run LIGHTPLANSCAN in AutoCAD, then import ACIESLightingPlan.snapshot.json.";
+    } else {
+      const segments = [];
+      if (record.snapshotPath) segments.push(`Scan: ${record.snapshotPath}`);
+      if (record.instructionPath)
+        segments.push(`CAD tags: ${record.instructionPath}`);
+      if (record.updatedAtUtc) {
+        const parsed = new Date(record.updatedAtUtc);
+        segments.push(
+          `Updated: ${Number.isNaN(parsed.getTime()) ? record.updatedAtUtc : parsed.toLocaleString()}`
+        );
+      }
+      status.textContent = segments.join(" • ") || "Lighting plan analysis loaded.";
+    }
+  }
+
+  if (review) review.hidden = !hasAnalysis;
+  if (!hasAnalysis) {
+    if (metrics) metrics.innerHTML = "";
+    if (fixtureBody) fixtureBody.innerHTML = "";
+    if (circuitBody) circuitBody.innerHTML = "";
+    if (warningsWrap) warningsWrap.innerHTML = "";
+    return;
+  }
+
+  const summary = analysis.summary || {};
+  if (metrics) {
+    metrics.innerHTML = "";
+    [
+      [summary.roomCount || 0, "Rooms"],
+      [summary.fixtureCount || 0, "Fixtures"],
+      [summary.fixtureTypeCount || 0, "Types"],
+      [summary.circuitCount || 0, "Circuits"],
+      [formatLightingPlanWatts(summary.totalWatts || 0), "Connected Load"],
+      [
+        `${summary.errorCount || 0} / ${summary.warningCount || 0}`,
+        "Errors / Warnings",
+      ],
+    ].forEach(([value, label]) => {
+      const card = el("div", { className: "lighting-plan-metric" });
+      card.append(
+        el("span", {
+          className: "lighting-plan-metric-value",
+          textContent: value,
+        }),
+        el("span", {
+          className: "lighting-plan-metric-label",
+          textContent: label,
+        })
+      );
+      metrics.appendChild(card);
+    });
+  }
+
+  if (fixtureBody) {
+    fixtureBody.innerHTML = "";
+    (analysis.fixtureCounts || []).forEach((item) => {
+      const row = document.createElement("tr");
+      appendLightingPlanTableCell(row, item.mark);
+      appendLightingPlanTableCell(row, item.description || "—");
+      appendLightingPlanTableCell(row, item.quantity);
+      appendLightingPlanTableCell(row, formatLightingPlanWatts(item.totalWatts));
+      fixtureBody.appendChild(row);
+    });
+  }
+
+  if (circuitBody) {
+    circuitBody.innerHTML = "";
+    (analysis.circuits || []).forEach((item) => {
+      const row = document.createElement("tr");
+      appendLightingPlanTableCell(row, item.panel || "—");
+      appendLightingPlanTableCell(row, item.circuit || "—");
+      appendLightingPlanTableCell(row, item.fixtureCount);
+      appendLightingPlanTableCell(row, formatLightingPlanWatts(item.totalWatts));
+      appendLightingPlanTableCell(row, item.description || "LIGHTING");
+      circuitBody.appendChild(row);
+    });
+  }
+
+  if (warningsWrap) {
+    warningsWrap.innerHTML = "";
+    const warnings = Array.isArray(analysis.warnings) ? analysis.warnings : [];
+    if (!warnings.length) {
+      warningsWrap.appendChild(
+        el("div", {
+          className: "tiny muted",
+          textContent: "No validation issues found. CAD tag preparation is ready.",
+        })
+      );
+    } else {
+      warnings.forEach((warning) => {
+        const item = el("div", {
+          className: `lighting-plan-warning${warning.severity === "error" ? " is-error" : ""}`,
+        });
+        item.append(
+          el("span", {
+            className: "lighting-plan-warning-code",
+            textContent: warning.code || warning.severity || "warning",
+          }),
+          document.createTextNode(warning.message || "Validation issue")
+        );
+        warningsWrap.appendChild(item);
+      });
+    }
+  }
+}
+
+async function loadLightingPlanRecord(project = getActiveLightingScheduleProject()) {
+  lightingPlanRecord = null;
+  if (!project) {
+    renderLightingPlanReview(null);
+    return;
+  }
+  if (!window.pywebview?.api?.get_lighting_plan_record) {
+    renderLightingPlanReview(
+      null,
+      "Desktop backend is missing the lighting plan analysis API."
+    );
+    return;
+  }
+  const schedule = ensureLightingSchedule(project).schedule;
+  const projectId = getLightingScheduleProjectId(project, schedule);
+  if (!projectId) {
+    renderLightingPlanReview(null, "This project has no resolvable project ID.");
+    return;
+  }
+  lightingPlanLoading = true;
+  renderLightingPlanReview(null);
+  try {
+    const response = await window.pywebview.api.get_lighting_plan_record(projectId);
+    if (getActiveLightingScheduleProject() !== project) return;
+    if (response?.status !== "success") {
+      throw new Error(response?.message || "Failed to load lighting plan analysis.");
+    }
+    lightingPlanRecord = response.exists ? response.data : null;
+  } catch (error) {
+    reportClientError("Failed to load lighting plan analysis", error);
+    renderLightingPlanReview(null, error?.message || "Failed to load lighting plan analysis.");
+    return;
+  } finally {
+    lightingPlanLoading = false;
+  }
+  renderLightingPlanReview(lightingPlanRecord);
+}
+
+async function importLightingPlanSnapshot() {
+  const project = getActiveLightingScheduleProject();
+  const schedule = getActiveLightingSchedule();
+  if (!project || !schedule) {
+    toast("Select a project first.");
+    return;
+  }
+  if (!window.pywebview?.api?.select_files || !window.pywebview?.api?.import_lighting_plan_snapshot) {
+    toast("Desktop backend is missing the lighting plan import API.");
+    return;
+  }
+  const projectId = getLightingScheduleProjectId(project, schedule);
+  if (!projectId) {
+    toast("The selected project has no project ID.");
+    return;
+  }
+  try {
+    await persistActiveLightingSchedule({ reason: "lighting plan import" });
+    const targetPath = normalizeLightingSchedulePath(schedule.targetDwgPath);
+    const defaultDirectory = targetPath
+      ? targetPath.replace(/[\\/][^\\/]+$/, "")
+      : undefined;
+    const selection = await window.pywebview.api.select_files({
+      allow_multiple: false,
+      file_types: ["Lighting Plan Snapshot (*.snapshot.json;*.json)"],
+      default_directory: defaultDirectory,
+    });
+    if (selection?.status !== "success" || !selection.paths?.length) return;
+    lightingPlanLoading = true;
+    renderLightingPlanReview(
+      lightingPlanRecord,
+      "Importing scan and calculating room, fixture, and circuit results…"
+    );
+    const response = await window.pywebview.api.import_lighting_plan_snapshot(
+      projectId,
+      selection.paths[0]
+    );
+    if (response?.status !== "success") {
+      throw new Error(response?.message || "Lighting plan import failed.");
+    }
+    lightingPlanRecord = response.data;
+    toast(
+      `Imported ${response.data?.analysis?.summary?.fixtureCount || 0} lighting fixtures.`
+    );
+  } catch (error) {
+    reportClientError("Failed to import lighting plan snapshot", error);
+    toast(`Lighting plan import failed: ${error?.message || "Unknown error."}`);
+  } finally {
+    lightingPlanLoading = false;
+    renderLightingPlanReview(lightingPlanRecord);
+  }
+}
+
+async function exportLightingPlanInstructions() {
+  const project = getActiveLightingScheduleProject();
+  const schedule = getActiveLightingSchedule();
+  if (!project || !schedule) {
+    toast("Select a project first.");
+    return;
+  }
+  const projectId = getLightingScheduleProjectId(project, schedule);
+  if (!projectId || !window.pywebview?.api?.export_lighting_plan_instructions) {
+    toast("Desktop backend is missing the lighting plan export API.");
+    return;
+  }
+  lightingPlanLoading = true;
+  renderLightingPlanReview(lightingPlanRecord, "Preparing idempotent CAD tag instructions…");
+  try {
+    const response = await window.pywebview.api.export_lighting_plan_instructions(
+      projectId
+    );
+    if (response?.status !== "success") {
+      throw new Error(response?.message || "Could not prepare CAD tags.");
+    }
+    lightingPlanRecord = response.data;
+    toast(`Prepared ${response.tagCount || 0} fixture tags for LIGHTPLANAPPLY.`);
+  } catch (error) {
+    reportClientError("Failed to prepare lighting plan CAD tags", error);
+    toast(`CAD tag preparation failed: ${error?.message || "Unknown error."}`);
+  } finally {
+    lightingPlanLoading = false;
+    renderLightingPlanReview(lightingPlanRecord);
+  }
+}
+
 function getLightingTemplates() {
   return Array.isArray(userSettings.lightingTemplates)
     ? userSettings.lightingTemplates
@@ -31776,6 +32054,8 @@ function renderLightingSchedule(
       autoResizeTextarea(notes);
     }
     renderLightingScheduleSyncControls(null, null);
+    lightingPlanRecord = null;
+    renderLightingPlanReview(null);
     return;
   }
 
@@ -31800,6 +32080,7 @@ async function setLightingScheduleProject(index) {
     lightingScheduleProjectIndex = null;
     lightingScheduleSyncStatusMessage = "";
     lightingScheduleSyncDirty = false;
+    lightingPlanRecord = null;
     renderLightingSchedule(null);
     return;
   }
@@ -31812,6 +32093,7 @@ async function setLightingScheduleProject(index) {
   if (created) save();
   renderLightingSchedule(schedule);
   await loadLightingScheduleFromCentralStore(db[index], { quiet: false });
+  await loadLightingPlanRecord(db[index]);
 }
 
 function isLightingScheduleRowBlank(row) {
@@ -31901,6 +32183,7 @@ async function openLightingSchedule() {
   if (activeProject) {
     renderLightingSchedule(ensureLightingSchedule(activeProject).schedule);
     await loadLightingScheduleFromCentralStore(activeProject, { quiet: true });
+    await loadLightingPlanRecord(activeProject);
   }
 
   const templateSearch = document.getElementById("lightingTemplateSearch");
@@ -36032,6 +36315,23 @@ function initEventListeners() {
     lightingSchedulePushBtn.addEventListener(
       "click",
       pushLightingScheduleToAutoCAD
+    );
+  }
+
+  const lightingPlanImportBtn = document.getElementById(
+    "lightingPlanImportBtn"
+  );
+  if (lightingPlanImportBtn) {
+    lightingPlanImportBtn.addEventListener("click", importLightingPlanSnapshot);
+  }
+
+  const lightingPlanExportBtn = document.getElementById(
+    "lightingPlanExportBtn"
+  );
+  if (lightingPlanExportBtn) {
+    lightingPlanExportBtn.addEventListener(
+      "click",
+      exportLightingPlanInstructions
     );
   }
 

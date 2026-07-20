@@ -4372,6 +4372,158 @@ dialog.lighting-schedule-dialog {
   line-height: 1.45;
 }
 
+.lighting-plan-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.85rem;
+  border: 1px solid color-mix(in srgb, var(--glass-border) 65%, var(--accent) 35%);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg-secondary) 90%, var(--accent-dim) 10%);
+}
+
+.lighting-plan-header,
+.lighting-plan-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.lighting-plan-title,
+.lighting-plan-review-title {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+  font-weight: 700;
+}
+
+.lighting-plan-status {
+  padding: 0.55rem 0.65rem;
+  border: 1px dashed var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  overflow-wrap: anywhere;
+}
+
+.lighting-plan-review {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.lighting-plan-metrics {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(90px, 1fr));
+  gap: 0.5rem;
+}
+
+.lighting-plan-metric {
+  padding: 0.6rem;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+}
+
+.lighting-plan-metric-value {
+  display: block;
+  color: var(--text);
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.lighting-plan-metric-label {
+  display: block;
+  margin-top: 0.1rem;
+  color: var(--muted);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.lighting-plan-review-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.4fr);
+  gap: 0.75rem;
+}
+
+.lighting-plan-review-card {
+  min-width: 0;
+  padding: 0.65rem;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+}
+
+.lighting-plan-table-wrap {
+  margin-top: 0.5rem;
+  overflow: auto;
+  max-height: 220px;
+}
+
+.lighting-plan-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.75rem;
+}
+
+.lighting-plan-table th,
+.lighting-plan-table td {
+  padding: 0.4rem 0.45rem;
+  border-bottom: 1px solid var(--glass-border);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.lighting-plan-table th {
+  color: var(--muted);
+  font-size: 0.67rem;
+  text-transform: uppercase;
+}
+
+.lighting-plan-warnings-card {
+  max-height: 240px;
+  overflow: auto;
+}
+
+.lighting-plan-warnings {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+
+.lighting-plan-warning {
+  padding: 0.45rem 0.55rem;
+  border-left: 3px solid var(--warning);
+  background: var(--warning-bg);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  font-size: 0.75rem;
+}
+
+.lighting-plan-warning.is-error {
+  border-left-color: var(--danger);
+  background: var(--danger-bg);
+}
+
+.lighting-plan-warning-code {
+  margin-right: 0.35rem;
+  font-family: Consolas, "Courier New", monospace;
+  font-weight: 700;
+}
+
+@media (max-width: 900px) {
+  .lighting-plan-metrics {
+    grid-template-columns: repeat(3, minmax(90px, 1fr));
+  }
+
+  .lighting-plan-review-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .lighting-template-panel {
   display: flex;
   flex-direction: column;

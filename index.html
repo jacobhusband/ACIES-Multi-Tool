@@ -2836,6 +2836,54 @@
                         Select a project to load its centralized lighting fixture schedule.
                     </div>
                 </div>
+                <section class="lighting-plan-panel" aria-labelledby="lightingPlanTitle">
+                    <div class="lighting-plan-header">
+                        <div>
+                            <div class="lighting-plan-title" id="lightingPlanTitle">Lighting Plan Automation</div>
+                            <div class="tiny muted">Phase 1: import an AutoCAD scan, validate fixtures, assign rooms,
+                                and prepare fixture tags.</div>
+                        </div>
+                        <div class="lighting-plan-actions">
+                            <button class="btn tiny" id="lightingPlanImportBtn" type="button">Import CAD Scan</button>
+                            <button class="btn tiny" id="lightingPlanExportBtn" type="button" disabled>Prepare CAD
+                                Tags</button>
+                        </div>
+                    </div>
+                    <div id="lightingPlanStatus" class="lighting-plan-status tiny muted">
+                        Select a project, run LIGHTPLANSCAN in AutoCAD, then import the generated snapshot.
+                    </div>
+                    <div id="lightingPlanReview" class="lighting-plan-review" hidden>
+                        <div id="lightingPlanMetrics" class="lighting-plan-metrics"></div>
+                        <div class="lighting-plan-review-grid">
+                            <div class="lighting-plan-review-card">
+                                <div class="lighting-plan-review-title">Fixture Counts</div>
+                                <div class="lighting-plan-table-wrap">
+                                    <table class="lighting-plan-table" aria-label="Lighting plan fixture counts">
+                                        <thead>
+                                            <tr><th>Mark</th><th>Description</th><th>Qty</th><th>Watts</th></tr>
+                                        </thead>
+                                        <tbody id="lightingPlanFixtureCounts"></tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            <div class="lighting-plan-review-card">
+                                <div class="lighting-plan-review-title">Circuit Loads</div>
+                                <div class="lighting-plan-table-wrap">
+                                    <table class="lighting-plan-table" aria-label="Lighting plan circuit loads">
+                                        <thead>
+                                            <tr><th>Panel</th><th>Circuit</th><th>Fixtures</th><th>Watts</th><th>Description</th></tr>
+                                        </thead>
+                                        <tbody id="lightingPlanCircuits"></tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="lighting-plan-review-card lighting-plan-warnings-card">
+                            <div class="lighting-plan-review-title">Validation</div>
+                            <div id="lightingPlanWarnings" class="lighting-plan-warnings"></div>
+                        </div>
+                    </div>
+                </section>
                 <div class="lighting-template-panel">
                     <div class="lighting-template-header">
                         <div class="lighting-template-heading">

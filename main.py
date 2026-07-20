@@ -32,6 +32,7 @@ import base64
 from typing import List
 import importlib
 import uuid
+from contextlib import closing
 from urllib.parse import parse_qs, urlencode, urlparse, unquote
 
 # Work around NumPy 2.x removing scalar aliases used by openpyxl.
@@ -106,6 +107,7 @@ except AttributeError as _exc:
 from openpyxl.worksheet.copier import WorksheetCopy
 from pydantic import BaseModel, Field
 from PIL import Image as PILImage, ImageOps, UnidentifiedImageError
+from lighting_plan import LightingPlanValidationError, analyze_lighting_plan
 
 
 _PROJECT_PAGE_PDF_VOID_TAGS = frozenset({
@@ -1352,6 +1354,9 @@ SYNC_BACKUPS_DIR = os.path.join(get_app_data_dir(), "sync_backups")
 SYNC_METADATA_FILE = get_app_data_path("local_project_sync_metadata.json")
 LIGHTING_SCHEDULE_SYNC_FILE = "T24LightingFixtureSchedule.sync.json"
 LIGHTING_SCHEDULE_DB_FILE = get_app_data_path("lighting_schedules.db")
+LIGHTING_PLAN_DB_FILE = get_app_data_path("lighting_plans.db")
+LIGHTING_PLAN_SNAPSHOT_FILE = "ACIESLightingPlan.snapshot.json"
+LIGHTING_PLAN_INSTRUCTIONS_FILE = "ACIESLightingPlan.instructions.json"
 PROJECT_CHECKLIST_DB_FILE = get_app_data_path("project_checklists.db")
 EMAIL_CAPTURE_DB_FILE = get_app_data_path("email_capture.db")
 EMAIL_CAPTURE_SCHEMA_VERSION = 1
@@ -1883,7 +1888,7 @@ def _get_lighting_schedule_record(project_id):
     if not resolved_id:
         return None
 
-    with _open_lighting_schedule_db() as conn:
+    with closing(_open_lighting_schedule_db()) as conn:
         row = conn.execute(
             """
             SELECT project_id, schedule_json, target_dwg_path, table_handle, version,
@@ -1921,7 +1926,7 @@ def _get_lighting_schedule_links(project_id):
     if not resolved_id:
         return []
 
-    with _open_lighting_schedule_db() as conn:
+    with closing(_open_lighting_schedule_db()) as conn:
         rows = conn.execute(
             """
             SELECT id, project_id, dwg_path, table_handle, last_applied_version, last_seen_at_utc
@@ -2033,7 +2038,7 @@ def _save_lighting_schedule_record(
         separators=(",", ":"),
     )
 
-    with _open_lighting_schedule_db() as conn:
+    with closing(_open_lighting_schedule_db()) as conn:
         existing = conn.execute(
             """
             SELECT project_id, schedule_json, target_dwg_path, table_handle, version
@@ -2099,11 +2104,210 @@ def _save_lighting_schedule_record(
     return record
 
 
+def _normalize_lighting_plan_snapshot_path(json_path):
+    raw = str(json_path or "").strip().strip('"').strip("'")
+    if not raw:
+        raise ValueError("Lighting plan snapshot path is required.")
+    normalized = os.path.normpath(raw)
+    if not os.path.isabs(normalized):
+        raise ValueError("Lighting plan snapshot path must be absolute.")
+    if os.path.splitext(normalized)[1].lower() != ".json":
+        raise ValueError("Lighting plan snapshot path must end with .json.")
+    return normalized
+
+
+def _open_lighting_plan_db():
+    conn = sqlite3.connect(LIGHTING_PLAN_DB_FILE, timeout=5)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode = WAL;")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS lighting_plan_projects (
+            project_id TEXT PRIMARY KEY,
+            snapshot_path TEXT NOT NULL DEFAULT '',
+            snapshot_json TEXT NOT NULL,
+            analysis_json TEXT NOT NULL,
+            instruction_path TEXT NOT NULL DEFAULT '',
+            version INTEGER NOT NULL DEFAULT 1,
+            updated_at_utc TEXT NOT NULL,
+            updated_by TEXT NOT NULL DEFAULT 'unknown'
+        );
+        """
+    )
+    return conn
+
+
+def _normalize_lighting_plan_record(row):
+    if row is None:
+        return None
+    try:
+        analysis = json.loads(row["analysis_json"])
+    except (TypeError, ValueError, KeyError):
+        analysis = {}
+    return {
+        "projectId": str(row["project_id"] or "").strip(),
+        "snapshotPath": str(row["snapshot_path"] or "").strip(),
+        "instructionPath": str(row["instruction_path"] or "").strip(),
+        "version": int(row["version"] or 0),
+        "updatedAtUtc": str(row["updated_at_utc"] or "").strip(),
+        "updatedBy": str(row["updated_by"] or "").strip(),
+        "analysis": analysis if isinstance(analysis, dict) else {},
+    }
+
+
+def _get_lighting_plan_record(project_id):
+    resolved_id = _resolve_lighting_schedule_project_id(project_id)
+    if not resolved_id:
+        return None
+    with closing(_open_lighting_plan_db()) as conn:
+        row = conn.execute(
+            """
+            SELECT project_id, snapshot_path, snapshot_json, analysis_json,
+                   instruction_path, version, updated_at_utc, updated_by
+            FROM lighting_plan_projects
+            WHERE project_id = ?
+            """,
+            (resolved_id,),
+        ).fetchone()
+    return _normalize_lighting_plan_record(row)
+
+
+def _save_lighting_plan_record(
+    project_id,
+    snapshot,
+    snapshot_path="",
+    schedule_rows=None,
+    updated_by="desktop",
+):
+    resolved_id = _resolve_lighting_schedule_project_id(project_id)
+    if not resolved_id:
+        raise ValueError("Lighting plan project ID is required.")
+    analysis = analyze_lighting_plan(snapshot, schedule_rows or [])
+    normalized_snapshot_path = (
+        _normalize_lighting_plan_snapshot_path(snapshot_path)
+        if str(snapshot_path or "").strip()
+        else ""
+    )
+    now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    with closing(_open_lighting_plan_db()) as conn:
+        existing = conn.execute(
+            "SELECT version, instruction_path FROM lighting_plan_projects WHERE project_id = ?",
+            (resolved_id,),
+        ).fetchone()
+        next_version = int(existing["version"] or 0) + 1 if existing else 1
+        instruction_path = str(existing["instruction_path"] or "") if existing else ""
+        conn.execute(
+            """
+            INSERT INTO lighting_plan_projects (
+                project_id, snapshot_path, snapshot_json, analysis_json,
+                instruction_path, version, updated_at_utc, updated_by
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(project_id) DO UPDATE SET
+                snapshot_path = excluded.snapshot_path,
+                snapshot_json = excluded.snapshot_json,
+                analysis_json = excluded.analysis_json,
+                instruction_path = excluded.instruction_path,
+                version = excluded.version,
+                updated_at_utc = excluded.updated_at_utc,
+                updated_by = excluded.updated_by
+            """,
+            (
+                resolved_id,
+                normalized_snapshot_path,
+                json.dumps(snapshot, ensure_ascii=False, separators=(",", ":")),
+                json.dumps(analysis, ensure_ascii=False, separators=(",", ":")),
+                instruction_path,
+                next_version,
+                now_iso,
+                str(updated_by or "desktop").strip() or "desktop",
+            ),
+        )
+        conn.commit()
+    return _get_lighting_plan_record(resolved_id)
+
+
+def _import_lighting_plan_snapshot(project_id, snapshot_path, schedule_rows=None):
+    normalized_path = _normalize_lighting_plan_snapshot_path(snapshot_path)
+    if not os.path.isfile(normalized_path):
+        raise FileNotFoundError(
+            f"Lighting plan snapshot was not found at: {normalized_path}"
+        )
+    snapshot = _read_json_file_strict(normalized_path)
+    return _save_lighting_plan_record(
+        project_id,
+        snapshot,
+        snapshot_path=normalized_path,
+        schedule_rows=schedule_rows,
+        updated_by="desktop-import",
+    )
+
+
+def _export_lighting_plan_instructions(project_id, output_path=None):
+    resolved_id = _resolve_lighting_schedule_project_id(project_id)
+    if not resolved_id:
+        raise ValueError("Lighting plan project ID is required.")
+    with closing(_open_lighting_plan_db()) as conn:
+        row = conn.execute(
+            """
+            SELECT snapshot_path, analysis_json
+            FROM lighting_plan_projects
+            WHERE project_id = ?
+            """,
+            (resolved_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError("Import a lighting plan snapshot before generating CAD instructions.")
+        analysis = json.loads(row["analysis_json"])
+        if not isinstance(analysis, dict):
+            raise ValueError("Stored lighting plan analysis is invalid.")
+        summary = analysis.get("summary") if isinstance(analysis.get("summary"), dict) else {}
+        if int(summary.get("errorCount") or 0) > 0:
+            raise ValueError(
+                "Lighting plan has validation errors. Resolve them and rescan before generating CAD instructions."
+            )
+        instructions = analysis.get("instructions")
+        if not isinstance(instructions, dict):
+            raise ValueError("Stored lighting plan does not contain CAD instructions.")
+
+        raw_output_path = str(output_path or "").strip()
+        if raw_output_path:
+            normalized_output_path = _normalize_lighting_plan_snapshot_path(raw_output_path)
+        else:
+            snapshot_path = str(row["snapshot_path"] or "").strip()
+            if not snapshot_path:
+                raise ValueError("The imported snapshot has no source folder for CAD instructions.")
+            normalized_output_path = os.path.join(
+                os.path.dirname(snapshot_path), LIGHTING_PLAN_INSTRUCTIONS_FILE
+            )
+
+        _atomic_write_json_file(normalized_output_path, instructions)
+        conn.execute(
+            """
+            UPDATE lighting_plan_projects
+            SET instruction_path = ?, updated_at_utc = ?, updated_by = 'desktop-export'
+            WHERE project_id = ?
+            """,
+            (
+                normalized_output_path,
+                datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                resolved_id,
+            ),
+        )
+        conn.commit()
+    record = _get_lighting_plan_record(resolved_id)
+    return {
+        "path": normalized_output_path,
+        "tagCount": len(instructions.get("tags") or []),
+        "record": record,
+    }
+
+
 def _migrate_project_lighting_schedules(projects):
     if not isinstance(projects, list) or not projects:
         return
 
-    with _open_lighting_schedule_db() as conn:
+    with closing(_open_lighting_schedule_db()) as conn:
         for project in projects:
             if not isinstance(project, dict):
                 continue
@@ -7483,6 +7687,64 @@ Return ONLY the JSON object.
             }
         except Exception as e:
             logging.error(f"Error loading lighting schedule links: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def get_lighting_plan_record(self, project_id):
+        """Load the latest Phase 1 lighting-plan scan and analysis."""
+        try:
+            record = _get_lighting_plan_record(project_id)
+            return {
+                'status': 'success',
+                'exists': bool(record),
+                'projectId': _resolve_lighting_schedule_project_id(project_id),
+                'data': record,
+            }
+        except Exception as e:
+            logging.error(f"Error loading lighting plan record: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def import_lighting_plan_snapshot(self, project_id, snapshot_path):
+        """Import an AutoCAD lighting scan and run deterministic Phase 1 analysis."""
+        try:
+            schedule_record = _get_lighting_schedule_record(project_id)
+            schedule_rows = (
+                schedule_record.get('schedule', {}).get('rows', [])
+                if isinstance(schedule_record, dict)
+                else []
+            )
+            record = _import_lighting_plan_snapshot(
+                project_id,
+                snapshot_path,
+                schedule_rows=schedule_rows,
+            )
+            return {
+                'status': 'success',
+                'projectId': record['projectId'],
+                'data': record,
+            }
+        except (FileNotFoundError, ValueError, LightingPlanValidationError) as e:
+            logging.warning(f"Lighting plan import validation failed: {e}")
+            return {'status': 'error', 'message': str(e)}
+        except Exception as e:
+            logging.error(f"Error importing lighting plan snapshot: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def export_lighting_plan_instructions(self, project_id):
+        """Write reviewed tag instructions beside the imported AutoCAD snapshot."""
+        try:
+            result = _export_lighting_plan_instructions(project_id)
+            return {
+                'status': 'success',
+                'projectId': _resolve_lighting_schedule_project_id(project_id),
+                'path': result['path'],
+                'tagCount': result['tagCount'],
+                'data': result['record'],
+            }
+        except (ValueError, LightingPlanValidationError) as e:
+            logging.warning(f"Lighting plan instruction export blocked: {e}")
+            return {'status': 'error', 'message': str(e)}
+        except Exception as e:
+            logging.error(f"Error exporting lighting plan instructions: {e}")
             return {'status': 'error', 'message': str(e)}
 
     def get_project_checklist_record(self, project_id):

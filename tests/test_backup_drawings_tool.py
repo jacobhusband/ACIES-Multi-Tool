@@ -1,5 +1,6 @@
 import os
 import shutil
+import stat
 import sys
 import tempfile
 import types
@@ -1129,6 +1130,39 @@ class LocalProjectManagerBackendTests(unittest.TestCase):
                 "local-only",
                 (backup_root / stale_relative_path).read_text(encoding="utf-8"),
             )
+
+    @unittest.skipUnless(os.name == "nt", "Windows read-only directory behavior")
+    def test_copy_project_locally_replace_existing_removes_read_only_directory(self):
+        with tempfile.TemporaryDirectory(prefix="acies-local-project-readonly-") as temp_dir:
+            docs_root = Path(temp_dir) / "DocumentsRoot"
+            server_project = Path(temp_dir) / "ServerRoot" / "251013 BofA - Rocklin"
+            local_project = docs_root / "Local Projects" / server_project.name
+            selected_relative_path = os.path.join("Electrical", "power.dwg")
+            read_only_directory = local_project / "Electrical" / "Calculations"
+
+            self._write_file(server_project / selected_relative_path, "server-power")
+            self._write_file(read_only_directory / "load.txt", "local-calculation")
+            os.chmod(read_only_directory, stat.S_IREAD)
+
+            with patch.object(self.api, "get_user_settings", return_value=self._settings()), patch.object(
+                main_module,
+                "_get_windows_documents_dir",
+                return_value=str(docs_root),
+            ):
+                result = self.api.copy_project_locally(
+                    str(server_project),
+                    None,
+                    ["Electrical"],
+                    None,
+                    True,
+                )
+
+            self.assertEqual("success", result["status"])
+            self.assertEqual(
+                "server-power",
+                (local_project / selected_relative_path).read_text(encoding="utf-8"),
+            )
+            self.assertFalse((local_project / "Electrical" / "Calculations").exists())
 
     def test_compare_project_timestamps_uses_shared_engine_and_ignores_archive_folders(self):
         with tempfile.TemporaryDirectory(prefix="acies-local-project-manager-compare-") as temp_dir:

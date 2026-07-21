@@ -18965,6 +18965,44 @@ async function loadLocalProjectManagerDirectionPreview(
   }
 }
 
+function applyLocalProjectManagerComparisonDirectionPreviews(result, serverPathInfo) {
+  const resolvedServerPath = String(
+    result?.serverProjectPath || serverPathInfo?.path || ""
+  ).trim();
+  let applied = false;
+  [
+    {
+      direction: "to_local",
+      directionState: copyProjectLocallyDialogState.copyToLocal,
+      candidates: result?.serverToLocalCandidates,
+      blockedEntries: result?.serverToLocalBlockedEntries,
+    },
+    {
+      direction: "to_server",
+      directionState: copyProjectLocallyDialogState.sync,
+      candidates: result?.localToServerCandidates,
+      blockedEntries: result?.localToServerBlockedEntries,
+    },
+  ].forEach(({ direction, directionState, candidates, blockedEntries }) => {
+    if (!Array.isArray(candidates)) return;
+    directionState.previewLoading = false;
+    directionState.previewError = "";
+    directionState.resolvedServerProjectPath = resolvedServerPath;
+    directionState.serverPathSource = serverPathInfo?.source || "";
+    directionState.candidateFiles = candidates.map((candidate, index) =>
+      normalizeLocalProjectManagerDirectionCandidateFile(candidate, direction, index)
+    );
+    directionState.blockedEntries = Array.isArray(blockedEntries)
+      ? blockedEntries.map((entry, index) =>
+          normalizeLocalProjectManagerBlockedEntry(entry, index)
+        )
+      : [];
+    directionState.previewLoaded = true;
+    applied = true;
+  });
+  return applied;
+}
+
 async function previewLocalProjectManagerCopyToLocal(options = {}) {
   return loadLocalProjectManagerDirectionPreview("to_local", {
     force: true,
@@ -19075,6 +19113,16 @@ async function openLocalProjectManagerCopyToServerReview() {
   }
 
   copyProjectLocallyDialogState.syncReviewVisible = true;
+  renderCopyProjectLocallyDialog();
+
+  if (localProjectManagerComparisonPromise) {
+    await localProjectManagerComparisonPromise;
+    if (copyProjectLocallyDialogState.syncReviewVisible !== true) return;
+  }
+  if (copyProjectLocallyDialogState.sync.previewLoaded === true) {
+    renderCopyProjectLocallyDialog();
+    return;
+  }
   resetLocalProjectManagerDirectionPreview("to_server");
   renderCopyProjectLocallyDialog();
   await previewLocalProjectManagerSync({ force: true });
@@ -19093,7 +19141,21 @@ async function ensureLocalProjectManagerActiveTabPreview({ force = false } = {})
 
 
 
+let localProjectManagerComparisonPromise = null;
+
 async function autoCompareTimestampsAndSelectTab() {
+  const runPromise = runLocalProjectManagerTimestampComparison();
+  localProjectManagerComparisonPromise = runPromise;
+  try {
+    await runPromise;
+  } finally {
+    if (localProjectManagerComparisonPromise === runPromise) {
+      localProjectManagerComparisonPromise = null;
+    }
+  }
+}
+
+async function runLocalProjectManagerTimestampComparison() {
   const localProjectPath = copyProjectLocallyDialogState.localProjectPath || "";
   const serverPathInfo = getLocalProjectManagerServerPathInfo();
 
@@ -19117,6 +19179,8 @@ async function autoCompareTimestampsAndSelectTab() {
 
   copyProjectLocallyDialogState.comparisonLoading = true;
   copyProjectLocallyDialogState.sync.timestampComparisonLoading = true;
+  copyProjectLocallyDialogState.sync.previewLoading = true;
+  copyProjectLocallyDialogState.copyToLocal.previewLoading = true;
   renderCopyProjectLocallyDialog();
 
   try {
@@ -19142,9 +19206,19 @@ async function autoCompareTimestampsAndSelectTab() {
       equalFiles: result?.equalFiles || [],
     };
 
-    copyProjectLocallyDialogState.activeTab = "copy";
-    copyProjectLocallyDialogState.syncReviewVisible = false;
-    await loadLocalProjectManagerDirectionPreview("to_local", { force: true });
+    const appliedDirectionPreviews =
+      applyLocalProjectManagerComparisonDirectionPreviews(result, serverPathInfo);
+
+    const reviewingSyncChanges =
+      copyProjectLocallyDialogState.syncReviewVisible === true ||
+      copyProjectLocallyDialogState.activeTab === "sync";
+    if (!reviewingSyncChanges) {
+      copyProjectLocallyDialogState.activeTab = "copy";
+      copyProjectLocallyDialogState.syncReviewVisible = false;
+    }
+    if (!appliedDirectionPreviews) {
+      await loadLocalProjectManagerDirectionPreview("to_local", { force: true });
+    }
   } catch (error) {
     copyProjectLocallyDialogState.comparisonSummary = null;
     copyProjectLocallyDialogState.comparisonBannerMessage =
@@ -19153,6 +19227,8 @@ async function autoCompareTimestampsAndSelectTab() {
   } finally {
     copyProjectLocallyDialogState.comparisonLoading = false;
     copyProjectLocallyDialogState.sync.timestampComparisonLoading = false;
+    copyProjectLocallyDialogState.sync.previewLoading = false;
+    copyProjectLocallyDialogState.copyToLocal.previewLoading = false;
     renderCopyProjectLocallyDialog();
   }
 }

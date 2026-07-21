@@ -1623,12 +1623,19 @@ def _get_file_modified_iso(path):
     if not path or not os.path.exists(path):
         return ""
     try:
+        return _format_modified_timestamp_iso(os.path.getmtime(path))
+    except OSError:
+        return ""
+
+
+def _format_modified_timestamp_iso(timestamp):
+    try:
         modified = datetime.datetime.fromtimestamp(
-            os.path.getmtime(path),
+            float(timestamp),
             tz=datetime.timezone.utc,
         )
         return modified.replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    except OSError:
+    except (OSError, OverflowError, TypeError, ValueError):
         return ""
 
 
@@ -11064,6 +11071,21 @@ Return ONLY the JSON object.
             return f"\\\\?\\{normalized}"
         return normalized
 
+    def _remove_copy_project_tree(self, path):
+        """Remove a copied project, retrying Windows read-only entries once."""
+        removal_path = self._to_windows_extended_path(path)
+
+        def retry_read_only_removal(function, blocked_path, error):
+            if not isinstance(error, PermissionError):
+                raise error
+            try:
+                os.chmod(blocked_path, stat_module.S_IWRITE)
+            except Exception:
+                raise error
+            function(blocked_path)
+
+        shutil.rmtree(removal_path, onexc=retry_read_only_removal)
+
     def _is_copy_project_reparse_point(self, stat_result):
         reparse_flag = getattr(stat_module, 'FILE_ATTRIBUTE_REPARSE_POINT', 0)
         if not reparse_flag:
@@ -11333,6 +11355,7 @@ Return ONLY the JSON object.
     def _scan_copy_project_files(self, root_path, excluded_root_names=None, excluded_file_extensions=None):
         normalized_root_path = os.path.normpath(str(root_path or '').strip())
         results = []
+        directory_relative_paths = []
         scan_errors = []
         excluded_root_name_keys = {
             str(name or '').strip().lower()
@@ -11396,6 +11419,7 @@ Return ONLY the JSON object.
                                     and entry_name.lower() in excluded_root_name_keys
                                 ):
                                     continue
+                                directory_relative_paths.append(relative_path)
                                 pending_paths.append(
                                     (relative_path, os.path.join(current_path, entry_name))
                                 )
@@ -11405,15 +11429,16 @@ Return ONLY the JSON object.
                                 if file_ext in excluded_ext_keys:
                                     continue
                                 file_size = max(0, int(getattr(entry_stat, 'st_size', 0) or 0))
+                                file_mtime = float(
+                                    getattr(entry_stat, 'st_mtime', 0.0) or 0.0
+                                )
                                 results.append({
                                     'relativePath': relative_path,
                                     'path': os.path.join(current_path, entry_name),
                                     'sizeBytes': file_size,
                                     'sizeLabel': self._format_copy_project_size_label(file_size),
-                                    'modifiedAt': _get_file_modified_iso(os.path.join(current_path, entry_name)),
-                                    'modifiedTimestamp': float(
-                                        getattr(entry_stat, 'st_mtime', 0.0) or 0.0
-                                    ),
+                                    'modifiedAt': _format_modified_timestamp_iso(file_mtime),
+                                    'modifiedTimestamp': file_mtime,
                                 })
                         except Exception as e:
                             scan_errors.append({
@@ -11433,6 +11458,7 @@ Return ONLY the JSON object.
         results.sort(key=lambda item: str(item.get('relativePath') or '').lower())
         return {
             'files': results,
+            'directories': directory_relative_paths,
             'scanErrors': scan_errors,
         }
 
@@ -11742,6 +11768,42 @@ Return ONLY the JSON object.
             if str(entry.get('relativePath') or '').strip()
         }
 
+        def build_directory_key_set(scan, files_by_relative_path):
+            directory_keys = {
+                str(directory_path or '').strip().lower()
+                for directory_path in scan.get('directories', []) or []
+                if str(directory_path or '').strip()
+            }
+            for relative_key in files_by_relative_path:
+                path_parts = [
+                    part for part in re.split(r'[\\/]+', relative_key) if part
+                ]
+                for depth in range(1, len(path_parts)):
+                    directory_keys.add(os.sep.join(path_parts[:depth]))
+            return directory_keys
+
+        local_directory_keys = build_directory_key_set(local_scan, local_files_by_relative_path)
+        server_directory_keys = build_directory_key_set(server_scan, server_files_by_relative_path)
+
+        def find_target_conflict(relative_path, target_root, target_files, target_directory_keys):
+            # In-memory collision check against the scanned target tree; the
+            # apply step still re-verifies against the disk before copying.
+            normalized_relative = os.path.normpath(str(relative_path or '').strip())
+            if not normalized_relative or normalized_relative in {'.', os.curdir}:
+                return ''
+            display_parts = [
+                part for part in re.split(r'[\\/]+', normalized_relative) if part
+            ]
+            for depth in range(1, len(display_parts)):
+                ancestor_key = os.sep.join(display_parts[:depth]).lower()
+                if ancestor_key in target_files:
+                    return os.path.normpath(
+                        os.path.join(target_root, *display_parts[:depth])
+                    )
+            if normalized_relative.lower() in target_directory_keys:
+                return os.path.normpath(os.path.join(target_root, normalized_relative))
+            return ''
+
         local_to_server_candidates = []
         server_to_local_candidates = []
         local_to_server_blocked_entries = []
@@ -11822,9 +11884,11 @@ Return ONLY the JSON object.
                 server_modified_timestamp = float(server_file.get('modifiedTimestamp') or 0.0)
                 time_difference = local_modified_timestamp - server_modified_timestamp
                 if time_difference > comparison_tolerance_seconds:
-                    conflict_path = self._get_local_project_manager_target_conflict(
-                        normalized_server_project_path,
+                    conflict_path = find_target_conflict(
                         relative_path,
+                        normalized_server_project_path,
+                        server_files_by_relative_path,
+                        server_directory_keys,
                     )
                     if conflict_path:
                         add_local_blocked_entry(
@@ -11856,9 +11920,11 @@ Return ONLY the JSON object.
                     continue
 
                 if time_difference < -comparison_tolerance_seconds:
-                    conflict_path = self._get_local_project_manager_target_conflict(
-                        normalized_local_project_path,
+                    conflict_path = find_target_conflict(
                         relative_path,
+                        normalized_local_project_path,
+                        local_files_by_relative_path,
+                        local_directory_keys,
                     )
                     if conflict_path:
                         add_server_blocked_entry(
@@ -11898,9 +11964,11 @@ Return ONLY the JSON object.
                 continue
 
             if local_file:
-                conflict_path = self._get_local_project_manager_target_conflict(
-                    normalized_server_project_path,
+                conflict_path = find_target_conflict(
                     relative_path,
+                    normalized_server_project_path,
+                    server_files_by_relative_path,
+                    server_directory_keys,
                 )
                 if conflict_path:
                     add_local_blocked_entry(
@@ -11931,9 +11999,11 @@ Return ONLY the JSON object.
                 continue
 
             if server_file:
-                conflict_path = self._get_local_project_manager_target_conflict(
-                    normalized_local_project_path,
+                conflict_path = find_target_conflict(
                     relative_path,
+                    normalized_local_project_path,
+                    local_files_by_relative_path,
+                    local_directory_keys,
                 )
                 if conflict_path:
                     add_server_blocked_entry(
@@ -13528,7 +13598,7 @@ Return ONLY the JSON object.
                         'backupPath': backup_result.get('backupPath') or '',
                     }
                 try:
-                    shutil.rmtree(local_project_copy_path)
+                    self._remove_copy_project_tree(local_project_path)
                 except Exception as e:
                     return {
                         'status': 'error',
@@ -13673,6 +13743,15 @@ Return ONLY the JSON object.
                 ),
                 'serverToLocalBlockedEntries': list(
                     comparison_result.get('serverToLocalBlockedEntries', []) or []
+                ),
+                'localToServerCandidates': list(
+                    comparison_result.get('localToServerCandidates', []) or []
+                ),
+                'serverToLocalCandidates': list(
+                    comparison_result.get('serverToLocalCandidates', []) or []
+                ),
+                'managedRootNames': list(
+                    comparison_result.get('managedRootNames', []) or []
                 ),
                 'localProjectPath': normalized_local,
                 'serverProjectPath': normalized_server,

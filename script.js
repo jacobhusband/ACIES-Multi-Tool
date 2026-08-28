@@ -235,8 +235,6 @@ const TITLE24_SCOPE_OPTION_FIELDS = [
   "projectScopeType",
   "lightingSystemType",
 ];
-const STAR_ICON_PATH =
-  "M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z";
 const EYE_ICON_PATH =
   "M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5C21.27 7.61 17 4.5 12 4.5zm0 12.5a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-8a3 3 0 1 0 0 6 3 3 0 0 0 0-6z";
 const PIN_ICON_PATH =
@@ -267,6 +265,8 @@ const CHECK_ICON_PATH =
 const MAX_DELIVERABLE_EMAIL_REFS = 3;
 const EMAIL_INTAKE_PROJECT_CONTEXT_MAX_PROJECTS = 200;
 const EMAIL_INTAKE_PROJECT_CONTEXT_MAX_CHARS = 25000;
+const EMAIL_INTAKE_REQUEST_TIMEOUT_MS = 300000;
+const EMAIL_INTAKE_SLOW_NOTICE_MS = 90000;
 
 // Checklists Data
 let checklistsDb = {
@@ -2638,6 +2638,7 @@ const WORKROOM_LAUNCH_CONTEXT_TOOL_IDS = new Set([
   ...WORKROOM_CAD_TOOL_IDS,
   ...WORKROOM_TEMPLATE_TOOL_IDS,
   "toolBackupDrawings",
+  "toolPanelScheduleManager",
 ]);
 const WORKROOM_HIDDEN_TOOL_IDS = new Set([]);
 const WORKROOM_PHASE_CHECKLIST_MAP = {
@@ -2658,7 +2659,7 @@ const WORKROOM_PHASE_CHECKLIST_MAP = {
 };
 const WORKROOM_PHASE_TOOL_MAP = {
   pre_design: ["toolCleanXrefs"],
-  design: ["toolLightingSchedule", "toolCircuitBreaker"],
+  design: ["toolLightingSchedule", "toolPanelScheduleManager", "toolCircuitBreaker"],
   preflight: ["toolManageLayers", "toolPublishDwgs"],
   post_permit: ["toolCreateNarrativeTemplate", "toolCreatePlanCheckTemplate"],
 };
@@ -2666,6 +2667,7 @@ const WORKROOM_ALWAYS_AVAILABLE_TOOLS = [
   "toolCopyProjectLocally",
   "toolBackupDrawings",
   "toolWireSizer",
+  "toolPanelScheduleManager",
   "toolCircuitBreaker",
 ];
 const MAX_HOURS_PER_DAY = 24;
@@ -3854,7 +3856,7 @@ const SHARED_TOOL_LAUNCH_REGISTRY = Object.freeze([
   },
   {
     id: "toolPublishDwgs",
-    label: "Publish CAD DWGs in Headless Mode",
+    label: "Publish",
     menuLabel: "Publish",
     launchType: "user-selects-files",
     category: "general",
@@ -3864,8 +3866,8 @@ const SHARED_TOOL_LAUNCH_REGISTRY = Object.freeze([
   },
   {
     id: "toolManageLayers",
-    label: "Freeze/Thaw Layers in CAD DWGs Headless Mode",
-    menuLabel: "Freeze/Thaw",
+    label: "Freeze / Thaw",
+    menuLabel: "Freeze / Thaw",
     launchType: "user-selects-files",
     category: "general",
     iconSvg:
@@ -3874,8 +3876,8 @@ const SHARED_TOOL_LAUNCH_REGISTRY = Object.freeze([
   },
   {
     id: "toolCleanXrefs",
-    label: "Prepare CAD DWG for Reference",
-    menuLabel: "Prepare XREFs",
+    label: "XREF",
+    menuLabel: "XREF",
     launchType: "user-selects-files",
     category: "general",
     iconSvg:
@@ -3884,8 +3886,8 @@ const SHARED_TOOL_LAUNCH_REGISTRY = Object.freeze([
   },
   {
     id: "toolCreateNarrativeTemplate",
-    label: "Create Narrative of Changes Template",
-    menuLabel: "Create NOC",
+    label: "Narrative",
+    menuLabel: "Narrative",
     launchType: "user-selects-folder",
     category: "templates",
     iconSvg:
@@ -3894,8 +3896,8 @@ const SHARED_TOOL_LAUNCH_REGISTRY = Object.freeze([
   },
   {
     id: "toolCreatePlanCheckTemplate",
-    label: "Create Plan Check Comments Template",
-    menuLabel: "Create PCC",
+    label: "Plan Check",
+    menuLabel: "Plan Check",
     launchType: "user-selects-folder",
     category: "templates",
     iconSvg:
@@ -3913,6 +3915,16 @@ const SHARED_TOOL_LAUNCH_REGISTRY = Object.freeze([
     isReady: true,
   },
   {
+    id: "toolPanelScheduleManager",
+    label: "Panel Schedules",
+    menuLabel: "Panel Schedules",
+    launchType: "modal",
+    category: "electrical",
+    iconSvg:
+      '<rect x="3" y="3" width="18" height="18" rx="2"></rect><path d="M3 9h18M3 15h18M9 3v18M15 3v18"></path>',
+    isReady: true,
+  },
+  {
     id: "toolCircuitBreaker",
     label: "Panel Schedule AI",
     menuLabel: "Panel Schedule AI",
@@ -3924,8 +3936,8 @@ const SHARED_TOOL_LAUNCH_REGISTRY = Object.freeze([
   },
   {
     id: "toolBackupDrawings",
-    label: "Backup Drawings",
-    menuLabel: "Backup DWGs",
+    label: "Archive",
+    menuLabel: "Archive",
     launchType: "archive-project",
     category: "general",
     iconSvg:
@@ -4000,6 +4012,7 @@ function getDeliverableToolMenuEntries() {
     "toolCreateNarrativeTemplate",
     "toolCreatePlanCheckTemplate",
     "toolWireSizer",
+    "toolPanelScheduleManager",
     "toolCircuitBreaker",
     "toolBackupDrawings",
     "toolCopyProjectLocally",
@@ -4068,6 +4081,7 @@ function buildProjectsTabToolLaunchContext(project, deliverable) {
     source: "projects-tab",
     projectPath,
     rootProjectPath: projectPath,
+    discipline: getActiveDiscipline(),
     cadFilePaths: [],
     projectId: String(project?.id || "").trim(),
     projectName: String(project?.name || project?.nick || project?.id || "").trim(),
@@ -4117,18 +4131,34 @@ function resolveCadLaunchContextForTool() {
   return buildWorkroomCadLaunchContext();
 }
 
-async function resolveCadFilesBeforeLaunch(launchContext = null) {
+async function resolveCadFilesBeforeLaunch(launchContext = null, toolId = "") {
   const context = launchContext && typeof launchContext === "object" ? { ...launchContext } : {};
   const source = String(context.source || "").trim().toLowerCase();
   const existingFiles = Array.isArray(context.cadFilePaths)
     ? context.cadFilePaths.map((path) => String(path || "").trim()).filter(Boolean)
     : [];
+  const automaticDisciplinePublish =
+    toolId === "toolPublishDwgs" &&
+    userSettings.publishDwgOptions?.automateProjectDisciplinePublish === true;
+  const automaticDisciplineManageLayers =
+    toolId === "toolManageLayers" &&
+    userSettings.manageLayersOptions?.autoSelectProjectDisciplineDwgs === true;
+  const automaticDisciplineSelection =
+    automaticDisciplinePublish || automaticDisciplineManageLayers;
 
   // Workroom launches resolve the discipline folder in the backend. Every
   // other launch selects files in the app so a hidden PowerShell child never
   // owns the picker and leaves it behind the main window.
-  if (source === "workroom" || existingFiles.length) {
+  if (
+    source === "workroom" ||
+    existingFiles.length ||
+    (automaticDisciplineSelection && hasLaunchContextProjectPath(context))
+  ) {
     return { ...context, cadFilePaths: existingFiles };
+  }
+  if (automaticDisciplineSelection) {
+    const toolLabel = automaticDisciplinePublish ? "Publish" : "Freeze / Thaw selection";
+    toast(`Automatic ${toolLabel} needs a project folder. Select DWG files manually.`);
   }
   if (!window.pywebview?.api?.select_files) {
     throw new Error("The DWG file picker is unavailable.");
@@ -7407,7 +7437,6 @@ function showCalendarForDeliverableBadge(
     openDate.getMonth(),
     async (selectedDate) => {
       deliverable[field] = formatDueDateShort(selectedDate);
-      if (project) autoSetPrimary(project);
       await save();
       render();
       calendarContainer.remove();
@@ -8594,6 +8623,80 @@ function getToolActivityLabel(toolId, fallback = "") {
   return normalizedFallback || normalizedToolId || "Activity";
 }
 
+function findActivityProjectForPath(rawPath) {
+  const normalizedPath = normalizeWindowsPath(rawPath).toLowerCase();
+  if (!normalizedPath || !Array.isArray(db)) return null;
+
+  const parsedProject = parseProjectFromPath(rawPath);
+  const parsedProjectId = String(parsedProject?.id || "").trim().toLowerCase();
+  if (parsedProjectId) {
+    const idMatch = db.find(
+      (project) => String(project?.id || "").trim().toLowerCase() === parsedProjectId
+    );
+    if (idMatch) return idMatch;
+  }
+
+  let bestMatch = null;
+  let bestMatchLength = -1;
+  db.forEach((project) => {
+    [project?.path, project?.localProjectPath].forEach((projectPath) => {
+      const normalizedProjectPath = normalizeWindowsPath(projectPath).toLowerCase();
+      if (
+        !normalizedProjectPath ||
+        (normalizedPath !== normalizedProjectPath &&
+          !normalizedPath.startsWith(`${normalizedProjectPath}\\`)) ||
+        normalizedProjectPath.length <= bestMatchLength
+      ) {
+        return;
+      }
+      bestMatch = project;
+      bestMatchLength = normalizedProjectPath.length;
+    });
+  });
+  return bestMatch;
+}
+
+function getActivityProjectName({
+  projectName = "",
+  launchContext = null,
+  rerunDefaultPath = "",
+  openFolderPath = "",
+} = {}) {
+  const explicitName = String(projectName || launchContext?.projectName || "").trim();
+  if (explicitName) return explicitName;
+
+  const projectId = String(launchContext?.projectId || "").trim().toLowerCase();
+  if (projectId && Array.isArray(db)) {
+    const project = db.find(
+      (candidate) => String(candidate?.id || "").trim().toLowerCase() === projectId
+    );
+    const matchedName = String(
+      project?.name || project?.nick || project?.id || ""
+    ).trim();
+    if (matchedName) return matchedName;
+  }
+
+  const candidatePaths = [
+    launchContext?.rootProjectPath,
+    launchContext?.projectPath,
+    ...(Array.isArray(launchContext?.cadFilePaths) ? launchContext.cadFilePaths : []),
+    rerunDefaultPath,
+    openFolderPath,
+  ];
+  for (const candidatePath of candidatePaths) {
+    const project = findActivityProjectForPath(candidatePath);
+    const matchedName = String(
+      project?.name || project?.nick || project?.id || ""
+    ).trim();
+    if (matchedName) return matchedName;
+
+    const parsedProject = parseProjectFromPath(candidatePath);
+    const parsedName = String(parsedProject?.name || parsedProject?.id || "").trim();
+    if (parsedName) return parsedName;
+  }
+  return "";
+}
+
 function isRerunnableToolId(toolId) {
   const normalizedToolId = String(toolId || "").trim();
   if (!ACTIVITY_RERUN_TOOL_IDS.has(normalizedToolId)) return false;
@@ -8719,6 +8822,7 @@ function renderActivityTray() {
   items.forEach((item) => {
     const status = String(item.status || ACTIVITY_STATUS.RUNNING).trim().toLowerCase();
     const workflowTitle = String(item.workflowTitle || "").trim();
+    const projectName = String(item.projectName || "").trim();
     const activityTitle =
       String(item.toolId || "").trim() === "toolWorkflow" && workflowTitle
         ? `Workflow: ${workflowTitle}`
@@ -8743,12 +8847,25 @@ function renderActivityTray() {
     });
     const content = el("div", { className: "activity-card-content" });
     const header = el("div", { className: "activity-card-header" });
-    header.append(
+    const titleGroup = el("div", { className: "activity-card-title-group" });
+    titleGroup.appendChild(
       el("div", {
         className: "activity-card-title",
         textContent: activityTitle,
         title: activityTitle,
-      }),
+      })
+    );
+    if (projectName) {
+      titleGroup.appendChild(
+        el("div", {
+          className: "activity-card-project",
+          textContent: `Project: ${projectName}`,
+          title: projectName,
+        })
+      );
+    }
+    header.append(
+      titleGroup,
       el("div", {
         className: "activity-card-percent",
         textContent: `${clampActivityProgress(item.progress, 0)}%`,
@@ -9052,11 +9169,23 @@ function upsertActivity(nextItem, { autoExpandReason = "update" } = {}) {
   const nextRerunLaunchContext = hasIncomingRerunContext
     ? deepCloneJson(incoming.rerunLaunchContext, null)
     : deepCloneJson(existing?.rerunLaunchContext, null);
+  const mergedRerunDefaultPath = String(
+    incoming.rerunDefaultPath || existing?.rerunDefaultPath || ""
+  ).trim();
+  const mergedOpenFolderPath = String(
+    incoming.openFolderPath || existing?.openFolderPath || ""
+  ).trim();
   const merged = {
     id: incoming.id,
     kind: existing?.kind || incoming.kind || "tool",
     toolId: mergedToolId,
     label: String(incoming.label || existing?.label || "Activity").trim(),
+    projectName: getActivityProjectName({
+      projectName: incoming.projectName || existing?.projectName || "",
+      launchContext: nextRerunLaunchContext,
+      rerunDefaultPath: mergedRerunDefaultPath,
+      openFolderPath: mergedOpenFolderPath,
+    }),
     message: String(
       incoming.message == null ? existing?.message || "" : incoming.message
     ).trim(),
@@ -9067,9 +9196,7 @@ function upsertActivity(nextItem, { autoExpandReason = "update" } = {}) {
       incoming.progress == null ? existing?.progress ?? 0 : incoming.progress,
       existing?.progress ?? 0
     ),
-    openFolderPath: String(
-      incoming.openFolderPath || existing?.openFolderPath || ""
-    ).trim(),
+    openFolderPath: mergedOpenFolderPath,
     openFolderLabel: String(
       incoming.openFolderLabel || existing?.openFolderLabel || "Open Folder"
     ).trim(),
@@ -9079,9 +9206,7 @@ function upsertActivity(nextItem, { autoExpandReason = "update" } = {}) {
     workflowTitle: String(
       incoming.workflowTitle || existing?.workflowTitle || ""
     ).trim(),
-    rerunDefaultPath: String(
-      incoming.rerunDefaultPath || existing?.rerunDefaultPath || ""
-    ).trim(),
+    rerunDefaultPath: mergedRerunDefaultPath,
     rerunLaunchContext: nextRerunLaunchContext,
     canRerun:
       incoming.canRerun == null
@@ -9128,6 +9253,7 @@ function beginActivity({
   activityId = "",
   toolId = "",
   label = "",
+  projectName = "",
   message = "Starting...",
   progress = 5,
   kind = "tool",
@@ -9146,6 +9272,7 @@ function beginActivity({
       kind,
       toolId,
       label: getToolActivityLabel(toolId, label),
+      projectName,
       message,
       status: ACTIVITY_STATUS.RUNNING,
       progress,
@@ -9344,6 +9471,12 @@ function updateActivityStatusFromPayload(payload = {}) {
   const workflowTitle = String(
     payload?.workflowTitle || existing?.workflowTitle || ""
   ).trim();
+  const projectName = getActivityProjectName({
+    projectName: payload?.projectName || existing?.projectName || "",
+    launchContext: rerunLaunchContext,
+    rerunDefaultPath,
+    openFolderPath,
+  });
   const activityLabel = getActivityLabelFromPayload(toolId, payload, existing);
 
   if (rawMessage.startsWith("OUTPUT_FOLDER:")) {
@@ -9389,6 +9522,7 @@ function updateActivityStatusFromPayload(payload = {}) {
       activityId,
       toolId,
       label: activityLabel,
+      projectName,
       message: nextMessage || "Starting...",
       progress: nextProgress,
       openFolderPath,
@@ -9404,6 +9538,7 @@ function updateActivityStatusFromPayload(payload = {}) {
 
   const commonPatch = {
     label: activityLabel,
+    projectName,
     message:
       nextMessage ||
       existing?.message ||
@@ -9638,12 +9773,31 @@ const DEFAULT_CLEAN_DWG_OPTIONS = {
   hatchColor: true,
 };
 const DEFAULT_PUBLISH_DWG_OPTIONS = {
+  automateProjectDisciplinePublish: false,
   autoDetectPaperSize: true,
   shrinkPercent: 100,
   stripPdfLayers: true,
   refreshExcelOleLinks: true,
 };
+
+function normalizePublishDwgOptions(value) {
+  const source = value && typeof value === "object" ? value : {};
+  const normalized = {
+    ...DEFAULT_PUBLISH_DWG_OPTIONS,
+    ...source,
+  };
+  if (
+    !Object.prototype.hasOwnProperty.call(source, "automateProjectDisciplinePublish") &&
+    Object.prototype.hasOwnProperty.call(source, "automateProjectElectricalPublish")
+  ) {
+    normalized.automateProjectDisciplinePublish =
+      source.automateProjectElectricalPublish === true;
+  }
+  delete normalized.automateProjectElectricalPublish;
+  return normalized;
+}
 const DEFAULT_MANAGE_LAYERS_OPTIONS = {
+  autoSelectProjectDisciplineDwgs: false,
   scanAllLayers: true,
   freezePatterns: [],
   thawPatterns: [],
@@ -9730,7 +9884,6 @@ let userSettings = {
   showSetupHelp: true,
   theme: "dark",
   lightingTemplates: [],
-  autoPrimary: false,
   separateDeliverableCompletionGroups: true,
   groupDeliverablesByProject: false,
   projectsViewMode: "list",
@@ -9962,10 +10115,14 @@ let lastCloudComparableFingerprints = {
   checklists: "",
   timesheets: "",
 };
-let deliverablesFilter = "active";
+let deliverablesFilter = "all";
 let separateDeliverableCompletionGroups = true;
 let groupDeliverablesByProject = false;
 let projectsViewMode = "list";
+const PROJECTS_LIST_PAGE_SIZE_OPTIONS = [25, 50, 100];
+const DEFAULT_PROJECTS_LIST_PAGE_SIZE = PROJECTS_LIST_PAGE_SIZE_OPTIONS[0];
+let projectsListPage = 1;
+let projectsListPageSize = DEFAULT_PROJECTS_LIST_PAGE_SIZE;
 let projectsWideLayout = true;
 let minimizeEmptyProjectColumns = true;
 let hideEmptyProjectColumns = false;
@@ -10041,6 +10198,7 @@ function normalizeProjectCardColumns(raw) {
 }
 
 function syncProjectViewPreferencesFromSettings() {
+  resetProjectsListPagination();
   separateDeliverableCompletionGroups =
     userSettings.separateDeliverableCompletionGroups !== false;
   groupDeliverablesByProject =
@@ -11358,8 +11516,8 @@ async function processEmailIntakePaste() {
   }
   const txt = val("emailArea");
   if (!txt) return;
-  const AI_EMAIL_TIMEOUT_MS = 120000;
   let timeoutId = null;
+  let slowNoticeId = null;
   emailIntakeBusy = true;
   beginEmailIntakeActivity();
   renderOutlookScanUi();
@@ -11373,21 +11531,31 @@ async function processEmailIntakePaste() {
       projectContext
     );
     updateEmailIntakeActivity("Waiting for AI response...", 35);
+    slowNoticeId = setTimeout(() => {
+      updateEmailIntakeActivity(
+        "Gemini is busy; automatic retries are still running...",
+        65
+      );
+    }, EMAIL_INTAKE_SLOW_NOTICE_MS);
     const timeoutPromise = new Promise((_, reject) => {
       timeoutId = setTimeout(() => {
         reject(
           new Error(
-            `AI request timed out after ${Math.round(
-              AI_EMAIL_TIMEOUT_MS / 1000
-            )} seconds. Please try again.`
+            `Gemini did not respond after ${Math.round(
+              EMAIL_INTAKE_REQUEST_TIMEOUT_MS / 60000
+            )} minutes. Google may still be at capacity; please try again later.`
           )
         );
-      }, AI_EMAIL_TIMEOUT_MS);
+      }, EMAIL_INTAKE_REQUEST_TIMEOUT_MS);
     });
     const res = await Promise.race([aiRequest, timeoutPromise]);
     if (timeoutId) {
       clearTimeout(timeoutId);
       timeoutId = null;
+    }
+    if (slowNoticeId) {
+      clearTimeout(slowNoticeId);
+      slowNoticeId = null;
     }
     if (res?.status === "success") {
       const emailField = document.getElementById("emailArea");
@@ -11400,9 +11568,10 @@ async function processEmailIntakePaste() {
     throw new Error(res?.message || "Failed to process email.");
   } catch (e) {
     const errorMessage = e?.message || "Unknown error.";
-    failEmailIntakeActivity("AI Error: " + errorMessage);
+    failEmailIntakeActivity(errorMessage);
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
+    if (slowNoticeId) clearTimeout(slowNoticeId);
     emailIntakeBusy = false;
     renderOutlookScanUi();
   }
@@ -11974,9 +12143,6 @@ async function acceptOutlookScanSuggestion(suggestionKey) {
     emailRef: (suggestion.emailRefs || [])[0] || null,
   });
   project.deliverables.push(deliverable);
-  syncProjectActiveDeliverables(project, {
-    fallbackActiveId: deliverable.id,
-  });
   db[suggestion.projectIndex] = project;
 
   const saved = await save({ silent: true });
@@ -12492,7 +12658,6 @@ function getDefaultSyncableSettings() {
     showSetupHelp: true,
     theme: "dark",
     lightingTemplates: [],
-    autoPrimary: false,
     separateDeliverableCompletionGroups: true,
     groupDeliverablesByProject: false,
     projectsViewMode: "list",
@@ -12527,7 +12692,6 @@ function sanitizeSettingsForCloud(settings = userSettings) {
     lightingTemplates: Array.isArray(source.lightingTemplates)
       ? deepCloneJson(source.lightingTemplates, [])
       : [],
-    autoPrimary: source.autoPrimary === true,
     separateDeliverableCompletionGroups:
       source.separateDeliverableCompletionGroups !== false,
     groupDeliverablesByProject: source.groupDeliverablesByProject === true,
@@ -12543,10 +12707,7 @@ function sanitizeSettingsForCloud(settings = userSettings) {
       ...DEFAULT_CLEAN_DWG_OPTIONS,
       ...(source.cleanDwgOptions || {}),
     },
-    publishDwgOptions: {
-      ...DEFAULT_PUBLISH_DWG_OPTIONS,
-      ...(source.publishDwgOptions || {}),
-    },
+    publishDwgOptions: normalizePublishDwgOptions(source.publishDwgOptions),
     manageLayersOptions: {
       ...DEFAULT_MANAGE_LAYERS_OPTIONS,
       ...(source.manageLayersOptions || {}),
@@ -12574,7 +12735,6 @@ function normalizeCloudSettingsDoc(raw = {}) {
     lightingTemplates: Array.isArray(source.lightingTemplates)
       ? deepCloneJson(source.lightingTemplates, [])
       : [],
-    autoPrimary: source.autoPrimary === true,
     separateDeliverableCompletionGroups:
       source.separateDeliverableCompletionGroups !== false,
     groupDeliverablesByProject: source.groupDeliverablesByProject === true,
@@ -12590,10 +12750,7 @@ function normalizeCloudSettingsDoc(raw = {}) {
       ...DEFAULT_CLEAN_DWG_OPTIONS,
       ...(source.cleanDwgOptions || {}),
     },
-    publishDwgOptions: {
-      ...DEFAULT_PUBLISH_DWG_OPTIONS,
-      ...(source.publishDwgOptions || {}),
-    },
+    publishDwgOptions: normalizePublishDwgOptions(source.publishDwgOptions),
     manageLayersOptions: {
       ...DEFAULT_MANAGE_LAYERS_OPTIONS,
       ...(source.manageLayersOptions || {}),
@@ -12748,7 +12905,7 @@ function sanitizeDeliverableForCloud(deliverable = {}) {
     .map((attachment) => sanitizeAttachmentForCloud(attachment))
     .filter(Boolean);
   const emailRefs = buildLegacyEmailRefsFromAttachments(attachments);
-  return {
+  const sanitized = {
     ...source,
     ...normalized,
     attachments,
@@ -12781,6 +12938,8 @@ function sanitizeDeliverableForCloud(deliverable = {}) {
       };
     }),
   };
+  delete sanitized.active;
+  return sanitized;
 }
 
 function getCloudDeliverableKey(deliverable, index = 0) {
@@ -12827,7 +12986,7 @@ function sanitizeProjectForCloud(project = {}) {
   const attachments = normalizeAttachments(normalized.attachments)
     .map((attachment) => sanitizeAttachmentForCloud(attachment))
     .filter(Boolean);
-  return {
+  const sanitized = {
     ...source,
     ...normalized,
     path: "",
@@ -12857,6 +13016,8 @@ function sanitizeProjectForCloud(project = {}) {
         }
       : createDefaultTitle24(),
   };
+  delete sanitized.overviewDeliverableId;
+  return sanitized;
 }
 
 function getCloudProjectKey(project, index = 0) {
@@ -14243,10 +14404,9 @@ async function loadUserSettings() {
       ...DEFAULT_CLEAN_DWG_OPTIONS,
       ...(userSettings.cleanDwgOptions || {}),
     };
-    userSettings.publishDwgOptions = {
-      ...DEFAULT_PUBLISH_DWG_OPTIONS,
-      ...(userSettings.publishDwgOptions || {}),
-    };
+    userSettings.publishDwgOptions = normalizePublishDwgOptions(
+      userSettings.publishDwgOptions
+    );
     const legacyFreezeOpts =
       userSettings.freezeLayerOptions && typeof userSettings.freezeLayerOptions === "object"
         ? userSettings.freezeLayerOptions
@@ -14340,6 +14500,14 @@ function syncCleanOptionsInputs() {
 function syncPublishOptionsInputs() {
   const publishOptions = userSettings.publishDwgOptions || {};
   setCheckboxValue(
+    "settings_publish_automateProjectDisciplinePublish",
+    publishOptions.automateProjectDisciplinePublish === true
+  );
+  setCheckboxValue(
+    "publish_modal_automateProjectDisciplinePublish",
+    publishOptions.automateProjectDisciplinePublish === true
+  );
+  setCheckboxValue(
     "settings_publish_autoDetectPaperSize",
     publishOptions.autoDetectPaperSize
   );
@@ -14373,6 +14541,14 @@ function syncPublishOptionsInputs() {
 
 function syncManageLayersOptionsInputs() {
   const manageOptions = userSettings.manageLayersOptions || {};
+  setCheckboxValue(
+    "settings_manageLayers_autoSelectProjectDisciplineDwgs",
+    manageOptions.autoSelectProjectDisciplineDwgs === true
+  );
+  setCheckboxValue(
+    "manageLayers_modal_autoSelectProjectDisciplineDwgs",
+    manageOptions.autoSelectProjectDisciplineDwgs === true
+  );
   setCheckboxValue(
     "settings_manageLayers_scanAllLayers",
     manageOptions.scanAllLayers
@@ -14470,8 +14646,6 @@ async function populateSettingsModal() {
       checkbox.checked = disciplines.includes(checkbox.value);
     });
 
-  const autoPrimaryCheck = document.getElementById("settings_autoPrimary");
-  if (autoPrimaryCheck) autoPrimaryCheck.checked = !!userSettings.autoPrimary;
   setCheckboxValue(
     "settings_separateDeliverableCompletionGroups",
     userSettings.separateDeliverableCompletionGroups
@@ -14601,8 +14775,6 @@ async function saveUserSettings() {
       userSettings.autocadPath = String(settingsAutocadInput?.value || "").trim();
     }
   }
-  const autoPrimaryCheck = document.getElementById("settings_autoPrimary");
-  if (autoPrimaryCheck) userSettings.autoPrimary = autoPrimaryCheck.checked;
   const separateCompletionGroupsCheck = document.getElementById(
     "settings_separateDeliverableCompletionGroups"
   );
@@ -14890,8 +15062,8 @@ function buildLegacyPinnedProjectSortContextMap(items = []) {
       return [
         project,
         {
-          activeAnchorDeliverable: priority.priorityDeliverable,
-          anchorDueDate: priority.hasIncompleteActiveWork
+          priorityDeliverable: priority.priorityDeliverable,
+          anchorDueDate: priority.hasIncompleteWork
             ? priority.sortDueDate
             : priority.fallbackDueDate,
           sortBucket: priority.sortBucket,
@@ -15581,7 +15753,6 @@ function normalizeDeliverable(deliverable = {}) {
     pinnedOrder: deliverable.pinned === true
       ? normalizePinnedDeliverableOrder(deliverable.pinnedOrder)
       : null,
-    active: deliverable.active === true,
     workroomCadDiscipline: normalizeWorkroomCadDiscipline(
       deliverable.workroomCadDiscipline,
       ""
@@ -15630,7 +15801,6 @@ function createDeliverable(seed = {}) {
     attachments: seedAttachments,
     pinned: seed.pinned === true,
     pinnedOrder: normalizePinnedDeliverableOrder(seed.pinnedOrder),
-    active: seed.active !== false,
     workroomCadDiscipline: seed.workroomCadDiscipline || "",
     workroomPhase: seed.workroomPhase || "pre_design",
     workroomReturnType: seed.workroomReturnType || "",
@@ -15849,16 +16019,9 @@ function mergeProjects(base, incoming) {
   if (!Array.isArray(base.deliverables)) base.deliverables = [];
   if (Array.isArray(incoming.deliverables)) {
     base.deliverables.push(
-      ...incoming.deliverables.map((deliverable) =>
-        normalizeDeliverable({
-          ...deliverable,
-          active: true,
-        })
-      )
+      ...incoming.deliverables.map((deliverable) => normalizeDeliverable(deliverable))
     );
   }
-  if (!base.overviewDeliverableId && incoming.overviewDeliverableId)
-    base.overviewDeliverableId = incoming.overviewDeliverableId;
   base.pinned = base?.pinned === true || incoming?.pinned === true;
   base.pinnedOrder = base.pinned
     ? getLowestPinnedProjectOrder([base, incoming])
@@ -15891,7 +16054,6 @@ function convertLegacyProject(legacy) {
     }),
     links: [],
     deliverables: [deliverable],
-    overviewDeliverableId: deliverable.id,
     pinned: !!legacy?.pinned,
     pinnedOrder: normalizePinnedProjectOrder(legacy?.pinnedOrder),
     lightingSchedule: legacy?.lightingSchedule || null,
@@ -16008,34 +16170,14 @@ function normalizeProject(project) {
     ),
     title24: normalizeTitle24(project.title24 || createDefaultTitle24()),
   };
+  delete out.overviewDeliverableId;
   syncProjectAttachmentFields(out);
   if (!out.pinned) out.pinnedOrder = null;
   if (!out.deliverables.length) out.deliverables = [createDeliverable()];
-  syncProjectActiveDeliverables(out, {
-    fallbackActiveId: String(project.overviewDeliverableId || "").trim(),
-  });
   migrateProjectNotesToPage(out);
   migrateCoordinationItemsToPage(out);
   migrateDeliverablePagesToProjectSubpages(out);
   return out;
-}
-
-function getLatestDueDeliverableId(deliverables = []) {
-  let latestId = "";
-  let latestDue = null;
-  deliverables.forEach((deliverable) => {
-    const due = parseDueStr(getEffectiveDueStr(deliverable));
-    if (!due) return;
-    if (!latestDue || due > latestDue) {
-      latestDue = due;
-      latestId = deliverable?.id || "";
-    }
-  });
-  return latestId;
-}
-
-function isDeliverableActive(deliverable) {
-  return deliverable?.active === true;
 }
 
 function isDeliverablePinned(deliverable) {
@@ -16051,90 +16193,22 @@ function setDeliverablePinnedState(deliverable, nextPinned) {
   return deliverable.pinned === true;
 }
 
-function getProjectActiveDeliverables(project) {
-  return getProjectDeliverables(project).filter((deliverable) =>
-    isDeliverableActive(deliverable)
-  );
-}
-
-function getActiveAnchorDeliverable(project) {
-  const deliverables = getProjectDeliverables(project);
-  if (!deliverables.length) return null;
-  const activeDeliverables = getProjectActiveDeliverables(project);
-  const activeWithDue = activeDeliverables.filter((deliverable) =>
-    parseDueStr(getEffectiveDueStr(deliverable))
-  );
-  if (activeWithDue.length) {
-    return activeWithDue.sort(compareDeliverablesByDue)[0];
-  }
-  if (activeDeliverables.length) return activeDeliverables[0];
-  return deliverables[0];
-}
-
-function syncProjectActiveDeliverables(project, { fallbackActiveId = "" } = {}) {
-  if (!project) return project;
-  const deliverables = getProjectDeliverables(project);
-  if (!deliverables.length) {
-    const deliverable = createDeliverable();
-    project.deliverables = [deliverable];
-    project.overviewDeliverableId = deliverable.id;
-    return project;
-  }
-
-  const normalizedFallbackId = String(fallbackActiveId || "").trim();
-  const hasExplicitActiveDeliverables = deliverables.some((deliverable) =>
-    isDeliverableActive(deliverable)
-  );
-  if (!hasExplicitActiveDeliverables && normalizedFallbackId) {
-    deliverables.forEach((deliverable) => {
-      deliverable.active = deliverable.id === normalizedFallbackId;
-    });
-  }
-  if (!deliverables.some((deliverable) => deliverable?.active)) {
-    deliverables[0].active = true;
-  }
-
-  const activeAnchorDeliverable = getActiveAnchorDeliverable(project);
-  project.overviewDeliverableId = activeAnchorDeliverable?.id || deliverables[0]?.id || "";
-  return project;
-}
-
-function projectNeedsActiveMigration(sourceProject, normalizedProject) {
-  if (
-    String(sourceProject?.overviewDeliverableId || "").trim() !==
-    String(normalizedProject?.overviewDeliverableId || "").trim()
-  ) {
+function projectHasLegacyActiveState(project) {
+  if (!project || typeof project !== "object") return false;
+  if (Object.prototype.hasOwnProperty.call(project, "overviewDeliverableId")) {
     return true;
   }
-  const sourceDeliverables = Array.isArray(sourceProject?.deliverables)
-    ? sourceProject.deliverables
-    : [];
-  const normalizedDeliverables = Array.isArray(normalizedProject?.deliverables)
-    ? normalizedProject.deliverables
-    : [];
-  if (sourceDeliverables.length !== normalizedDeliverables.length) return true;
-  return normalizedDeliverables.some(
-    (deliverable, index) =>
-      (sourceDeliverables[index]?.active === true) !== (deliverable?.active === true)
+  return (Array.isArray(project.deliverables) ? project.deliverables : []).some(
+    (deliverable) =>
+      deliverable &&
+      typeof deliverable === "object" &&
+      Object.prototype.hasOwnProperty.call(deliverable, "active")
   );
-}
-
-function autoSetPrimary(project) {
-  if (!project || !userSettings.autoPrimary) return;
-  const latestId = getLatestDueDeliverableId(project.deliverables);
-  if (!latestId) return;
-  const latestDeliverable = getProjectDeliverables(project).find(
-    (deliverable) => deliverable.id === latestId
-  );
-  if (latestDeliverable) latestDeliverable.active = true;
-  syncProjectActiveDeliverables(project, { fallbackActiveId: latestId });
 }
 
 function migrateProjects(raw = []) {
   let changed = false;
   const map = new Map();
-  const legacyKeys = new Set();
-  const nonLegacyKeys = new Set();
   raw.forEach((item, index) => {
     const isLegacy = isLegacyProject(item);
     let project = item;
@@ -16148,20 +16222,15 @@ function migrateProjects(raw = []) {
       if (needsTitle24Migration(item?.title24)) {
         changed = true;
       }
+      if (projectHasLegacyActiveState(item)) {
+        changed = true;
+      }
       project = normalizeProject(item);
       if (project?.path !== normalizeWindowsPath(item?.path || "")) {
         changed = true;
       }
-      if (projectNeedsActiveMigration(item, project)) {
-        changed = true;
-      }
     }
     const key = getProjectMergeKey(project, index);
-    if (isLegacy) {
-      legacyKeys.add(key);
-    } else {
-      nonLegacyKeys.add(key);
-    }
     if (map.has(key)) {
       mergeProjects(map.get(key), project);
       changed = true;
@@ -16169,23 +16238,8 @@ function migrateProjects(raw = []) {
       map.set(key, project);
     }
   });
-  const legacyOnlyKeys = new Set(
-    [...legacyKeys].filter((key) => !nonLegacyKeys.has(key))
-  );
   const merged = Array.from(map.entries())
-    .map(([key, p]) => {
-      const normalized = normalizeProject(p);
-      if (normalized && legacyOnlyKeys.has(key)) {
-        const beforeOverviewId = normalized.overviewDeliverableId;
-        syncProjectActiveDeliverables(normalized, {
-          fallbackActiveId: beforeOverviewId,
-        });
-        if (normalized.overviewDeliverableId !== beforeOverviewId) {
-          changed = true;
-        }
-      }
-      return normalized;
-    })
+    .map(([, project]) => normalizeProject(project))
     .filter(Boolean);
   if (syncPinnedProjectOrders(merged, { seedMissing: true })) {
     changed = true;
@@ -19641,16 +19695,6 @@ function compareDeliverablesByDueDesc(a, b) {
   return dbb - da;
 }
 
-function sortDeliverablesByPrimaryThenDueDesc(list, primaryId) {
-  list.sort((a, b) => {
-    const aPrimary = a?.id === primaryId;
-    const bPrimary = b?.id === primaryId;
-    if (aPrimary && !bPrimary) return -1;
-    if (!aPrimary && bPrimary) return 1;
-    return compareDeliverablesByDueDesc(a, b);
-  });
-}
-
 function getEarliestIncompleteDeliverable(project) {
   const deliverables = getProjectDeliverables(project).filter(
     (d) => !isFinished(d)
@@ -19666,38 +19710,24 @@ function getEarliestIncompleteDeliverable(project) {
 
 
 function getProjectListPriorityMeta(project) {
-  const activeAnchorDeliverable = getActiveAnchorDeliverable(project);
-  const activeIncompleteDeliverables = getProjectActiveDeliverables(project).filter(
-    (deliverable) => !isFinished(deliverable)
-  );
-  if (!activeIncompleteDeliverables.length) {
+  const priorityDeliverable = getEarliestIncompleteDeliverable(project);
+  if (!priorityDeliverable) {
+    const fallbackDeliverable = getOverviewDeliverables(project)[0] || null;
     return {
-      priorityDeliverable: activeAnchorDeliverable,
-      hasIncompleteActiveWork: false,
+      priorityDeliverable: fallbackDeliverable,
+      hasIncompleteWork: false,
       sortBucket: 2,
       sortDueDate: null,
-      fallbackDueDate: parseDueStr(getEffectiveDueStr(activeAnchorDeliverable)),
+      fallbackDueDate: parseDueStr(getEffectiveDueStr(fallbackDeliverable)),
     };
   }
 
-  const activeIncompleteWithDue = activeIncompleteDeliverables.filter((deliverable) =>
-    parseDueStr(getEffectiveDueStr(deliverable))
-  );
-  if (activeIncompleteWithDue.length) {
-    const priorityDeliverable = activeIncompleteWithDue.sort(compareDeliverablesByDue)[0];
-    return {
-      priorityDeliverable,
-      hasIncompleteActiveWork: true,
-      sortBucket: 0,
-      sortDueDate: parseDueStr(getEffectiveDueStr(priorityDeliverable)),
-      fallbackDueDate: null,
-    };
-  }
+  const sortDueDate = parseDueStr(getEffectiveDueStr(priorityDeliverable));
   return {
-    priorityDeliverable: activeIncompleteDeliverables[0],
-    hasIncompleteActiveWork: true,
-    sortBucket: 1,
-    sortDueDate: null,
+    priorityDeliverable,
+    hasIncompleteWork: true,
+    sortBucket: sortDueDate ? 0 : 1,
+    sortDueDate,
     fallbackDueDate: null,
   };
 }
@@ -19706,23 +19736,20 @@ function getProjectListPriorityDeliverable(project) {
   return getProjectListPriorityMeta(project).priorityDeliverable;
 }
 
-function getOverviewDeliverables(project, { primaryId = "" } = {}) {
+function getOverviewDeliverables(project) {
   const deliverables = getProjectDeliverables(project);
   if (!deliverables.length) return [];
-  const out = deliverables.slice();
-  const resolvedPrimaryId = String(primaryId || "").trim();
-  const anchorId = resolvedPrimaryId || getActiveAnchorDeliverable(project)?.id || "";
-  sortDeliverablesByPrimaryThenDueDesc(out, anchorId);
-  return out;
+  return deliverables.slice().sort(compareDeliverablesByDueDesc);
 }
 
 function getProjectSortKey(project, projectListContext = null) {
   if (projectListContext && "anchorDueDate" in projectListContext) {
     return projectListContext.anchorDueDate;
   }
-  const activeAnchorDeliverable =
-    projectListContext?.activeAnchorDeliverable || getActiveAnchorDeliverable(project);
-  return parseDueStr(getEffectiveDueStr(activeAnchorDeliverable));
+  const priorityDeliverable =
+    projectListContext?.priorityDeliverable ||
+    getProjectListPriorityDeliverable(project);
+  return parseDueStr(getEffectiveDueStr(priorityDeliverable));
 }
 
 function matchesProjectStatusFilter(deliverable, filter) {
@@ -19731,16 +19758,9 @@ function matchesProjectStatusFilter(deliverable, filter) {
   return hasStatus(deliverable, filter);
 }
 
-function matchesProjectDeliverablesFilter(
-  deliverable,
-  filter,
-  activeAnchorDeliverable
-) {
+function matchesProjectDeliverablesFilter(deliverable, filter) {
   if (filter === "all") return true;
   if (filter === "incomplete") return !isFinished(deliverable);
-  if (filter === "active") {
-    return deliverable?.active === true;
-  }
   return true;
 }
 
@@ -19789,21 +19809,21 @@ function getLatestDeliverableDueDate(deliverables = []) {
 function buildProjectTimeframeNote(
   filter,
   hasAdditionalFilters,
-  activeAnchorMatchesTimeframe
+  priorityMatchesTimeframe
 ) {
   const timeframeLabel = getTimeframeFilterLabel(filter);
   if (!timeframeLabel) return "";
 
   const prefix =
     hasAdditionalFilters
-      ? `Showing deliverables based on ${timeframeLabel} and the active filters.`
+      ? `Showing deliverables based on ${timeframeLabel} and the current filters.`
       : `Showing deliverables based on ${timeframeLabel}.`;
 
-  if (hasAdditionalFilters && activeAnchorMatchesTimeframe) {
-    return `${prefix} Active deliverable does not match the current filters.`;
+  if (hasAdditionalFilters && priorityMatchesTimeframe) {
+    return `${prefix} The highest-priority deliverable does not match the current filters.`;
   }
 
-  return `${prefix} Active deliverable is outside this timeframe.`;
+  return `${prefix} The highest-priority deliverable is outside this timeframe.`;
 }
 
 function shouldSortCompletedProjectsLast() {
@@ -19834,11 +19854,9 @@ function compareProjectListSortBuckets(a, b, projectListContextMap = null) {
 
 function getProjectListRenderContext(project) {
   const projectListPriority = getProjectListPriorityMeta(project);
-  const activeAnchorDeliverable = projectListPriority.priorityDeliverable;
-  if (!activeAnchorDeliverable) return null;
-  const overviewDeliverables = getOverviewDeliverables(project, {
-    primaryId: activeAnchorDeliverable.id,
-  });
+  const priorityDeliverable = projectListPriority.priorityDeliverable;
+  if (!priorityDeliverable) return null;
+  const overviewDeliverables = getOverviewDeliverables(project);
   if (!overviewDeliverables.length) return null;
 
   const isTimeframeView = dueFilter !== "all";
@@ -19851,32 +19869,28 @@ function getProjectListRenderContext(project) {
     (deliverable) => matchesProjectStatusFilter(deliverable, statusFilter)
   );
   const filteredDeliverables = statusMatchingDeliverables.filter((deliverable) =>
-    matchesProjectDeliverablesFilter(
-      deliverable,
-      deliverablesFilter,
-      activeAnchorDeliverable
-    )
+    matchesProjectDeliverablesFilter(deliverable, deliverablesFilter)
   );
   const visibleDeliverables = isTimeframeView
     ? filteredDeliverables.slice().sort(compareDeliverablesByDueDesc)
     : filteredDeliverables;
   const matchesFilters = visibleDeliverables.length > 0;
-  const activeAnchorMatchesTimeframe = isTimeframeView
+  const priorityMatchesTimeframe = isTimeframeView
     ? timeframeDeliverables.some(
-        (deliverable) => deliverable.id === activeAnchorDeliverable.id
+        (deliverable) => deliverable.id === priorityDeliverable.id
       )
     : true;
   const hasAdditionalFilters =
     statusFilter !== "all" || deliverablesFilter !== "all";
-  const activeAnchorVisible = visibleDeliverables.some(
-    (deliverable) => deliverable.id === activeAnchorDeliverable.id
+  const priorityVisible = visibleDeliverables.some(
+    (deliverable) => deliverable.id === priorityDeliverable.id
   );
   const showTimeframeNote =
-    isTimeframeView && visibleDeliverables.length > 0 && !activeAnchorVisible;
+    isTimeframeView && visibleDeliverables.length > 0 && !priorityVisible;
 
   return {
-    activeAnchorDeliverable,
-    hasIncompleteActiveWork: projectListPriority.hasIncompleteActiveWork,
+    priorityDeliverable,
+    hasIncompleteWork: projectListPriority.hasIncompleteWork,
     sortBucket: projectListPriority.sortBucket,
     sortDueDate: projectListPriority.sortDueDate,
     fallbackDueDate: projectListPriority.fallbackDueDate,
@@ -19885,7 +19899,7 @@ function getProjectListRenderContext(project) {
     visibleDeliverables,
     anchorDueDate: isTimeframeView
       ? getLatestDeliverableDueDate(visibleDeliverables)
-      : projectListPriority.hasIncompleteActiveWork
+      : projectListPriority.hasIncompleteWork
         ? projectListPriority.sortDueDate
         : projectListPriority.fallbackDueDate,
     matchesFilters,
@@ -19895,7 +19909,7 @@ function getProjectListRenderContext(project) {
       ? buildProjectTimeframeNote(
           dueFilter,
           hasAdditionalFilters,
-          activeAnchorMatchesTimeframe
+          priorityMatchesTimeframe
         )
       : "",
   };
@@ -19904,11 +19918,12 @@ function getProjectListRenderContext(project) {
 function getProjectsFilterValue(filterKey) {
   if (filterKey === "timeframe") return dueFilter || "all";
   if (filterKey === "status") return statusFilter || "all";
-  if (filterKey === "deliverables") return deliverablesFilter || "active";
+  if (filterKey === "deliverables") return deliverablesFilter || "all";
   return "all";
 }
 
 function setProjectsFilterValue(filterKey, value) {
+  resetProjectsListPagination();
   if (filterKey === "timeframe") {
     dueFilter = value;
     if (currentSort.key === "due") {
@@ -23099,21 +23114,13 @@ function createDeliverableActionsDropdown(deliverable, project, card) {
   return dropdown;
 }
 
-function createCardHeader(deliverable, isPrimary, card, project) {
+function createCardHeader(deliverable, card, project) {
   const header = el("div", { className: "deliverable-card-header-new" });
 
   // Left section: title + due date
   const leftSection = el("div", { className: "deliverable-header-left" });
 
   const title = el("div", { className: "deliverable-card-title-new" });
-
-  if (isPrimary) {
-    const starIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-    starIcon.setAttribute("viewBox", "0 0 24 24");
-    starIcon.setAttribute("fill", "currentColor");
-    starIcon.innerHTML = `<path d="${STAR_ICON_PATH}"/>`;
-    title.appendChild(starIcon);
-  }
 
   const nameSpan = el("span", {
     className: "deliverable-card-title-name",
@@ -23717,18 +23724,18 @@ function renderProjectsPreservingExpandedDeliverables() {
   restoreExpandedProjectDeliverables(expandedIds);
 }
 
-function renderDeliverableCardLegacy(deliverable, isPrimary, project) {
+function renderDeliverableCardLegacy(deliverable, project) {
   syncDeliverableWorkItemFields(deliverable);
   const deliverableId = String(deliverable?.id || createId("dlv")).trim();
   if (!deliverable?.id) deliverable.id = deliverableId;
   const card = el("div", {
-    className: `deliverable-card-new ${isPrimary ? "is-primary" : ""} details-collapsed`
+    className: "deliverable-card-new details-collapsed"
   });
   card.dataset.deliverableId = deliverableId;
 
   // Header: name + due badge + expand toggle (pass card for toggle)
   const actionRow = createDeliverableCardTopActions(deliverable, project, card);
-  const header = createCardHeader(deliverable, isPrimary, card, project);
+  const header = createCardHeader(deliverable, card, project);
 
   // Progress: bar + percentage text
   const progress = createProgressSection(deliverable);
@@ -24100,19 +24107,19 @@ function createTasksPreview(deliverable, card, project = null) {
   return container;
 }
 
-function renderDeliverableCard(deliverable, isPrimary, project) {
+function renderDeliverableCard(deliverable, project) {
   syncDeliverableWorkItemFields(deliverable);
   const deliverableId = String(deliverable?.id || createId("dlv")).trim();
   if (!deliverable?.id) deliverable.id = deliverableId;
   const card = el("div", {
-    className: `deliverable-card-new ${isPrimary ? "is-primary" : ""} ${
+    className: `deliverable-card-new ${
       isDeliverablePinned(deliverable) ? "is-pinned-deliverable" : ""
     }`,
   });
   card.dataset.deliverableId = deliverableId;
 
   const actionRow = createDeliverableCardTopActions(deliverable, project, card);
-  const header = createCardHeader(deliverable, isPrimary, card, project);
+  const header = createCardHeader(deliverable, card, project);
 
   const statusSection = createDeliverableStatusSection(
     deliverable,
@@ -24263,6 +24270,73 @@ function buildAiDeliverableFromData(rawAiData = {}) {
   });
 }
 
+function hasAiSeparateDeliverable(rawAiData = {}) {
+  return !!String(rawAiData?.deliverable || "").trim();
+}
+
+function buildAiImportantText(rawAiData = {}) {
+  const explicitImportant = String(rawAiData?.important || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (explicitImportant) return explicitImportant;
+
+  const parts = [];
+  const tasks = (Array.isArray(rawAiData?.tasks) ? rawAiData.tasks : [])
+    .map((task) => String(task?.text || task || "").replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+  if (tasks.length) {
+    parts.push(tasks.length === 1 ? tasks[0] : `Action items: ${tasks.join("; ")}`);
+  }
+  const notes = String(rawAiData?.notes || "").replace(/\s+/g, " ").trim();
+  if (notes) parts.push(notes);
+  const due = String(rawAiData?.due || "").trim();
+  if (due) parts.push(`Relevant date: ${due}.`);
+  return parts.join(" ").trim();
+}
+
+function appendAiImportantToProject(project, rawAiData = {}) {
+  if (!project) return null;
+  const text = buildAiImportantText(rawAiData);
+  if (!text) return null;
+
+  let subpage = null;
+  let page = normalizePage(project.page);
+  if (isCanvasPage(page)) {
+    const subpages = getProjectSubpages(project);
+    subpage =
+      subpages.find(
+        (candidate) =>
+          String(candidate?.title || "").trim().toLowerCase() === "email intake" &&
+          !isCanvasPage(candidate?.page)
+      ) || null;
+    if (!subpage) {
+      subpage = createProjectSubpage({
+        title: "Email Intake",
+        order: subpages.length,
+      });
+      subpages.push(subpage);
+    }
+    page = normalizePage(subpage.page);
+  }
+
+  const duplicate = extractImportantPageLines(page.html, {
+    subpageId: subpage?.id || null,
+    pageTitle: subpage?.title || project.name || "Project notes",
+  }).some(
+    (item) =>
+      String(item?.text || "").trim().toLowerCase() === text.toLowerCase()
+  );
+  if (!duplicate) {
+    const block = `<p data-important="true">${escapeHtml(text)}</p>`;
+    page.html = page.html ? `${page.html}${block}` : block;
+    page.updatedAt = new Date().toISOString();
+  }
+
+  if (subpage) subpage.page = page;
+  else project.page = page;
+  return { added: !duplicate, subpage, text };
+}
+
 function openAiCreateNewProject(rawAiData = {}) {
   openNew();
   fillForm(rawAiData || {});
@@ -24391,6 +24465,19 @@ function openAiNoMatchResolution(rawAiData = {}, aiProject = null) {
 
   const searchInput = document.getElementById("aiNoMatchSearchInput");
   if (searchInput) searchInput.value = aiNoMatchState.query;
+  const addsDeliverable = hasAiSeparateDeliverable(rawAiData);
+  const help = document.getElementById("aiNoMatchAddHelp");
+  const addBtn = document.getElementById("aiNoMatchAddBtn");
+  if (help) {
+    help.textContent = addsDeliverable
+      ? "Select one project and then add the new AI deliverable to it."
+      : "Select one project and add the email content to its page as /important.";
+  }
+  if (addBtn) {
+    addBtn.textContent = addsDeliverable
+      ? "Add Deliverable to Selected Project"
+      : "Add to Selected Project /important";
+  }
   renderAiNoMatchProjectOptions();
   showDialog(dlg);
   return getAiNoMatchDialogState();
@@ -24457,9 +24544,6 @@ function addAiDeliverableToProject(projectIndex, aiProject, rawAiData) {
   if (!target.path && aiProject?.path) target.path = aiProject.path;
   if (!target.id && aiProject?.id) target.id = aiProject.id;
   target.deliverables.push(newDeliverable);
-  syncProjectActiveDeliverables(target, {
-    fallbackActiveId: newDeliverable.id,
-  });
   db[projectIndex] = target;
   editIndex = projectIndex;
   _aiMatchSnapshot = { index: projectIndex, data: snapshot };
@@ -24471,14 +24555,51 @@ function addAiDeliverableToProject(projectIndex, aiProject, rawAiData) {
   return true;
 }
 
+function addAiImportantToProject(projectIndex, aiProject, rawAiData) {
+  if (!Number.isInteger(projectIndex) || projectIndex < 0 || !db[projectIndex]) {
+    return null;
+  }
+
+  const target = normalizeProject(db[projectIndex]);
+  if (!target) return null;
+  if (!target.path && aiProject?.path) target.path = aiProject.path;
+  if (!target.id && aiProject?.id) target.id = aiProject.id;
+
+  const appended = appendAiImportantToProject(target, rawAiData);
+  if (!appended) return null;
+  db[projectIndex] = target;
+  void save();
+  render();
+  pendingImportantPageScroll = true;
+  openProjectPage(target, appended.subpage);
+  return { kind: "important", ...appended };
+}
+
+function addAiResultToProject(projectIndex, aiProject, rawAiData) {
+  if (hasAiSeparateDeliverable(rawAiData)) {
+    return addAiDeliverableToProject(projectIndex, aiProject, rawAiData)
+      ? { kind: "deliverable", added: true }
+      : null;
+  }
+  return addAiImportantToProject(projectIndex, aiProject, rawAiData);
+}
+
 function applyAiToMatchedProject(match, aiProject, rawAiData) {
   if (!match || !Number.isInteger(match.index)) return false;
-  const applied = addAiDeliverableToProject(match.index, aiProject, rawAiData);
-  if (!applied) return false;
+  const result = addAiResultToProject(match.index, aiProject, rawAiData);
+  if (!result) return false;
   const confidenceText = Number.isFinite(match.score)
     ? `${Math.round(match.score * 100)}% confidence`
     : "match confirmed";
-  toast(`Matched existing project (${match.method || "auto"}, ${confidenceText}).`);
+  if (result.kind === "important") {
+    toast(
+      result.added
+        ? `Matched existing project (${match.method || "auto"}, ${confidenceText}) and added the email content to /important.`
+        : `Matched existing project (${match.method || "auto"}, ${confidenceText}); that /important item already exists.`
+    );
+  } else {
+    toast(`Matched existing project (${match.method || "auto"}, ${confidenceText}).`);
+  }
   return true;
 }
 
@@ -24490,9 +24611,17 @@ function confirmAiNoMatchAddToProject() {
   const aiProject = aiNoMatchState.aiProject || normalizeProject(aiNoMatchState.rawAiData || {});
   const rawAiData = aiNoMatchState.rawAiData || {};
   closeAiNoMatchDialog();
-  const applied = addAiDeliverableToProject(selectedIndex, aiProject, rawAiData);
-  if (applied) toast("Added deliverable to selected project.");
-  return applied;
+  const result = addAiResultToProject(selectedIndex, aiProject, rawAiData);
+  if (result?.kind === "important") {
+    toast(
+      result.added
+        ? "Added the email content to the selected project's /important page items."
+        : "That /important item already exists on the selected project."
+    );
+  } else if (result) {
+    toast("Added deliverable to selected project.");
+  }
+  return !!result;
 }
 
 function handleAiProjectResult(rawAiData) {
@@ -24587,12 +24716,9 @@ function scanAndMergeSimilarProjects() {
       .map((deliverable) => ({
         ...deliverable,
         id: deliverable.id || createId("dlv"),
-        active: true,
       }));
     base.deliverables.sort(compareDeliverablesByDueDesc);
     if (!base.deliverables.length) base.deliverables = [createDeliverable()];
-    syncProjectActiveDeliverables(base);
-    autoSetPrimary(base);
     base.overviewSortDir = "desc";
     base.pinned = projects.some((project) => project?.pinned);
     base.pinnedOrder = base.pinned ? getLowestPinnedProjectOrder(projects) : null;
@@ -24663,6 +24789,97 @@ function buildProjectDeliverableRowEntries(items, projectListContextMap = null) 
     });
   });
   return deliverableRows;
+}
+
+function normalizeProjectsListPageSize(value) {
+  const parsed = Number.parseInt(value, 10);
+  return PROJECTS_LIST_PAGE_SIZE_OPTIONS.includes(parsed)
+    ? parsed
+    : DEFAULT_PROJECTS_LIST_PAGE_SIZE;
+}
+
+function resetProjectsListPagination() {
+  projectsListPage = 1;
+}
+
+function paginateProjectsListItems(items = []) {
+  const safeItems = Array.isArray(items) ? items : [];
+  const pageSize = normalizeProjectsListPageSize(projectsListPageSize);
+  const totalItems = safeItems.length;
+  const pageCount = Math.max(1, Math.ceil(totalItems / pageSize));
+  const page = Math.min(Math.max(1, Number(projectsListPage) || 1), pageCount);
+  const startIndex = totalItems ? (page - 1) * pageSize : 0;
+  const endIndex = Math.min(startIndex + pageSize, totalItems);
+
+  projectsListPageSize = pageSize;
+  projectsListPage = page;
+
+  return {
+    items: safeItems.slice(startIndex, endIndex),
+    totalItems,
+    page,
+    pageCount,
+    pageSize,
+    startIndex,
+    endIndex,
+  };
+}
+
+function updateProjectsPaginationUi(pagination, entityLabel = "deliverables") {
+  const controls = document.getElementById("projectsPagination");
+  if (!controls || !pagination) return;
+
+  const {
+    totalItems,
+    page,
+    pageCount,
+    pageSize,
+    startIndex,
+    endIndex,
+  } = pagination;
+  const singularLabel = entityLabel === "projects" ? "project" : "deliverable";
+  const countLabel = totalItems === 1 ? singularLabel : entityLabel;
+  const summary = document.getElementById("projectsPaginationSummary");
+  const pageLabel = document.getElementById("projectsPaginationPage");
+  const pageSizeSelect = document.getElementById("projectsPageSize");
+  const firstButton = document.getElementById("projectsPageFirst");
+  const previousButton = document.getElementById("projectsPagePrev");
+  const nextButton = document.getElementById("projectsPageNext");
+  const lastButton = document.getElementById("projectsPageLast");
+  const hasPreviousPage = page > 1;
+  const hasNextPage = page < pageCount;
+
+  controls.hidden =
+    projectsViewMode !== "list" ||
+    totalItems <= DEFAULT_PROJECTS_LIST_PAGE_SIZE;
+  controls.dataset.pageCount = String(pageCount);
+  if (summary) {
+    summary.textContent = totalItems
+      ? `${startIndex + 1}\u2013${endIndex} of ${totalItems} ${countLabel}`
+      : `0 ${countLabel}`;
+  }
+  if (pageLabel) pageLabel.textContent = `Page ${page} of ${pageCount}`;
+  if (pageSizeSelect) pageSizeSelect.value = String(pageSize);
+  if (firstButton) firstButton.disabled = !hasPreviousPage;
+  if (previousButton) previousButton.disabled = !hasPreviousPage;
+  if (nextButton) nextButton.disabled = !hasNextPage;
+  if (lastButton) lastButton.disabled = !hasNextPage;
+}
+
+function scrollProjectsListToTop() {
+  requestAnimationFrame(() => {
+    document
+      .querySelector("#projects-panel .projects-table")
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+}
+
+function setProjectsListPage(page) {
+  const nextPage = Number.parseInt(page, 10);
+  if (!Number.isFinite(nextPage)) return;
+  projectsListPage = Math.max(1, nextPage);
+  renderProjectsPreservingExpandedDeliverables();
+  scrollProjectsListToTop();
 }
 
 function getProjectDeliverableRowSortBucket(row) {
@@ -25014,7 +25231,24 @@ function ensureProjectDirectoryContextMenu() {
     textContent: "Open Local Directory",
     "data-project-directory-action": "local",
   });
-  menu.append(serverItem, localItem);
+  const divider = el("div", {
+    className: "project-directory-context-menu__divider",
+  });
+  const editItem = el("button", {
+    className: "project-directory-context-menu__item",
+    type: "button",
+    role: "menuitem",
+    textContent: "Edit Project",
+    "data-project-directory-action": "edit",
+  });
+  const deleteItem = el("button", {
+    className: "project-directory-context-menu__item text-danger",
+    type: "button",
+    role: "menuitem",
+    textContent: "Delete Project",
+    "data-project-directory-action": "delete",
+  });
+  menu.append(serverItem, localItem, divider, editItem, deleteItem);
 
   menu.addEventListener("click", async (event) => {
     const item = event.target.closest("button[data-project-directory-action]");
@@ -25024,7 +25258,17 @@ function ensureProjectDirectoryContextMenu() {
     const project = projectDirectoryContextMenuProject;
     const action = item.dataset.projectDirectoryAction;
     hideProjectDirectoryContextMenu();
-    if (project) await openProjectDirectory(project, action);
+    if (project) {
+      if (action === "edit") {
+        const idx = db.indexOf(project);
+        if (idx >= 0) openEdit(idx);
+      } else if (action === "delete") {
+        const idx = db.indexOf(project);
+        if (idx >= 0) removeProject(idx);
+      } else {
+        await openProjectDirectory(project, action);
+      }
+    }
   });
 
   document.body.appendChild(menu);
@@ -25213,7 +25457,33 @@ function buildProjectTableRow(project, projectIndex, rowTemplate) {
       projectDetailsMain.appendChild(syncBadge);
     }
 
-    projectDetailsHeader.append(projectDetailsMain);
+    const projectDetailsActions = el("div", {
+      className: "project-details-actions",
+    });
+    const editBtn = el("button", {
+      className: "btn tiny ghost icon-only project-row-action-btn",
+      title: "Edit project",
+      "aria-label": "Edit project",
+      onclick: (e) => {
+        e.stopPropagation();
+        openEdit(projectIndex);
+      },
+    });
+    editBtn.appendChild(createIcon(PENCIL_ICON_PATH, 12));
+
+    const deleteBtn = el("button", {
+      className: "btn tiny ghost text-danger icon-only project-row-action-btn",
+      title: "Delete project",
+      "aria-label": "Delete project",
+      onclick: (e) => {
+        e.stopPropagation();
+        removeProject(projectIndex);
+      },
+    });
+    deleteBtn.appendChild(createIcon(TRASH_ICON_PATH, 12));
+
+    projectDetailsActions.append(editBtn, deleteBtn);
+    projectDetailsHeader.append(projectDetailsMain, projectDetailsActions);
     nameCell.appendChild(projectDetailsHeader);
   }
 
@@ -25242,8 +25512,7 @@ function renderGroupedProjectDeliverablesCell(
 
     const cardsContainer = el("div", { className: "deliverable-cards-container" });
     visibleDeliverables.forEach((deliverable) => {
-      const isPrimary = isDeliverableActive(deliverable);
-      cardsContainer.appendChild(renderDeliverableCard(deliverable, isPrimary, project));
+      cardsContainer.appendChild(renderDeliverableCard(deliverable, project));
     });
 
     deliverablesCell.appendChild(cardsContainer);
@@ -25261,7 +25530,6 @@ function renderGroupedProjectDeliverablesCell(
 function renderProjectDeliverableCell(
   deliverablesCell,
   deliverable,
-  isPrimary,
   project
 ) {
   if (!deliverablesCell) return;
@@ -25275,7 +25543,7 @@ function renderProjectDeliverableCell(
     );
     return;
   }
-  deliverablesCell.appendChild(renderDeliverableCard(deliverable, isPrimary, project));
+  deliverablesCell.appendChild(renderDeliverableCard(deliverable, project));
 }
 
 function appendProjectSearchContextRow(tbody, query, project, matchContextMap) {
@@ -25304,7 +25572,7 @@ function renderGroupedProjectRows({
     const projectDue = getProjectSortKey(project, projectListContext);
     const weekKey = projectDue ? formatWeekKey(projectDue) : "no-date";
     const isCompleteOnlyProject =
-      shouldSortCompletedProjectsLast() && !projectListContext.hasIncompleteActiveWork;
+      shouldSortCompletedProjectsLast() && !projectListContext.hasIncompleteWork;
 
     if (isCompleteOnlyProject) {
       if (!completeProjectsSectionShown) {
@@ -25341,12 +25609,14 @@ function renderUngroupedDeliverableRows({
   matchContextMap,
   query,
   appendSectionSeparator,
+  paginatedDeliverableRows = null,
 }) {
-  const deliverableRows = buildProjectDeliverableRowEntries(
-    items,
-    projectListContextMap
-  );
-  sortProjectDeliverableRows(deliverableRows);
+  const deliverableRows = Array.isArray(paginatedDeliverableRows)
+    ? paginatedDeliverableRows
+    : buildProjectDeliverableRowEntries(items, projectListContextMap);
+  if (!Array.isArray(paginatedDeliverableRows)) {
+    sortProjectDeliverableRows(deliverableRows);
+  }
 
   let lastWeekKey = null;
   let lastCompleteWeekKey = null;
@@ -25392,11 +25662,9 @@ function renderUngroupedDeliverableRows({
     }
 
     const tr = buildProjectTableRow(project, projectIndex, rowTemplate);
-    const isPrimary = isDeliverableActive(deliverable);
     renderProjectDeliverableCell(
       tr.querySelector(".cell-deliverables"),
       deliverable,
-      isPrimary,
       project
     );
     tbody.appendChild(tr);
@@ -25503,10 +25771,12 @@ function updateProjectsViewModeUi() {
   const cardControls = document.getElementById("projectsCardControls");
   const emptyState = document.getElementById("emptyState");
   const filterControls = document.getElementById("projectsFilterControls");
+  const pagination = document.getElementById("projectsPagination");
   if (table) table.hidden = !isList;
   if (cardView) cardView.hidden = !isCard;
   if (cardControls) cardControls.hidden = !isCard;
   if (filterControls) filterControls.hidden = !isList;
+  if (pagination && !isList) pagination.hidden = true;
   if (emptyState && !isList) emptyState.style.display = "none";
 }
 
@@ -25735,8 +26005,7 @@ function renderCardView(items = db, projectListContextMap = null) {
       );
     } else {
       for (const { project, deliverable } of bucketRows) {
-        const isPrimary = isDeliverableActive(deliverable);
-        const card = renderDeliverableCard(deliverable, isPrimary, project);
+        const card = renderDeliverableCard(deliverable, project);
         card.draggable = true;
         const projectMeta = buildCardProjectMeta(project, db.indexOf(project), deliverable);
         if (projectMeta) {
@@ -26338,47 +26607,6 @@ function render() {
 
   updateSortHeaders();
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const dayOfWeek = today.getDay();
-  const startOfWeek = new Date(today);
-  startOfWeek.setDate(today.getDate() - dayOfWeek);
-  const endOfWeek = new Date(startOfWeek);
-  endOfWeek.setDate(startOfWeek.getDate() + 6);
-  endOfWeek.setHours(23, 59, 59, 999);
-  const startOfLastWeek = new Date(startOfWeek);
-  startOfLastWeek.setDate(startOfWeek.getDate() - 7);
-  const endOfLastWeek = new Date(endOfWeek);
-  endOfLastWeek.setDate(endOfWeek.getDate() - 7);
-  const currentYear = today.getFullYear();
-  const lastYear = currentYear - 1;
-
-  let dueThisWeek = 0,
-    dueLastWeek = 0,
-    upcoming = 0,
-    completedThisYear = 0,
-    completedLastYear = 0;
-  let minDate = null,
-    maxDate = null;
-
-  getAllDeliverables().forEach(({ deliverable }) => {
-    const d = parseDueStr(getEffectiveDueStr(deliverable));
-    if (d) {
-      if (d >= startOfWeek && d <= endOfWeek) dueThisWeek++;
-      if (d >= startOfLastWeek && d <= endOfLastWeek) dueLastWeek++;
-      if (d > endOfWeek) upcoming++;
-      if (!minDate || d < minDate) minDate = d;
-      if (!maxDate || d > maxDate) maxDate = d;
-      if (isFinished(deliverable)) {
-        if (d.getFullYear() === currentYear) completedThisYear++;
-        if (d.getFullYear() === lastYear) completedLastYear++;
-      }
-    }
-  });
-
-  // Stats are now handled exclusively by the Statistics Modal (renderStats)
-  // We do not update them here to avoid conflicts or incorrect "All Time" overwrites.
-
   const emptyTitle = emptyState?.querySelector("h3");
   const emptyBody = emptyState?.querySelector("p");
   const hasActiveProjectFilters =
@@ -26401,7 +26629,6 @@ function render() {
         ? "Create a new project to get started."
         : "Create a new project with a deliverable to get started.";
   }
-  emptyState.style.display = items.length ? "none" : "block";
   const rowTemplate = document.getElementById("project-row-template");
 
   const appendSectionSeparator = (label) => {
@@ -26415,9 +26642,12 @@ function render() {
   };
 
   if (groupDeliverablesByProject) {
+    const pagination = paginateProjectsListItems(items);
+    updateProjectsPaginationUi(pagination, "projects");
+    emptyState.style.display = pagination.totalItems ? "none" : "block";
     renderGroupedProjectRows({
       tbody,
-      items,
+      items: pagination.items,
       rowTemplate,
       projectListContextMap,
       matchContextMap,
@@ -26427,6 +26657,15 @@ function render() {
     return;
   }
 
+  const deliverableRows = buildProjectDeliverableRowEntries(
+    items,
+    projectListContextMap
+  );
+  sortProjectDeliverableRows(deliverableRows);
+  const pagination = paginateProjectsListItems(deliverableRows);
+  updateProjectsPaginationUi(pagination, "deliverables");
+  emptyState.style.display = pagination.totalItems ? "none" : "block";
+
   renderUngroupedDeliverableRows({
     tbody,
     items,
@@ -26435,6 +26674,7 @@ function render() {
     matchContextMap,
     query: q,
     appendSectionSeparator,
+    paginatedDeliverableRows: pagination.items,
   });
 }
 
@@ -26528,7 +26768,6 @@ function createBlankProject(options = {}) {
     attachments: [],
     links: [],
     deliverables: deliverable ? [deliverable] : [],
-    overviewDeliverableId: deliverable ? deliverable.id : "",
     pinned: false,
     pinnedOrder: null,
     lightingSchedule: createDefaultLightingSchedule(),
@@ -26583,31 +26822,122 @@ function showModalFieldError(inputId, message) {
     err.classList.add("is-visible");
   }
 }
-function removeProject(i) {
-  if (!confirm("Delete this project?")) return;
-  const project = db[i];
+function removeProject(i, { skipConfirm = false } = {}) {
+  const project = typeof i === "number" ? db[i] : i;
   if (!project) return;
+  const projectTitle = project.name
+    ? `${project.id ? project.id + " — " : ""}${project.name}`
+    : (project.id || "Untitled");
+
+  if (!skipConfirm) {
+    const deliverables = getProjectDeliverables(project);
+    const subpages = getProjectSubpages(project);
+    const details = [];
+    if (deliverables.length) {
+      details.push(
+        `${deliverables.length} deliverable${deliverables.length === 1 ? "" : "s"}`
+      );
+    }
+    if (subpages.length) {
+      details.push(
+        `${subpages.length} subpage${subpages.length === 1 ? "" : "s"}`
+      );
+    }
+    const detailsStr = details.length ? ` (${details.join(", ")})` : "";
+    if (
+      !confirm(
+        `Are you sure you want to permanently delete project "${projectTitle}"${detailsStr}?\n\nThis will remove all associated deliverables and notes.`
+      )
+    ) {
+      return;
+    }
+  }
+
   void (async () => {
+    // 1. Close edit modal if open
+    closeDlg("editDlg");
+
+    // 2. Close page view if currently viewing this project or any of its subpages
+    if (pageNav?.project === project) {
+      closePageView();
+    }
+
+    // 3. Delete managed page workbooks
     const cleanupResult = await deleteManagedPageWorkbooks([
       project,
       ...getProjectSubpages(project),
     ]);
+
+    // 4. Backend database / checklist cleanup
+    if (window.pywebview?.api?.delete_project) {
+      try {
+        await window.pywebview.api.delete_project(project.id, project.name);
+      } catch (err) {
+        console.warn("Backend project deletion warning:", err);
+      }
+    }
+
+    // 5. Remove from in-memory db
     const currentIndex = db.indexOf(project);
-    if (currentIndex < 0) return;
-    db.splice(currentIndex, 1);
-    save();
+    if (currentIndex >= 0) {
+      db.splice(currentIndex, 1);
+    }
+
+    // 6. Clean local changes cache
+    if (
+      window.localProjectChanges &&
+      project.id &&
+      window.localProjectChanges[project.id]
+    ) {
+      delete window.localProjectChanges[project.id];
+    }
+
+    // 7. Save and re-render
+    await save();
     render();
+    toast(`Project "${projectTitle}" deleted.`);
     reportPageWorkbookCleanup(cleanupResult);
   })();
 }
+
+function onDeleteCurrentProject() {
+  if (editIndex < 0 || !db[editIndex]) return;
+  removeProject(editIndex);
+}
+
+function onDeleteActiveProjectFromPageView() {
+  if (!pageNav?.project) return;
+  const idx = db.indexOf(pageNav.project);
+  if (idx < 0) return;
+  removeProject(idx);
+}
+
 function removeDeliverable(project, deliverable) {
   if (!project || !deliverable) return;
   const deliverables = getProjectDeliverables(project);
   const index = deliverables.indexOf(deliverable);
   if (index < 0) return;
-  if (!confirm("Delete this deliverable?")) return;
+
+  if (deliverables.length === 1) {
+    const projectTitle = project.name
+      ? `${project.id ? project.id + " — " : ""}${project.name}`
+      : (project.id || "Untitled");
+    const deleteProjectToo = confirm(
+      `"${deliverable.name || "Untitled"}" is the only deliverable for project "${projectTitle}".\n\nWould you like to delete the entire project instead?`
+    );
+    if (deleteProjectToo) {
+      const projectIndex = db.indexOf(project);
+      if (projectIndex >= 0) {
+        removeProject(projectIndex, { skipConfirm: true });
+        return;
+      }
+    }
+    if (!confirm(`Delete deliverable "${deliverable.name || "Untitled"}"?`)) return;
+  } else {
+    if (!confirm(`Delete deliverable "${deliverable.name || "Untitled"}"?`)) return;
+  }
+
   deliverables.splice(index, 1);
-  syncProjectActiveDeliverables(project);
   save();
   render();
 }
@@ -26635,7 +26965,6 @@ function onSaveProject() {
       return;
     }
     const data = readForm();
-    autoSetPrimary(data);
     _aiMatchSnapshot = null;
     db.push(data);
     editIndex = db.length - 1;
@@ -26671,7 +27000,6 @@ function onSaveProject() {
   }
 
   const data = readForm();
-  autoSetPrimary(data);
   _aiMatchSnapshot = null;
   if (editIndex >= 0) {
     db[editIndex] = data;
@@ -26701,21 +27029,18 @@ function fillForm(project) {
   const sortedDeliverables = p.deliverables
     .slice()
     .sort(compareDeliverablesByDueDesc);
-  const activeAnchorDeliverable = getActiveAnchorDeliverable(p);
-  sortedDeliverables.forEach((deliverable) =>
-    addDeliverableCard(deliverable, activeAnchorDeliverable?.id, {
+  sortedDeliverables.forEach((deliverable, index) =>
+    addDeliverableCard(deliverable, {
       projectDraft: p,
-      startExpanded:
-        !!activeAnchorDeliverable && deliverable.id === activeAnchorDeliverable.id,
+      startExpanded: index === 0,
     })
   );
   if (!deliverableList.children.length) {
-    addDeliverableCard(createDeliverable(), activeAnchorDeliverable?.id, {
+    addDeliverableCard(createDeliverable(), {
       projectDraft: p,
       startExpanded: true,
     });
   }
-  ensureModalProjectHasActiveDeliverable();
 
   document.getElementById("refList").innerHTML = "";
   (p.refs || []).forEach(addRefRowFrom);
@@ -26891,38 +27216,7 @@ function setModalProjectAttachments(attachments) {
   return draft.attachments;
 }
 
-function getModalActiveDeliverableInputs(list = document.getElementById("deliverableList")) {
-  if (!list) return [];
-  return Array.from(list.querySelectorAll(".d-active"));
-}
-
-function getModalFallbackActiveDeliverableInput(list, excludedCard = null) {
-  const activeInputs = getModalActiveDeliverableInputs(list);
-  if (!activeInputs.length) return null;
-  if (!excludedCard) return activeInputs[0];
-  const remainingInputs = activeInputs.filter(
-    (input) => input.closest(".deliverable-card") !== excludedCard
-  );
-  return remainingInputs[0] || activeInputs[0];
-}
-
-function ensureModalProjectHasActiveDeliverable({ preferredCard = null } = {}) {
-  const list = document.getElementById("deliverableList");
-  if (!list) return null;
-  const checkedInputs = Array.from(list.querySelectorAll(".d-active:checked"));
-  if (checkedInputs.length) return checkedInputs[0];
-
-  const preferredInput =
-    preferredCard && list.contains(preferredCard)
-      ? preferredCard.querySelector(".d-active")
-      : null;
-  const fallbackInput =
-    preferredInput || getModalFallbackActiveDeliverableInput(list);
-  if (fallbackInput) fallbackInput.checked = true;
-  return fallbackInput;
-}
-
-function addDeliverableCard(deliverable, activeAnchorId, options = {}) {
+function addDeliverableCard(deliverable, options = {}) {
   const list = document.getElementById("deliverableList");
   const template = document.getElementById("deliverable-card-template");
   if (!list || !template) return;
@@ -26949,22 +27243,6 @@ function addDeliverableCard(deliverable, activeAnchorId, options = {}) {
 
   card.querySelector(".d-due").value = deliverable.due || "";
   card.querySelector(".d-hard-due").value = deliverable.hardDue || "";
-
-  const activeInput = card.querySelector(".d-active");
-  if (deliverable.active === true || (activeAnchorId && deliverableId === activeAnchorId)) {
-    activeInput.checked = true;
-  }
-  activeInput.addEventListener("change", () => {
-    if (!activeInput.checked) {
-      const fallbackInput = getModalFallbackActiveDeliverableInput(list, card);
-      if (!list.querySelector(".d-active:checked") && fallbackInput) {
-        fallbackInput.checked = true;
-        const fallbackCard = fallbackInput.closest(".deliverable-card");
-        if (fallbackCard) refreshModalDeliverableSummary(fallbackCard);
-      }
-    }
-    refreshModalDeliverableSummary(card);
-  });
 
   const attachmentControlHost = card.querySelector(".deliverable-attachment-control");
   if (attachmentControlHost) {
@@ -27004,9 +27282,7 @@ function addDeliverableCard(deliverable, activeAnchorId, options = {}) {
     }
     card.remove();
     if (!list.querySelector(".deliverable-card")) {
-      addDeliverableCard(createDeliverable(), null, { projectDraft });
-    } else {
-      ensureModalProjectHasActiveDeliverable();
+      addDeliverableCard(createDeliverable(), { projectDraft });
     }
   };
 
@@ -27073,7 +27349,6 @@ function addDeliverableCard(deliverable, activeAnchorId, options = {}) {
     list.appendChild(card);
   }
 
-  ensureModalProjectHasActiveDeliverable({ preferredCard: card });
   refreshModalDeliverableSummary(card);
   toggleModalDeliverableCard(card, !!startExpanded);
   if (startExpanded && insertAtTop) {
@@ -27159,8 +27434,6 @@ function refreshModalDeliverableSummary(card) {
     }
   }
 
-  const activeInput = card.querySelector(".d-active");
-  card.classList.toggle("is-primary", !!activeInput?.checked);
 }
 
 function toggleModalDeliverableCard(card, expanded) {
@@ -27608,7 +27881,6 @@ function readForm() {
     attachments: getModalProjectAttachments(),
     links: getModalProjectLinks(),
     deliverables: [],
-    overviewDeliverableId: "",
     pinned: !!existingProject?.pinned,
     pinnedOrder: normalizePinnedProjectOrder(existingProject?.pinnedOrder),
     lightingSchedule,
@@ -27686,7 +27958,6 @@ function readForm() {
       pinnedOrder: normalizePinnedDeliverableOrder(
         existingDeliverable?.pinnedOrder ?? card.dataset.pinnedOrder
       ),
-      active: !!card.querySelector(".d-active")?.checked,
     });
 
     out.deliverables.push(deliverable);
@@ -27717,7 +27988,7 @@ function addRefRowFrom(L = {}) {
 }
 
 window.addDeliverable = () => {
-  addDeliverableCard(createDeliverable(), null, {
+  addDeliverableCard(createDeliverable(), {
     insertAtTop: true,
     projectDraft: getModalProjectDraft(),
   });
@@ -27857,7 +28128,6 @@ function importRows(rows, hasHeader = true) {
       path: (path || "").trim(),
       refs: refsList,
       deliverables: [deliverable],
-      overviewDeliverableId: deliverable.id,
       lightingSchedule: createDefaultLightingSchedule(),
       title24: createDefaultTitle24(),
     });
@@ -29281,6 +29551,41 @@ async function renderBundles(bundles) {
       btnClass = "btn-primary";
     }
 
+    const helpBtn = el("div", {
+      className: "tool-card-help",
+      role: "button",
+      tabIndex: 0,
+      "aria-label": `${coreName} details`,
+    });
+    const helpIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    helpIcon.setAttribute("width", "13");
+    helpIcon.setAttribute("height", "13");
+    helpIcon.setAttribute("viewBox", "0 0 24 24");
+    helpIcon.setAttribute("fill", "none");
+    helpIcon.setAttribute("stroke", "currentColor");
+    helpIcon.setAttribute("stroke-width", "2");
+    helpIcon.setAttribute("stroke-linecap", "round");
+    helpIcon.setAttribute("stroke-linejoin", "round");
+    helpIcon.innerHTML = '<circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line>';
+
+    const detailsState = el("div", {
+      className: "release-card-details-state",
+      textContent: "Loading details...",
+    });
+    const tags = el("div", { className: "command-tags" });
+
+    const tooltip = el("div", { className: "tool-card-tooltip" }, [
+      el("div", { className: "tool-card-tooltip-title", textContent: coreName }),
+      detailsState,
+      tags,
+    ]);
+    helpBtn.append(helpIcon, tooltip);
+
+    helpBtn.addEventListener("click", (e) => e.stopPropagation());
+    helpBtn.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") e.stopPropagation();
+    });
+
     const header = el("div", { className: "release-card-header" }, [
       el("div", { className: "release-card-title" }, [
         el("div", {
@@ -29289,42 +29594,13 @@ async function renderBundles(bundles) {
         }),
         el("span", { textContent: coreName }),
       ]),
+      helpBtn,
     ]);
 
-    const body = el("div", {
-      className: "release-card-body",
-      id: detailsId,
-      hidden: true,
-    });
-    const detailsState = el("div", {
-      className: "release-card-details-state",
-      textContent: "Loading details...",
-    });
-    const tags = el("div", { className: "command-tags" });
-    body.append(detailsState, tags);
-
     const footer = el("div", { className: "release-card-footer" });
-    const detailsBtn = el("button", {
-      type: "button",
-      className: "release-card-toggle",
-      textContent: "Details",
-      "aria-controls": detailsId,
-      "aria-expanded": "false",
-    });
     const btn = el("button", {
       className: `btn ${btnClass}`.trim(),
       textContent: btnText,
-    });
-
-    const setDetailsExpanded = (expanded) => {
-      body.hidden = !expanded;
-      card.classList.toggle("details-expanded", expanded);
-      detailsBtn.textContent = expanded ? "Hide details" : "Details";
-      detailsBtn.setAttribute("aria-expanded", String(expanded));
-    };
-
-    detailsBtn.addEventListener("click", () => {
-      setDetailsExpanded(body.hidden);
     });
 
     btn.dataset.bundleName = bundle.bundle_name;
@@ -29341,8 +29617,8 @@ async function renderBundles(bundles) {
       btn.dataset.asset = JSON.stringify(bundle.asset);
     }
 
-    footer.append(detailsBtn, btn);
-    card.append(header, body, footer);
+    footer.append(btn);
+    card.append(header, footer);
     container.append(card);
 
     const descriptionPromise = fetchDescriptionForBundle(bundle.name)
@@ -29621,6 +29897,741 @@ function closeWireSizer() {
   const frame = document.getElementById("wireSizerFrame");
   if (dlg?.open) dlg.close();
   if (frame) frame.src = "about:blank";
+}
+
+// --- Project Panel Schedule Manager ---
+const panelScheduleManagerState = {
+  sessionId: "",
+  projectId: "",
+  projectPath: "",
+  workbookPath: "",
+  panels: [],
+  activeWorksheetName: "",
+  revision: "",
+  dirty: false,
+  loading: false,
+  saving: false,
+  pollTimer: 0,
+  conflictPath: "",
+  conflictChanges: [],
+  lastSyncedAt: "",
+  launchContext: null,
+};
+
+function getPanelScheduleManagerProjectKey(project, index = 0) {
+  return String(
+    project?.id ||
+      project?.number ||
+      project?.projectNumber ||
+      project?.name ||
+      "project-" + (index + 1)
+  ).trim();
+}
+
+function getPanelScheduleManagerProjectOptions() {
+  return (Array.isArray(db) ? db : [])
+    .map((project, index) => ({
+      project,
+      id: getPanelScheduleManagerProjectKey(project, index),
+      label: String(
+        project?.nick || project?.name || project?.id || "Project " + (index + 1)
+      ).trim(),
+      path: normalizeProjectPath(project?.path || ""),
+    }))
+    .filter((entry) => entry.id);
+}
+
+function getSelectedPanelScheduleManagerProject() {
+  return (
+    getPanelScheduleManagerProjectOptions().find(
+      (entry) => entry.id === panelScheduleManagerState.projectId
+    ) || null
+  );
+}
+
+function clearPanelScheduleManagerPoll() {
+  if (panelScheduleManagerState.pollTimer) {
+    clearTimeout(panelScheduleManagerState.pollTimer);
+    panelScheduleManagerState.pollTimer = 0;
+  }
+}
+
+function schedulePanelScheduleManagerPoll() {
+  clearPanelScheduleManagerPoll();
+  const dlg = document.getElementById("panelScheduleManagerDlg");
+  if (!dlg?.open || !panelScheduleManagerState.sessionId) return;
+  panelScheduleManagerState.pollTimer = window.setTimeout(() => {
+    void pollPanelScheduleManager();
+  }, 5000);
+}
+
+function setPanelScheduleManagerLoading(loading, message = "Reading panel schedules") {
+  panelScheduleManagerState.loading = Boolean(loading);
+  const loadingEl = document.getElementById("psmLoading");
+  if (loadingEl) {
+    loadingEl.hidden = !loading;
+    const spinner = loadingEl.querySelector(".spinner");
+    if (spinner) spinner.textContent = message;
+  }
+  renderPanelScheduleManagerVisibility();
+}
+
+function setPanelScheduleManagerSyncStatus(text, kind = "") {
+  const status = document.getElementById("psmSyncStatus");
+  if (!status) return;
+  status.textContent = text;
+  status.classList.toggle("is-synced", kind === "synced");
+  status.classList.toggle("is-dirty", kind === "dirty");
+  status.classList.toggle("is-conflict", kind === "conflict");
+}
+
+function renderPanelScheduleManagerVisibility() {
+  const hasPanels = panelScheduleManagerState.panels.length > 0;
+  const loading = panelScheduleManagerState.loading;
+  const empty = document.getElementById("psmEmpty");
+  const workspace = document.getElementById("psmWorkspace");
+  if (empty) empty.hidden = loading || hasPanels;
+  if (workspace) workspace.hidden = loading || !hasPanels;
+}
+
+function renderPanelScheduleManagerProjects() {
+  const select = document.getElementById("psmProjectSelect");
+  if (!select) return;
+  const options = getPanelScheduleManagerProjectOptions();
+  select.replaceChildren();
+  if (!options.length) {
+    select.appendChild(el("option", { value: "", textContent: "No projects available" }));
+    select.disabled = true;
+    return;
+  }
+  select.disabled = false;
+  options.forEach((entry) => {
+    select.appendChild(el("option", { value: entry.id, textContent: entry.label }));
+  });
+  if (!options.some((entry) => entry.id === panelScheduleManagerState.projectId)) {
+    panelScheduleManagerState.projectId = options[0].id;
+    panelScheduleManagerState.projectPath = options[0].path;
+  }
+  select.value = panelScheduleManagerState.projectId;
+}
+
+function renderPanelScheduleManagerConnection() {
+  const pathButton = document.getElementById("psmWorkbookPath");
+  const openButton = document.getElementById("psmOpenWorkbookBtn");
+  const path = panelScheduleManagerState.workbookPath;
+  if (pathButton) {
+    pathButton.textContent = path || "No workbook selected";
+    pathButton.title = path ? "Open " + path : "No workbook selected";
+    pathButton.disabled = !path;
+  }
+  if (openButton) openButton.disabled = !path;
+}
+
+function getActivePanelScheduleManagerPanel() {
+  return (
+    panelScheduleManagerState.panels.find(
+      (panel) => panel.worksheetName === panelScheduleManagerState.activeWorksheetName
+    ) || panelScheduleManagerState.panels[0] || null
+  );
+}
+
+function getPanelScheduleManagerDisplayName(panel) {
+  const panelName = String(panel?.panelName || panel?.worksheetName || "Panel").trim();
+  const section = String(panel?.sectionLabel || "").trim();
+  return section && !panelName.toUpperCase().includes(section.toUpperCase())
+    ? panelName + " - " + section
+    : panelName;
+}
+
+function renderPanelScheduleManagerPanelList() {
+  const list = document.getElementById("psmPanelList");
+  const count = document.getElementById("psmPanelCount");
+  if (count) count.textContent = String(panelScheduleManagerState.panels.length);
+  if (!list) return;
+  list.replaceChildren();
+  panelScheduleManagerState.panels.forEach((panel) => {
+    const button = el("button", {
+      type: "button",
+      className:
+        panel.worksheetName === panelScheduleManagerState.activeWorksheetName
+          ? "is-active"
+          : "",
+    });
+    button.append(
+      el("span", { textContent: getPanelScheduleManagerDisplayName(panel) }),
+      el("span", { textContent: String(panel.worksheetName || "") })
+    );
+    button.addEventListener("click", () => {
+      panelScheduleManagerState.activeWorksheetName = panel.worksheetName;
+      renderPanelScheduleManager();
+    });
+    list.appendChild(button);
+  });
+}
+
+function setPanelScheduleManagerInputValue(input, value) {
+  const normalized = value === null || value === undefined ? "" : String(value);
+  if (input.value !== normalized) input.value = normalized;
+}
+
+function createPanelScheduleCircuitInput(circuitIndex, field, value, className = "") {
+  return el("input", {
+    type: "text",
+    value: value === null || value === undefined ? "" : String(value),
+    className,
+    "data-psm-circuit-index": String(circuitIndex),
+    "data-psm-circuit-field": field,
+    autocomplete: "off",
+  });
+}
+
+function getPanelScheduleManagerCircuitPairs(circuits = []) {
+  const pairsByRow = new Map();
+  (Array.isArray(circuits) ? circuits : []).forEach((circuit, circuitIndex) => {
+    const circuitNumber = Number(circuit?.circuitNumber);
+    const sourceRow = Number(circuit?.sourceRow);
+    const order = Number.isFinite(sourceRow) && sourceRow > 0
+      ? sourceRow
+      : Math.ceil((Number.isFinite(circuitNumber) ? circuitNumber : circuitIndex + 1) / 2);
+    const key = Number.isFinite(sourceRow) && sourceRow > 0
+      ? "row-" + sourceRow
+      : "pair-" + order;
+    const pair = pairsByRow.get(key) || { order, left: null, right: null };
+    const declaredSide = String(circuit?.side || "").toLowerCase();
+    const side = declaredSide === "left" || declaredSide === "right"
+      ? declaredSide
+      : circuitNumber % 2 === 0
+        ? "right"
+        : "left";
+    pair[side] = { circuit, circuitIndex };
+    pairsByRow.set(key, pair);
+  });
+  return Array.from(pairsByRow.values()).sort((left, right) => left.order - right.order);
+}
+
+function appendPanelScheduleManagerCircuitCell(row, entry, field, className, side) {
+  const cell = document.createElement("td");
+  cell.classList.add("psm-circuit-input-cell", "psm-" + side + "-side");
+  if (entry) {
+    cell.appendChild(
+      createPanelScheduleCircuitInput(
+        entry.circuitIndex,
+        field,
+        entry.circuit[field],
+        className
+      )
+    );
+  }
+  row.appendChild(cell);
+}
+
+function appendPanelScheduleManagerCircuitNumber(row, entry, side) {
+  row.appendChild(
+    el("td", {
+      className: "psm-circuit-number psm-" + side + "-side",
+      textContent: entry ? String(entry.circuit.circuitNumber ?? "") : "",
+    })
+  );
+}
+
+function updatePanelScheduleManagerCircuitCount(panel = null) {
+  const count = document.getElementById("psmCircuitCountText");
+  if (!count) return;
+  const circuits = Array.isArray(panel?.circuits) ? panel.circuits : [];
+  const highestCircuit = circuits.reduce(
+    (highest, circuit) => Math.max(highest, Number(circuit?.circuitNumber) || 0),
+    0
+  );
+  count.textContent = highestCircuit
+    ? highestCircuit + " circuits loaded"
+    : "No circuits loaded";
+}
+
+function scrollPanelScheduleManagerCircuits(destination = "page") {
+  const viewport = document.getElementById("psmCircuitTableWrap");
+  if (!viewport) return;
+  const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+  const pageSize = Math.max(160, Math.floor(viewport.clientHeight * 0.8));
+  if (destination === "bottom") {
+    viewport.scrollTop = maxScrollTop;
+  } else if (destination === "top") {
+    viewport.scrollTop = 0;
+  } else {
+    viewport.scrollTop = Math.min(maxScrollTop, viewport.scrollTop + pageSize);
+  }
+  viewport.focus({ preventScroll: true });
+}
+
+function handlePanelScheduleManagerCircuitWheel(event) {
+  const viewport = event.currentTarget;
+  if (!(viewport instanceof HTMLElement) || event.ctrlKey || event.shiftKey) return;
+  if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+  const multiplier = event.deltaMode === 1
+    ? 36
+    : event.deltaMode === 2
+      ? viewport.clientHeight
+      : 1;
+  const delta = event.deltaY * multiplier;
+  const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+  const nextScrollTop = Math.min(
+    maxScrollTop,
+    Math.max(0, viewport.scrollTop + delta)
+  );
+  if (nextScrollTop === viewport.scrollTop) return;
+  event.preventDefault();
+  event.stopPropagation();
+  viewport.scrollTop = nextScrollTop;
+}
+
+function renderPanelScheduleManagerEditor() {
+  const panel = getActivePanelScheduleManagerPanel();
+  const title = document.getElementById("psmActivePanelTitle");
+  const worksheet = document.getElementById("psmWorksheetName");
+  const validation = document.getElementById("psmPanelValidation");
+  const rows = document.getElementById("psmCircuitRows");
+  if (!panel) {
+    if (rows) rows.replaceChildren();
+    updatePanelScheduleManagerCircuitCount();
+    return;
+  }
+  if (title) title.textContent = getPanelScheduleManagerDisplayName(panel);
+  if (worksheet) worksheet.textContent = "Excel worksheet: " + (panel.worksheetName || "");
+  if (validation) validation.textContent = panel.validationStatus || "VALID";
+  updatePanelScheduleManagerCircuitCount(panel);
+
+  const editableFields = new Set(panel.editablePanelFields || []);
+  document.querySelectorAll("[data-psm-panel-field]").forEach((input) => {
+    const field = input.dataset.psmPanelField;
+    setPanelScheduleManagerInputValue(input, panel[field]);
+    input.disabled = editableFields.size > 0 && !editableFields.has(field);
+  });
+  const mainBreakerInput = document.querySelector(
+    '[data-psm-panel-field="mainBreakerAmps"]'
+  );
+  if (mainBreakerInput) {
+    mainBreakerInput.disabled =
+      (editableFields.size > 0 && !editableFields.has("mainBreakerAmps")) ||
+      panel.mainType === "MLO";
+  }
+
+  if (!rows) return;
+  rows.replaceChildren();
+  getPanelScheduleManagerCircuitPairs(panel.circuits).forEach((pair) => {
+    const row = document.createElement("tr");
+    appendPanelScheduleManagerCircuitNumber(row, pair.left, "odd");
+    const oddFields = [
+      ["notes", "psm-cell-notes"],
+      ["loadTypeCode", "psm-cell-load"],
+      ["polesInput", "psm-cell-poles"],
+      ["breakerAmpsInput", "psm-cell-trip"],
+      ["loadDescription", "psm-cell-description"],
+      ["connectedKvaInput", "psm-cell-kva"],
+    ];
+    oddFields.forEach(([field, className]) => {
+      appendPanelScheduleManagerCircuitCell(row, pair.left, field, className, "odd");
+    });
+
+    row.appendChild(
+      el("td", {
+        className: "psm-circuit-phase",
+        textContent: String(
+          pair.left?.circuit?.phasePole || pair.right?.circuit?.phasePole || ""
+        ),
+      })
+    );
+
+    const evenFields = [
+      ["connectedKvaInput", "psm-cell-kva"],
+      ["loadDescription", "psm-cell-description"],
+      ["breakerAmpsInput", "psm-cell-trip"],
+      ["polesInput", "psm-cell-poles"],
+      ["loadTypeCode", "psm-cell-load"],
+      ["notes", "psm-cell-notes"],
+    ];
+    evenFields.forEach(([field, className]) => {
+      appendPanelScheduleManagerCircuitCell(row, pair.right, field, className, "even");
+    });
+    appendPanelScheduleManagerCircuitNumber(row, pair.right, "even");
+    rows.appendChild(row);
+  });
+}
+
+function renderPanelScheduleManagerConflict() {
+  const banner = document.getElementById("psmConflictBanner");
+  const message = document.getElementById("psmConflictMessage");
+  const changes = document.getElementById("psmConflictChanges");
+  const hasConflict = Boolean(panelScheduleManagerState.conflictPath);
+  if (banner) banner.hidden = !hasConflict;
+  if (!hasConflict) return;
+  if (message) {
+    message.textContent =
+      "The linked workbook was left untouched. Review the highlighted copy, then reload Excel changes before saving again.";
+  }
+  if (changes) {
+    const items = panelScheduleManagerState.conflictChanges
+      .slice(0, 4)
+      .map(
+        (change) =>
+          change.worksheetName + " " + change.address + ": " + change.field
+      );
+    const remaining = Math.max(
+      panelScheduleManagerState.conflictChanges.length - items.length,
+      0
+    );
+    changes.textContent =
+      items.join(" • ") + (remaining ? " • +" + remaining + " more" : "");
+  }
+}
+
+function formatPanelScheduleManagerSyncTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+function updatePanelScheduleManagerControls() {
+  const reloadButton = document.getElementById("psmReloadBtn");
+  const saveButton = document.getElementById("psmSaveBtn");
+  const footer = document.getElementById("psmFooterMessage");
+  const connected = Boolean(panelScheduleManagerState.sessionId);
+  const conflicted = Boolean(panelScheduleManagerState.conflictPath);
+  if (reloadButton) reloadButton.disabled = !connected || panelScheduleManagerState.saving;
+  if (saveButton) {
+    saveButton.disabled =
+      !connected ||
+      !panelScheduleManagerState.dirty ||
+      panelScheduleManagerState.saving ||
+      conflicted;
+    saveButton.textContent = panelScheduleManagerState.saving
+      ? "Saving to Excel..."
+      : "Save changes to Excel";
+  }
+  if (conflicted) {
+    setPanelScheduleManagerSyncStatus("Conflict copy created", "conflict");
+    if (footer) {
+      footer.textContent = "Reload from Excel before continuing this edit session.";
+    }
+  } else if (panelScheduleManagerState.dirty) {
+    setPanelScheduleManagerSyncStatus("Unsaved app changes", "dirty");
+    if (footer) footer.textContent = "Changes are local until you save them to Excel.";
+  } else if (connected) {
+    setPanelScheduleManagerSyncStatus("Excel synchronized", "synced");
+    if (footer) {
+      const syncTime = formatPanelScheduleManagerSyncTime(
+        panelScheduleManagerState.lastSyncedAt
+      );
+      footer.textContent =
+        "Watching Excel for changes" + (syncTime ? " • Last synced " + syncTime : "") + ".";
+    }
+  } else {
+    setPanelScheduleManagerSyncStatus("Not connected");
+    if (footer) footer.textContent = "Choose a project workbook to begin.";
+  }
+}
+
+function renderPanelScheduleManager() {
+  renderPanelScheduleManagerProjects();
+  renderPanelScheduleManagerConnection();
+  renderPanelScheduleManagerVisibility();
+  renderPanelScheduleManagerPanelList();
+  renderPanelScheduleManagerEditor();
+  renderPanelScheduleManagerConflict();
+  updatePanelScheduleManagerControls();
+}
+
+function applyPanelScheduleManagerPayload(payload, { preserveSelection = true } = {}) {
+  const previousWorksheet = preserveSelection
+    ? panelScheduleManagerState.activeWorksheetName
+    : "";
+  panelScheduleManagerState.sessionId = String(payload?.sessionId || "").trim();
+  panelScheduleManagerState.workbookPath = String(payload?.workbookPath || "").trim();
+  panelScheduleManagerState.panels = deepCloneJson(payload?.panels, []);
+  panelScheduleManagerState.revision = String(payload?.revision || "").trim();
+  panelScheduleManagerState.lastSyncedAt = String(payload?.lastSyncedAt || "").trim();
+  panelScheduleManagerState.activeWorksheetName =
+    panelScheduleManagerState.panels.some(
+      (panel) => panel.worksheetName === previousWorksheet
+    )
+      ? previousWorksheet
+      : String(panelScheduleManagerState.panels[0]?.worksheetName || "");
+  panelScheduleManagerState.dirty = false;
+  panelScheduleManagerState.conflictPath = "";
+  panelScheduleManagerState.conflictChanges = [];
+  renderPanelScheduleManager();
+  schedulePanelScheduleManagerPoll();
+}
+
+async function closePanelScheduleManagerSession() {
+  clearPanelScheduleManagerPoll();
+  const sessionId = panelScheduleManagerState.sessionId;
+  panelScheduleManagerState.sessionId = "";
+  if (sessionId && window.pywebview?.api?.close_panel_schedule_manager) {
+    try {
+      await window.pywebview.api.close_panel_schedule_manager(sessionId);
+    } catch (_) {
+      // Session cleanup is best effort when the window is closing.
+    }
+  }
+}
+
+async function connectPanelScheduleManager(workbookPath = "") {
+  if (!panelScheduleManagerState.projectId) {
+    toast("Choose a project first.");
+    return;
+  }
+  if (!window.pywebview?.api?.start_panel_schedule_manager) {
+    toast("Panel Schedule Manager is unavailable in this environment.");
+    return;
+  }
+  await closePanelScheduleManagerSession();
+  panelScheduleManagerState.panels = [];
+  panelScheduleManagerState.workbookPath = String(workbookPath || "").trim();
+  panelScheduleManagerState.dirty = false;
+  panelScheduleManagerState.conflictPath = "";
+  setPanelScheduleManagerLoading(true);
+  try {
+    const result = await window.pywebview.api.start_panel_schedule_manager(
+      panelScheduleManagerState.projectId,
+      panelScheduleManagerState.workbookPath || null
+    );
+    if (result?.status === "unbound") {
+      panelScheduleManagerState.workbookPath = "";
+      panelScheduleManagerState.panels = [];
+      renderPanelScheduleManager();
+      return;
+    }
+    if (result?.status !== "success") {
+      throw new Error(result?.message || "Could not read the panel schedule workbook.");
+    }
+    applyPanelScheduleManagerPayload(result, { preserveSelection: false });
+  } catch (error) {
+    panelScheduleManagerState.panels = [];
+    panelScheduleManagerState.workbookPath = "";
+    toast(error?.message || "Could not open the panel schedule workbook.");
+    renderPanelScheduleManager();
+  } finally {
+    setPanelScheduleManagerLoading(false);
+  }
+}
+
+async function choosePanelScheduleManagerWorkbook() {
+  if (!window.pywebview?.api?.select_files) {
+    toast("The Excel file picker is unavailable.");
+    return;
+  }
+  const selectedProject = getSelectedPanelScheduleManagerProject();
+  try {
+    const selection = await window.pywebview.api.select_files({
+      allow_multiple: false,
+      file_types: ["Excel Panel Schedules (*.xls;*.xlsx)"],
+      default_directory:
+        selectedProject?.path || panelScheduleManagerState.projectPath || undefined,
+    });
+    if (selection?.status === "success" && selection.paths?.length) {
+      await connectPanelScheduleManager(selection.paths[0]);
+    }
+  } catch (error) {
+    toast(error?.message || "Could not select the Excel workbook.");
+  }
+}
+
+async function openPanelScheduleManagerPath(path) {
+  const target = String(path || "").trim();
+  if (!target || !window.pywebview?.api?.open_path) return;
+  const result = await window.pywebview.api.open_path(target);
+  if (result?.status && result.status !== "success") {
+    toast(result.message || "Could not open the Excel workbook.");
+  }
+}
+
+function showPanelScheduleManagerConflict(result) {
+  panelScheduleManagerState.conflictPath = String(result?.conflictPath || "").trim();
+  panelScheduleManagerState.conflictChanges = deepCloneJson(result?.changes, []);
+  renderPanelScheduleManagerConflict();
+  updatePanelScheduleManagerControls();
+  toast("Excel changed while you were editing. A highlighted conflict copy was created.");
+}
+
+async function pollPanelScheduleManager() {
+  clearPanelScheduleManagerPoll();
+  const dlg = document.getElementById("panelScheduleManagerDlg");
+  if (
+    !dlg?.open ||
+    !panelScheduleManagerState.sessionId ||
+    panelScheduleManagerState.saving
+  ) {
+    schedulePanelScheduleManagerPoll();
+    return;
+  }
+  try {
+    const result = await window.pywebview.api.poll_panel_schedule_manager(
+      panelScheduleManagerState.sessionId,
+      panelScheduleManagerState.dirty
+    );
+    if (result?.status === "updated") {
+      applyPanelScheduleManagerPayload(result);
+      toast("Panel schedules refreshed from Excel.");
+      return;
+    }
+    if (result?.status === "conflict") {
+      showPanelScheduleManagerConflict(result);
+    } else if (result?.status === "error") {
+      setPanelScheduleManagerSyncStatus("Excel sync unavailable", "conflict");
+    }
+  } catch (_) {
+    setPanelScheduleManagerSyncStatus("Excel sync unavailable", "conflict");
+  }
+  schedulePanelScheduleManagerPoll();
+}
+
+async function reloadPanelScheduleManagerFromExcel({ skipConfirm = false } = {}) {
+  if (!panelScheduleManagerState.sessionId || panelScheduleManagerState.saving) return;
+  if (
+    !skipConfirm &&
+    panelScheduleManagerState.dirty &&
+    !window.confirm(
+      "Discard the unsaved application edits and reload the latest Excel values?"
+    )
+  ) {
+    return;
+  }
+  setPanelScheduleManagerLoading(true, "Reloading Excel changes");
+  try {
+    const result = await window.pywebview.api.reload_panel_schedule_manager(
+      panelScheduleManagerState.sessionId
+    );
+    if (result?.status !== "updated") {
+      throw new Error(result?.message || "Could not reload the panel schedule workbook.");
+    }
+    applyPanelScheduleManagerPayload(result);
+    toast("Latest Excel changes loaded.");
+  } catch (error) {
+    toast(error?.message || "Could not reload the Excel workbook.");
+  } finally {
+    setPanelScheduleManagerLoading(false);
+  }
+}
+
+async function savePanelScheduleManager() {
+  if (
+    !panelScheduleManagerState.sessionId ||
+    !panelScheduleManagerState.dirty ||
+    panelScheduleManagerState.saving ||
+    panelScheduleManagerState.conflictPath
+  ) {
+    return;
+  }
+  panelScheduleManagerState.saving = true;
+  updatePanelScheduleManagerControls();
+  try {
+    const result = await window.pywebview.api.save_panel_schedule_manager(
+      panelScheduleManagerState.sessionId,
+      panelScheduleManagerState.panels
+    );
+    if (result?.status === "conflict") {
+      showPanelScheduleManagerConflict(result);
+      return;
+    }
+    if (result?.status !== "saved") {
+      throw new Error(result?.message || "Could not save changes to Excel.");
+    }
+    applyPanelScheduleManagerPayload(result);
+    const count = Number(result.changedCellCount || 0);
+    toast(
+      "Saved " + count + " changed Excel cell" + (count === 1 ? "" : "s") + "."
+    );
+  } catch (error) {
+    toast(error?.message || "Could not save changes to Excel.");
+  } finally {
+    panelScheduleManagerState.saving = false;
+    updatePanelScheduleManagerControls();
+    schedulePanelScheduleManagerPoll();
+  }
+}
+
+function markPanelScheduleManagerDirty() {
+  panelScheduleManagerState.dirty = true;
+  updatePanelScheduleManagerControls();
+}
+
+function handlePanelScheduleManagerInput(event) {
+  const target = event.target;
+  const panel = getActivePanelScheduleManagerPanel();
+  if (
+    !panel ||
+    !(
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLSelectElement
+    )
+  ) {
+    return;
+  }
+  const panelField = target.dataset.psmPanelField;
+  if (panelField) {
+    panel[panelField] = target.value;
+    if (panelField === "panelName" || panelField === "sectionLabel") {
+      panel.displayName = getPanelScheduleManagerDisplayName(panel);
+      renderPanelScheduleManagerPanelList();
+      const title = document.getElementById("psmActivePanelTitle");
+      if (title) title.textContent = panel.displayName;
+    }
+    if (panelField === "mainType") {
+      const mainBreakerInput = document.querySelector(
+        '[data-psm-panel-field="mainBreakerAmps"]'
+      );
+      if (mainBreakerInput) mainBreakerInput.disabled = target.value === "MLO";
+    }
+    markPanelScheduleManagerDirty();
+    return;
+  }
+  const circuitIndex = Number(target.dataset.psmCircuitIndex);
+  const circuitField = target.dataset.psmCircuitField;
+  if (
+    Number.isInteger(circuitIndex) &&
+    circuitField &&
+    panel.circuits?.[circuitIndex]
+  ) {
+    panel.circuits[circuitIndex][circuitField] = target.value;
+    markPanelScheduleManagerDirty();
+  }
+}
+
+async function openPanelScheduleManager() {
+  const launchContext = resolveCadLaunchContextForTool();
+  panelScheduleManagerState.launchContext = deepCloneJson(launchContext, null);
+  const contextProjectId = getLaunchContextProjectId(launchContext);
+  const projects = getPanelScheduleManagerProjectOptions();
+  const contextProject = projects.find((entry) => entry.id === contextProjectId);
+  const selected = contextProject || projects[0] || null;
+  panelScheduleManagerState.projectId = selected?.id || contextProjectId || "";
+  panelScheduleManagerState.projectPath =
+    selected?.path || getLaunchContextProjectRoot(launchContext) || "";
+  panelScheduleManagerState.workbookPath = "";
+  panelScheduleManagerState.panels = [];
+  panelScheduleManagerState.activeWorksheetName = "";
+  panelScheduleManagerState.dirty = false;
+  panelScheduleManagerState.conflictPath = "";
+  panelScheduleManagerState.conflictChanges = [];
+  const dlg = document.getElementById("panelScheduleManagerDlg");
+  if (!dlg) return;
+  if (!dlg.open) dlg.showModal();
+  renderPanelScheduleManager();
+  if (panelScheduleManagerState.projectId) {
+    await connectPanelScheduleManager();
+  }
+}
+
+async function closePanelScheduleManager() {
+  if (
+    panelScheduleManagerState.dirty &&
+    !window.confirm("Close Panel Schedules and discard unsaved application edits?")
+  ) {
+    return;
+  }
+  await closePanelScheduleManagerSession();
+  const dlg = document.getElementById("panelScheduleManagerDlg");
+  if (dlg?.open) dlg.close();
 }
 
 // --- Circuit Breaker AI (Panel Schedule) ---
@@ -35046,41 +36057,76 @@ function initToolCardDetailsToggles() {
 
     const body = card.querySelector(".tool-card-body");
     const statusEl = card.querySelector(".tool-card-status");
-    if (!body || !statusEl) return;
+    const descriptionText = body ? body.textContent.trim() : "";
+    const headerEl = card.querySelector(".tool-card-header");
+    const headerText = headerEl ? headerEl.textContent.trim() : "";
 
-    const detailsId =
-      body.id || `${card.id || `tool-card-${index + 1}`}-details`;
-    body.id = detailsId;
+    // Create or get actions container
+    let actions = card.querySelector(".tool-card-actions");
+    if (!actions) {
+      actions = document.createElement("div");
+      actions.className = "tool-card-actions";
+      const settingsBtn = card.querySelector(".tool-card-settings");
+      if (settingsBtn) {
+        card.insertBefore(actions, settingsBtn);
+        actions.appendChild(settingsBtn);
+      } else {
+        card.appendChild(actions);
+      }
+    }
 
-    const footer = document.createElement("div");
-    footer.className = "tool-card-footer";
+    // If description exists, create question mark help hover menu
+    if (descriptionText && !card.querySelector(".tool-card-help")) {
+      const helpBtn = document.createElement("div");
+      helpBtn.className = "tool-card-help";
+      helpBtn.setAttribute("role", "button");
+      helpBtn.setAttribute("tabindex", "0");
+      helpBtn.setAttribute("aria-label", `${headerText} info`);
 
-    const toggle = document.createElement("button");
-    toggle.type = "button";
-    toggle.className = "tool-card-toggle";
-    toggle.textContent = "Details";
-    toggle.setAttribute("aria-controls", detailsId);
-    toggle.setAttribute("aria-expanded", "false");
+      const helpIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      helpIcon.setAttribute("width", "13");
+      helpIcon.setAttribute("height", "13");
+      helpIcon.setAttribute("viewBox", "0 0 24 24");
+      helpIcon.setAttribute("fill", "none");
+      helpIcon.setAttribute("stroke", "currentColor");
+      helpIcon.setAttribute("stroke-width", "2");
+      helpIcon.setAttribute("stroke-linecap", "round");
+      helpIcon.setAttribute("stroke-linejoin", "round");
+      helpIcon.innerHTML = '<circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line>';
 
-    const setExpanded = (expanded) => {
-      card.classList.toggle("details-expanded", expanded);
-      toggle.textContent = expanded ? "Hide details" : "Details";
-      toggle.setAttribute("aria-expanded", String(expanded));
-    };
+      const tooltip = document.createElement("div");
+      tooltip.className = "tool-card-tooltip";
+      tooltip.innerHTML = `<div class="tool-card-tooltip-title">${headerText}</div><div class="tool-card-tooltip-text">${descriptionText}</div>`;
 
-    setExpanded(false);
+      helpBtn.append(helpIcon, tooltip);
 
-    toggle.addEventListener("click", (e) => {
-      e.stopPropagation();
-      setExpanded(!card.classList.contains("details-expanded"));
-    });
+      helpBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+      });
+      helpBtn.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.stopPropagation();
+        }
+      });
 
-    toggle.addEventListener("keydown", (e) => {
-      e.stopPropagation();
-    });
+      actions.appendChild(helpBtn);
+    }
 
-    footer.append(toggle, statusEl);
-    card.appendChild(footer);
+    // Wrap header and status inside tool-card-info so status renders cleanly under the title
+    const content = card.querySelector(".tool-card-content");
+    if (content && headerEl) {
+      let infoWrap = content.querySelector(".tool-card-info");
+      if (!infoWrap) {
+        infoWrap = document.createElement("div");
+        infoWrap.className = "tool-card-info";
+        content.insertBefore(infoWrap, headerEl);
+        infoWrap.appendChild(headerEl);
+        if (statusEl) {
+          infoWrap.appendChild(statusEl);
+        }
+      }
+    }
+
     card.dataset.detailsToggleReady = "true";
   });
 }
@@ -35108,6 +36154,7 @@ function guardUnderConstructionToolAccess(card, label, event) {
 }
 
 function handleProjectSearchInput() {
+  resetProjectsListPagination();
   if (projectsViewMode !== "list" && val("search")) {
     setProjectsViewMode("list", { persist: false });
     return;
@@ -35979,6 +37026,29 @@ function initEventListeners() {
     "input",
     debounce(handleProjectSearchInput, 250)
   );
+  const projectsPageSize = document.getElementById("projectsPageSize");
+  projectsPageSize?.addEventListener("change", (event) => {
+    projectsListPageSize = normalizeProjectsListPageSize(event.target.value);
+    resetProjectsListPagination();
+    renderProjectsPreservingExpandedDeliverables();
+    scrollProjectsListToTop();
+  });
+  document.getElementById("projectsPageFirst")?.addEventListener("click", () => {
+    setProjectsListPage(1);
+  });
+  document.getElementById("projectsPagePrev")?.addEventListener("click", () => {
+    setProjectsListPage(projectsListPage - 1);
+  });
+  document.getElementById("projectsPageNext")?.addEventListener("click", () => {
+    setProjectsListPage(projectsListPage + 1);
+  });
+  document.getElementById("projectsPageLast")?.addEventListener("click", () => {
+    const pageCount = Number.parseInt(
+      document.getElementById("projectsPagination")?.dataset.pageCount || "1",
+      10
+    );
+    setProjectsListPage(pageCount);
+  });
   document.getElementById("notesSearch").addEventListener(
     "input",
     debounce((e) => {
@@ -36678,7 +37748,7 @@ function initEventListeners() {
         return;
       }
       try {
-        launchContext = await resolveCadFilesBeforeLaunch(launchContext);
+        launchContext = await resolveCadFilesBeforeLaunch(launchContext, "toolPublishDwgs");
         if (!launchContext) return;
       } catch (error) {
         toast(error?.message || "Could not select DWG files.");
@@ -36720,7 +37790,7 @@ function initEventListeners() {
         return;
       }
       try {
-        launchContext = await resolveCadFilesBeforeLaunch(launchContext);
+        launchContext = await resolveCadFilesBeforeLaunch(launchContext, "toolManageLayers");
         if (!launchContext) return;
       } catch (error) {
         toast(error?.message || "Could not select DWG files.");
@@ -37019,6 +38089,91 @@ function initEventListeners() {
       const frame = document.getElementById("wireSizerFrame");
       if (frame) frame.src = "about:blank";
       setWireSizerMessage("");
+    });
+  }
+
+  // Project Panel Schedule Manager event listeners
+  const panelScheduleManagerBtn = document.getElementById("toolPanelScheduleManager");
+  if (panelScheduleManagerBtn) {
+    panelScheduleManagerBtn.addEventListener("click", () => {
+      void openPanelScheduleManager();
+    });
+    panelScheduleManagerBtn.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        void openPanelScheduleManager();
+      }
+    });
+  }
+
+  const panelScheduleManagerDlg = document.getElementById("panelScheduleManagerDlg");
+  if (panelScheduleManagerDlg) {
+    panelScheduleManagerDlg.addEventListener("input", handlePanelScheduleManagerInput);
+    panelScheduleManagerDlg.addEventListener("change", handlePanelScheduleManagerInput);
+    panelScheduleManagerDlg.addEventListener("cancel", (e) => {
+      e.preventDefault();
+      void closePanelScheduleManager();
+    });
+    panelScheduleManagerDlg.addEventListener("close", () => {
+      clearPanelScheduleManagerPoll();
+      void closePanelScheduleManagerSession();
+    });
+  }
+
+  document.getElementById("psmCloseBtn")?.addEventListener("click", () => {
+    void closePanelScheduleManager();
+  });
+  document.getElementById("psmChooseWorkbookBtn")?.addEventListener("click", () => {
+    void choosePanelScheduleManagerWorkbook();
+  });
+  document.getElementById("psmEmptyChooseBtn")?.addEventListener("click", () => {
+    void choosePanelScheduleManagerWorkbook();
+  });
+  document.getElementById("psmOpenWorkbookBtn")?.addEventListener("click", () => {
+    void openPanelScheduleManagerPath(panelScheduleManagerState.workbookPath);
+  });
+  document.getElementById("psmWorkbookPath")?.addEventListener("click", () => {
+    void openPanelScheduleManagerPath(panelScheduleManagerState.workbookPath);
+  });
+  document.getElementById("psmOpenConflictBtn")?.addEventListener("click", () => {
+    void openPanelScheduleManagerPath(panelScheduleManagerState.conflictPath);
+  });
+  document.getElementById("psmReloadConflictBtn")?.addEventListener("click", () => {
+    void reloadPanelScheduleManagerFromExcel();
+  });
+  document.getElementById("psmReloadBtn")?.addEventListener("click", () => {
+    void reloadPanelScheduleManagerFromExcel();
+  });
+  document.getElementById("psmSaveBtn")?.addEventListener("click", () => {
+    void savePanelScheduleManager();
+  });
+  document.getElementById("psmCircuitPageDownBtn")?.addEventListener("click", () => {
+    scrollPanelScheduleManagerCircuits("page");
+  });
+  document.getElementById("psmCircuitBottomBtn")?.addEventListener("click", () => {
+    scrollPanelScheduleManagerCircuits("bottom");
+  });
+  document.getElementById("psmCircuitTableWrap")?.addEventListener(
+    "wheel",
+    handlePanelScheduleManagerCircuitWheel,
+    { passive: false }
+  );
+
+  const psmProjectSelect = document.getElementById("psmProjectSelect");
+  if (psmProjectSelect) {
+    psmProjectSelect.addEventListener("change", async (e) => {
+      const previousProjectId = panelScheduleManagerState.projectId;
+      if (
+        panelScheduleManagerState.dirty &&
+        !window.confirm("Discard unsaved panel edits and switch projects?")
+      ) {
+        e.target.value = previousProjectId;
+        return;
+      }
+      panelScheduleManagerState.projectId = String(e.target.value || "").trim();
+      const selected = getSelectedPanelScheduleManagerProject();
+      panelScheduleManagerState.projectPath = selected?.path || "";
+      await connectPanelScheduleManager();
     });
   }
 
@@ -37706,6 +38861,13 @@ function initEventListeners() {
 
   [
     [
+      "automateProjectDisciplinePublish",
+      [
+        "settings_publish_automateProjectDisciplinePublish",
+        "publish_modal_automateProjectDisciplinePublish",
+      ],
+    ],
+    [
       "autoDetectPaperSize",
       ["settings_publish_autoDetectPaperSize", "publish_modal_autoDetectPaperSize"],
     ],
@@ -37761,19 +38923,33 @@ function initEventListeners() {
     updateLabel();
   });
 
-  ["settings_manageLayers_scanAllLayers", "manageLayers_modal_scanAllLayers"]
-    .map((id) => document.getElementById(id))
-    .filter(Boolean)
-    .forEach((checkbox) => {
-      checkbox.onchange = (e) => {
-        if (!userSettings.manageLayersOptions) {
-          userSettings.manageLayersOptions = { ...DEFAULT_MANAGE_LAYERS_OPTIONS };
-        }
-        userSettings.manageLayersOptions.scanAllLayers = e.target.checked;
-        syncManageLayersOptionsInputs();
-        debouncedSaveUserSettings();
-      };
-    });
+  [
+    [
+      "autoSelectProjectDisciplineDwgs",
+      [
+        "settings_manageLayers_autoSelectProjectDisciplineDwgs",
+        "manageLayers_modal_autoSelectProjectDisciplineDwgs",
+      ],
+    ],
+    [
+      "scanAllLayers",
+      ["settings_manageLayers_scanAllLayers", "manageLayers_modal_scanAllLayers"],
+    ],
+  ].forEach(([settingKey, checkboxIds]) => {
+    checkboxIds
+      .map((id) => document.getElementById(id))
+      .filter(Boolean)
+      .forEach((checkbox) => {
+        checkbox.onchange = (e) => {
+          if (!userSettings.manageLayersOptions) {
+            userSettings.manageLayersOptions = { ...DEFAULT_MANAGE_LAYERS_OPTIONS };
+          }
+          userSettings.manageLayersOptions[settingKey] = e.target.checked;
+          syncManageLayersOptionsInputs();
+          debouncedSaveUserSettings();
+        };
+      });
+  });
 
   const bindManageLayersPatternInput = (id, key) => {
     const input = document.getElementById(id);
@@ -40314,6 +41490,11 @@ function renderPageView() {
   const editor = getPageEditorEl();
   const titleEl = document.getElementById("pageTitle");
   const childLinksEl = document.getElementById("pageChildLinks");
+  const deleteProjectBtn = document.getElementById("pageDeleteProjectBtn");
+  if (deleteProjectBtn) {
+    deleteProjectBtn.style.display =
+      project && !subpage && !globalPage ? "inline-flex" : "none";
+  }
 
   if (globalPage) {
     if (!globalPage.page || typeof globalPage.page !== "object") {

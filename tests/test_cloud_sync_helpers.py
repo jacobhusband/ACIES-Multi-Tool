@@ -115,6 +115,12 @@ class CloudSyncHelperTests(unittest.TestCase):
         )
         self.assertTrue(settings["publishDwgOptions"]["stripPdfLayers"])
         self.assertTrue(settings["publishDwgOptions"]["refreshExcelOleLinks"])
+        self.assertFalse(
+            settings["publishDwgOptions"]["automateProjectDisciplinePublish"]
+        )
+        self.assertFalse(
+            settings["manageLayersOptions"]["autoSelectProjectDisciplineDwgs"]
+        )
 
     def test_sanitize_user_settings_preserves_valid_unconfigured_active_discipline(self):
         payload = main_module.build_default_user_settings()
@@ -169,6 +175,38 @@ class CloudSyncHelperTests(unittest.TestCase):
         self.assertEqual(85, sanitized["publishDwgOptions"]["shrinkPercent"])
         self.assertTrue(sanitized["publishDwgOptions"]["stripPdfLayers"])
         self.assertTrue(sanitized["publishDwgOptions"]["refreshExcelOleLinks"])
+        self.assertFalse(
+            sanitized["publishDwgOptions"]["automateProjectDisciplinePublish"]
+        )
+
+    def test_sanitize_user_settings_migrates_electrical_publish_automation(self):
+        payload = main_module.build_default_user_settings()
+        payload["publishDwgOptions"].pop("automateProjectDisciplinePublish")
+        payload["publishDwgOptions"]["automateProjectElectricalPublish"] = True
+
+        sanitized, changed = main_module._sanitize_user_settings_payload(payload)
+
+        self.assertTrue(changed)
+        self.assertTrue(
+            sanitized["publishDwgOptions"]["automateProjectDisciplinePublish"]
+        )
+        self.assertNotIn(
+            "automateProjectElectricalPublish", sanitized["publishDwgOptions"]
+        )
+
+    def test_sanitize_user_settings_adds_missing_manage_layers_auto_select_default(self):
+        payload = main_module.build_default_user_settings()
+        payload["manageLayersOptions"] = {"scanAllLayers": False}
+
+        sanitized, changed = main_module._sanitize_user_settings_payload(payload)
+
+        self.assertTrue(changed)
+        self.assertFalse(sanitized["manageLayersOptions"]["scanAllLayers"])
+        self.assertFalse(
+            sanitized["manageLayersOptions"]["autoSelectProjectDisciplineDwgs"]
+        )
+        self.assertEqual([], sanitized["manageLayersOptions"]["freezePatterns"])
+        self.assertEqual([], sanitized["manageLayersOptions"]["thawPatterns"])
 
     def test_build_google_auth_record_preserves_id_token(self):
         existing_auth = {"idToken": "existing-id-token", "refreshToken": "refresh-token"}

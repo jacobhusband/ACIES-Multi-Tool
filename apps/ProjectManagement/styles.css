@@ -15600,3 +15600,15 @@ button.page-crumb:hover {
 }
 
 
+
+.clean-drawings-dialog { width: min(720px, 90vw); max-height: 85vh; overflow: auto; }
+.clean-drawings-dialog form > label { display: grid; gap: 6px; margin: 12px 0; }
+.clean-drawings-dialog fieldset { max-height: 240px; overflow: auto; margin: 16px 0; }
+.clean-drawings-dialog fieldset label { display: flex; gap: 8px; padding: 6px; overflow-wrap: anywhere; }
+.clean-drawings-dialog select { width: 100%; min-width: 0; }
+.clean-drawings-dialog button { margin-right: 8px; }
+.clean-drawings-dialog form { padding: 20px; }
+.clean-drawings-dialog fieldset input[type="checkbox"] { width: 18px; height: 18px; padding: 0; flex: 0 0 18px; margin: 0; }
+.clean-drawings-dialog fieldset label { align-items: center; justify-content: flex-start; }
+.clean-drawings-size { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 12px 0; }
+.clean-drawings-size label { display: grid; gap: 6px; min-width: 0; }

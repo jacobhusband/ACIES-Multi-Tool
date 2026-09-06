@@ -2643,6 +2643,7 @@ const WORKROOM_AUTO_SELECT_CAD_TOOL_IDS = new Set([
 ]);
 const WORKROOM_CAD_TOOL_IDS = new Set([
   ...WORKROOM_AUTO_SELECT_CAD_TOOL_IDS,
+  "toolCleanDrawings",
   "toolRepairXrefPaths",
   "toolCleanXrefs",
 ]);
@@ -3901,6 +3902,15 @@ const SHARED_TOOL_LAUNCH_REGISTRY = Object.freeze([
     isReady: true,
   },
   {
+    id: "toolCleanDrawings",
+    label: "Clean Drawings",
+    menuLabel: "Clean Drawings",
+    launchType: "user-selects-files",
+    category: "general",
+    iconSvg: '<path d="M4 3h12l4 4v14H4z"></path><path d="m8 13 3 3 6-7"></path>',
+    isReady: true,
+  },
+  {
     id: "toolCleanXrefs",
     label: "XREF",
     menuLabel: "XREF",
@@ -4032,6 +4042,7 @@ function getReadySharedToolLaunchEntries() {
 
 function getDeliverableToolMenuEntries() {
   const deliverableMenuOrder = [
+    "toolCleanDrawings",
     "toolPublishDwgs",
     "toolManageLayers",
     "toolRepairXrefPaths",
@@ -9902,6 +9913,26 @@ function deriveToolActivityProgress(toolId, message, currentProgress = 5) {
   const normalizedToolId = String(toolId || "").trim();
   const text = String(message || "").trim();
   if (!text) return clampActivityProgress(currentProgress, 5);
+  if (normalizedToolId === "toolCleanDrawings") {
+    let progress = currentProgress;
+    if (/^Finding electrical/.test(text)) progress = 4;
+    else if (/^Finding published/.test(text)) progress = 8;
+    else if (/^Reading PDF/.test(text)) progress = 12;
+    else if (/^Inspecting paper-space/.test(text)) progress = 16;
+    else if (/^Inspecting drawings and required/.test(text)) progress = 25;
+    else if (/^Copying/.test(text)) progress = 30;
+    else if (/^Redirecting/.test(text)) progress = 35;
+    else if (/^Cleaning the titleblock/.test(text)) progress = 40;
+    else if (/^Validating the saved titleblock/.test(text)) progress = 45;
+    else if (/^Checking source versions/.test(text)) progress = 95;
+    const drawing = text.match(/^(Cleaning|Validating) drawing (\d+) of (\d+):/);
+    if (drawing) {
+      const fraction = (Number(drawing[2]) - (drawing[1] === "Cleaning" ? 1 : 0.25)) / Math.max(Number(drawing[3]), 1);
+      progress = 45 + 45 * fraction;
+    }
+    // Worker heartbeat messages retain the stage's progress; never imply completion early.
+    return clampActivityProgress(Math.max(Number(currentProgress) || 0, Number(progress) || 0), 2);
+  }
   if (text === "DONE" || text.startsWith("WARN:") || text.startsWith("ERROR:")) {
     return 100;
   }
@@ -38929,6 +38960,53 @@ function initEventListeners() {
       }
     });
 
+  document.getElementById("toolCleanDrawings")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    if (button.classList.contains("running") || button.dataset.cleanBusy) return;
+    const launchContext = resolveCadLaunchContextForTool();
+    if (!(await ensureAutocadPathLoaded())) {
+      await showAutocadSelectModal();
+      return;
+    }
+    let activityId;
+    button.dataset.cleanBusy = "true";
+    button.setAttribute("aria-busy", "true");
+    const status = button.querySelector(".tool-card-status");
+    if (status) status.textContent = "Inspecting project drawings…";
+    try {
+      activityId = beginActivity({ toolId: "toolCleanDrawings", message: "Inspecting project drawings…", progress: 2,
+        canCancel: false, rerunLaunchContext: launchContext,
+        rerunDefaultPath: getLaunchContextProjectRoot(launchContext) });
+      const preview = await window.pywebview.api.preview_clean_drawings(launchContext, activityId);
+      if (preview.status !== "success") throw new Error(preview.message);
+      if (!preview.titleblocks.length || !preview.drawings.length) {
+        throw new Error("No titleblock candidates in XREF/Xrefs or drawings in Electrical were found.");
+      }
+      updateActivity(activityId, { message: "Waiting for titleblock and drawing confirmation…", progress: 20 });
+      const selection = await confirmCleanDrawingSelection(preview);
+      if (!selection) {
+        completeActivity(activityId, { status: ACTIVITY_STATUS.CANCELLED, message: "Clean Drawings cancelled." });
+        return;
+      }
+      updateActivity(activityId, { message: "Inspecting selected drawings…", progress: 22 });
+      const result = await window.pywebview.api.run_clean_drawings(selection, launchContext, activityId);
+      if (result.status !== "success") throw new Error(result.message);
+      completeActivity(activityId, { status: result.cleanupWarning ? ACTIVITY_STATUS.WARNING : ACTIVITY_STATUS.SUCCESS,
+        message: result.cleanupWarning || `Cleaned ${result.count} drawing(s) and the titleblock.`,
+        openFolderPath: result.output, openFolderLabel: "Open Cleaned CAD" });
+    } catch (error) {
+      if (activityId) failActivity(activityId, { message: error.message });
+      else toast(error.message || "Could not start Clean Drawings.");
+    } finally {
+      delete button.dataset.cleanBusy;
+      button.removeAttribute("aria-busy");
+      if (!activityId && status) status.textContent = "";
+    }
+  });
+  document.getElementById("toolCleanDrawings")?.addEventListener("keydown", event => {
+    if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.currentTarget.click(); }
+  });
+
   const bindTemplateToolButton = (toolId, templateKey, label) => {
     const button = document.getElementById(toolId);
     if (!button) return;
@@ -38967,6 +39045,7 @@ function initEventListeners() {
     ?.querySelector(".tools-grid");
   if (generalToolsGrid) {
     const generalToolOrder = [
+      "toolCleanDrawings",
       "toolPublishDwgs",
       "toolManageLayers",
       "toolRepairXrefPaths",
@@ -44324,3 +44403,58 @@ function renderPageCanvasView() {
 }
 
 init();
+
+function confirmCleanDrawingSelection(preview) {
+  return new Promise(resolve => {
+    const dialog = document.createElement("dialog");
+    dialog.className = "clean-drawings-dialog";
+    const form = document.createElement("form");
+    form.method = "dialog";
+    const heading = document.createElement("h2"); heading.textContent = "Clean Drawings"; form.append(heading);
+    const note = document.createElement("p");
+    note.textContent = "Confirm the titleblock and drawings. Cleanup uses local copies and a boundary starting at (0,0). External images, underlays, and linked OLE objects currently stop the job.";
+    form.append(note);
+    function field(text, control) {
+      const label = document.createElement("label"); label.append(document.createTextNode(text), control); form.append(label); return control;
+    }
+    const titleblock = field("Titleblock XREF", document.createElement("select"));
+    preview.titleblocks.forEach(path => titleblock.add(new Option(
+      `${path}${preview.detectedTitleblocks?.includes(path) ? " (referenced in paperspace)" : ""}`, path)));
+    const pdf = field("Reference PDF and sheet size", document.createElement("select"));
+    pdf.add(new Option("Enter dimensions manually", ""));
+    preview.sizes.forEach((size, index) => pdf.add(new Option(`${size.pdf}, page ${size.page}: ${size.width} x ${size.height} in`, String(index))));
+    const width = field("Width in CAD units", document.createElement("input"));
+    const height = field("Height in CAD units", document.createElement("input"));
+    const dimensions = document.createElement("div"); dimensions.className = "clean-drawings-size";
+    dimensions.append(width.parentElement, height.parentElement); form.append(dimensions);
+    [width, height].forEach(input => { input.type = "number"; input.min = "0.001"; input.max = "1000"; input.step = "any"; input.required = true; });
+    pdf.addEventListener("change", () => {
+      if (pdf.value !== "") { const size = preview.sizes[Number(pdf.value)]; width.value = size.width; height.value = size.height; }
+    });
+    if (preview.sizes.length) { pdf.value = "0"; pdf.dispatchEvent(new Event("change")); }
+    const unitNote = document.createElement("p");
+    unitNote.textContent = "PDF dimensions are inches. Confirm the CAD dimensions; for a 36 x 24 inch titleblock use 36 and 24."; form.append(unitNote);
+    const files = document.createElement("fieldset");
+    const legend = document.createElement("legend"); legend.textContent = "Electrical drawings"; files.append(legend);
+    const checks = preview.drawings.map(path => {
+      const label = document.createElement("label"); const check = document.createElement("input");
+      check.type = "checkbox"; check.checked = true; check.value = path;
+      label.append(check, document.createTextNode(path)); files.append(label); return check;
+    });
+    form.append(files);
+    const error = document.createElement("p"); error.setAttribute("role", "alert"); form.append(error);
+    const cancel = document.createElement("button"); cancel.type = "button"; cancel.className = "btn ghost"; cancel.textContent = "Cancel";
+    cancel.addEventListener("click", () => dialog.close());
+    const submit = document.createElement("button"); submit.type = "submit"; submit.className = "btn"; submit.textContent = "Clean selected drawings";
+    form.append(cancel, submit);
+    let selection = null;
+    form.addEventListener("submit", event => {
+      event.preventDefault(); const drawings = checks.filter(check => check.checked).map(check => check.value);
+      if (!drawings.length) { error.textContent = "Select at least one electrical drawing."; return; }
+      selection = { titleblock: titleblock.value, drawings, width: Number(width.value), height: Number(height.value), pdfSource: pdf.value === "" ? null : preview.sizes[Number(pdf.value)] };
+      dialog.close();
+    });
+    dialog.addEventListener("close", () => { dialog.remove(); resolve(selection); }, { once: true });
+    dialog.append(form); document.body.append(dialog); dialog.showModal();
+  });
+}

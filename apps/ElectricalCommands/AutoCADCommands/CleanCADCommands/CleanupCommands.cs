@@ -1,3 +1,4 @@
+using Application = Autodesk.AutoCAD.ApplicationServices.Core.Application;
 using Autodesk.AutoCAD.Runtime;
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
@@ -354,6 +355,7 @@ namespace AutoCADCleanupTool
             catch (System.Exception ex)
             {
                 ed.WriteMessage($"\nFailed to erase entities: {ex.Message}");
+                if (!regenerateView) throw;
             }
 
             return erasedCount;

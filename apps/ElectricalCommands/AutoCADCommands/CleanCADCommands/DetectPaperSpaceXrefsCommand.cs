@@ -1,3 +1,4 @@
+using Application = Autodesk.AutoCAD.ApplicationServices.Core.Application;
 using Autodesk.AutoCAD.Runtime;
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
@@ -13,6 +14,7 @@ namespace AutoCADCleanupTool
 {
     public partial class CleanupCommands
     {
+        internal static bool HeadlessPaperSpaceSucceeded;
         [CommandMethod("CLEANPS", CommandFlags.Modal)]
         public static void ListPaperSpaceXrefs()
         {
@@ -21,6 +23,7 @@ namespace AutoCADCleanupTool
 
         internal static void CleanPaperSpaceHeadless()
         {
+            HeadlessPaperSpaceSucceeded = false;
             CleanPaperSpace(headless: true);
         }
 
@@ -143,6 +146,12 @@ namespace AutoCADCleanupTool
                                 footprint = BuildRectangleFromExtents(extents.Value);
                             }
 
+                            if (headless && TitleBlockXrefResolver.ConfirmedBatchBoundary != null)
+                            {
+                                footprint = TitleBlockXrefResolver.ConfirmedBatchBoundary
+                                    .Select(point => point.TransformBy(br.BlockTransform)).ToArray();
+                                extents = ExtentsFromPoints(footprint);
+                            }
                             entries.Add(new XrefReportEntry(br.ObjectId, layout.LayoutName, blockName, layer, status, absolutePath, footprint, extents));
                         }
                     }
@@ -202,6 +211,7 @@ namespace AutoCADCleanupTool
 
                 if (autoCleanedLayouts > 0)
                 {
+                    if (headless) HeadlessPaperSpaceSucceeded = autoCleanedLayouts == groupedByLayout.Count;
                     ed.WriteMessage($"\r\nAutomatically cleaned {autoCleanedLayouts} layout(s) containing a single XREF.");
                 }
                 else

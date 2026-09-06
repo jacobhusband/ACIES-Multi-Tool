@@ -1,3 +1,4 @@
+using Application = Autodesk.AutoCAD.ApplicationServices.Core.Application;
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
@@ -11,6 +12,7 @@ namespace AutoCADCleanupTool
 {
     public partial class SimplerCommands
     {
+        internal static bool HeadlessSheetSucceeded;
         /// <summary>
         /// Initial Core Console-safe CLEANCAD workflow.
         ///
@@ -22,6 +24,7 @@ namespace AutoCADCleanupTool
         [CommandMethod("CLEANCAD2", CommandFlags.Modal)]
         public static void RunCleanSheetHeadless()
         {
+            HeadlessSheetSucceeded = false;
             Document doc = Application.DocumentManager.MdiActiveDocument;
             if (doc == null) return;
 
@@ -67,11 +70,11 @@ namespace AutoCADCleanupTool
                 return;
             }
 
-            if (preflight.RasterImageCount > 0 || preflight.UnderlayCount > 0)
+            if (preflight.RasterImageCount > 0 || preflight.UnderlayCount > 0 || preflight.LinkedOleCount > 0)
             {
                 ed.WriteMessage(
                     $"\nCLEANCAD2_ERROR: Headless media embedding is not implemented yet. " +
-                    $"Found {preflight.RasterImageCount} raster image reference(s) and {preflight.UnderlayCount} underlay reference(s).");
+                    $"Found {preflight.RasterImageCount} raster image reference(s), {preflight.UnderlayCount} underlay reference(s), and {preflight.LinkedOleCount} linked OLE object(s).");
                 foreach (string location in preflight.MediaLocations.Take(12))
                 {
                     ed.WriteMessage($"\n - {location}");
@@ -139,6 +142,8 @@ namespace AutoCADCleanupTool
 
                 ed.WriteMessage("\nCLEANCAD2: Cleaning paper space without activating layouts...");
                 CleanupCommands.CleanPaperSpaceHeadless();
+                if (!CleanupCommands.HeadlessPaperSpaceSucceeded)
+                    throw new InvalidOperationException("Paper Space cleanup did not complete for every detected titleblock layout.");
 
                 ed.WriteMessage("\nCLEANCAD2: Cleaning Model Space with database-only viewport intersection...");
                 if (!CleanupCommands.RunViewportToPolylineHeadless())
@@ -153,6 +158,7 @@ namespace AutoCADCleanupTool
 
                 ed.WriteMessage(
                     "\nCLEANCAD2_COMPLETE: Non-interactive cleanup finished. Save the drawing from the calling script after checking this marker.");
+                HeadlessSheetSucceeded = true;
             }
             catch (System.Exception ex)
             {
@@ -273,7 +279,7 @@ namespace AutoCADCleanupTool
                             }
                             if (entity == null || entity.IsErased) continue;
 
-                            if (entity is RasterImage)
+                            if (IsExternalRasterImage(entity))
                             {
                                 result.RasterImageCount++;
                                 result.MediaLocations.Add(DescribeMediaLocation(block, entity, "RasterImage"));
@@ -282,6 +288,11 @@ namespace AutoCADCleanupTool
                             {
                                 result.UnderlayCount++;
                                 result.MediaLocations.Add(DescribeMediaLocation(block, entity, entity.GetType().Name));
+                            }
+                            else if (entity is Ole2Frame ole && ole.IsLinked)
+                            {
+                                result.LinkedOleCount++;
+                                result.MediaLocations.Add(DescribeMediaLocation(block, entity, "Linked OLE"));
                             }
                         }
                     }
@@ -339,12 +350,20 @@ namespace AutoCADCleanupTool
             return $"{mediaType} handle {handle} in block/space '{owner}'";
         }
 
+        private static bool IsExternalRasterImage(Entity entity)
+        {
+            // Wipeout inherits RasterImage but is an internal masking entity, not
+            // an external image attachment requiring the desktop embedding path.
+            return entity is RasterImage && !(entity is Wipeout);
+        }
+
         private sealed class HeadlessPreflightResult
         {
             internal bool Succeeded { get; set; }
             internal string FailureMessage { get; set; } = string.Empty;
             internal int RasterImageCount { get; set; }
             internal int UnderlayCount { get; set; }
+            internal int LinkedOleCount { get; set; }
             internal List<string> UnresolvedXrefs { get; } = new List<string>();
             internal List<string> MediaLocations { get; } = new List<string>();
         }

@@ -18395,6 +18395,35 @@ Return JSON matching the provided schema exactly, with image_index values 0 thro
                 }
         return {'status': 'success', 'activityId': str(activity_id or '').strip()}
 
+    def preview_clean_drawings(self, launch_context=None, activity_id=None):
+        import clean_drawings
+        try:
+            context = self._resolve_workroom_context(self.get_user_settings(), launch_context)
+            project = context.get('project_path')
+            if not project:
+                return {'status': 'error', 'message': 'Select a project in the Workroom before running Clean Drawings.'}
+            return dict(clean_drawings.preview(
+                project, self.get_user_settings().get('autocadPath', ''),
+                notify=lambda message: self._notify_tool_status(
+                    'toolCleanDrawings', message, activity_id=activity_id)), status='success')
+        except Exception as exc:
+            return {'status': 'error', 'message': str(exc)}
+
+    def run_clean_drawings(self, selection, launch_context=None, activity_id=None):
+        import clean_drawings
+        try:
+            settings = self.get_user_settings()
+            context = self._resolve_workroom_context(settings, launch_context)
+            project = context.get('project_path')
+            if not project:
+                raise ValueError('Select a project in the Workroom first.')
+            return clean_drawings.run(
+                project, selection, settings.get('autocadPath', ''),
+                notify=lambda message: self._notify_tool_status(
+                    'toolCleanDrawings', message, activity_id=activity_id))
+        except Exception as exc:
+            return {'status': 'error', 'message': str(exc)}
+
     def run_clean_xrefs_script(self, launch_context=None, activity_id=None, params_override=None):
         """Runs the removeXREFPaths.ps1 PowerShell script with progress updates.
 

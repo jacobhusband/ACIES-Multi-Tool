@@ -12,7 +12,7 @@ namespace AutoCADCleanupTool
 {
     public partial class SimplerCommands
     {
-        // Experimental, explicit batch operation only. No proxy entities or image file payloads.
+        // Native geometry encoder shared by staged media cleanup and isolated experiments.
         private sealed class PixelRectangle
         {
             public int X, Y, Width, Height, Rgb;
@@ -25,7 +25,7 @@ namespace AutoCADCleanupTool
             public List<PixelRectangle> Rectangles;
         }
 
-        private static List<PixelRectangle> ReadPixelRectangles(string path, out int width, out int height, int remaining)
+        private static List<PixelRectangle> ReadPixelRectangles(string path, out int width, out int height, int remaining, bool transparent)
         {
             using (var source = new Bitmap(path))
             {
@@ -46,12 +46,18 @@ namespace AutoCADCleanupTool
                         for (int y = 0; y < height; y++)
                         {
                             Marshal.Copy(IntPtr.Add(data.Scan0, y * data.Stride), row, 0, width);
+                            for (int i = 0; i < width; i++)
+                            {
+                                uint alpha = (uint)row[i] >> 24;
+                                if (alpha != 0 && alpha != 255)
+                                    throw new InvalidOperationException("Alpha transparency with partial opacity is not supported: " + path);
+                                if (!transparent) row[i] |= unchecked((int)0xff000000);
+                            }
                             var current = new Dictionary<Tuple<int, int, int>, PixelRectangle>();
                             for (int x = 0; x < width;)
                             {
                                 int color = row[x];
-                                if ((uint)color >> 24 != 255)
-                                    throw new InvalidOperationException("Alpha transparency is not supported by the prototype: " + path);
+                                if ((uint)color >> 24 == 0) { x++; continue; }
                                 int end = x + 1;
                                 while (end < width && row[end] == color) end++;
                                 var key = Tuple.Create(x, end - x, color);
@@ -108,9 +114,9 @@ namespace AutoCADCleanupTool
                     {
                         var entity = tr.GetObject(id, OpenMode.ForRead) as Entity;
                         if (!(entity is RasterImage image) || image is Wipeout) continue;
-                        if (image.GetType() != typeof(RasterImage) || HasPartialImageClip(image) || image.ImageTransparency ||
+                        if (image.GetType() != typeof(RasterImage) || HasPartialImageClip(image) ||
                             image.Brightness != 50 || image.Contrast != 50 || image.Fade != 0)
-                            throw new InvalidOperationException("Prototype supports only unclipped raster images with default brightness/contrast, zero fade and image transparency off. Image " + image.Handle + " (clipped=" + image.IsClipped + ", transparency=" + image.ImageTransparency + ", brightness=" + image.Brightness + ", contrast=" + image.Contrast + ", fade=" + image.Fade + ")");
+                            throw new InvalidOperationException("Image conversion supports only unclipped raster images with default brightness/contrast and zero fade. Image " + image.Handle + " (clipped=" + image.IsClipped + ", transparency=" + image.ImageTransparency + ", brightness=" + image.Brightness + ", contrast=" + image.Contrast + ", fade=" + image.Fade + ")");
                         var layer = (LayerTableRecord)tr.GetObject(image.LayerId, OpenMode.ForRead);
                         if (layer.IsLocked) throw new InvalidOperationException("Unlock image layer before prototype conversion: " + layer.Name);
                         var axes = image.Orientation;
@@ -122,7 +128,7 @@ namespace AutoCADCleanupTool
                         string path = definition.SourceFileName;
                         if (!Path.IsPathRooted(path)) path = Path.Combine(Path.GetDirectoryName(db.Filename), path);
                         if (!File.Exists(path)) throw new FileNotFoundException("Image source is missing.", path);
-                        var rectangles = ReadPixelRectangles(path, out int width, out int height, 50000 - count);
+                        var rectangles = ReadPixelRectangles(path, out int width, out int height, 50000 - count, image.ImageTransparency);
                         if (Math.Abs(image.ImageWidth - width) > 0.01 || Math.Abs(image.ImageHeight - height) > 0.01)
                             throw new InvalidOperationException("Source image dimensions changed since attachment: " + path);
                         count += rectangles.Count;

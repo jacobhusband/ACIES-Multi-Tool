@@ -4,6 +4,7 @@ import hashlib
 import json
 import math
 import os
+import re
 from pathlib import Path
 import shutil
 import stat
@@ -14,8 +15,20 @@ import time
 import uuid
 
 import fitz
+from clean_review import compare_sets
 
 _run_lock = threading.Lock()
+
+
+def _titleblock_name(path):
+    return bool(re.search(r'(?:^|[^a-z0-9])(?:tb|tblk|tblock|titleblock|title|border)(?:$|[^a-z0-9])', Path(path).stem, re.IGNORECASE))
+
+
+def _rank_titleblocks(result):
+    detected = set(result.get('detectedTitleblocks', []))
+    likely = [p for p in result['titleblocks'] if p in detected and _titleblock_name(p)]
+    result['recommendedTitleblock'] = likely[0] if len(likely) == 1 else None
+    result['titleblocks'].sort(key=lambda p: (not (p in detected and _titleblock_name(p)), p not in detected, not _titleblock_name(p), p.casefold()))
 
 
 def _file_hash(path):
@@ -42,7 +55,7 @@ def discover(project, notify=lambda message: None):
     drawings = sorted(p for p in electrical.glob('*') if p.is_file() and p.suffix.lower() == '.dwg') if electrical else []
     candidates = sorted(p for folder in xrefs for p in folder.rglob('*')
                         if p.is_file() and p.suffix.lower() == '.dwg' and _inside(p, root))
-    candidates.sort(key=lambda p: (not any(h in p.stem.lower() for h in ('tblk', 'tblock', 'title', 'x-tb', 'border')), str(p)))
+    candidates.sort(key=lambda p: (not _titleblock_name(p), str(p)))
     pdfs = []
     notify('Finding published PDFs and checksets…')
     for folder in [root / 'PDF', (electrical / 'Checkset') if electrical else root / 'Electrical' / 'Checkset']:
@@ -113,7 +126,7 @@ def preview(project, acad, notify=lambda message: None):
             result['inspectionWarning'] = f'Inspection files could not be removed: {workspace}'
     detected = {str(Path(p).resolve()).casefold() for p in scan.get('titleblocks', [])}
     result['detectedTitleblocks'] = [p for p in result['titleblocks'] if str((root / p).resolve()).casefold() in detected]
-    result['titleblocks'].sort(key=lambda p: p not in result['detectedTitleblocks'])
+    _rank_titleblocks(result)
     result['media'] = scan.get('media', [])
     return result
 
@@ -151,6 +164,9 @@ def run_worker(acad, dll, drawing, job, workspace, timeout=300, notify=lambda me
             except subprocess.TimeoutExpired:
                 elapsed = int(time.monotonic() - started)
                 stage = {'scan': 'reference inspection', 'prepare': 'reference preparation',
+                         'validate-titleblock': 'titleblock boundary check',
+                         'plot-review': 'review PDF plotting', 'remove-titleblock-marks': 'titleblock stamp/signature removal',
+                         'embed-media': 'PDF and image conversion', 'verify-media': 'embedded content validation',
                          'titleblock': 'titleblock cleanup', 'sheet': 'sheet cleanup',
                          'verify': 'saved drawing validation'}.get(job['Operation'], job['Operation'])
                 notify(f'AutoCAD {stage}: running ({elapsed}s elapsed)…')
@@ -167,6 +183,36 @@ def _selected(root, relative):
     if not _inside(path, root) or path.suffix.lower() != '.dwg':
         raise ValueError('Select a DWG inside the project.')
     return path
+
+
+def _canonicalize_scan(scan):
+    """Use one filesystem identity for mapped drives, UNC paths and case aliases.
+
+    Keep Path fields verbatim: the CAD worker uses those to detect edits to the
+    saved references. Only graph identities (Owner/Resolved/files) are normalized.
+    """
+    cache = {}
+    identities = {}
+    def canonical(value):
+        key = os.path.normcase(value)
+        if key not in cache:
+            resolved = str(Path(value).resolve(strict=True))
+            cache[key] = identities.setdefault(os.path.normcase(resolved), resolved)
+        return cache[key]
+
+    result = dict(scan)
+    result['files'] = list(dict.fromkeys(canonical(p) for p in scan['files']))
+    for field, identity in (('references', 'Name'), ('pdfs', 'Handle'), ('images', 'Handle')):
+        records = {}
+        for original in scan.get(field, []):
+            record = dict(original, Owner=canonical(original['Owner']), Resolved=canonical(original['Resolved']))
+            key = (record['Owner'], record[identity].casefold())
+            if key in records and record != records[key]:
+                raise RuntimeError(f'Conflicting {field} discovered through alternate paths: {record["Owner"]}')
+            records[key] = record
+        result[field] = list(records.values())
+    result['titleblocks'] = list(dict.fromkeys(canonical(p) for p in scan.get('titleblocks', [])))
+    return result
 
 
 def run(project, selection, acad, notify=lambda message: None, worker=run_worker, dll=None):
@@ -190,13 +236,36 @@ def run(project, selection, acad, notify=lambda message: None, worker=run_worker
         seed = workspace / 'seed.dwg'
         shutil.copy2(titleblock, seed)
         seed.chmod(stat.S_IREAD | stat.S_IWRITE)
+        notify(f'Checking titleblock geometry and boundary: {titleblock.name}')
+        worker(acad, dll, seed, {'Operation': 'validate-titleblock', 'Width': width, 'Height': height}, workspace)
         notify('Inspecting drawings and required XREFs…')
         catalog = [str(root / p) for p in discover(root)['titleblocks']]
         scan = worker(acad, dll, seed, {'Operation': 'scan', 'Files': [str(titleblock), *map(str, drawings)], 'Catalog': catalog}, workspace)
         if scan.get('media'):
-            raise RuntimeError('Headless image/underlay/linked OLE embedding is not supported yet. No drawings were cleaned.\n' + '\n'.join(scan['media'][:12]))
+            raise RuntimeError('Headless embedding is not supported for these attachment types. No drawings were cleaned.\n' + '\n'.join(scan['media'][:12]))
+        scan = _canonicalize_scan(scan)
         copies = {}
         fingerprints = {}
+        media_copies = {}
+        for kind, records in (('PDF', scan.get('pdfs', [])), ('image', scan.get('images', []))):
+            for record in records:
+                source = Path(record['Resolved']).resolve(strict=True)
+                if str(source) in media_copies:
+                    continue
+                notify(f'Staging {kind}: {source.name}')
+                target = workspace / 'media' / hashlib.sha256(str(source).encode()).hexdigest()[:12] / source.name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, target)
+                target.chmod(stat.S_IREAD | stat.S_IWRITE)
+                fingerprints[str(source)] = _file_hash(target)
+                if kind == 'PDF':
+                    # PDFIMPORT omits annotations. Refuse rather than silently lose form entries or markups.
+                    with fitz.open(target) as document:
+                        if document.needs_pass or document.get_ocgs() or any(list(page.widgets()) or list(page.annots()) for page in document):
+                            raise RuntimeError(f'PDF contains interactive fields, annotations, optional layers, or requires a password. Flatten a working PDF before cleanup: {source}')
+                media_copies[str(source)] = str(target)
+        def asset_map(records):
+            return {record['Resolved']: media_copies[str(Path(record['Resolved']).resolve(strict=True))] for record in records}
         notify(f'Copying {len(scan["files"])} drawing dependencies to local working storage…')
         for source in scan['files']:
             path = Path(source).resolve(strict=True)
@@ -208,7 +277,40 @@ def run(project, selection, acad, notify=lambda message: None, worker=run_worker
             fingerprints[str(path)] = _file_hash(target)
             copies[str(path)] = str(target)
         notify('Redirecting references to the local working copies…')
-        worker(acad, dll, seed, {'Operation': 'prepare', 'Copies': copies, 'References': scan['references']}, workspace)
+        worker(acad, dll, seed, {'Operation': 'prepare', 'Copies': copies, 'References': scan['references'],
+                              'Pdfs': scan.get('pdfs', []), 'PdfCopies': asset_map(scan.get('pdfs', [])),
+                              'Images': scan.get('images', []), 'ImageCopies': asset_map(scan.get('images', []))}, workspace)
+        def plot_set(label, paths, layout_source=None):
+            records = []
+            for index, (source, drawing) in enumerate(paths, 1):
+                relative = str(drawing.relative_to(root))
+                notify(f'Plotting {label} {index} of {len(paths)}: {drawing.name}')
+                job = {'Operation': 'plot-review', 'Output': str(workspace / f'{label}-{index}'), 'Width': width, 'Height': height}
+                if layout_source is not None:
+                    job['Layouts'] = [r['layout'] for r in layout_source if r['drawing'] == relative]
+                plotted = worker(acad, dll, source, job, workspace)
+                for page in plotted['pages']:
+                    records.append(dict(page, drawing=relative, profile=plotted.get('profile')))
+            return records
+        original_pdfs = plot_set('Original', [(Path(copies[str(d)]), d) for d in drawings])
+        staged_titleblock = Path(copies[str(titleblock)])
+        notify('Removing stamps and signatures from the staged titleblock…')
+        unmarked = workspace / 'titleblock-without-marks.dwg'
+        mark_removal = worker(acad, dll, staged_titleblock, {'Operation': 'remove-titleblock-marks', 'Output': str(unmarked)}, workspace)
+        shutil.copy2(unmarked, staged_titleblock)
+        reference_pdfs = plot_set('Reference', [(Path(copies[str(d)]), d) for d in drawings], original_pdfs)
+        media_results = []
+        owners = {record['Owner'] for record in scan.get('pdfs', []) + scan.get('images', [])}
+        for index, owner in enumerate(sorted(owners), 1):
+            notify(f'Converting PDF/image attachments {index} of {len(owners)}: {Path(owner).name}')
+            staged = Path(copies[owner])
+            converted = workspace / (uuid.uuid4().hex + '.dwg')
+            counts = worker(acad, dll, staged, {'Operation': 'embed-media', 'Output': str(converted)}, workspace)
+            notify(f'Validating embedded content: {Path(owner).name}')
+            if worker(acad, dll, converted, {'Operation': 'verify-media'}, workspace) != counts:
+                raise RuntimeError(f'Embedded content changed after saving and reopening: {owner}')
+            shutil.copy2(converted, staged)
+            media_results.append({'drawing': owner, 'validation': counts})
         staged_titleblock = Path(copies[str(titleblock)])
         output_root = workspace / 'outputs'
         output_root.mkdir()
@@ -234,20 +336,30 @@ def run(project, selection, acad, notify=lambda message: None, worker=run_worker
                 raise RuntimeError(f'Entity counts changed after saving and reopening {drawing.name}.')
             outputs.append((output, drawing.relative_to(root)))
             results.append({'drawing': str(drawing.relative_to(root)), 'validation': reopened})
+        cleaned_pdfs = plot_set('Cleaned', [(path, root / relative) for path, relative in outputs[1:]], original_pdfs)
+        notify('Comparing original and cleaned PDFs, accounting for titleblock stamp/signature removal…')
+        review_directory = workspace / 'Review'
+        comparison = compare_sets(original_pdfs, reference_pdfs, cleaned_pdfs, review_directory, notify=notify)
+        needs_review = comparison['status'] == 'review_required'
+        outputs.extend((file, Path('Review') / file.name) for file in sorted(review_directory.iterdir()) if file.is_file())
         notify('Checking source versions and delivering validated drawings…')
         for source, digest in fingerprints.items():
             if _file_hash(source) != digest:
                 raise RuntimeError(f'Source changed during processing. Run again: {source}')
-        report = {'status': 'success', 'selection': selection, 'drawings': results,
+        report = {'status': 'review_required' if needs_review else 'success', 'selection': selection, 'drawings': results, 'mediaConversions': media_results,
+                  'titleblockMarkRemoval': mark_removal, 'comparison': comparison,
                   'titleblockValidation': title_result, 'sourceHashes': fingerprints,
-                  'limitations': ['External images, underlays, and linked OLE are unsupported.',
+                  'limitations': ['PDF pages import as native CAD objects; supported raster pixels become native solids.',
+                                  'Custom PDF clips/adjustments, PDF markups/layers, complex images, other underlays and linked OLE remain unsupported.',
                                   'Boundary intersection uses conservative entity bounds.',
-                                  'Reopen/count/reference checks are not a visual comparison.']}
+                                  'PDF comparison uses Layout at 1:1 inches, zero offset, 510-monochrome.ctb, 144 DPI and a 24/255 channel tolerance; it is not proof of engineering equivalence.']}
         destination_root = root / 'Cleaned CAD'
         if not _inside(destination_root, root):
             raise RuntimeError('Cleaned CAD resolves outside the project directory.')
         destination_root.mkdir(exist_ok=True)
         stamp = datetime.now().strftime('%Y-%m-%d_%H%M%S') + '_' + uuid.uuid4().hex[:6]
+        if needs_review:
+            stamp += '_REVIEW_REQUIRED'
         pending = destination_root / ('.incomplete-' + stamp)
         pending.mkdir()
         for source, relative in outputs:
@@ -266,7 +378,9 @@ def run(project, selection, acad, notify=lambda message: None, worker=run_worker
             workspace = None
         except OSError:
             cleanup_warning = f'Drawings delivered successfully. Temporary files could not be removed: {workspace}'
-        return {'status': 'success', 'output': str(destination), 'count': len(drawings), 'cleanupWarning': cleanup_warning}
+        return {'status': 'success', 'output': str(destination), 'count': len(drawings), 'cleanupWarning': cleanup_warning,
+                'comparisonWarning': 'Review required: plotted differences remain beyond titleblock stamp/signature removal. Open Review/Comparison.pdf before sharing these drawings.' if needs_review else '',
+                'comparisonStatus': comparison['status']}
     except Exception as exc:
         raise RuntimeError(str(exc) + (f'\nWorking files and logs retained at: {workspace}' if workspace else '')) from exc
     finally:

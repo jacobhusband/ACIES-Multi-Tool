@@ -91,6 +91,25 @@ class NativeImageGeometryTests(unittest.TestCase):
             self.assertFalse(output.exists())
             self.assertEqual(original, drawing.read_bytes())
 
+    def test_binary_alpha_respects_image_transparency_flag(self):
+        with tempfile.TemporaryDirectory(prefix='acies-native-binary-alpha-') as temporary:
+            root = Path(temporary)
+            image = root / 'binary.png'
+            pixels = Image.new('RGBA', (2, 1))
+            pixels.putdata([(255, 0, 0, 0), (0, 0, 255, 255)])
+            pixels.save(image)
+            for transparent in (False, True):
+                with self.subTest(transparent=transparent):
+                    drawing = root / f'input-{transparent}.dwg'
+                    output = root / f'output-{transparent}.dwg'
+                    flag = '(setq e (entlast) d (entget e)) (entmod (subst (cons 70 (logior 8 (cdr (assoc 70 d)))) (assoc 70 d) d))' if transparent else ''
+                    self.core(root, f'''(setvar "FILEDIA" 0)
+(command "_.-IMAGE" "_ATTACH" "{image.as_posix()}" "0,0" 2 0)
+{flag}
+(command "_.QSAVE" "{drawing.as_posix()}")''')
+                    result = self.worker(root, drawing, Operation='embed-prototype', Output=str(output))
+                    self.assertEqual(1 if transparent else 2, result['embedding']['solids'])
+
     def test_complexity_and_partial_clip_are_rejected(self):
         with tempfile.TemporaryDirectory(prefix='acies-native-limits-') as temporary:
             root = Path(temporary)

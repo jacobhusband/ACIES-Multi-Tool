@@ -98,7 +98,8 @@ function looksLikeExternalEmailDrop(dataTransfer) {
   const types = Array.from(dataTransfer?.types || []).map((type) => String(type).toLowerCase());
   if (types.includes("files")) return true;
   return types.some(
-    (type) => type.startsWith("filegroupdescriptor") || type.startsWith("renprivate")
+    (type) => type.startsWith("filegroupdescriptor") || type.startsWith("renprivate") ||
+      type.startsWith("filecontents") || type.startsWith("application/x-moz-file-promise")
   );
 }
 
@@ -862,6 +863,7 @@ function PageEditor({ context, options }) {
           if (!context.onAttachEmailDrop || !looksLikeExternalEmailDrop(event.dataTransfer)) {
             return false;
           }
+          event.preventDefault();
           if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
           const coords = view.posAtCoords({ left: event.clientX, top: event.clientY });
           setEmailDropTarget(view, coords ? coords.pos : null);

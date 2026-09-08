@@ -73,14 +73,14 @@ namespace AutoCADCleanupTool
             if (preflight.RasterImageCount > 0 || preflight.UnderlayCount > 0 || preflight.LinkedOleCount > 0)
             {
                 ed.WriteMessage(
-                    $"\nCLEANCAD2_ERROR: Headless media embedding is not implemented yet. " +
+                    $"\nCLEANCAD2_ERROR: External media must be converted before sheet cleanup. " +
                     $"Found {preflight.RasterImageCount} raster image reference(s), {preflight.UnderlayCount} underlay reference(s), and {preflight.LinkedOleCount} linked OLE object(s).");
                 foreach (string location in preflight.MediaLocations.Take(12))
                 {
                     ed.WriteMessage($"\n - {location}");
                 }
                 ed.WriteMessage(
-                    "\nCLEANCAD2: Aborted before mutation so external media cannot be lost. Use CLEANCAD for this drawing until a headless embedding strategy is added.");
+                    "\nCLEANCAD2: Aborted before mutation so external media cannot be lost. Run Clean Drawings to stage and convert supported attachments first.");
                 return;
             }
 

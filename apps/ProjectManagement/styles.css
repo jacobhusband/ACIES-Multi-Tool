@@ -9280,6 +9280,7 @@ dialog::backdrop {
   border: 1px solid rgba(245, 158, 11, 0.45);
 }
 
+.deliverable-status-badge.completed-by-others,
 .deliverable-status-badge.complete {
   background: rgba(16, 185, 129, 0.18);
   color: #34d399;
@@ -14088,6 +14089,7 @@ body[data-active-tab="projects"][data-projects-view-mode="card"] .projects-card-
 .kanban-column--pending-review .kanban-column__label {
   color: #f59e0b;
 }
+.kanban-column--completed-by-others .kanban-column__label,
 .kanban-column--complete .kanban-column__label {
   color: var(--accent);
 }

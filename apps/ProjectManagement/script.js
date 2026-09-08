@@ -4,11 +4,13 @@ const STATUS_CANON = [
   "On hold",
   "Pending Review",
   "Complete",
+  "Completed (by others)",
   "Delivered",
 ];
 const STATUS_PRIORITY = [
   "Delivered",
   "Complete",
+  "Completed (by others)",
   "Pending Review",
   "On hold",
   "Waiting",
@@ -18,6 +20,7 @@ const LABEL_TO_KEY = {
   "On hold": "onHold",
   "Pending Review": "pendingReview",
   Complete: "complete",
+  "Completed (by others)": "completed-by-others",
   Delivered: "delivered",
 };
 const KEY_TO_LABEL = {
@@ -25,6 +28,7 @@ const KEY_TO_LABEL = {
   onHold: "On hold",
   pendingReview: "Pending Review",
   complete: "Complete",
+  "completed-by-others": "Completed (by others)",
   delivered: "Delivered",
 };
 const HELP_TOPICS = ["projects", "notes", "tools", "timesheets", "misc"];
@@ -8243,7 +8247,7 @@ function captureDropFileEntries(dt) {
   return entries;
 }
 
-const OUTLOOK_DROP_TYPE_PREFIXES = ["filegroupdescriptor", "renprivate"];
+const OUTLOOK_DROP_TYPE_PREFIXES = ["filegroupdescriptor", "filecontents", "renprivate", "application/x-moz-file-promise"];
 
 function looksLikeOutlookDrop(types) {
   return Array.from(types || [])
@@ -8398,24 +8402,33 @@ async function resolvePageEmailDropRef(event, context = {}) {
   // editor's drop handler returns.
   const captured = captureEmailDropSources(event?.dataTransfer);
   let result = null;
+  let dropError = null;
   try {
     result = await resolveEmailRefFromCapturedDrop(captured, context);
   } catch (e) {
-    return { status: "error", message: e?.message || "Could not attach the dropped email." };
+    dropError = e;
   }
   if (result?.emailRef) {
     console.info(`[page-email] attached via ${result.source}`);
     return { status: "success", emailRef: result.emailRef };
   }
-  if (result?.outlookDrop) {
+  const outlookDrop = looksLikeOutlookDrop(captured?.types);
+  // Some WebView2 versions expose only an empty Files payload. Ask before
+  // using Outlook's selection because that payload cannot identify its source.
+  const unreadableFileDrop = captured && !captured.files.length &&
+    !captured.entries.length && !captured.urlCandidate &&
+    captured.types.some((type) => String(type).toLowerCase() === "files");
+  if (outlookDrop || (unreadableFileDrop &&
+      window.pywebview?.api?.save_active_outlook_selection &&
+      confirm("This drop contains no readable file. Attach the message currently selected in Outlook to these notes?"))) {
     const fromSelection = await saveActiveOutlookSelectionRef(context);
     if (fromSelection) {
       console.info("[page-email] attached via outlook-selection");
       return { status: "success", emailRef: fromSelection };
     }
   }
-  showEmailLinkFallbackGuidance();
-  return { status: "error", message: "" };
+  return { status: "error", message: dropError?.message ||
+    "Could not read the email drop. Type /email in your notes to attach the selected Outlook message, paste a link, or choose a .msg/.eml file." };
 }
 
 async function requestPageEmailRef(context = {}) {
@@ -10434,6 +10447,7 @@ const DEFAULT_PROJECT_CARD_COLUMNS = [
   { key: "On hold", label: "On hold", hidden: false },
   { key: "Pending Review", label: "Pending Review", hidden: false },
   { key: "Complete", label: "Complete", hidden: false },
+  { key: "Completed (by others)", label: "Completed (by others)", hidden: false },
   { key: "Delivered", label: "Delivered", hidden: false },
   { key: "nodate", label: "No date", hidden: false },
 ];
@@ -16395,6 +16409,7 @@ function canonStatus(s) {
     ["pending review", "pending-review", "review", "pr", "pending"].includes(t)
   )
     return "Pending Review";
+  if (t === "completed (by others)") return "Completed (by others)";
   if (["complete", "completed", "done"].includes(t)) return "Complete";
   if (["delivered", "sent", "shipped"].includes(t)) return "Delivered";
   return null;
@@ -16420,7 +16435,7 @@ function hasStatus(p, s) {
   return Array.isArray(p.statuses) && p.statuses.includes(s);
 }
 function isFinished(p) {
-  return hasStatus(p, "Complete") || hasStatus(p, "Delivered");
+  return hasStatus(p, "Complete") || hasStatus(p, "Completed (by others)") || hasStatus(p, "Delivered");
 }
 
 function setSingleStatus(p, label) {
@@ -23771,19 +23786,6 @@ function createDeliverableActionsDropdown(deliverable, project, card) {
   });
   menu.appendChild(pinItem);
 
-  const attachmentItem = buildDeliverableActionsItem({
-    label: "Attachments",
-    iconPath: ATTACHMENT_ICON_PATH,
-    onClick: () => {
-      closeOpenDeliverableToolDropdown();
-      closeOpenDeliverableStatusDropdowns();
-      setDeliverableActionsDropdownState(dropdown, false);
-      openAttachmentPanel(attachmentContext);
-    },
-  });
-  attachmentItem.classList.add("deliverable-actions-attachments");
-  menu.appendChild(attachmentItem);
-
   const projectIndex = Array.isArray(db) ? db.indexOf(project) : -1;
   if (project && projectIndex >= 0) {
     menu.appendChild(el("div", { className: "deliverable-actions-divider" }));
@@ -24121,7 +24123,7 @@ function renderDeliverableStatusBadges(container, deliverable) {
   container.replaceChildren();
   if (deliverable.statuses && deliverable.statuses.length) {
     deliverable.statuses.forEach(status => {
-      const statusClass = status.toLowerCase().replace(/\s+/g, "");
+      const statusClass = (LABEL_TO_KEY[status] || status).toLowerCase().replace(/\s+/g, "");
       const badge = el("div", {
         className: `deliverable-status-badge ${statusClass}`,
         textContent: status
@@ -24167,6 +24169,7 @@ function createStatusDropdown(deliverable, project, card) {
     "On hold",
     "Pending Review",
     "Complete",
+    "Completed (by others)",
     "Delivered",
   ];
   const dropdown = el("div", { className: "deliverable-status-dropdown" });
@@ -26503,6 +26506,7 @@ const KANBAN_COLUMN_SLUGS = {
   "On hold": "on-hold",
   "Pending Review": "pending-review",
   Complete: "complete",
+  "Completed (by others)": "completed-by-others",
   Delivered: "delivered",
   nodate: "nodate",
 };
@@ -26671,7 +26675,7 @@ function renderCardView(items = db, projectListContextMap = null) {
   const isCurrentWeek = weekStart.getTime() === currentWeekStart.getTime();
 
   const visibleColumns = dueFilter === "attention"
-    ? projectCardColumns.filter((c) => !["Complete", "Delivered", "nodate"].includes(c.key))
+    ? projectCardColumns.filter((c) => !["Complete", "Completed (by others)", "Delivered", "nodate"].includes(c.key))
     : projectCardColumns.filter((c) => !c.hidden);
   const pinnedShown = visibleColumns.some((c) => c.key === "pinned");
   const nodateShown = visibleColumns.some((c) => c.key === "nodate");
@@ -27485,6 +27489,7 @@ function renderStatusToggles(p) {
     ["hold", "On hold"],
     ["pr", "Pending Review"],
     ["comp", "Complete"],
+    ["comp", "Completed (by others)"],
     ["del", "Delivered"],
   ].forEach(([cls, label]) => wrap.append(mk(cls, label)));
   return wrap;
@@ -28078,7 +28083,7 @@ function addDeliverableCard(deliverable, options = {}) {
     renderModalDeliverableTaskList(card, taskList);
   };
   const picker = buildStatusPicker(deliverable.statuses || [], (label, pressed) => {
-    if (pressed && (label === "Complete" || label === "Delivered")) {
+    if (pressed && isFinished({ statuses: [label] })) {
       markTasksDone();
     }
     refreshModalDeliverableSummary(card);
@@ -28166,7 +28171,7 @@ function refreshModalDeliverableSummary(card) {
       .map((b) => b.dataset.status)
       .filter(Boolean);
     activeStatuses.forEach((status) => {
-      const cls = status.toLowerCase().replace(/\s+/g, "");
+      const cls = (LABEL_TO_KEY[status] || status).toLowerCase().replace(/\s+/g, "");
       const badge = el("span", {
         className: `deliverable-status-badge ${cls}`,
         textContent: status,
@@ -28177,7 +28182,7 @@ function refreshModalDeliverableSummary(card) {
 
   const isCardFinished = Array.from(
     card.querySelectorAll('.deliverable-status .st[aria-pressed="true"]')
-  ).some((b) => b.dataset.status === "Complete" || b.dataset.status === "Delivered");
+  ).some((b) => isFinished({ statuses: [b.dataset.status] }));
 
   const dueInput = card.querySelector(".d-due");
   const hardDueInput = card.querySelector(".d-hard-due");
@@ -28245,6 +28250,11 @@ function buildStatusPicker(selected = [], onToggle) {
     b.onclick = (e) => {
       e.preventDefault();
       const next = b.getAttribute("aria-pressed") !== "true";
+      if (next) {
+        wrap.querySelectorAll(".st").forEach((button) => {
+          button.setAttribute("aria-pressed", "false");
+        });
+      }
       b.setAttribute("aria-pressed", String(next));
       if (onToggle) onToggle(label, next, b);
     };
@@ -28255,6 +28265,7 @@ function buildStatusPicker(selected = [], onToggle) {
     ["hold", "On hold"],
     ["pr", "Pending Review"],
     ["comp", "Complete"],
+    ["comp", "Completed (by others)"],
     ["del", "Delivered"],
   ].forEach(([cls, label]) => wrap.append(mk(cls, label)));
   return wrap;
@@ -38991,8 +39002,9 @@ function initEventListeners() {
       updateActivity(activityId, { message: "Inspecting selected drawings…", progress: 22 });
       const result = await window.pywebview.api.run_clean_drawings(selection, launchContext, activityId);
       if (result.status !== "success") throw new Error(result.message);
-      completeActivity(activityId, { status: result.cleanupWarning ? ACTIVITY_STATUS.WARNING : ACTIVITY_STATUS.SUCCESS,
-        message: result.cleanupWarning || `Cleaned ${result.count} drawing(s) and the titleblock.`,
+      const warning = [result.comparisonWarning, result.cleanupWarning].filter(Boolean).join(" ");
+      completeActivity(activityId, { status: warning ? ACTIVITY_STATUS.WARNING : ACTIVITY_STATUS.SUCCESS,
+        message: warning || `Cleaned ${result.count} drawing(s), removed titleblock stamps/signatures, and compared plotted PDFs. No differences above the comparison tolerance.`,
         openFolderPath: result.output, openFolderLabel: "Open Cleaned CAD" });
     } catch (error) {
       if (activityId) failActivity(activityId, { message: error.message });
@@ -44412,14 +44424,17 @@ function confirmCleanDrawingSelection(preview) {
     form.method = "dialog";
     const heading = document.createElement("h2"); heading.textContent = "Clean Drawings"; form.append(heading);
     const note = document.createElement("p");
-    note.textContent = "Confirm the titleblock and drawings. Cleanup uses local copies and a boundary starting at (0,0). External images, underlays, and linked OLE objects currently stop the job.";
+    note.textContent = "Select the border/titleblock XREF, not a site or plan background. Cleanup removes identifiable titleblock stamps/signatures from local copies and converts supported PDFs/images. Original and cleaned PDFs are compared; other differences are flagged for review.";
     form.append(note);
     function field(text, control) {
       const label = document.createElement("label"); label.append(document.createTextNode(text), control); form.append(label); return control;
     }
     const titleblock = field("Titleblock XREF", document.createElement("select"));
+    titleblock.required = true;
+    titleblock.add(new Option("Select the titleblock XREF…", ""));
     preview.titleblocks.forEach(path => titleblock.add(new Option(
-      `${path}${preview.detectedTitleblocks?.includes(path) ? " (referenced in paperspace)" : ""}`, path)));
+      `${path}${path === preview.recommendedTitleblock ? " (recommended titleblock)" : preview.detectedTitleblocks?.includes(path) ? " (paper-space XREF; verify its purpose)" : ""}`, path)));
+    if (preview.recommendedTitleblock) titleblock.value = preview.recommendedTitleblock;
     const pdf = field("Reference PDF and sheet size", document.createElement("select"));
     pdf.add(new Option("Enter dimensions manually", ""));
     preview.sizes.forEach((size, index) => pdf.add(new Option(`${size.pdf}, page ${size.page}: ${size.width} x ${size.height} in`, String(index))));
@@ -44450,6 +44465,7 @@ function confirmCleanDrawingSelection(preview) {
     let selection = null;
     form.addEventListener("submit", event => {
       event.preventDefault(); const drawings = checks.filter(check => check.checked).map(check => check.value);
+      if (!titleblock.value) { error.textContent = "Select the border/titleblock XREF."; return; }
       if (!drawings.length) { error.textContent = "Select at least one electrical drawing."; return; }
       selection = { titleblock: titleblock.value, drawings, width: Number(width.value), height: Number(height.value), pdfSource: pdf.value === "" ? null : preview.sizes[Number(pdf.value)] };
       dialog.close();

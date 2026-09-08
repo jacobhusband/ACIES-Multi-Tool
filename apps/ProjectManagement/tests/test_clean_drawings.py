@@ -22,9 +22,18 @@ class CleanDrawingTests(unittest.TestCase):
         self.selection = {'titleblock': 'Xrefs/x-TB.dwg', 'drawings': ['Electrical/E01.dwg'], 'width': 36, 'height': 24}
         self.calls = []
         self.media = []
+        self.pdfs = []
+        self.images = []
         self.fail_operation = ''
         self.work = Path(self.temp.name) / 'worker'
         self.work.mkdir()
+        def comparison(original, reference, cleaned, output, **kwargs):
+            Path(output).mkdir()
+            (Path(output) / 'Comparison.pdf').write_bytes(b'review fixture')
+            return {'status': 'match_within_tolerance'}
+        self.comparison = patch.object(clean, 'compare_sets', side_effect=comparison)
+        self.compare_mock = self.comparison.start()
+        self.addCleanup(self.comparison.stop)
 
     def worker(self, acad, dll, drawing, job, workspace):
         op = job['Operation']
@@ -32,12 +41,81 @@ class CleanDrawingTests(unittest.TestCase):
         if op == self.fail_operation:
             raise RuntimeError('simulated failure')
         if op == 'scan':
-            return {'files': [str(self.tb), str(self.sheet)], 'references': [], 'media': self.media}
-        if op in ('titleblock', 'sheet'):
+            return {'files': [str(self.tb), str(self.sheet)], 'references': [], 'media': self.media, 'pdfs': self.pdfs, 'images': self.images}
+        if op == 'plot-review':
+            return {'pages': [{'layout': 'E01', 'file': str(Path(job['Output']) / '0000.pdf')}]}
+        if op in ('titleblock', 'sheet', 'embed-media', 'remove-titleblock-marks'):
             self.assertTrue(clean._inside(drawing, workspace))
             self.assertTrue(clean._inside(job['Output'], workspace))
             Path(job['Output']).write_bytes(b'cleaned')
         return {'modelEntities': 1, 'paperEntities': 1, 'externalReferences': 0}
+
+    def test_pdf_assets_are_staged_converted_and_reopened_before_cleanup(self):
+        source = self.root / 'form.pdf'
+        with fitz.open() as document:
+            document.new_page().insert_text((72, 72), 'Energy form')
+            document.save(source)
+        original = source.read_bytes()
+        self.pdfs = [{'Owner': str(self.sheet), 'Resolved': str(source), 'Path': str(source), 'Handle': '1', 'Page': '1'}]
+        def worker(*args):
+            job, workspace = args[3], args[4]
+            if job['Operation'] == 'prepare':
+                target = Path(job['PdfCopies'][str(source)])
+                self.assertTrue(clean._inside(target, workspace))
+                self.assertEqual(original, target.read_bytes())
+            return self.worker(*args)
+        result = self.run_job(worker)
+        self.assertEqual(original, source.read_bytes())
+        self.assertLess(self.calls.index('embed-media'), self.calls.index('titleblock'))
+        self.assertLess(self.calls.index('verify-media'), self.calls.index('titleblock'))
+        self.assertTrue((Path(result['output']) / 'Review/Comparison.pdf').exists())
+        self.assertFalse((Path(result['output']) / 'form.pdf').exists())
+
+    def test_unexpected_visual_changes_are_delivered_for_review_not_marked_match(self):
+        def comparison(*args, **kwargs):
+            Path(args[3]).mkdir()
+            return {'status': 'review_required'}
+        self.compare_mock.side_effect = comparison
+        result = self.run_job()
+        self.assertTrue(result['output'].endswith('_REVIEW_REQUIRED'))
+        self.assertIn('Review required', result['comparisonWarning'])
+        report = json.loads((Path(result['output']) / 'cleanup-report.json').read_text())
+        self.assertEqual('review_required', report['status'])
+
+    def test_failed_media_conversion_does_not_deliver(self):
+        source = self.root / 'logo.png'
+        source.write_bytes(b'fixture')
+        self.images = [{'Owner': str(self.sheet), 'Resolved': str(source), 'Path': str(source), 'Handle': '1'}]
+        self.fail_operation = 'embed-media'
+        with self.assertRaisesRegex(RuntimeError, 'simulated failure'):
+            self.run_job()
+        self.assertNotIn('titleblock', self.calls)
+        self.assertFalse((self.root / 'Cleaned CAD').exists())
+
+    def test_mapped_drive_aliases_normalize_the_entire_graph(self):
+        stamp = self.root / 'stamp.dwg'
+        stamp.write_bytes(b'stamp')
+        asset = self.root / 'logo.png'
+        asset.write_bytes(b'asset')
+        aliases = {'P:/stamp.dwg': stamp, 'P:/sheet.dwg': self.sheet, 'P:/logo.png': asset}
+        resolve = Path.resolve
+        def resolve_alias(path, *args, **kwargs):
+            if path.as_posix() in aliases:
+                return aliases[path.as_posix()]
+            return resolve(path, *args, **kwargs)
+        reference = {'Owner': 'P:/sheet.dwg', 'Name': 'Stamp', 'Path': 'P:/stamp.dwg', 'Resolved': 'P:/stamp.dwg'}
+        scan = {'files': [str(self.sheet), 'P:/sheet.dwg', 'P:/stamp.dwg', str(stamp)],
+                'references': [reference, dict(reference, Owner=str(self.sheet), Resolved=str(stamp))],
+                'images': [{'Owner': 'P:/sheet.dwg', 'Handle': 'AB', 'Path': 'P:/logo.png', 'Resolved': 'P:/logo.png'}],
+                'titleblocks': ['P:/stamp.dwg']}
+        with patch.object(Path, 'resolve', resolve_alias):
+            normalized = clean._canonicalize_scan(scan)
+        self.assertEqual([str(self.sheet), str(stamp)], normalized['files'])
+        self.assertEqual([dict(reference, Owner=str(self.sheet), Resolved=str(stamp))], normalized['references'])
+        self.assertEqual(str(self.sheet), normalized['images'][0]['Owner'])
+        self.assertEqual(str(asset), normalized['images'][0]['Resolved'])
+        self.assertEqual('P:/logo.png', normalized['images'][0]['Path'])
+        self.assertEqual([str(stamp)], normalized['titleblocks'])
 
     def run_job(self, worker=None):
         with patch.object(clean.tempfile, 'mkdtemp', return_value=str(self.work)):
@@ -58,7 +136,7 @@ class CleanDrawingTests(unittest.TestCase):
         self.media = ['logo RasterImage']
         with self.assertRaisesRegex(RuntimeError, 'embedding is not supported'):
             self.run_job()
-        self.assertEqual(['scan'], self.calls)
+        self.assertEqual(['validate-titleblock', 'scan'], self.calls)
         self.assertFalse((self.root / 'Cleaned CAD').exists())
         self.assertTrue(self.work.exists())
 
@@ -68,6 +146,25 @@ class CleanDrawingTests(unittest.TestCase):
         self.assertEqual('success', result['status'])
         self.assertTrue(Path(result['output']).is_dir())
         self.assertIn('could not be removed', result['cleanupWarning'])
+
+    def test_wrong_titleblock_stops_before_scan_or_media_work(self):
+        self.fail_operation = 'validate-titleblock'
+        with self.assertRaisesRegex(RuntimeError, 'simulated failure'):
+            self.run_job()
+        self.assertEqual(['validate-titleblock'], self.calls)
+        self.assertFalse((self.root / 'Cleaned CAD').exists())
+
+    def test_titleblock_recommendation_requires_unique_name_and_paper_reference(self):
+        site = 'Xrefs/San Mateo HS Site Xref (E).dwg'
+        border = 'Xrefs/X-SMHS-AQ_TB-30x42-DSA.dwg'
+        unused = 'Xrefs/Danny_Stringer_X-SMHS-AQ_TB-30x42-DSA.dwg'
+        preview = {'titleblocks': [site, unused, border], 'detectedTitleblocks': [site, border]}
+        clean._rank_titleblocks(preview)
+        self.assertEqual(border, preview['recommendedTitleblock'])
+        self.assertEqual(border, preview['titleblocks'][0])
+        preview['detectedTitleblocks'].append(unused)
+        clean._rank_titleblocks(preview)
+        self.assertIsNone(preview['recommendedTitleblock'])
 
     def test_sheet_failure_never_delivers_partial_titleblock(self):
         self.fail_operation = 'sheet'

@@ -460,14 +460,15 @@ _register_heif_support()
 
 # Helper functions for date parsing and status management
 STATUS_CANON = ["Waiting", "Working",
-                "Pending Review", "Complete", "Delivered"]
-STATUS_PRIORITY = ['Delivered', 'Complete',
+                "Pending Review", "Complete", "Completed (by others)", "Delivered"]
+STATUS_PRIORITY = ['Delivered', 'Complete', 'Completed (by others)',
                    'Pending Review', 'Working', 'Waiting']
 LABEL_TO_KEY = {
     "Waiting": "waiting",
     "Working": "working",
     "Pending Review": "pendingReview",
     "Complete": "complete",
+    "Completed (by others)": "completed-by-others",
     "Delivered": "delivered"
 }
 KEY_TO_LABEL = {v: k for k, v in LABEL_TO_KEY.items()}
@@ -10243,6 +10244,10 @@ Return ONLY the JSON object.
                 deliverables = task.get('deliverables')
                 if isinstance(deliverables, list):
                     for deliverable in deliverables:
+                        if (deliverable.get('status') == 'Completed (by others)'
+                                or 'Completed (by others)' in (deliverable.get('statuses') or [])
+                                or 'completed-by-others' in (deliverable.get('statusTags') or [])):
+                            continue
                         due_str = get_effective_due_str(deliverable)
                         if due_str:
                             due_date = parse_due_str(due_str)
@@ -10255,6 +10260,10 @@ Return ONLY the JSON object.
                                         t['done'] = True
                                 count += 1
                 else:
+                    if (task.get('status') == 'Completed (by others)'
+                            or 'Completed (by others)' in (task.get('statuses') or [])
+                            or 'completed-by-others' in (task.get('statusTags') or [])):
+                        continue
                     due_str = task.get('due', '')
                     if due_str:
                         due_date = parse_due_str(due_str)
@@ -10283,6 +10292,10 @@ Return ONLY the JSON object.
                 deliverables = task.get('deliverables')
                 if isinstance(deliverables, list):
                     for deliverable in deliverables:
+                        if (deliverable.get('status') == 'Completed (by others)'
+                                or 'Completed (by others)' in (deliverable.get('statuses') or [])
+                                or 'completed-by-others' in (deliverable.get('statusTags') or [])):
+                            continue
                         due_str = get_effective_due_str(deliverable)
                         if due_str:
                             due_date = parse_due_str(due_str)
@@ -10295,6 +10308,10 @@ Return ONLY the JSON object.
                                         t['done'] = True
                                 count += 1
                 else:
+                    if (task.get('status') == 'Completed (by others)'
+                            or 'Completed (by others)' in (task.get('statuses') or [])
+                            or 'completed-by-others' in (task.get('statusTags') or [])):
+                        continue
                     due_str = task.get('due', '')
                     if due_str:
                         due_date = parse_due_str(due_str)

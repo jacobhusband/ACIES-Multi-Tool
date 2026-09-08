@@ -183,6 +183,15 @@ namespace AutoCADCleanupTool
             {
                 using (doc.LockDocument())
                 {
+                    using (var tr = db.TransactionManager.StartTransaction())
+                    {
+                        var model = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
+                        if (!model.Cast<ObjectId>().Any(id => !id.IsErased))
+                        {
+                            ed.WriteMessage("\nVP2PLHEADLESS: Model Space is empty; no viewport cleanup is needed.");
+                            return true;
+                        }
+                    }
                     var regions = CollectViewportRegionsHeadless(db, ed);
                     if (regions.Count == 0)
                     {
@@ -246,16 +255,26 @@ namespace AutoCADCleanupTool
                     var layoutBtr = tr.GetObject(layout.BlockTableRecordId, OpenMode.ForRead) as BlockTableRecord;
                     if (layoutBtr == null) continue;
 
+                    // Number and On describe the active graphics state. Viewports on
+                    // inactive tabs can report Number=0 and On=false even when they
+                    // plot normally. Identify the overall paper viewport by its ID,
+                    // and retain regions for every floating viewport (including off
+                    // ones) so changing the active tab cannot delete drawing content.
+                    var layoutViewports = layout.GetViewports();
+                    ObjectId paperViewportId = layoutViewports.Count > 0 ? layoutViewports[0] : ObjectId.Null;
+
                     foreach (ObjectId id in layoutBtr)
                     {
                         if (!id.IsValid || id.IsErased || id.ObjectClass.DxfName != "VIEWPORT") continue;
 
                         var viewport = tr.GetObject(id, OpenMode.ForRead, false) as Viewport;
-                        if (viewport == null || viewport.Number == 1 || !viewport.On) continue;
-                        if (viewport.Width <= 0 || viewport.Height <= 0) continue;
+                        if (viewport == null || id == paperViewportId || viewport.Number == 1) continue;
+                        if (viewport.Width <= 0 || viewport.Height <= 0)
+                            throw new InvalidOperationException("Invalid viewport dimensions on layout '" + layout.LayoutName + "'.");
 
                         var paperPoints = GetViewportBoundaryPointsInPaper(viewport, tr);
-                        if (paperPoints == null || paperPoints.Count < 3) continue;
+                        if (paperPoints == null || paperPoints.Count < 3)
+                            throw new InvalidOperationException("Cannot measure viewport on layout '" + layout.LayoutName + "'.");
 
                         Matrix3d modelFromPaper;
                         try
@@ -266,7 +285,7 @@ namespace AutoCADCleanupTool
                         {
                             ed.WriteMessage(
                                 $"\nVP2PLHEADLESS: PS-to-MS transform failed for layout '{layout.LayoutName}' viewport {viewport.Number}: {ex.Message}");
-                            continue;
+                            throw new InvalidOperationException("Cannot safely preserve every viewport region.", ex);
                         }
 
                         var polygon = new Point3dCollection();
@@ -280,7 +299,8 @@ namespace AutoCADCleanupTool
                             previous = modelPoint;
                         }
 
-                        if (polygon.Count < 3) continue;
+                        if (polygon.Count < 3)
+                            throw new InvalidOperationException("Degenerate viewport region on layout '" + layout.LayoutName + "'.");
 
                         regions.Add(new ViewportRegion(layout.LayoutName, viewport.ObjectId, polygon, ObjectId.Null));
                     }

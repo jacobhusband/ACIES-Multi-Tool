@@ -6,12 +6,64 @@ import subprocess
 import tempfile
 import unittest
 from PIL import Image
+import pymupdf as fitz
 
 import clean_drawings as clean
 
 
 @unittest.skipUnless(os.environ.get('ACIES_TEST_CORE') and os.environ.get('ACIES_TEST_CLEAN_DLL'), 'Core Console integration is opt-in')
 class CoreCleanDrawingTests(unittest.TestCase):
+    def test_inactive_layout_viewport_keeps_its_model_contents(self):
+        with tempfile.TemporaryDirectory(prefix='acies-clean-inactive-viewport-') as temporary:
+            root = Path(temporary)
+            drawing = root / 'two-layouts.dwg'
+            count = root / 'kept-lines.txt'
+            fixture = root / 'fixture.scr'
+            fixture.write_text(f'''(setvar "FILEDIA" 0)
+(setvar "OSMODE" 0)
+(command "_.LINE" "1000,1000" "1001,1001" "")
+(command "_.LINE" "5000,5000" "5001,5001" "")
+(command "_.LINE" "10000,10000" "10001,10001" "")
+(setvar "TILEMODE" 0)
+(setvar "CTAB" "Layout1")
+(setq s (ssget "_X" '((0 . "VIEWPORT") (410 . "Layout1"))))
+(if s (command "_.ERASE" s ""))
+(command "_.MVIEW" "1,1" "11,11")
+(command "_.MSPACE")
+(command "_.ZOOM" "_C" "1000,1000" 20)
+(command "_.PSPACE")
+(setvar "CTAB" "Layout2")
+(setq s (ssget "_X" '((0 . "VIEWPORT") (410 . "Layout2"))))
+(if s (command "_.ERASE" s ""))
+(command "_.MVIEW" "1,1" "11,11")
+(command "_.MSPACE")
+(command "_.ZOOM" "_C" "5000,5000" 20)
+(command "_.PSPACE")
+(command "_.QSAVE" "{drawing.as_posix()}")
+_.QUIT
+_Y
+''', encoding='utf-8')
+            probe = root / 'probe.scr'
+            probe.write_text(f'''(setvar "SECURELOAD" 0)
+_.NETLOAD
+"{Path(os.environ['ACIES_TEST_CLEAN_DLL']).as_posix()}"
+VP2PLHEADLESS
+(setq f (open "{count.as_posix()}" "w"))
+(setq s (ssget "_X" '((0 . "LINE") (410 . "Model"))))
+(prin1 (if s (sslength s) 0) f)
+(close f)
+_.QUIT
+_Y
+''', encoding='utf-8')
+            for script, inputs in [(fixture, []), (probe, ['/i', str(drawing)])]:
+                result = subprocess.run([os.environ['ACIES_TEST_CORE'], *inputs, '/s', str(script)],
+                                        cwd=root, capture_output=True, timeout=90,
+                                        creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+                self.assertEqual(0, result.returncode, result.stdout[-3000:])
+            self.assertEqual('2', count.read_text().strip(),
+                             'Keep both layout regions and erase only the unrelated third line.\n' +
+                             result.stdout.decode('utf-16-le', errors='replace'))
+
     def test_external_raster_image_still_blocks_cleanup(self):
         with tempfile.TemporaryDirectory(prefix='acies-clean-raster-') as temporary:
             root = Path(temporary)
@@ -31,8 +83,8 @@ _Y
             self.assertEqual(0, result.returncode)
             scan = clean.run_worker(os.environ['ACIES_TEST_CORE'], os.environ['ACIES_TEST_CLEAN_DLL'], drawing,
                                     {'Operation': 'scan', 'Files': [str(drawing)], 'Catalog': []}, root)
-            self.assertEqual(1, len(scan['media']))
-            self.assertIn('RasterImage', scan['media'][0])
+            self.assertEqual(1, len(scan['images']))
+            self.assertEqual(str(image), scan['images'][0]['Resolved'])
             output = root / 'must-not-exist.dwg'
             with self.assertRaisesRegex(RuntimeError, 'Unsupported media'):
                 clean.run_worker(os.environ['ACIES_TEST_CORE'], os.environ['ACIES_TEST_CLEAN_DLL'], drawing,
@@ -59,6 +111,9 @@ _Y
 (setvar "TILEMODE" 0)
 (command "_.-XREF" "_ATTACH" "{tb}" "0,0" 1 1 0)
 (command "_.WIPEOUT" "8,8" "9,8" "9,9" "8,9" "")
+(setvar "CECOLOR" "1")
+(command "_.LINE" "10,10" "12,10" "")
+(setvar "CECOLOR" "BYLAYER")
 (command "_.QSAVE" "{sheet}")
 _.QUIT
 _Y
@@ -82,6 +137,17 @@ _Y
             self.assertEqual(1, report['titleblockValidation']['wipeouts'])
             self.assertEqual(2, report['drawings'][0]['validation']['wipeouts'])
             self.assertEqual(0, report['drawings'][0]['validation']['externalReferences'])
+            with fitz.open(Path(result['output']) / 'Review' / 'Original Set.pdf') as document:
+                page = document[0]
+                page.remove_rotation()
+                self.assertEqual((2592, 1728), (round(page.rect.width), round(page.rect.height)))
+                # The two-inch red paper-space line must plot at 1:1, at its
+                # zero-offset position, and in black through the requested CTB.
+                strokes = [(path, item) for path in page.get_drawings() for item in path['items']
+                           if item[0] == 'l' and abs(item[1].x - 720) < 1 and abs(item[2].x - 864) < 1
+                           and abs(item[1].y - 1008) < 1 and abs(item[2].y - 1008) < 1]
+                self.assertTrue(strokes, 'Expected a 144-point line at the 1:1 paper-space position.')
+                self.assertTrue(all(max(path['color']) < .01 for path, _ in strokes))
             for path, data in original.items():
                 self.assertEqual(data, path.read_bytes())
             rejected_output = root / 'must-not-exist.dwg'

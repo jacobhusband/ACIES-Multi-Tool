@@ -19,8 +19,8 @@ class HeaderAccountPopoverUiTests(unittest.TestCase):
         self.assertIn('id="headerAccountPopoverAvatar"', html)
         self.assertIn('id="headerAccountPopoverName"', html)
         self.assertIn('id="headerAccountPopoverEmail"', html)
-        self.assertIn('id="headerAccountPopoverStatus"', html)
-        self.assertIn('id="headerAccountPopoverNote"', html)
+        self.assertNotIn('id="headerAccountPopoverStatus"', html)
+        self.assertNotIn('id="headerAccountPopoverNote"', html)
         self.assertIn('id="headerAccountSignOutBtn"', html)
         self.assertIn('id="headerDisciplineSwitcher"', html)
         self.assertIn('role="radiogroup"', html)
@@ -53,7 +53,7 @@ class HeaderAccountPopoverUiTests(unittest.TestCase):
         self.assertIn("function initializeHeaderDisciplineSwitcher() {", script)
         self.assertIn("function handleHeaderGoogleAuthAction() {", script)
         self.assertIn('const headerPopoverName = document.getElementById("headerAccountPopoverName");', script)
-        self.assertIn('const headerPopoverStatus = document.getElementById("headerAccountPopoverStatus");', script)
+        self.assertNotIn('const headerPopoverStatus = document.getElementById("headerAccountPopoverStatus");', script)
         self.assertIn('headerGoogleAuthBtn.onclick = () => handleHeaderGoogleAuthAction();', script)
         self.assertIn("initializeHeaderDisciplineSwitcher();", script)
         self.assertIn('headerAccountSignOutBtn.onclick = () => handleGoogleSignOut();', script)
@@ -83,9 +83,9 @@ class HeaderAccountPopoverUiTests(unittest.TestCase):
         self.assertIn("display: none;", css)
         self.assertIn(".header-account-popover {", css)
         self.assertIn(".header-account-profile {", css)
-        self.assertIn(".header-account-sync {", css)
+        self.assertNotIn(".header-account-sync {", css)
         self.assertIn(".header-account-actions {", css)
-        self.assertIn(
+        self.assertNotIn(
             '.header-account-popover[data-sync-status="active"] .header-account-sync-dot {',
             css,
         )

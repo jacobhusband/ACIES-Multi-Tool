@@ -8,6 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;700&family=Barlow+Condensed:wght@400;500;600&display=swap" rel="stylesheet">
     <script>
         (function () {
             try {
@@ -22,6 +23,8 @@
     </script>
     <link rel="stylesheet" href="styles.css?v=20260708-richer-blocks-p6" />
     <link rel="stylesheet" href="symbol_counter.css?v=20260818-delete-actions" />
+    <link rel="stylesheet" href="industry.css?v=20260909-modern-header" />
+    <link rel="stylesheet" href="modern-workspace.css?v=20260909-new-logo" />
     <link rel="stylesheet" href="project-pages-editor/dist/project-pages-editor-project-pages-editor.css?v=20260729-page-email-attach" />
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
@@ -29,7 +32,9 @@
 <body data-active-tab="projects" data-projects-layout-width="wide">
     <div id="appLoader" class="app-loader" role="status" aria-live="polite" aria-label="Loading">
         <div class="app-loader-content">
-            <img src="./assets/acies.png" alt="ACIES" class="app-loader-logo" onerror="this.style.display='none'" />
+            <span class="brand-mark app-loader-mark supplied-logo" aria-hidden="true">
+                <img src="assets/acies-modern-logo.png" alt="" width="1774" height="887" />
+            </span>
             <div class="app-loader-dots" aria-hidden="true">
                 <span></span>
                 <span></span>
@@ -40,12 +45,14 @@
     <header class="app-header">
         <div class="header-start">
             <div class="brand">
-                <img src="./assets/acies.png" alt="ACIES" class="logo-img" onerror="this.style.display='none'" />
+                <span class="brand-mark supplied-logo" role="img" aria-label="ACIES Engineering">
+                    <img src="assets/acies-modern-logo.png" alt="" width="1774" height="887" />
+                </span>
             </div>
         </div>
-        <!-- Centered navigation -->
+        <!-- Navigation flows beside the wordmark and wraps on small windows. -->
         <div class="header-center">
-            <nav class="main-nav">
+            <nav class="main-nav" aria-label="Main navigation">
                 <button class="main-tab-btn active" data-tab="projects">Projects</button>
                 <button class="main-tab-btn" data-tab="notes">Pages</button>
                 <button class="main-tab-btn" data-tab="tools">Tools</button>
@@ -56,30 +63,8 @@
             <div class="version-chip header-version-corner" id="versionChip" title="Current version">
                 <span class="version-dot" id="versionDot"></span>
                 <span id="appVersionLabel">v0.0.0</span>
-                <button class="icon-btn mini" id="checkUpdateBtn" aria-label="Check for updates"
-                    title="Check for updates">
-                    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
-                        <path fill="currentColor"
-                            d="M12 4a8 8 0 1 0 7.45 10.67 1 1 0 1 1 1.9.66A10 10 0 1 1 12 2a1 1 0 1 1 0 2Zm6.71-3.29a1 1 0 0 0-1.42 0l-3 3a1 1 0 0 0 1.42 1.42L17 5.41V10a1 1 0 1 0 2 0V3.41l1.29 1.3a1 1 0 0 0 1.42-1.42Z" />
-                    </svg>
-                </button>
             </div>
             <button class="btn btn-primary tiny" id="appUpdateBtn" style="display:none;">Update</button>
-            <button class="icon-btn theme-toggle" id="themeToggleBtn" aria-label="Toggle theme"
-                title="Toggle light/dark mode">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                    stroke-linecap="round" stroke-linejoin="round">
-                    <circle cx="12" cy="12" r="5"></circle>
-                    <line x1="12" y1="1" x2="12" y2="3"></line>
-                    <line x1="12" y1="21" x2="12" y2="23"></line>
-                    <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
-                    <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
-                    <line x1="1" y1="12" x2="3" y2="12"></line>
-                    <line x1="21" y1="12" x2="23" y2="12"></line>
-                    <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
-                    <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
-                </svg>
-            </button>
             <button class="icon-btn" id="settingsBtn" aria-label="Settings" title="Settings">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                     stroke-linecap="round" stroke-linejoin="round">
@@ -140,13 +125,6 @@
                             </div>
                         </div>
                     </div>
-                    <div class="header-account-sync" id="headerAccountPopoverSync">
-                        <span class="header-account-sync-dot" id="headerAccountPopoverSyncDot" aria-hidden="true"></span>
-                        <span id="headerAccountPopoverStatus">Cloud sync not configured</span>
-                    </div>
-                    <div class="header-account-note" id="headerAccountPopoverNote">
-                        Cloud sync is not configured yet.
-                    </div>
                     <div class="header-account-actions">
                         <button class="btn tiny" id="headerAccountSignOutBtn" type="button">Sign out</button>
                     </div>
@@ -174,6 +152,10 @@
         <!-- Tab Panel for Projects -->
         <div id="projects-panel" class="tab-panel active">
             <section class="panel stack">
+                <div class="projects-board-heading">
+                    <span class="projects-board-heading__eyebrow">Workspace</span>
+                    <h1>Projects</h1>
+                </div>
                 <div class="panel-toolbar">
                     <div class="nav-search expanded-search">
                         <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none"
@@ -191,13 +173,6 @@
                                 <line x1="5" y1="12" x2="19" y2="12"></line>
                             </svg>
                         </button>
-                        <button class="icon-btn" id="outlookScanBtn" aria-label="Email intake" title="Email intake">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <path d="M4 4h16v16H4z"></path>
-                                <path d="m4 8 8 6 8-6"></path>
-                            </svg>
-                        </button>
                         <button class="icon-btn" id="statsBtn" aria-label="Statistics" title="View Statistics">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -206,33 +181,9 @@
                                 <line x1="6" y1="20" x2="6" y2="14"></line>
                             </svg>
                         </button>
-                        <button class="icon-btn" id="exportDeliverablesBtn" aria-label="Export deliverables"
-                            title="Export incomplete deliverables to Excel">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                                <polyline points="7 10 12 15 17 10"></polyline>
-                                <line x1="12" y1="15" x2="12" y2="3"></line>
-                            </svg>
-                        </button>
-                        <button class="btn projects-attention-btn" id="projectsAttentionBtn" type="button" aria-pressed="false" title="Show unfinished deliverables due this week or overdue">Needs attention</button>
                         <div class="projects-view-toggle" role="group" aria-label="Projects view mode">
-                            <button type="button" class="view-toggle-btn is-active" id="viewToggleList" data-view-mode="list" aria-pressed="true" title="List view">
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                    <line x1="8" y1="6" x2="21" y2="6"></line>
-                                    <line x1="8" y1="12" x2="21" y2="12"></line>
-                                    <line x1="8" y1="18" x2="21" y2="18"></line>
-                                    <line x1="3" y1="6" x2="3.01" y2="6"></line>
-                                    <line x1="3" y1="12" x2="3.01" y2="12"></line>
-                                    <line x1="3" y1="18" x2="3.01" y2="18"></line>
-                                </svg>
-                            </button>
-                            <button type="button" class="view-toggle-btn" id="viewToggleCard" data-view-mode="card" aria-pressed="false" title="Card view">
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                    <rect x="3" y="3" width="7" height="18" rx="1"></rect>
-                                    <rect x="14" y="3" width="7" height="11" rx="1"></rect>
-                                </svg>
-                            </button>
+                            <button type="button" class="view-toggle-btn is-active" id="viewToggleList" data-view-mode="list" aria-pressed="true" title="List view">List</button>
+                            <button type="button" class="view-toggle-btn" id="viewToggleCard" data-view-mode="card" aria-pressed="false" title="Card view">Board</button>
                         </div>
                         <button class="icon-btn projects-width-toggle is-active" id="projectsWidthToggle" type="button" aria-label="Wide project layout" aria-pressed="true" title="Wide project layout">
                             <svg class="projects-width-toggle__wide" width="16" height="16" viewBox="0 0 24 24" fill="none"
@@ -290,7 +241,6 @@
                                     <button type="button" class="projects-filter-option" data-filter-value="lastWeek" role="menuitemradio" aria-checked="false" tabindex="-1">Last week</button>
                                     <button type="button" class="projects-filter-option" data-filter-value="soon" role="menuitemradio" aria-checked="false" tabindex="-1">This week</button>
                                     <button type="button" class="projects-filter-option" data-filter-value="future" role="menuitemradio" aria-checked="false" tabindex="-1">Upcoming Weeks</button>
-                                    <button type="button" class="projects-filter-option" data-filter-value="attention" role="menuitemradio" aria-checked="false" tabindex="-1">Needs attention</button>
                                 </div>
                             </div>
                         </div>
@@ -409,14 +359,18 @@
                         <div id="columnConfigMenu" class="column-config-menu" role="menu" hidden></div>
                     </div>
                 </div>
-                <p id="projectsAttentionHint" class="projects-attention-hint" hidden>Unfinished deliverables due this week or overdue. Click Needs attention again to restore your previous view.</p>
                 <div class="projects-card-view" id="projectsCardView" hidden></div>
                 <table class="table projects-table">
                     <thead>
-                        <tr>
-                            <th style="width:90px" data-sort="id">ID</th>
-                            <th data-sort="name">Project Details</th>
-                            <th class="deliverables-header" data-sort="due" colspan="3">Deliverable</th>
+                        <tr class="reg-head">
+                            <th class="reg-th reg-th--rail" aria-hidden="true"></th>
+                            <th class="reg-th" data-sort="id">ID</th>
+                            <th class="reg-th" data-sort="name">Project</th>
+                            <th class="reg-th deliverables-header" data-sort="due">Deliverable</th>
+                            <th class="reg-th">Internal</th>
+                            <th class="reg-th">External</th>
+                            <th class="reg-th">Status</th>
+                            <th class="reg-th reg-th--right">Notes</th>
                         </tr>
                     </thead>
                     <tbody id="tbody"></tbody>
@@ -441,6 +395,10 @@
                         <button type="button" class="projects-pagination-btn" id="projectsPageLast" aria-label="Last page" title="Last page">Last</button>
                     </div>
                 </nav>
+                <div id="registerFooter" class="register-footer">
+                    <span id="registerFooterCount" class="reg-kick">0 of 0 shown</span>
+                    <span class="register-legend">Select a row to use the command bar · Hatched rail marks an overdue external date</span>
+                </div>
                 <div id="emptyState" class="empty" style="display:none">
                     <div class="empty-icon">
                         <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -460,6 +418,10 @@
         <!-- Tab Panel for Notes -->
         <div id="notes-panel" class="tab-panel" hidden>
             <div class="panel stack full-height">
+                <div class="global-pages-header">
+                    <h3 class="section-title">Pages</h3>
+                    <button class="btn btn-accent" type="button" id="globalPagesNewBtn">+ New page</button>
+                </div>
                 <div class="panel-toolbar texts-toolbar">
                     <div class="texts-toolbar-main">
                         <div class="nav-search expanded-search">
@@ -484,10 +446,6 @@
                 </div>
                 <div class="texts-content">
                     <div class="global-pages">
-                        <div class="global-pages-header">
-                            <h3 class="section-title">Pages</h3>
-                            <button class="btn btn-accent" type="button" id="globalPagesNewBtn">+ New page</button>
-                        </div>
                         <div class="notebook-empty-state" id="notesEmptyState" hidden>
                             <div class="notebook-empty-state-icon">
                                 <svg width="40" height="40" viewBox="0 0 24 24" fill="none"
@@ -837,6 +795,10 @@
         <!-- Tab Panel for Timesheets -->
         <div id="timesheets-panel" class="tab-panel" hidden>
             <section class="panel stack">
+                <div class="modern-page-heading">
+                    <span class="modern-eyebrow">Workspace</span>
+                    <h1>Timesheets</h1>
+                </div>
                 <div class="panel-toolbar">
                     <div class="timesheets-week-selector">
                         <button class="btn tiny" id="prevWeekBtn" aria-label="Previous week">
@@ -1234,62 +1196,7 @@
             </div>
         </div>
     </dialog>
-    <dialog id="deliverableNotepadDlg" class="deliverable-notepad-dialog">
-        <div class="modal-header">
-            <div>
-                <div class="title">Export Deliverables to Excel</div>
-                <div class="muted tiny">Incomplete deliverables are preselected. Generate an AI status briefing to
-                    include it as a second sheet.</div>
-            </div>
-            <button class="btn ghost" type="button" onclick="closeDlg('deliverableNotepadDlg')">Cancel</button>
-        </div>
-        <div class="modal-body stack">
-            <div class="deliverable-notepad-toolbar">
-                <div class="projects-filter-chip-list" role="group" aria-label="Deliverable scope">
-                    <button type="button" class="projects-filter-chip is-active"
-                        id="deliverableNotepadScopeIncompleteBtn" data-notepad-scope="incomplete"
-                        aria-pressed="true">Incomplete only</button>
-                    <button type="button" class="projects-filter-chip" id="deliverableNotepadScopeAllBtn"
-                        data-notepad-scope="all" aria-pressed="false">All deliverables</button>
-                </div>
-                <button class="btn ghost" id="deliverableNotepadSummaryBtn" type="button">Generate Status
-                    Briefing</button>
-            </div>
-            <div class="deliverable-notepad-layout">
-                <section class="deliverable-notepad-panel">
-                    <div class="deliverable-notepad-panel-header">
-                        <div class="deliverable-notepad-panel-title" id="deliverableNotepadAvailablePanelTitle">
-                            Incomplete Deliverables</div>
-                        <div id="deliverableNotepadAvailableCount" class="muted tiny">0 deliverables</div>
-                    </div>
-                    <div id="deliverableNotepadAvailableList" class="deliverable-notepad-list" role="list"></div>
-                </section>
-                <div class="deliverable-notepad-transfer">
-                    <button class="btn" id="deliverableNotepadAddBtn" type="button">Add Selected &gt;</button>
-                    <button class="btn ghost" id="deliverableNotepadRemoveBtn" type="button">&lt; Remove Selected</button>
-                </div>
-                <section class="deliverable-notepad-panel">
-                    <div class="deliverable-notepad-panel-header">
-                        <div class="deliverable-notepad-panel-title">Excel Export</div>
-                        <div id="deliverableNotepadSelectedCount" class="muted tiny">0 deliverables</div>
-                    </div>
-                    <div id="deliverableNotepadSelectedList" class="deliverable-notepad-list" role="list"></div>
-                </section>
-            </div>
-            <section id="deliverableNotepadSummaryPanel" class="deliverable-notepad-summary" hidden
-                aria-live="polite">
-                <div class="deliverable-notepad-summary-header">
-                    <div class="deliverable-notepad-panel-title">AI Status Briefing</div>
-                    <div id="deliverableNotepadSummaryMeta" class="muted tiny"></div>
-                </div>
-                <div id="deliverableNotepadSummaryBody" class="deliverable-notepad-summary-body"></div>
-            </section>
-            <div class="modal-footer">
-                <button class="btn-primary" id="deliverableNotepadExportBtn" type="button" disabled>Export to Excel</button>
-            </div>
-        </div>
-    </dialog>
-    <dialog id="copyProjectLocallyDlg" class="deliverable-notepad-dialog copy-project-locally-dialog local-project-manager-dialog">
+    <dialog id="copyProjectLocallyDlg" class="copy-project-locally-dialog local-project-manager-dialog">
         <div class="modal-header">
             <div>
                 <div class="title">Work Locally</div>
@@ -1309,7 +1216,7 @@
                     </div>
                 </section>
                 <div id="copyProjectLocallyFolderList"
-                    class="deliverable-notepad-list copy-project-locally-list local-project-manager-sync-list"
+                    class="local-project-manager-list copy-project-locally-list local-project-manager-sync-list"
                     role="list"></div>
                 <div id="localProjectManagerBlockedSection" class="local-project-manager-blocked-section" hidden>
                     <div class="local-project-manager-blocked-title">Blocked Entries</div>
@@ -1414,25 +1321,6 @@
                 </div>
                 <div id="refList" class="stack"></div>
             </div>
-        </div>
-    </dialog>
-    <dialog id="outlookScanDlg">
-        <div class="modal-header">
-            <div class="title">Email Intake</div>
-            <button class="btn ghost" onclick="closeDlg('outlookScanDlg')">Close</button>
-        </div>
-        <div class="modal-body stack">
-            <section id="emailIntakePastePanel" class="email-intake-panel stack">
-                <div class="email-intake-panel-head">
-                    <div>
-                        <div class="label">Paste Email</div>
-                        <div class="tiny muted">Paste the full email content below. The AI will match the project and
-                            extract either a deliverable or an important page item.</div>
-                    </div>
-                    <button type="button" class="btn-primary tiny" id="btnProcessEmail">Process with AI</button>
-                </div>
-                <textarea id="emailArea" rows="15" placeholder="Paste email content here..."></textarea>
-            </section>
         </div>
     </dialog>
     <dialog id="aiNoMatchDlg">
@@ -1599,6 +1487,13 @@
                 </div>
             </div>
 
+            <h3 class="section-title" style="margin-top: 1rem;">Appearance</h3>
+            <label class="label" for="settings_theme">Color mode</label>
+            <select id="settings_theme">
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+            </select>
+
             <!-- Integrations Section -->
             <h3 class="section-title" style="margin-top: 1rem;">Integrations</h3>
             <div class="modal-grid">
@@ -1624,15 +1519,6 @@
                                 </div>
                             </div>
                             <button type="button" class="btn tiny" id="settings_googleAuthActionBtn">Sign in</button>
-                        </div>
-                        <div class="sync-auth-row" style="margin-top: 0.9rem;">
-                            <div class="sync-auth-copy">
-                                <label class="label" style="margin-bottom: 0.25rem;">Cloud sync</label>
-                                <div id="settings_cloudSyncStatus" class="sync-auth-status">Cloud sync not configured</div>
-                                <div id="settings_cloudSyncDetails" class="tiny muted">
-                                    Add Firebase config to enable sync.
-                                </div>
-                            </div>
                         </div>
                     </div>
                 </div>
@@ -2138,10 +2024,6 @@
                             <span>Manage projects and tasks</span>
                         </div>
                         <div class="feature-item">
-                            <span class="feature-icon">🤖</span>
-                            <span>AI-powered email processing</span>
-                        </div>
-                        <div class="feature-item">
                             <span class="feature-icon">🔧</span>
                             <span>AutoCAD automation tools</span>
                         </div>
@@ -2187,8 +2069,7 @@
                 <div class="onboarding-content">
                     <div class="onboarding-icon">🔑</div>
                     <h2>Set up your AI assistant</h2>
-                    <p>Add your Google Gemini API key to enable AI features like email processing and project
-                        creation.
+                    <p>Add your Google Gemini API key to enable AI features like panel schedule analysis.
                     </p>
                     <div class="onboarding-input-group">
                         <label class="label">Google Gemini API Key</label>
@@ -2354,9 +2235,6 @@
                         <div class="tiny muted" id="googleAccountEmail">Sign in to connect your Google account.</div>
                     </div>
                 </div>
-                <div class="google-account-note" id="googleAccountSyncNote">
-                    Cloud sync is not configured yet.
-                </div>
             </div>
             <div class="modal-footer">
                 <button class="btn ghost" onclick="closeDlg('googleAccountDlg')">Close</button>
@@ -2386,8 +2264,7 @@
 
                     <h3>Creating &amp; editing</h3>
                     <ul>
-                        <li><strong>Add a project:</strong> use the <em>New</em> button in the toolbar, or paste an
-                            Outlook email and let the AI assistant create one from the message.</li>
+                        <li><strong>Add a project:</strong> use the <em>New</em> button in the toolbar.</li>
                         <li><strong>Edit:</strong> click a project card or row to open the edit dialog. You can rename
                             it, change dates, add/remove deliverables, and adjust status.</li>
                     </ul>
@@ -3571,9 +3448,10 @@
     </section>
     <div id="updateCheckIndicator" class="corner-status" hidden>Checking for updates...</div>
     <script src="project-pages-editor/dist/project-pages-editor.js?v=20260729-page-email-attach"></script>
-    <script src="script.js?v=20260824-remove-active-projects-fix"></script>
+    <script src="script.js?v=20260909-settings-appearance"></script>
+    <script src="industry-projects.js?v=20260909-command-dismiss"></script>
+    <script src="industry-shell.js?v=20260909-simplify-utilities"></script>
     <script src="symbol_counter_ui.js?v=20260818-delete-actions"></script>
 </body>
 
 </html>
-

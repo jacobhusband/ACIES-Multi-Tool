@@ -561,25 +561,11 @@ DEFAULT_GEMINI_FALLBACK_MODELS = (
     "gemini-2.5-flash",
 )
 PANEL_SCHEDULE_GEMINI_MODELS = DEFAULT_GEMINI_FALLBACK_MODELS
-DELIVERABLE_SUMMARY_GEMINI_MODELS = DEFAULT_GEMINI_FALLBACK_MODELS
 AI_ASSISTANT_GEMINI_MODELS = DEFAULT_GEMINI_FALLBACK_MODELS
 EMAIL_INTAKE_CAPACITY_RETRY_DELAYS_SECONDS = (1.0, 2.0)
 EMAIL_INTAKE_REQUEST_TIMEOUT_MS = 240000
-FIREBASE_API_KEY_ENV = "FIREBASE_API_KEY"
-FIREBASE_AUTH_DOMAIN_ENV = "FIREBASE_AUTH_DOMAIN"
-FIREBASE_PROJECT_ID_ENV = "FIREBASE_PROJECT_ID"
-FIREBASE_APP_ID_ENV = "FIREBASE_APP_ID"
-FIREBASE_STORAGE_BUCKET_ENV = "FIREBASE_STORAGE_BUCKET"
-FIREBASE_MESSAGING_SENDER_ID_ENV = "FIREBASE_MESSAGING_SENDER_ID"
 
 
-def build_default_cloud_sync_settings():
-    return {
-        'enabled': False,
-        'firebaseUid': '',
-        'lastSyncedAt': '',
-        'migrationCompleted': False,
-    }
 
 
 def build_default_workflow_cad_defaults():
@@ -800,7 +786,6 @@ def build_default_user_settings():
         'workroomAutoSelectCadFiles': True,
         'enableUnderConstructionTools': False,
         'googleAuth': None,
-        'cloudSync': build_default_cloud_sync_settings(),
         'workflows': [],
     }
 
@@ -885,6 +870,10 @@ def _merge_missing_user_settings_from_legacy(current_settings, legacy_settings):
 def _sanitize_user_settings_payload(settings):
     normalized = deepcopy(settings) if isinstance(settings, dict) else {}
     changed = False
+
+    if "cloudSync" in normalized:
+        normalized.pop("cloudSync", None)
+        changed = True
 
     if "microsoftAuth" in normalized:
         normalized.pop("microsoftAuth", None)
@@ -1757,46 +1746,6 @@ def _get_local_sync_metadata():
     return files
 
 
-def _create_cloud_sync_backup(reason="", metadata=None):
-    created_at = utc_now_iso()
-    safe_reason = re.sub(r"[^a-z0-9]+", "-", str(reason or "").strip().lower()).strip("-")
-    suffix = safe_reason[:40] or "sync"
-    backup_dir = os.path.join(
-        SYNC_BACKUPS_DIR,
-        f"{created_at.replace(':', '').replace('-', '')}_{suffix}_{uuid.uuid4().hex[:8]}",
-    )
-    os.makedirs(backup_dir, exist_ok=True)
-
-    copied = []
-    for key, source_path in SYNC_TRACKED_FILES.items():
-        if not os.path.exists(source_path):
-            continue
-        destination_path = os.path.join(backup_dir, os.path.basename(source_path))
-        shutil.copy2(source_path, destination_path)
-        copied.append(
-            {
-                "key": key,
-                "sourcePath": os.path.normpath(source_path),
-                "backupPath": os.path.normpath(destination_path),
-                "modified": _get_file_modified_iso(source_path),
-            }
-        )
-
-    backup_metadata = {
-        "createdAt": created_at,
-        "reason": str(reason or "").strip(),
-        "files": copied,
-        "localSyncMetadata": _get_local_sync_metadata(),
-    }
-    if isinstance(metadata, dict) and metadata:
-        backup_metadata["metadata"] = metadata
-
-    _atomic_write_json_file(os.path.join(backup_dir, "metadata.json"), backup_metadata)
-    return {
-        "path": os.path.normpath(backup_dir),
-        "createdAt": created_at,
-        "files": copied,
-    }
 
 
 def _normalize_lighting_schedule_text(value):
@@ -4210,24 +4159,6 @@ class Api:
             logging.error(f"Error saving user settings: {e}")
             return {'status': 'error', 'message': str(e)}
 
-    def get_cloud_sync_config(self):
-        config = {
-            "apiKey": str(os.getenv(FIREBASE_API_KEY_ENV) or "").strip(),
-            "authDomain": str(os.getenv(FIREBASE_AUTH_DOMAIN_ENV) or "").strip(),
-            "projectId": str(os.getenv(FIREBASE_PROJECT_ID_ENV) or "").strip(),
-            "appId": str(os.getenv(FIREBASE_APP_ID_ENV) or "").strip(),
-            "storageBucket": str(os.getenv(FIREBASE_STORAGE_BUCKET_ENV) or "").strip(),
-            "messagingSenderId": str(os.getenv(FIREBASE_MESSAGING_SENDER_ID_ENV) or "").strip(),
-        }
-        enabled = all(
-            config.get(key)
-            for key in ("apiKey", "authDomain", "projectId", "appId")
-        )
-        return {
-            "status": "success",
-            "enabled": enabled,
-            "config": config,
-        }
 
     def get_local_sync_metadata(self):
         try:
@@ -4239,16 +4170,6 @@ class Api:
             logging.error(f"Error loading local sync metadata: {e}")
             return {"status": "error", "message": str(e), "files": {}}
 
-    def create_cloud_sync_backup(self, reason="", metadata=None):
-        try:
-            result = _create_cloud_sync_backup(reason=reason, metadata=metadata)
-            return {
-                "status": "success",
-                **result,
-            }
-        except Exception as e:
-            logging.error(f"Error creating cloud sync backup: {e}")
-            return {"status": "error", "message": str(e)}
 
     def _get_google_oauth_client_id(self):
         return (os.getenv(GOOGLE_OAUTH_CLIENT_ID_ENV) or "").strip()
@@ -4356,24 +4277,6 @@ class Api:
             "hasRefreshToken": bool(str(auth_record.get("refreshToken") or "").strip()),
         }
 
-    def _build_google_sync_session(self, auth_record):
-        if not isinstance(auth_record, dict):
-            return {
-                "signedIn": False,
-                "idToken": "",
-                "accessToken": "",
-                "firebaseReady": False,
-                "auth": self._sanitize_google_auth_record(None),
-            }
-        id_token = str(auth_record.get("idToken") or "").strip()
-        access_token = str(auth_record.get("accessToken") or "").strip()
-        return {
-            "signedIn": True,
-            "idToken": id_token,
-            "accessToken": access_token,
-            "firebaseReady": bool(id_token or access_token),
-            "auth": self._sanitize_google_auth_record(auth_record),
-        }
 
     def _load_google_auth_record(self):
         settings = self.get_user_settings()
@@ -4607,22 +4510,6 @@ class Api:
                 "auth": self._sanitize_google_auth_record(None),
             }
 
-    def get_google_sync_session(self):
-        try:
-            auth_record = self._refresh_google_auth_record_if_needed(
-                self._load_google_auth_record()
-            )
-            return {
-                "status": "success",
-                **self._build_google_sync_session(auth_record),
-            }
-        except Exception as e:
-            logging.error(f"Error loading Google sync session: {e}")
-            return {
-                "status": "error",
-                "message": str(e),
-                **self._build_google_sync_session(None),
-            }
 
     def sign_in_with_google(self):
         client_id = self._get_google_oauth_client_id()
@@ -4714,7 +4601,6 @@ class Api:
             return {
                 "status": "success",
                 "auth": self._sanitize_google_auth_record(auth_record),
-                "syncSession": self._build_google_sync_session(auth_record),
             }
         except Exception as e:
             logging.error(f"Error signing in with Google: {e}")
@@ -7204,22 +7090,6 @@ Return ONLY the JSON object.
             if self._is_email_intake_retryable_error(e):
                 raise RuntimeError(self._email_intake_transient_error_message(e))
             raise RuntimeError(f"AI error: {msg}")
-
-    def process_email_with_ai(self, email_text, api_key, user_name, discipline, project_context=None):
-        """
-        Processes email text using Google GenAI to extract project details.
-        """
-        try:
-            project_data = self._extract_project_data_from_email_text(
-                email_text,
-                api_key,
-                user_name,
-                discipline,
-                project_context,
-            )
-            return {'status': 'success', 'data': project_data}
-        except Exception as e:
-            return {'status': 'error', 'message': str(e)}
 
     def get_tasks(self):
         """Reads and returns the content of tasks.json."""
@@ -10426,463 +10296,6 @@ Return ONLY the JSON object.
         except Exception as e:
             logging.error(f"Error opening Notepad text export: {e}")
             return {'status': 'error', 'message': str(e)}
-
-    def _normalize_deliverable_summary_payload(self, value):
-        """Coerces an AI status briefing payload into a safe dict, or None."""
-        if not value:
-            return None
-        if isinstance(value, str):
-            headline = ''
-            paragraphs = [value.strip()] if value.strip() else []
-        elif isinstance(value, dict):
-            headline = str(value.get('headline') or '').strip()[:1200]
-            raw_paragraphs = value.get('paragraphs')
-            if isinstance(raw_paragraphs, str):
-                raw_paragraphs = [raw_paragraphs]
-            if not isinstance(raw_paragraphs, list):
-                raw_paragraphs = []
-            paragraphs = []
-            for raw in raw_paragraphs[:12]:
-                text = str(raw or '').strip()[:1200]
-                if text:
-                    paragraphs.append(text)
-        else:
-            return None
-
-        if not headline and not paragraphs:
-            # An empty briefing should produce no sheet at all rather than a blank one.
-            return None
-
-        meta = value if isinstance(value, dict) else {}
-        return {
-            'headline': headline,
-            'paragraphs': paragraphs,
-            'generatedAt': str(meta.get('generatedAt') or '').strip(),
-            'scope': str(meta.get('scope') or '').strip(),
-            'deliverableCount': meta.get('deliverableCount'),
-        }
-
-    def _write_deliverable_summary_sheet(self, workbook, summary, deliverable_count):
-        """Appends a prose 'Status Summary' sheet after the Deliverables sheet."""
-        sheet = workbook.create_sheet("Status Summary")
-        wrap = openpyxl.styles.Alignment(wrap_text=True, vertical="top")
-        column_width = 110
-
-        def _write(row, text, font=None):
-            cell = sheet.cell(row=row, column=1, value=text)
-            cell.alignment = wrap
-            if font is not None:
-                cell.font = font
-            # Excel does not auto-fit heights for programmatically wrapped cells.
-            lines = max(1, math.ceil(len(str(text or '')) / column_width))
-            sheet.row_dimensions[row].height = max(15, lines * 15)
-            return cell
-
-        _write(1, "AI Status Briefing", openpyxl.styles.Font(bold=True, size=14))
-
-        meta_bits = []
-        if summary.get('generatedAt'):
-            meta_bits.append(f"Generated {summary['generatedAt']}")
-        scope = summary.get('scope')
-        if scope:
-            meta_bits.append(
-                "scope: incomplete deliverables" if scope == 'incomplete' else f"scope: {scope}"
-            )
-        count = summary.get('deliverableCount')
-        if not isinstance(count, int):
-            count = deliverable_count
-        meta_bits.append(f"{count} deliverable{'' if count == 1 else 's'}")
-        _write(
-            2,
-            " · ".join(meta_bits),
-            openpyxl.styles.Font(italic=True, color="808080"),
-        )
-
-        if summary.get('headline'):
-            _write(4, summary['headline'], openpyxl.styles.Font(bold=True))
-
-        for offset, paragraph in enumerate(summary.get('paragraphs') or []):
-            _write(6 + offset, paragraph)
-
-        sheet.column_dimensions['A'].width = column_width
-        return sheet
-
-    def export_deliverables_excel(self, data):
-        """Exports selected deliverables to a basic Excel workbook."""
-        try:
-            payload = data or {}
-            if isinstance(payload, str):
-                payload = json.loads(payload)
-            if not isinstance(payload, dict):
-                return {'status': 'error', 'message': 'Invalid export payload.'}
-
-            raw_entries = payload.get('entries', [])
-            if not isinstance(raw_entries, list):
-                return {'status': 'error', 'message': 'Deliverable entries are required.'}
-
-            summary = self._normalize_deliverable_summary_payload(payload.get('summary'))
-
-            cleaned_entries = []
-            for raw_entry in raw_entries:
-                if not isinstance(raw_entry, dict):
-                    continue
-
-                due_raw = str(raw_entry.get('due') or '').strip()
-                due_value = parse_due_str(due_raw)
-                hard_due_raw = get_hard_due_str(raw_entry)
-                hard_due_value = parse_due_str(hard_due_raw)
-                # Sort on the effective date so hard-only deliverables are not
-                # bunched with the undated ones.
-                sort_value = due_value or hard_due_value
-                deliverable_name = str(raw_entry.get('deliverableName') or '').strip()
-                cleaned_entries.append({
-                    'projectId': str(raw_entry.get('projectId') or '').strip(),
-                    'projectName': str(raw_entry.get('projectName') or '').strip(),
-                    'deliverableName': deliverable_name or 'Untitled Deliverable',
-                    'due': due_raw,
-                    'dueValue': due_value.date() if due_value else None,
-                    'hardDue': hard_due_raw,
-                    'hardDueValue': hard_due_value.date() if hard_due_value else None,
-                    'sortValue': sort_value.date() if sort_value else None,
-                    'statusText': str(raw_entry.get('statusText') or '').strip() or 'None',
-                    'projectPath': str(raw_entry.get('projectPath') or '').strip(),
-                })
-
-            if not cleaned_entries:
-                return {'status': 'error', 'message': 'Select at least one deliverable to export.'}
-
-            cleaned_entries.sort(key=lambda entry: (
-                0 if entry['sortValue'] else 1,
-                -(entry['sortValue'].toordinal()) if entry['sortValue'] else 0,
-                entry['projectId'].lower(),
-                entry['projectName'].lower(),
-                entry['deliverableName'].lower(),
-            ))
-
-            file_path = payload.get('filePath')
-            if isinstance(file_path, (list, tuple)):
-                file_path = file_path[0] if file_path else ''
-            file_path = str(file_path or '').strip()
-
-            if not file_path:
-                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                selection = self.select_template_save_location(
-                    default_dir=get_default_documents_dir(),
-                    default_name=f"Deliverables_{timestamp}",
-                    file_type='xlsx',
-                )
-                if selection.get('status') != 'success':
-                    return selection
-                file_path = str(selection.get('path') or '').strip()
-
-            if not file_path:
-                return {'status': 'cancelled'}
-            if not file_path.lower().endswith('.xlsx'):
-                file_path = f"{file_path}.xlsx"
-
-            workbook = openpyxl.Workbook()
-            worksheet = workbook.active
-            worksheet.title = "Deliverables"
-
-            headers = (
-                "Project ID",
-                "Project Name",
-                "Deliverable",
-                "Internal Due",
-                "Hard Deadline",
-                "Status",
-                "Project Path",
-            )
-            worksheet.append(headers)
-            for header_cell in worksheet[1]:
-                header_cell.font = openpyxl.styles.Font(bold=True)
-
-            for row_index, entry in enumerate(cleaned_entries, start=2):
-                worksheet.cell(row=row_index, column=1, value=entry['projectId'])
-                worksheet.cell(row=row_index, column=2, value=entry['projectName'])
-                worksheet.cell(row=row_index, column=3, value=entry['deliverableName'])
-                due_cell = worksheet.cell(
-                    row=row_index,
-                    column=4,
-                    value=entry['dueValue'] or entry['due'],
-                )
-                if entry['dueValue']:
-                    due_cell.number_format = "mm/dd/yyyy"
-                hard_due_cell = worksheet.cell(
-                    row=row_index,
-                    column=5,
-                    value=entry['hardDueValue'] or entry['hardDue'],
-                )
-                if entry['hardDueValue']:
-                    hard_due_cell.number_format = "mm/dd/yyyy"
-                worksheet.cell(row=row_index, column=6, value=entry['statusText'])
-                worksheet.cell(row=row_index, column=7, value=entry['projectPath'])
-
-            worksheet.freeze_panes = "A2"
-            worksheet.auto_filter.ref = worksheet.dimensions
-
-            for column_index, width in {
-                1: 14,
-                2: 28,
-                3: 32,
-                4: 14,
-                5: 16,
-                6: 18,
-                7: 62,
-            }.items():
-                column_letter = openpyxl.utils.get_column_letter(column_index)
-                worksheet.column_dimensions[column_letter].width = width
-
-            if summary:
-                # create_sheet appends, so "Deliverables" stays index 0 and active.
-                self._write_deliverable_summary_sheet(workbook, summary, len(cleaned_entries))
-
-            workbook.save(file_path)
-            workbook.close()
-
-            if sys.platform == "win32":
-                os.startfile(file_path)
-            else:
-                self.open_path(file_path)
-
-            return {'status': 'success', 'path': file_path, 'count': len(cleaned_entries)}
-        except ImportError:
-            return {'status': 'error', 'message': 'openpyxl not installed. Run: pip install openpyxl'}
-        except Exception as e:
-            logging.error(f"Error exporting deliverables to Excel: {e}")
-            return {'status': 'error', 'message': str(e)}
-
-    DELIVERABLE_SUMMARY_BUCKET_LABELS = {
-        'missedHardDeadline': 'MISSED HARD DEADLINE',
-        'overdue': 'PAST INTERNAL DUE DATE',
-        'dueThisWeek': 'DUE THIS WEEK',
-        'upcoming': 'UPCOMING',
-        'undated': 'NO DUE DATE SET',
-    }
-
-    def _build_deliverable_status_summary_prompt(self, payload):
-        """Builds the Gemini prompt for a deliverable status briefing.
-
-        Pure function of the payload - no I/O - so it can be unit tested directly.
-        """
-        data = payload if isinstance(payload, dict) else {}
-        today = str(data.get('today') or '').strip() or 'today'
-        scope = str(data.get('scope') or '').strip()
-        scope_text = (
-            'all incomplete deliverables'
-            if scope == 'incomplete'
-            else 'all deliverables'
-        )
-        raw_buckets = data.get('buckets')
-        if not isinstance(raw_buckets, list):
-            raw_buckets = []
-
-        listed = 0
-        sections = []
-        for raw_bucket in raw_buckets:
-            if not isinstance(raw_bucket, dict):
-                continue
-            deliverables = raw_bucket.get('deliverables')
-            if not isinstance(deliverables, list) or not deliverables:
-                continue
-            key = str(raw_bucket.get('bucket') or '').strip()
-            label = self.DELIVERABLE_SUMMARY_BUCKET_LABELS.get(key, key.upper() or 'OTHER')
-            total = raw_bucket.get('totalCount')
-            if not isinstance(total, int):
-                total = len(deliverables)
-            lines = [f"=== {label} ({len(deliverables)} of {total} listed) ==="]
-            for item in deliverables:
-                if not isinstance(item, dict):
-                    continue
-                listed += 1
-                project_id = str(item.get('projectId') or '').strip() or 'no id'
-                project_name = str(item.get('projectName') or '').strip() or 'Untitled Project'
-                name = str(item.get('deliverableName') or '').strip() or 'Untitled Deliverable'
-                due = str(item.get('due') or '').strip() or 'none'
-                hard_due = str(item.get('hardDue') or '').strip() or 'none'
-                status_text = str(item.get('statusText') or '').strip() or 'None'
-                lines.append(
-                    f"- [{project_id}] {project_name} | {name} | "
-                    f"internal due {due} | hard due {hard_due} | status {status_text}"
-                )
-            sections.append("\n".join(lines))
-
-        deliverable_count = data.get('deliverableCount')
-        if not isinstance(deliverable_count, int):
-            deliverable_count = listed
-        omitted_count = data.get('omittedCount')
-        if not isinstance(omitted_count, int):
-            omitted_count = max(0, deliverable_count - listed)
-
-        body = "\n\n".join(sections) if sections else "(no deliverables listed)"
-
-        return f"""Today is {today}.
-
-You are writing a short status briefing for the engineer who owns the deliverables listed below.
-Scope: {scope_text}.
-Total in scope: {deliverable_count}. Listed below: {listed}. Not listed: {omitted_count}.
-
-{body}
-
-IMPORTANT CONTEXT
-- "status None" means no status label was ever set on that deliverable. It does NOT mean the
-  work is stalled or abandoned. Judge urgency from the dates, not the status.
-- "hard due" is a deadline that cannot move. "internal due" is a target that can slip.
-  A missed hard deadline is always more serious than a missed internal due date.
-- Never invent deliverables, dates, people, or reasons that are not in the list above.
-
-Return JSON with exactly this shape:
-{{"headline": "one sentence, max 20 words", "paragraphs": ["...", "..."]}}
-
-RULES
-- 2 to 4 paragraphs, each 35-70 words, plain prose sentences.
-- No markdown, no bullet points, no headings, no bold.
-- Paragraph 1: what is overdue or has blown a hard deadline, named specifically
-  (project id + deliverable name).
-- Paragraph 2: what is due this week or slipping toward trouble.
-- Final paragraph: what to prioritize first, in order, and why.
-- Reference deliverables as "<deliverable name> on <project id>".
-- If a bucket is empty, say so in one clause rather than inventing filler."""
-
-    def _normalize_deliverable_status_summary(self, parsed):
-        """Coerces the model's JSON into (headline, paragraphs)."""
-        data = parsed if isinstance(parsed, dict) else {}
-
-        def _clean(value):
-            text = str(value or '').strip()
-            # The model occasionally emits markdown despite being told not to.
-            text = re.sub(r'^\s*(?:[-*+]\s+|#{1,6}\s+)', '', text)
-            text = text.replace('**', '').strip()
-            return text[:1200]
-
-        headline = _clean(data.get('headline'))
-
-        raw_paragraphs = data.get('paragraphs')
-        if isinstance(raw_paragraphs, str):
-            raw_paragraphs = [
-                chunk for chunk in re.split(r'\n\s*\n', raw_paragraphs) if chunk.strip()
-            ]
-        if not isinstance(raw_paragraphs, list):
-            raw_paragraphs = []
-
-        paragraphs = []
-        for raw in raw_paragraphs:
-            text = _clean(raw)
-            if text:
-                paragraphs.append(text)
-            if len(paragraphs) >= 6:
-                break
-
-        return headline, paragraphs
-
-    def _format_deliverable_summary_ai_error(self, exc):
-        """Maps a Gemini exception onto actionable copy for the status briefing."""
-        message = str(exc)
-        lower = message.lower()
-        if ("api key expired" in lower or "api_key_invalid" in lower
-                or "invalid api key" in lower):
-            return ('Your Google API key is expired/invalid. Create a new key in '
-                    'Google AI Studio, update your settings, then try again.')
-        if "api key" in lower and "not configured" in lower:
-            return message
-        if "model" in lower and ("not found" in lower or "does not exist" in lower):
-            return ('AI model not available. The requested Gemini model may not be '
-                    'accessible with your API key.')
-        if "quota" in lower or "rate limit" in lower:
-            return 'API rate limit exceeded. Please wait a moment and try again.'
-        if "deadline" in lower or "unavailable" in lower or "503" in lower or "504" in lower:
-            return ('The AI request timed out. Please try again, or export without '
-                    'the status briefing.')
-        return f"AI error: {message}"
-
-    def generate_deliverable_status_summary(self, data):
-        """Writes a short prose status briefing over the selected deliverables."""
-        try:
-            payload = data or {}
-            if isinstance(payload, str):
-                payload = json.loads(payload)
-            if not isinstance(payload, dict):
-                return {'status': 'error', 'message': 'Invalid summary payload.'}
-
-            buckets = payload.get('buckets')
-            if not isinstance(buckets, list) or not any(
-                isinstance(bucket, dict) and bucket.get('deliverables')
-                for bucket in buckets
-            ):
-                return {
-                    'status': 'error',
-                    'message': 'Select at least one deliverable to summarize.',
-                }
-
-            api_key = str(payload.get('apiKey') or '').strip()
-            if not api_key:
-                api_key = str(os.environ.get('GEMINI_API_KEY') or '').strip()
-            final_api_key = self._resolve_google_ai_api_key(api_key)
-
-            prompt = self._build_deliverable_status_summary_prompt(payload)
-
-            self._ensure_aiohttp()
-            client = genai.Client(
-                api_key=final_api_key,
-                http_options=types.HttpOptions(timeout=120000),
-            )
-            response, used_model = self._generate_content_with_model_fallback(
-                client,
-                DELIVERABLE_SUMMARY_GEMINI_MODELS,
-                contents=[
-                    types.Content(
-                        role="user",
-                        parts=[types.Part.from_text(text=prompt)],
-                    ),
-                ],
-                config=types.GenerateContentConfig(
-                    # Prose, not structured extraction - a little latitude reads better,
-                    # while staying near-deterministic. Deliberately not 0.
-                    temperature=0.2,
-                    response_mime_type="application/json",
-                ),
-            )
-
-            raw_text = response.text
-            if raw_text is None:
-                if hasattr(response, 'parts') and response.parts:
-                    raw_text = ''.join(
-                        part.text for part in response.parts
-                        if hasattr(part, 'text') and part.text
-                    )
-            cleaned = (raw_text or '').strip()
-            if not cleaned:
-                return {
-                    'status': 'error',
-                    'message': 'AI returned an empty briefing. Please try again.',
-                }
-
-            headline, paragraphs = self._normalize_deliverable_status_summary(
-                json.loads(cleaned)
-            )
-            if not headline and not paragraphs:
-                return {
-                    'status': 'error',
-                    'message': 'AI returned an empty briefing. Please try again.',
-                }
-
-            return {
-                'status': 'success',
-                'headline': headline,
-                'paragraphs': paragraphs,
-                'generatedAt': datetime.datetime.now().strftime("%m/%d/%Y %I:%M %p"),
-            }
-        except json.JSONDecodeError:
-            return {
-                'status': 'error',
-                'message': 'AI returned invalid JSON. Please try again.',
-            }
-        except Exception as e:
-            logging.error(f"Error generating deliverable status summary: {e}")
-            return {
-                'status': 'error',
-                'message': self._format_deliverable_summary_ai_error(e),
-            }
 
     def save_dropped_email(self, upload, context=None):
         """Persists a dropped .msg/.eml payload and returns a normalized email reference."""

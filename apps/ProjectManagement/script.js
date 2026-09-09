@@ -33,13 +33,6 @@ const KEY_TO_LABEL = {
 };
 const HELP_TOPICS = ["projects", "notes", "tools", "timesheets", "misc"];
 const THEME_STORAGE_KEY = "acies-theme";
-const FIREBASE_JS_SDK_VERSION = "12.7.0";
-const FIREBASE_COMPAT_SCRIPT_URLS = [
-  `https://www.gstatic.com/firebasejs/${FIREBASE_JS_SDK_VERSION}/firebase-app-compat.js`,
-  `https://www.gstatic.com/firebasejs/${FIREBASE_JS_SDK_VERSION}/firebase-auth-compat.js`,
-  `https://www.gstatic.com/firebasejs/${FIREBASE_JS_SDK_VERSION}/firebase-firestore-compat.js`,
-];
-const CLOUD_SYNC_TIMESHEETS_META_DOC_ID = "__meta__";
 const LIGHTING_SCHEDULE_FIELDS = [
   "mark",
   "description",
@@ -267,10 +260,6 @@ const CHECKLIST_ICON_PATH =
 const CHECK_ICON_PATH =
   "M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z";
 const MAX_DELIVERABLE_EMAIL_REFS = 3;
-const EMAIL_INTAKE_PROJECT_CONTEXT_MAX_PROJECTS = 200;
-const EMAIL_INTAKE_PROJECT_CONTEXT_MAX_CHARS = 25000;
-const EMAIL_INTAKE_REQUEST_TIMEOUT_MS = 300000;
-const EMAIL_INTAKE_SLOW_NOTICE_MS = 90000;
 
 // Checklists Data
 let checklistsDb = {
@@ -2169,32 +2158,18 @@ async function loadChecklists() {
 }
 
 async function saveChecklists({
-  skipCloud = false,
   saveTimestamp = true,
   timestamp = new Date().toISOString(),
   silent = false,
 } = {}) {
   const resolvedTimestamp =
     normalizeIsoTimestamp(timestamp) || new Date().toISOString();
-  const comparableChanged =
-    getCloudComparableFingerprint("checklists") !==
-    lastCloudComparableFingerprints.checklists;
-  if (saveTimestamp && comparableChanged) {
-    touchLocalSyncTimestamp("checklists", resolvedTimestamp);
+  if (saveTimestamp) {
     checklistsDb.lastModified = resolvedTimestamp;
   }
   try {
     const response = await window.pywebview.api.save_checklists(checklistsDb);
     if (response.status !== "success") throw new Error(response.message);
-    syncCloudComparableFingerprint("checklists");
-    if (
-      !skipCloud &&
-      comparableChanged &&
-      cloudSyncState.enabled &&
-      !isCloudSyncApplying()
-    ) {
-      queueCloudStatePush("checklists");
-    }
     return true;
   } catch (e) {
     console.warn("Failed to save checklists:", e);
@@ -3167,32 +3142,18 @@ async function loadTimesheets() {
 }
 
 async function saveTimesheets({
-  skipCloud = false,
   saveTimestamp = true,
   timestamp = new Date().toISOString(),
   silent = false,
 } = {}) {
   const resolvedTimestamp =
     normalizeIsoTimestamp(timestamp) || new Date().toISOString();
-  const comparableChanged =
-    getCloudComparableFingerprint("timesheets") !==
-    lastCloudComparableFingerprints.timesheets;
-  if (saveTimestamp && comparableChanged) {
-    touchLocalSyncTimestamp("timesheets", resolvedTimestamp);
+  if (saveTimestamp) {
     timesheetDb.lastModified = resolvedTimestamp;
   }
   try {
     const response = await window.pywebview.api.save_timesheets(timesheetDb);
     if (response.status !== "success") throw new Error(response.message);
-    syncCloudComparableFingerprint("timesheets");
-    if (
-      !skipCloud &&
-      comparableChanged &&
-      cloudSyncState.enabled &&
-      !isCloudSyncApplying()
-    ) {
-      queueCloudStatePush("timesheets");
-    }
     return true;
   } catch (e) {
     console.warn("Failed to save timesheets:", e);
@@ -3217,32 +3178,18 @@ async function loadTemplates() {
 }
 
 async function saveTemplates({
-  skipCloud = false,
   saveTimestamp = true,
   timestamp = new Date().toISOString(),
   silent = false,
 } = {}) {
   const resolvedTimestamp =
     normalizeIsoTimestamp(timestamp) || new Date().toISOString();
-  const comparableChanged =
-    getCloudComparableFingerprint("templates") !==
-    lastCloudComparableFingerprints.templates;
-  if (saveTimestamp && comparableChanged) {
-    touchLocalSyncTimestamp("templates", resolvedTimestamp);
+  if (saveTimestamp) {
     templatesDb.lastModified = resolvedTimestamp;
   }
   try {
     const response = await window.pywebview.api.save_templates(templatesDb);
     if (response.status !== "success") throw new Error(response.message);
-    syncCloudComparableFingerprint("templates");
-    if (
-      !skipCloud &&
-      comparableChanged &&
-      cloudSyncState.enabled &&
-      !isCloudSyncApplying()
-    ) {
-      queueCloudStatePush("templates");
-    }
     return true;
   } catch (e) {
     console.warn("Failed to save templates:", e);
@@ -10266,7 +10213,6 @@ let pinnedProjectDragState = null;
 let projectPinHandleSuppressClickUntil = 0;
 let statusFilter = "all";
 let dueFilter = "all";
-let projectAttentionPreviousFilters = null;
 let pendingCadLaunchContext = null;
 let modalEmailSession = {
   active: false,
@@ -10420,26 +10366,6 @@ function normalizeWorkflowCadDefaults(value = {}) {
     cleanXrefsSearchZipArchives: source.cleanXrefsSearchZipArchives !== false,
   };
 }
-const DEFAULT_CLOUD_SYNC_SETTINGS = {
-  enabled: false,
-  firebaseUid: "",
-  lastSyncedAt: "",
-  migrationCompleted: false,
-};
-const DEFAULT_CLOUD_SYNC_STATE = {
-  available: false,
-  configured: false,
-  enabled: false,
-  busy: false,
-  status: "local-only",
-  message: "Local-only",
-  error: "",
-  lastSyncedAt: "",
-  firebaseUid: "",
-  sdkLoaded: false,
-  signedIn: false,
-};
-
 const DEFAULT_PROJECT_CARD_COLUMNS = [
   { key: "pinned", label: "Pinned", hidden: false },
   { key: "none", label: "No status", hidden: false },
@@ -10479,7 +10405,6 @@ let userSettings = {
   workroomAutoSelectCadFiles: true,
   enableUnderConstructionTools: false,
   googleAuth: null,
-  cloudSync: { ...DEFAULT_CLOUD_SYNC_SETTINGS },
 };
 const DEFAULT_GOOGLE_AUTH_STATE = {
   signedIn: false,
@@ -10664,37 +10589,7 @@ const DEFAULT_OUTLOOK_SCAN_STATE = {
 let googleAuthState = { ...DEFAULT_GOOGLE_AUTH_STATE };
 let googleAuthBusy = false;
 let outlookScanCapabilityState = { ...DEFAULT_OUTLOOK_SCAN_CAPABILITY };
-let emailIntakeBusy = false;
-let emailIntakeActivityId = "";
 let outlookScanState = { ...DEFAULT_OUTLOOK_SCAN_STATE };
-let cloudSyncState = { ...DEFAULT_CLOUD_SYNC_STATE };
-let cloudSyncConfig = null;
-let firebaseLoadPromise = null;
-let firebaseAppInstance = null;
-let firebaseAuthInstance = null;
-let firebaseFirestoreInstance = null;
-let cloudSyncInitPromise = null;
-let cloudSyncUnsubscribers = [];
-let cloudSyncPushTimers = {};
-let cloudSyncTimesheetsPushTimer = null;
-let cloudSyncApplyDepth = 0;
-let cloudSyncRemoteTimesheetMeta = { updatedAt: "", knownWeeks: [] };
-let localSyncTimestamps = {
-  settings: "",
-  tasks: "",
-  notes: "",
-  templates: "",
-  checklists: "",
-  timesheets: "",
-};
-let lastCloudComparableFingerprints = {
-  settings: "",
-  tasks: "",
-  notes: "",
-  templates: "",
-  checklists: "",
-  timesheets: "",
-};
 let deliverablesFilter = "all";
 let separateDeliverableCompletionGroups = true;
 let groupDeliverablesByProject = false;
@@ -10882,70 +10777,11 @@ function deepCloneJson(value, fallback = null) {
   }
 }
 
-function normalizeCloudSyncSettings(raw = {}) {
-  return {
-    ...DEFAULT_CLOUD_SYNC_SETTINGS,
-    ...(raw && typeof raw === "object" ? raw : {}),
-    enabled: raw?.enabled === true,
-    firebaseUid: String(raw?.firebaseUid || "").trim(),
-    lastSyncedAt: String(raw?.lastSyncedAt || "").trim(),
-    migrationCompleted: raw?.migrationCompleted === true,
-  };
-}
-
-function ensureCloudSyncSettingsObject() {
-  userSettings.cloudSync = normalizeCloudSyncSettings(userSettings.cloudSync);
-  return userSettings.cloudSync;
-}
-
 function normalizeIsoTimestamp(value) {
   const raw = String(value || "").trim();
   if (!raw) return "";
   const parsed = Date.parse(raw);
   return Number.isFinite(parsed) ? new Date(parsed).toISOString() : "";
-}
-
-function isIsoAfter(left, right) {
-  const leftMs = Date.parse(normalizeIsoTimestamp(left) || "");
-  const rightMs = Date.parse(normalizeIsoTimestamp(right) || "");
-  if (!Number.isFinite(leftMs)) return false;
-  if (!Number.isFinite(rightMs)) return true;
-  return leftMs > rightMs;
-}
-
-function getLatestIsoTimestamp(values = []) {
-  return values.reduce((latest, value) => {
-    if (isIsoAfter(value, latest)) return normalizeIsoTimestamp(value);
-    return latest;
-  }, "");
-}
-
-function touchLocalSyncTimestamp(domain, timestamp = new Date().toISOString()) {
-  const normalized = normalizeIsoTimestamp(timestamp) || new Date().toISOString();
-  localSyncTimestamps[domain] = normalized;
-  return normalized;
-}
-
-function formatSyncTimestamp(value) {
-  const normalized = normalizeIsoTimestamp(value);
-  if (!normalized) return "";
-  try {
-    return new Date(normalized).toLocaleString();
-  } catch (e) {
-    return normalized;
-  }
-}
-
-function beginCloudSyncApply() {
-  cloudSyncApplyDepth += 1;
-}
-
-function endCloudSyncApply() {
-  cloudSyncApplyDepth = Math.max(0, cloudSyncApplyDepth - 1);
-}
-
-function isCloudSyncApplying() {
-  return cloudSyncApplyDepth > 0;
 }
 
 function isLikelyLocalPath(value) {
@@ -11281,7 +11117,6 @@ function renderGoogleAuthUi() {
   }
   updateHeaderAccountPopoverVisibility();
   renderHeaderDisciplineSwitcher();
-  renderCloudSyncUi();
 }
 
 async function loadGoogleAuthState({ silent = false } = {}) {
@@ -11350,28 +11185,7 @@ async function handleGoogleSignIn() {
       }
       googleAuthBusy = false;
       renderGoogleAuthUi();
-      showAppLoader();
-      try {
-        await bootstrapCloudSync({
-          session: response.syncSession || null,
-          silent: false,
-        });
-      } finally {
-        hideAppLoader();
-      }
-      if (cloudSyncState.enabled) {
-        toast(`Signed in as ${getGoogleAuthDisplayName()}. Cloud sync is active.`);
-      } else if (cloudSyncState.error) {
-        toast(
-          `Signed in as ${getGoogleAuthDisplayName()}, but cloud sync failed: ${cloudSyncState.error}`
-        );
-      } else if (!cloudSyncState.configured) {
-        toast(
-          `Signed in as ${getGoogleAuthDisplayName()}. Firebase sync is not configured, so data stays local.`
-        );
-      } else {
-        toast(`Signed in as ${getGoogleAuthDisplayName()}.`);
-      }
+      toast(`Signed in as ${getGoogleAuthDisplayName()}.`);
       return;
     }
     if (response?.status === "cancelled") {
@@ -11399,7 +11213,6 @@ async function handleGoogleSignOut() {
       throw new Error(response?.message || "Google sign-out failed.");
     }
     closeDlg("googleAccountDlg");
-    await signOutCloud({ preserveMetadata: true });
     await loadUserSettings();
     googleAuthState = normalizeGoogleAuthState(response.auth);
     renderGoogleAuthUi();
@@ -11411,10 +11224,6 @@ async function handleGoogleSignOut() {
     googleAuthBusy = false;
     renderGoogleAuthUi();
   }
-}
-
-function normalizeEmailIntakeMode(value = "") {
-  return "paste";
 }
 
 function normalizeOutlookScanCapability(raw = {}) {
@@ -11580,369 +11389,7 @@ window.updateOutlookScanProgress = function (payload = {}) {
 };
 
 function renderOutlookScanUi() {
-  const toolbarBtn = document.getElementById("outlookScanBtn");
-  const pasteModeInput = null;
-  const scanModeInput = null;
-  const pastePanel = document.getElementById("emailIntakePastePanel");
-  const scanPanel = null;
-  const capabilityStatusEl = null;
-  const capabilityDetailsEl = null;
-  const emailArea = document.getElementById("emailArea");
-  const processBtn = document.getElementById("btnProcessEmail");
-  const scanDateInput = null;
-  const progressEl = null;
-  const runBtn = null;
-  const summaryEl = null;
-  const metaEl = null;
-  const reportEl = null;
-  const reportSummaryEl = null;
-  const reportLogEl = null;
-  const suggestionsEl = null;
-  const skippedEl = null;
-  const emptyEl = null;
-
-  const mode = "paste";
-  const capability = { loading: false };
-  const desktopAvailable = false;
-  const desktopReason = "";
-  const scanBusy = false;
-  const busy = emailIntakeBusy;
-  const visibleSuggestions = [];
-  const skipped = [];
-  const lastResult = null;
-  const progress = createEmptyOutlookScanProgress();
-  const reportModel = {};
-  const selectedDayLabel = "";
-  const showReport = false;
-
-  if (toolbarBtn) {
-    toolbarBtn.disabled = false;
-    toolbarBtn.title = scanBusy
-      ? "Outlook day scan is running"
-      : emailIntakeBusy
-        ? "AI email intake is running"
-        : capability.loading
-          ? "Checking Desktop Outlook availability"
-          : "Email intake";
-  }
-  if (pasteModeInput) {
-    pasteModeInput.checked = mode === "paste";
-    pasteModeInput.disabled = emailIntakeBusy || scanBusy;
-  }
-  if (scanModeInput) {
-    scanModeInput.checked = mode === "scan";
-    scanModeInput.disabled = emailIntakeBusy || scanBusy;
-  }
-  if (pastePanel) {
-    pastePanel.hidden = mode !== "paste";
-  }
-  if (scanPanel) {
-    scanPanel.hidden = mode !== "scan";
-  }
-  if (capabilityStatusEl) {
-    capabilityStatusEl.textContent = capability.loading
-      ? "Checking Desktop Outlook..."
-      : desktopAvailable
-        ? "Desktop Outlook ready"
-        : "Desktop Outlook unavailable";
-  }
-  if (capabilityDetailsEl) {
-    capabilityDetailsEl.textContent = capability.loading
-      ? "Checking whether Desktop Outlook is available on this machine."
-      : desktopAvailable
-        ? "Scan a selected day using the installed Outlook desktop app on this machine."
-        : desktopReason || "Desktop Outlook is unavailable on this machine.";
-  }
-  if (emailArea) {
-    emailArea.disabled = emailIntakeBusy;
-  }
-  if (processBtn) {
-    processBtn.disabled = emailIntakeBusy;
-    processBtn.textContent = "Process with AI";
-  }
-  if (scanDateInput) {
-    scanDateInput.value = normalizeOutlookScanDateInput(outlookScanState.scanDate);
-    scanDateInput.max = getTodayLocalDateInputValue();
-    scanDateInput.disabled = busy;
-  }
-  if (runBtn) {
-    runBtn.disabled = busy || !desktopAvailable;
-    runBtn.textContent = scanBusy
-      ? "Scanning..."
-      : capability.loading
-        ? "Checking..."
-        : "Scan day";
-  }
-  if (progressEl) {
-    progressEl.classList.toggle("is-active", scanBusy || progress.active);
-    progressEl.classList.toggle(
-      "is-error",
-      !scanBusy && String(lastResult?.status || "").trim().toLowerCase() === "error"
-    );
-  }
-  if (summaryEl) {
-    if (scanBusy || progress.active) {
-      summaryEl.textContent = getOutlookScanProgressSummary(progress);
-    } else if (
-      String(lastResult?.status || "").trim().toLowerCase() === "error"
-    ) {
-      summaryEl.textContent = reportModel.errorMessage || "Outlook scan failed.";
-    } else if (!lastResult) {
-      summaryEl.textContent = "No Outlook day scan has been run yet.";
-    } else {
-      summaryEl.textContent =
-        `${visibleSuggestions.length} suggestion` +
-        `${visibleSuggestions.length === 1 ? "" : "s"}, ` +
-        `${skipped.length} skipped item${skipped.length === 1 ? "" : "s"}`;
-    }
-  }
-  if (metaEl) {
-    if (scanBusy || progress.active) {
-      const progressParts = buildOutlookScanProgressParts(progress);
-      metaEl.textContent =
-        progressParts.join(" · ") ||
-        "This can take a bit if there are many emails on the selected day.";
-    } else if (
-      String(lastResult?.status || "").trim().toLowerCase() === "error"
-    ) {
-      const parts = [];
-      if (reportModel.source) {
-        parts.push(`Source: ${getOutlookScanSourceLabel(reportModel.source)}`);
-      }
-      parts.push(`Day: ${selectedDayLabel}`);
-      if (reportModel.promptTruncated) {
-        parts.push("Prompt was trimmed to keep the scan bounded.");
-      }
-      if (reportModel.errorMessage) {
-        parts.push(reportModel.errorMessage);
-      }
-      metaEl.textContent = parts.join(" · ");
-    } else if (!lastResult) {
-      metaEl.textContent = desktopAvailable
-        ? "Choose a day, then run a scan."
-        : capability.loading
-          ? "Checking whether Desktop Outlook is available."
-          : desktopReason || "Desktop Outlook is unavailable on this machine.";
-    } else {
-      const deliverableCount =
-        reportModel.deliverablesInPeriod ?? lastResult.deliverablesIncludedCount ?? 0;
-      const parts = [
-        `Scanned ${Number(lastResult.scannedCount || 0)} email${Number(lastResult.scannedCount || 0) === 1 ? "" : "s"}`,
-        `Included ${Number(lastResult.emailsIncludedCount || 0)} email${Number(lastResult.emailsIncludedCount || 0) === 1 ? "" : "s"} and ${Number(deliverableCount || 0)} current deliverable${Number(deliverableCount || 0) === 1 ? "" : "s"} in one AI review`,
-        `Day: ${selectedDayLabel}`,
-      ];
-      if (lastResult?.source) {
-        parts.push(`Source: ${getOutlookScanSourceLabel(lastResult.source)}`);
-      }
-      if (lastResult.promptTruncated) {
-        parts.push("Prompt was trimmed to keep the scan bounded.");
-      } else if (lastResult.truncated) {
-        parts.push("Results were truncated to keep the scan bounded.");
-      }
-      metaEl.textContent = parts.join(" · ");
-    }
-  }
-  if (reportEl) {
-    reportEl.hidden = !showReport;
-    if (!showReport) {
-      reportEl.open = false;
-    } else if (reportEl.open !== !!outlookScanState.reportOpen) {
-      reportEl.open = !!outlookScanState.reportOpen;
-    }
-  }
-  if (reportSummaryEl) {
-    reportSummaryEl.innerHTML = "";
-    if (showReport) {
-      const rows = [];
-      if (reportModel.source) {
-        rows.push(["Source", getOutlookScanSourceLabel(reportModel.source)]);
-      }
-      rows.push(["Day", selectedDayLabel]);
-      if (reportModel.totalEmails !== null) {
-        rows.push(["Emails found", `${reportModel.totalEmails}`]);
-      }
-      if (reportModel.processedEmails !== null) {
-        rows.push(["Emails processed", `${reportModel.processedEmails}`]);
-      }
-      if (reportModel.includedEmails !== null) {
-        rows.push(["Emails in AI review", `${reportModel.includedEmails}`]);
-      }
-      if (reportModel.skippedEmails !== null) {
-        rows.push(["Skipped emails", `${reportModel.skippedEmails}`]);
-      }
-      if (reportModel.deliverablesInPeriod !== null) {
-        rows.push([
-          "Deliverables on day",
-          `${reportModel.deliverablesInPeriod}`,
-        ]);
-      }
-      if (reportModel.relevantEmails !== null) {
-        rows.push(["Relevant emails", `${reportModel.relevantEmails}`]);
-      }
-      if (reportModel.threadsDetected !== null) {
-        rows.push(["Threads detected", `${reportModel.threadsDetected}`]);
-      }
-      if (reportModel.dedupedEmailCount !== null) {
-        rows.push(["Emails shortened", `${reportModel.dedupedEmailCount}`]);
-      }
-      if (reportModel.dedupeSkippedEmailCount !== null) {
-        rows.push([
-          "Duplicate emails skipped",
-          `${reportModel.dedupeSkippedEmailCount}`,
-        ]);
-      }
-      rows.push(["Prompt trimmed", reportModel.promptTruncated ? "Yes" : "No"]);
-      rows.push(["Suggestions", `${reportModel.suggestionCount}`]);
-      if (reportModel.errorMessage) {
-        rows.push(["Error", reportModel.errorMessage]);
-      }
-      rows.forEach(([label, value]) => {
-        reportSummaryEl.appendChild(
-          el("div", { className: "outlook-scan-report-row" }, [
-            el("div", {
-              className: "outlook-scan-report-label tiny muted",
-              textContent: label,
-            }),
-            el("div", {
-              className: "outlook-scan-report-value",
-              textContent: value,
-            }),
-          ])
-        );
-      });
-    }
-  }
-  if (reportLogEl) {
-    reportLogEl.innerHTML = "";
-    if (showReport) {
-      if (reportModel.log.length) {
-        reportModel.log.forEach((entry) => {
-          const entryParts = buildOutlookScanProgressParts(entry);
-          reportLogEl.appendChild(
-            el("div", { className: "outlook-scan-log-item" }, [
-              el("div", { className: "outlook-scan-log-head" }, [
-                el("div", {
-                  className: "outlook-scan-log-stage",
-                  textContent: formatOutlookScanStageLabel(entry.stage),
-                }),
-                el("div", {
-                  className: "tiny muted",
-                  textContent: formatOutlookScanLogTime(entry.receivedAt),
-                }),
-              ]),
-              el("div", {
-                className: "outlook-scan-log-message",
-                textContent:
-                  String(entry.message || "").trim() ||
-                  formatOutlookScanStageLabel(entry.stage),
-              }),
-              entryParts.length
-                ? el("div", {
-                    className: "tiny muted",
-                    textContent: entryParts.join(" · "),
-                  })
-                : null,
-            ].filter(Boolean))
-          );
-        });
-      } else {
-        reportLogEl.appendChild(
-          el("div", {
-            className: "tiny muted",
-            textContent: "No scan events were recorded for this run.",
-          })
-        );
-      }
-    }
-  }
-
-  if (suggestionsEl) {
-    suggestionsEl.innerHTML = "";
-    visibleSuggestions.forEach((suggestion) => {
-      const projectLabel =
-        suggestion.projectName ||
-        suggestion.projectId ||
-        `Project ${suggestion.projectIndex + 1}`;
-      const metaParts = [];
-      if (suggestion.due) {
-        metaParts.push(`Due ${humanDate(suggestion.due) || suggestion.due}`);
-      }
-      metaParts.push(
-        `${suggestion.relatedMessages.length} related email${suggestion.relatedMessages.length === 1 ? "" : "s"}`
-      );
-      const card = el("div", { className: "outlook-scan-card" }, [
-        el("div", { className: "outlook-scan-card-head" }, [
-          el("div", {
-            className: "outlook-scan-card-project",
-            textContent: projectLabel,
-          }),
-          el("div", {
-            className: "outlook-scan-card-deliverable",
-            textContent: suggestion.deliverableName || "Deliverable",
-          }),
-        ]),
-        el("div", {
-          className: "outlook-scan-card-meta tiny muted",
-          textContent: metaParts.join(" · "),
-        }),
-        el("div", {
-          className: "outlook-scan-card-notes",
-          textContent: suggestion.notes || "No additional notes.",
-        }),
-        el(
-          "div",
-          { className: "outlook-scan-related-list" },
-          suggestion.relatedMessages.slice(0, 3).map((message) =>
-            el("button", {
-              className: "btn ghost tiny",
-              type: "button",
-              textContent: message.subject || "Open email",
-              onclick: () => openOutlookScanMessage(message),
-            })
-          )
-        ),
-        el("div", { className: "outlook-scan-card-actions" }, [
-          el("button", {
-            className: "btn tiny",
-            type: "button",
-            textContent: "Dismiss",
-            onclick: () => dismissOutlookScanSuggestion(suggestion.key),
-          }),
-          el("button", {
-            className: "btn-primary tiny",
-            type: "button",
-            textContent: "Add deliverable",
-            onclick: () => acceptOutlookScanSuggestion(suggestion.key),
-          }),
-        ]),
-      ]);
-      suggestionsEl.appendChild(card);
-    });
-  }
-
-  if (skippedEl) {
-    skippedEl.innerHTML = "";
-    skipped.slice(0, 20).forEach((item) => {
-      const subject = item?.message?.subject || "Untitled email";
-      skippedEl.appendChild(
-        el("div", { className: "outlook-scan-skipped-item" }, [
-          el("div", {
-            className: "outlook-scan-skipped-subject",
-            textContent: subject,
-          }),
-          el("div", {
-            className: "tiny muted",
-            textContent: item.reason || "Skipped",
-          }),
-        ])
-      );
-    });
-  }
-
-  if (emptyEl) {
-    emptyEl.hidden =
-      scanBusy || showReport || visibleSuggestions.length > 0 || skipped.length > 0;
-  }
+  // The legacy scan and email intake interfaces have been removed.
 }
 
 async function loadOutlookScanCapability({ silent = false } = {}) {
@@ -11988,182 +11435,6 @@ async function loadOutlookScanCapability({ silent = false } = {}) {
   }
   renderOutlookScanUi();
   return outlookScanCapabilityState;
-}
-
-
-
-function setEmailIntakeMode(mode = "paste") {
-  outlookScanState.mode = normalizeEmailIntakeMode(mode);
-  renderOutlookScanUi();
-}
-
-async function openOutlookScanDialog(mode = "paste") {
-  setEmailIntakeMode("paste");
-  const dialog = document.getElementById("outlookScanDlg");
-  if (dialog) {
-    renderOutlookScanUi();
-    showDialog(dialog);
-  }
-}
-
-function beginEmailIntakeActivity() {
-  initActivityTray();
-  emailIntakeActivityId = createActivityId("email_intake_ai");
-  beginActivity({
-    activityId: emailIntakeActivityId,
-    kind: "email-intake",
-    label: "Email Intake",
-    message: "Processing with AI...",
-    progress: 15,
-  });
-  return emailIntakeActivityId;
-}
-
-function updateEmailIntakeActivity(message, progress = 50) {
-  if (!emailIntakeActivityId) return;
-  updateActivity(emailIntakeActivityId, {
-    message,
-    progress,
-    status: ACTIVITY_STATUS.RUNNING,
-  });
-}
-
-function completeEmailIntakeActivity(message = "Email processed with AI.") {
-  if (!emailIntakeActivityId) return;
-  completeActivity(emailIntakeActivityId, { message });
-  emailIntakeActivityId = "";
-}
-
-function failEmailIntakeActivity(message = "AI email processing failed.") {
-  if (!emailIntakeActivityId) return;
-  failActivity(emailIntakeActivityId, { message });
-  emailIntakeActivityId = "";
-}
-
-function buildEmailIntakeProjectContext() {
-  const candidates = db
-    .map((rawProject) => normalizeProject(rawProject))
-    .filter(Boolean)
-    .map((project) => {
-      const path = String(project.path || "").trim();
-      return {
-        id: String(project.id || "").trim(),
-        name: String(project.name || "").trim(),
-        nick: String(project.nick || "").trim(),
-        path,
-        pathLeaf: getWindowsPathLeaf(path),
-      };
-    })
-    .filter((project) => Object.values(project).some((value) => !!String(value || "").trim()))
-    .sort((left, right) =>
-      [
-        left.id,
-        left.name,
-        left.nick,
-        left.path,
-        left.pathLeaf,
-      ].join("|").localeCompare(
-        [
-          right.id,
-          right.name,
-          right.nick,
-          right.path,
-          right.pathLeaf,
-        ].join("|")
-      )
-    );
-
-  const context = [];
-  let serializedChars = 2;
-  for (const candidate of candidates) {
-    if (context.length >= EMAIL_INTAKE_PROJECT_CONTEXT_MAX_PROJECTS) break;
-    const serialized = JSON.stringify(candidate);
-    const nextChars = serializedChars + serialized.length + (context.length ? 1 : 0);
-    if (context.length && nextChars > EMAIL_INTAKE_PROJECT_CONTEXT_MAX_CHARS) break;
-    if (!context.length && nextChars > EMAIL_INTAKE_PROJECT_CONTEXT_MAX_CHARS) continue;
-    context.push(candidate);
-    serializedChars = nextChars;
-  }
-  return context;
-}
-
-async function processEmailIntakePaste() {
-  if (emailIntakeBusy || !window.pywebview?.api?.process_email_with_ai) {
-    return;
-  }
-  if (!String(userSettings.apiKey || "").trim()) {
-    toast("Setup API Key in Settings first.");
-    return;
-  }
-  const txt = val("emailArea");
-  if (!txt) return;
-  let timeoutId = null;
-  let slowNoticeId = null;
-  emailIntakeBusy = true;
-  beginEmailIntakeActivity();
-  renderOutlookScanUi();
-  try {
-    const projectContext = buildEmailIntakeProjectContext();
-    const aiRequest = window.pywebview.api.process_email_with_ai(
-      txt,
-      userSettings.apiKey,
-      userSettings.userName,
-      getActiveDisciplineList(),
-      projectContext
-    );
-    updateEmailIntakeActivity("Waiting for AI response...", 35);
-    slowNoticeId = setTimeout(() => {
-      updateEmailIntakeActivity(
-        "Gemini is busy; automatic retries are still running...",
-        65
-      );
-    }, EMAIL_INTAKE_SLOW_NOTICE_MS);
-    const timeoutPromise = new Promise((_, reject) => {
-      timeoutId = setTimeout(() => {
-        reject(
-          new Error(
-            `Gemini did not respond after ${Math.round(
-              EMAIL_INTAKE_REQUEST_TIMEOUT_MS / 60000
-            )} minutes. Google may still be at capacity; please try again later.`
-          )
-        );
-      }, EMAIL_INTAKE_REQUEST_TIMEOUT_MS);
-    });
-    const res = await Promise.race([aiRequest, timeoutPromise]);
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-      timeoutId = null;
-    }
-    if (action === "cancel") {
-      await handleActivityTrayCancel(activityId);
-      return;
-    }
-    if (action === "queue") {
-      enqueueActivityRerun(activityId);
-      return;
-    }
-    if (slowNoticeId) {
-      clearTimeout(slowNoticeId);
-      slowNoticeId = null;
-    }
-    if (res?.status === "success") {
-      const emailField = document.getElementById("emailArea");
-      if (emailField) emailField.value = "";
-      completeEmailIntakeActivity();
-      closeDlg("outlookScanDlg");
-      handleAiProjectResult(res.data || {});
-      return;
-    }
-    throw new Error(res?.message || "Failed to process email.");
-  } catch (e) {
-    const errorMessage = e?.message || "Unknown error.";
-    failEmailIntakeActivity(errorMessage);
-  } finally {
-    if (timeoutId) clearTimeout(timeoutId);
-    if (slowNoticeId) clearTimeout(slowNoticeId);
-    emailIntakeBusy = false;
-    renderOutlookScanUi();
-  }
 }
 
 
@@ -12505,7 +11776,6 @@ function buildOutlookScanDerivedState(result = null) {
 async function runOutlookInboxScan() {
   if (
     outlookScanState.busy ||
-    emailIntakeBusy ||
     !window.pywebview?.api?.scan_outlook_inbox
   ) {
     return;
@@ -12758,968 +12028,6 @@ async function acceptOutlookScanSuggestion(suggestionKey) {
   return true;
 }
 
-// ===================== CLOUD SYNC =====================
-
-function updateCloudSyncState(patch = {}) {
-  cloudSyncState = {
-    ...cloudSyncState,
-    ...patch,
-  };
-  if (patch.lastSyncedAt !== undefined) {
-    cloudSyncState.lastSyncedAt = normalizeIsoTimestamp(patch.lastSyncedAt);
-  }
-  renderGoogleAuthUi();
-}
-
-async function updateLocalCloudSyncMetadata(
-  patch = {},
-  { persist = true } = {}
-) {
-  const current = ensureCloudSyncSettingsObject();
-  userSettings.cloudSync = normalizeCloudSyncSettings({
-    ...current,
-    ...patch,
-    lastSyncedAt:
-      patch.lastSyncedAt !== undefined
-        ? normalizeIsoTimestamp(patch.lastSyncedAt)
-        : current.lastSyncedAt,
-  });
-  if (persist) {
-    await persistUserSettingsLocally({
-      skipCloud: true,
-      saveTimestamp: false,
-      silent: true,
-    });
-  }
-  updateCloudSyncState({
-    enabled: userSettings.cloudSync.enabled,
-    firebaseUid: userSettings.cloudSync.firebaseUid,
-    lastSyncedAt: userSettings.cloudSync.lastSyncedAt,
-  });
-  return userSettings.cloudSync;
-}
-
-function getCloudSyncDisplayModel() {
-  const configured = cloudSyncState.configured === true;
-  const lastSyncedAt =
-    cloudSyncState.lastSyncedAt || ensureCloudSyncSettingsObject().lastSyncedAt;
-  if (!configured) {
-    return {
-      status: "Cloud sync not configured",
-      details:
-        "Add FIREBASE_API_KEY, FIREBASE_AUTH_DOMAIN, FIREBASE_PROJECT_ID, and FIREBASE_APP_ID to .env to enable cross-device sync.",
-      note:
-        "Google sign-in works without Firebase, but cross-device sync stays disabled until Firebase is configured.",
-      dot: "disabled",
-    };
-  }
-  if (!googleAuthState.signedIn) {
-    return {
-      status: "Ready when you sign in",
-      details:
-        "Sign in with Google to sync settings, projects, notes, templates, checklists, and timesheets.",
-      note:
-        "This app stays local-first until a Google account is connected and Firebase sync is available.",
-      dot: "idle",
-    };
-  }
-  if (cloudSyncState.busy) {
-    return {
-      status: "Syncing...",
-      details: cloudSyncState.message || "Connecting your Google account to Firestore.",
-      note: "Sync is in progress. Keep the app open until the initial pull completes.",
-      dot: "busy",
-    };
-  }
-  if (cloudSyncState.error) {
-    return {
-      status: "Sync error",
-      details: cloudSyncState.error,
-      note:
-        "Your local data is still available. Fix the Firebase configuration or connectivity issue and sign in again.",
-      dot: "error",
-    };
-  }
-  if (cloudSyncState.enabled) {
-    return {
-      status: "Cloud sync active",
-      details: lastSyncedAt
-        ? `Last sync: ${formatSyncTimestamp(lastSyncedAt)}`
-        : "Cross-device sync is connected.",
-      note:
-        "Supported app data now syncs through Firestore. Local-only secrets and file paths stay on this device.",
-      dot: "active",
-    };
-  }
-  return {
-    status: "Signed in locally",
-    details: "Google is connected, but Firestore sync is not active yet.",
-    note:
-      "Your Google account is available locally, but cross-device sync has not been established.",
-    dot: "idle",
-  };
-}
-
-function renderCloudSyncUi() {
-  const settingsStatus = document.getElementById("settings_cloudSyncStatus");
-  const settingsDetails = document.getElementById("settings_cloudSyncDetails");
-  const accountNote = document.getElementById("googleAccountSyncNote");
-  const headerBtn = document.getElementById("headerGoogleAuthBtn");
-  const headerDot = document.getElementById("headerGoogleAuthStatusDot");
-  const headerPopover = document.getElementById("headerAccountPopover");
-  const headerPopoverStatus = document.getElementById("headerAccountPopoverStatus");
-  const headerPopoverNote = document.getElementById("headerAccountPopoverNote");
-  const headerPopoverDot = document.getElementById("headerAccountPopoverSyncDot");
-  const model = getCloudSyncDisplayModel();
-
-  if (settingsStatus) {
-    settingsStatus.textContent = model.status;
-  }
-  if (settingsDetails) {
-    settingsDetails.textContent = model.details;
-  }
-  if (accountNote) {
-    accountNote.textContent = model.note;
-  }
-  if (headerBtn) {
-    headerBtn.dataset.syncStatus = model.dot;
-  }
-  if (headerDot) {
-    headerDot.title = model.status;
-  }
-  if (headerPopover) {
-    headerPopover.dataset.syncStatus = model.dot;
-  }
-  if (headerPopoverStatus) {
-    headerPopoverStatus.textContent = model.status;
-  }
-  if (headerPopoverNote) {
-    headerPopoverNote.textContent = model.note;
-  }
-  if (headerPopoverDot) {
-    headerPopoverDot.title = model.status;
-  }
-}
-
-async function loadCloudSyncConfig() {
-  if (cloudSyncConfig) {
-    updateCloudSyncState({
-      configured: !!(
-        cloudSyncConfig.apiKey &&
-        cloudSyncConfig.authDomain &&
-        cloudSyncConfig.projectId &&
-        cloudSyncConfig.appId
-      ),
-      available: true,
-    });
-    return cloudSyncConfig;
-  }
-  if (!window.pywebview?.api?.get_cloud_sync_config) {
-    updateCloudSyncState({
-      configured: false,
-      available: false,
-      status: "local-only",
-    });
-    return null;
-  }
-  try {
-    const response = await window.pywebview.api.get_cloud_sync_config();
-    if (response?.status !== "success") {
-      throw new Error(response?.message || "Failed to load cloud sync configuration.");
-    }
-    cloudSyncConfig = response.config || null;
-    updateCloudSyncState({
-      configured: response.enabled === true,
-      available: true,
-    });
-    return cloudSyncConfig;
-  } catch (e) {
-    console.warn("Failed to load cloud sync config:", e);
-    updateCloudSyncState({
-      configured: false,
-      available: false,
-      error: String(e?.message || "Cloud sync config unavailable."),
-    });
-    return null;
-  }
-}
-
-function loadExternalScript(src) {
-  return new Promise((resolve, reject) => {
-    const existing = document.querySelector(`script[data-cloud-sync-src="${src}"]`);
-    if (existing?.dataset.loaded === "true") {
-      resolve();
-      return;
-    }
-    const script = existing || document.createElement("script");
-    script.async = true;
-    script.src = src;
-    script.dataset.cloudSyncSrc = src;
-    const timeoutId = window.setTimeout(() => {
-      reject(new Error(`Timed out loading ${src}`));
-    }, 15000);
-    script.onload = () => {
-      window.clearTimeout(timeoutId);
-      script.dataset.loaded = "true";
-      resolve();
-    };
-    script.onerror = () => {
-      window.clearTimeout(timeoutId);
-      reject(new Error(`Failed to load ${src}`));
-    };
-    if (!existing) {
-      document.head.appendChild(script);
-    }
-  });
-}
-
-async function ensureFirebaseSdk() {
-  if (window.firebase?.apps) {
-    updateCloudSyncState({ sdkLoaded: true });
-    return true;
-  }
-  if (!firebaseLoadPromise) {
-    firebaseLoadPromise = (async () => {
-      for (const src of FIREBASE_COMPAT_SCRIPT_URLS) {
-        await loadExternalScript(src);
-      }
-      updateCloudSyncState({ sdkLoaded: true });
-      return true;
-    })().catch((error) => {
-      firebaseLoadPromise = null;
-      throw error;
-    });
-  }
-  try {
-    await firebaseLoadPromise;
-    return true;
-  } catch (e) {
-    console.warn("Failed to load Firebase SDK:", e);
-    updateCloudSyncState({
-      sdkLoaded: false,
-      error: String(e?.message || "Firebase SDK could not be loaded."),
-    });
-    return false;
-  }
-}
-
-async function ensureFirebaseServices() {
-  const config = await loadCloudSyncConfig();
-  if (
-    !config ||
-    !config.apiKey ||
-    !config.authDomain ||
-    !config.projectId ||
-    !config.appId
-  ) {
-    updateCloudSyncState({
-      configured: false,
-      enabled: false,
-    });
-    return null;
-  }
-  const sdkReady = await ensureFirebaseSdk();
-  if (!sdkReady || !window.firebase?.initializeApp) {
-    return null;
-  }
-  if (!firebaseAppInstance) {
-    const existingApp =
-      window.firebase.apps?.find((app) => app?.name === "acies-cloud-sync") ||
-      null;
-    firebaseAppInstance =
-      existingApp || window.firebase.initializeApp(config, "acies-cloud-sync");
-    firebaseAuthInstance = window.firebase.auth(firebaseAppInstance);
-    firebaseFirestoreInstance = window.firebase.firestore(firebaseAppInstance);
-    firebaseFirestoreInstance.settings({
-      ignoreUndefinedProperties: true,
-    });
-  }
-  return {
-    app: firebaseAppInstance,
-    auth: firebaseAuthInstance,
-    db: firebaseFirestoreInstance,
-  };
-}
-
-async function getGoogleSyncSessionFromBackend() {
-  if (!window.pywebview?.api?.get_google_sync_session) {
-    return {
-      status: "error",
-      signedIn: false,
-      idToken: "",
-      accessToken: "",
-      firebaseReady: false,
-      auth: { ...DEFAULT_GOOGLE_AUTH_STATE },
-    };
-  }
-  const response = await window.pywebview.api.get_google_sync_session();
-  return {
-    status: response?.status || "error",
-    signedIn: response?.signedIn === true,
-    idToken: String(response?.idToken || "").trim(),
-    accessToken: String(response?.accessToken || "").trim(),
-    firebaseReady: response?.firebaseReady === true,
-    auth: normalizeGoogleAuthState(response?.auth),
-    message: response?.message || "",
-  };
-}
-
-function getCloudSyncDocRefs(uid) {
-  const userDoc = firebaseFirestoreInstance.collection("users").doc(uid);
-  return {
-    settings: userDoc.collection("settings").doc("app"),
-    tasks: userDoc.collection("tasks").doc("main"),
-    notes: userDoc.collection("notes").doc("main"),
-    templates: userDoc.collection("templates").doc("main"),
-    checklists: userDoc.collection("checklists").doc("main"),
-    timesheets: userDoc.collection("timesheets"),
-    timesheetsMeta: userDoc
-      .collection("timesheets")
-      .doc(CLOUD_SYNC_TIMESHEETS_META_DOC_ID),
-  };
-}
-
-function clearCloudSyncSubscriptions() {
-  cloudSyncUnsubscribers.forEach((unsubscribe) => {
-    try {
-      unsubscribe();
-    } catch (e) {
-      console.warn("Failed to unsubscribe cloud sync listener:", e);
-    }
-  });
-  cloudSyncUnsubscribers = [];
-}
-
-async function signInToCloud(session = null) {
-  const services = await ensureFirebaseServices();
-  if (!services) {
-    return null;
-  }
-  const syncSession = session || (await getGoogleSyncSessionFromBackend());
-  if (!syncSession?.signedIn) {
-    return null;
-  }
-  const idToken = String(syncSession.idToken || "").trim();
-  const accessToken = String(syncSession.accessToken || "").trim();
-  if (!idToken && !accessToken) {
-    if (firebaseAuthInstance.currentUser) {
-      return firebaseAuthInstance.currentUser;
-    }
-    throw new Error(
-      "Google sign-in completed, but no Firebase-compatible token was returned."
-    );
-  }
-  const credential = window.firebase.auth.GoogleAuthProvider.credential(
-    idToken || null,
-    accessToken || null
-  );
-  const userCredential = await firebaseAuthInstance.signInWithCredential(
-    credential
-  );
-  return userCredential?.user || firebaseAuthInstance.currentUser;
-}
-
-function queueCloudStatePush(domain, delay = 900) {
-  if (!cloudSyncState.enabled || isCloudSyncApplying()) return;
-  if (domain === "timesheets") {
-    if (cloudSyncTimesheetsPushTimer) {
-      clearTimeout(cloudSyncTimesheetsPushTimer);
-    }
-    cloudSyncTimesheetsPushTimer = setTimeout(() => {
-      pushUserState(["timesheets"]).catch((error) => {
-        console.warn("Failed to push timesheets to cloud:", error);
-        updateCloudSyncState({
-          error: String(error?.message || "Timesheet sync failed."),
-          status: "error",
-        });
-      });
-    }, delay);
-    return;
-  }
-  if (cloudSyncPushTimers[domain]) {
-    clearTimeout(cloudSyncPushTimers[domain]);
-  }
-  cloudSyncPushTimers[domain] = setTimeout(() => {
-    pushUserState([domain]).catch((error) => {
-      console.warn(`Failed to push ${domain} to cloud:`, error);
-      updateCloudSyncState({
-        error: String(error?.message || `${domain} sync failed.`),
-        status: "error",
-      });
-    });
-  }, delay);
-}
-
-const schedulePullUserState = debounce(() => {
-  pullUserState({ silent: true }).catch((error) => {
-    console.warn("Failed to pull remote cloud state:", error);
-    updateCloudSyncState({
-      error: String(error?.message || "Cloud pull failed."),
-      status: "error",
-    });
-  });
-}, 700);
-
-function subscribeToUserState(uid = cloudSyncState.firebaseUid) {
-  if (!uid || !firebaseFirestoreInstance) return;
-  clearCloudSyncSubscriptions();
-  const refs = getCloudSyncDocRefs(uid);
-  const listen = (ref) =>
-    ref.onSnapshot(
-      (snapshot) => {
-        if (snapshot?.metadata?.hasPendingWrites) return;
-        schedulePullUserState();
-      },
-      (error) => {
-        console.warn("Cloud sync listener failed:", error);
-        updateCloudSyncState({
-          error: String(error?.message || "Cloud listener failed."),
-          status: "error",
-        });
-      }
-    );
-  cloudSyncUnsubscribers = [
-    listen(refs.settings),
-    listen(refs.tasks),
-    listen(refs.notes),
-    listen(refs.templates),
-    listen(refs.checklists),
-    listen(refs.timesheetsMeta),
-  ];
-}
-
-async function loadLocalSyncMetadata() {
-  if (!window.pywebview?.api?.get_local_sync_metadata) return;
-  try {
-    const response = await window.pywebview.api.get_local_sync_metadata();
-    if (response?.status !== "success") return;
-    const files = response.files || {};
-    localSyncTimestamps.settings = normalizeIsoTimestamp(
-      files?.settings?.modified || localSyncTimestamps.settings
-    );
-    localSyncTimestamps.tasks = normalizeIsoTimestamp(
-      files?.tasks?.modified || localSyncTimestamps.tasks
-    );
-    localSyncTimestamps.notes = normalizeIsoTimestamp(
-      files?.notes?.modified || localSyncTimestamps.notes
-    );
-    localSyncTimestamps.templates = getLatestIsoTimestamp([
-      files?.templates?.modified,
-      templatesDb?.lastModified,
-      localSyncTimestamps.templates,
-    ]);
-    localSyncTimestamps.checklists = getLatestIsoTimestamp([
-      files?.checklists?.modified,
-      checklistsDb?.lastModified,
-      localSyncTimestamps.checklists,
-    ]);
-    localSyncTimestamps.timesheets = getLatestIsoTimestamp([
-      files?.timesheets?.modified,
-      timesheetDb?.lastModified,
-      localSyncTimestamps.timesheets,
-    ]);
-  } catch (e) {
-    console.warn("Failed to load local sync metadata:", e);
-  }
-}
-
-async function createCloudSyncBackup(reason, metadata = {}) {
-  if (!window.pywebview?.api?.create_cloud_sync_backup) return null;
-  try {
-    const response = await window.pywebview.api.create_cloud_sync_backup(
-      reason,
-      metadata
-    );
-    if (response?.status === "success") {
-      return response;
-    }
-  } catch (e) {
-    console.warn("Failed to create cloud sync backup:", e);
-  }
-  return null;
-}
-
-function getDefaultSyncableSettings() {
-  return {
-    userName: "",
-    discipline: ["Electrical"],
-    activeDiscipline: "Electrical",
-    showSetupHelp: true,
-    theme: "dark",
-    lightingTemplates: [],
-    separateDeliverableCompletionGroups: true,
-    groupDeliverablesByProject: false,
-    projectsViewMode: "list",
-    projectsWideLayout: true,
-    minimizeEmptyProjectColumns: true,
-    hideEmptyProjectColumns: false,
-    projectCardColumns: DEFAULT_PROJECT_CARD_COLUMNS.map((c) => ({ ...c })),
-    defaultPmInitials: "",
-    cleanDwgOptions: { ...DEFAULT_CLEAN_DWG_OPTIONS },
-    publishDwgOptions: { ...DEFAULT_PUBLISH_DWG_OPTIONS },
-    manageLayersOptions: { ...DEFAULT_MANAGE_LAYERS_OPTIONS },
-    workflowCadDefaults: { ...DEFAULT_WORKFLOW_CAD_DEFAULTS },
-    workroomAutoSelectCadFiles: true,
-    enableUnderConstructionTools: false,
-  };
-}
-
-function sanitizeSettingsForCloud(settings = userSettings) {
-  const source = settings && typeof settings === "object" ? settings : {};
-  const updatedAt =
-    normalizeIsoTimestamp(localSyncTimestamps.settings) || new Date().toISOString();
-  return {
-    ...getDefaultSyncableSettings(),
-    userName: String(source.userName || "").trim(),
-    discipline: normalizeDisciplineList(source.discipline),
-    activeDiscipline: normalizeActiveDiscipline(
-      source.activeDiscipline,
-      source.discipline
-    ),
-    showSetupHelp: source.showSetupHelp !== false,
-    theme: source.theme === "light" ? "light" : "dark",
-    lightingTemplates: Array.isArray(source.lightingTemplates)
-      ? deepCloneJson(source.lightingTemplates, [])
-      : [],
-    separateDeliverableCompletionGroups:
-      source.separateDeliverableCompletionGroups !== false,
-    groupDeliverablesByProject: source.groupDeliverablesByProject === true,
-    projectsViewMode: normalizeProjectsViewMode(source.projectsViewMode),
-    projectsWideLayout: source.projectsWideLayout !== false,
-    minimizeEmptyProjectColumns: source.minimizeEmptyProjectColumns !== false,
-    hideEmptyProjectColumns: source.hideEmptyProjectColumns === true,
-    projectCardColumns: normalizeProjectCardColumns(source.projectCardColumns),
-    defaultPmInitials: String(source.defaultPmInitials || "")
-      .trim()
-      .toUpperCase(),
-    cleanDwgOptions: {
-      ...DEFAULT_CLEAN_DWG_OPTIONS,
-      ...(source.cleanDwgOptions || {}),
-    },
-    publishDwgOptions: normalizePublishDwgOptions(source.publishDwgOptions),
-    manageLayersOptions: {
-      ...DEFAULT_MANAGE_LAYERS_OPTIONS,
-      ...(source.manageLayersOptions || {}),
-    },
-    workflowCadDefaults: normalizeWorkflowCadDefaults(source.workflowCadDefaults),
-    workroomAutoSelectCadFiles: source.workroomAutoSelectCadFiles !== false,
-    enableUnderConstructionTools: source.enableUnderConstructionTools === true,
-    updatedAt,
-  };
-}
-
-function normalizeCloudSettingsDoc(raw = {}) {
-  const source = raw && typeof raw === "object" ? raw : {};
-  const defaults = getDefaultSyncableSettings();
-  return {
-    ...defaults,
-    userName: String(source.userName || "").trim(),
-    discipline: normalizeDisciplineList(source.discipline),
-    activeDiscipline: normalizeActiveDiscipline(
-      source.activeDiscipline,
-      source.discipline
-    ),
-    showSetupHelp: source.showSetupHelp !== false,
-    theme: source.theme === "light" ? "light" : "dark",
-    lightingTemplates: Array.isArray(source.lightingTemplates)
-      ? deepCloneJson(source.lightingTemplates, [])
-      : [],
-    separateDeliverableCompletionGroups:
-      source.separateDeliverableCompletionGroups !== false,
-    groupDeliverablesByProject: source.groupDeliverablesByProject === true,
-    projectsViewMode: normalizeProjectsViewMode(source.projectsViewMode),
-    projectsWideLayout: source.projectsWideLayout !== false,
-    minimizeEmptyProjectColumns: source.minimizeEmptyProjectColumns !== false,
-    hideEmptyProjectColumns: source.hideEmptyProjectColumns === true,
-    projectCardColumns: normalizeProjectCardColumns(source.projectCardColumns),
-    defaultPmInitials: String(source.defaultPmInitials || "")
-      .trim()
-      .toUpperCase(),
-    cleanDwgOptions: {
-      ...DEFAULT_CLEAN_DWG_OPTIONS,
-      ...(source.cleanDwgOptions || {}),
-    },
-    publishDwgOptions: normalizePublishDwgOptions(source.publishDwgOptions),
-    manageLayersOptions: {
-      ...DEFAULT_MANAGE_LAYERS_OPTIONS,
-      ...(source.manageLayersOptions || {}),
-    },
-    workflowCadDefaults: normalizeWorkflowCadDefaults(source.workflowCadDefaults),
-    workroomAutoSelectCadFiles: source.workroomAutoSelectCadFiles !== false,
-    enableUnderConstructionTools: source.enableUnderConstructionTools === true,
-    updatedAt:
-      normalizeIsoTimestamp(source.updatedAt) ||
-      normalizeIsoTimestamp(source.lastModified),
-  };
-}
-
-function hasMeaningfulSettingsState(doc) {
-  if (!doc) return false;
-  const comparable = deepCloneJson(doc, {}) || {};
-  delete comparable.updatedAt;
-  return stableStringify(comparable) !== stableStringify(getDefaultSyncableSettings());
-}
-
-function sanitizeLinkForCloud(link) {
-  const normalized = normalizeRef(link);
-  if (!normalized || isLocalOnlyLink(normalized)) return null;
-  return normalized;
-}
-
-function getLinkKey(link) {
-  const normalized = normalizeRef(link);
-  if (!normalized) return "";
-  return `${String(normalized.raw || normalized.url || "")
-    .trim()
-    .toLowerCase()}|${String(normalized.label || "")
-    .trim()
-    .toLowerCase()}`;
-}
-
-function mergeCloudAndLocalLinks(remoteRefs = [], localRefs = []) {
-  const merged = [];
-  const seen = new Set();
-  [...(Array.isArray(remoteRefs) ? remoteRefs : [])]
-    .map((ref) => normalizeRef(ref))
-    .filter(Boolean)
-    .forEach((ref) => {
-      const key = getLinkKey(ref);
-      if (!key || seen.has(key)) return;
-      seen.add(key);
-      merged.push(ref);
-    });
-  [...(Array.isArray(localRefs) ? localRefs : [])]
-    .map((ref) => normalizeRef(ref))
-    .filter((ref) => ref && isLocalOnlyLink(ref))
-    .forEach((ref) => {
-      const key = getLinkKey(ref);
-      if (!key || seen.has(key)) return;
-      seen.add(key);
-      merged.push(ref);
-    });
-  return merged;
-}
-
-function sanitizeEmailRefForCloud(ref) {
-  const normalized = normalizeEmailRef(ref);
-  if (!normalized) return null;
-  if (
-    String(normalized.source || "").toLowerCase() === "file" ||
-    isLikelyLocalPath(normalized.raw) ||
-    isLikelyLocalPath(normalized.url)
-  ) {
-    return null;
-  }
-  return normalized;
-}
-
-function sanitizeAttachmentForCloud(attachment = {}) {
-  const normalized = normalizeAttachmentEntry(attachment);
-  if (!normalized) return null;
-  if (normalized.type === "email") {
-    const emailRef = sanitizeEmailRefForCloud(normalized.emailRef);
-    if (!emailRef) return null;
-    return {
-      id: normalized.id,
-      type: "email",
-      description: String(normalized.description || "").trim(),
-      emailRef,
-    };
-  }
-  if (normalized.type !== "url") {
-    return null;
-  }
-  return {
-    id: normalized.id,
-    type: "url",
-    description: String(normalized.description || "").trim(),
-    target: normalized.target,
-  };
-}
-
-function mergeCloudAndLocalAttachments(remoteAttachments = [], localAttachments = []) {
-  const merged = [];
-  const seen = new Map();
-  [
-    ...(Array.isArray(remoteAttachments) ? remoteAttachments : []),
-    ...(Array.isArray(localAttachments) ? localAttachments : []),
-  ]
-    .map((attachment) => normalizeAttachmentEntry(attachment))
-    .filter(Boolean)
-    .forEach((attachment) => {
-      const key = getAttachmentEntryKey(attachment);
-      if (!key) return;
-      if (seen.has(key)) {
-        const existing = seen.get(key);
-        if (!existing.description && attachment.description) {
-          existing.description = attachment.description;
-        }
-        return;
-      }
-      seen.set(key, attachment);
-      merged.push(attachment);
-    });
-  return merged;
-}
-
-function mergeCloudAndLocalEmailRefs(remoteRefs = [], localRefs = []) {
-  const merged = [];
-  const seen = new Set();
-  [
-    ...normalizeEmailRefs(remoteRefs, null),
-    ...normalizeEmailRefs(localRefs, null).filter(
-      (ref) =>
-        ref &&
-        (String(ref.source || "").toLowerCase() === "file" ||
-          isLikelyLocalPath(ref.raw) ||
-          isLikelyLocalPath(ref.url))
-    ),
-  ].forEach((ref) => {
-    const normalized = normalizeEmailRef(ref);
-    const key = normalizeEmailRefKey(normalized);
-    if (!normalized || !key || seen.has(key)) return;
-    seen.add(key);
-    merged.push(normalized);
-  });
-  return merged;
-}
-
-function sanitizeDeliverableForCloud(deliverable = {}) {
-  const source =
-    deliverable && typeof deliverable === "object"
-      ? deepCloneJson(deliverable, {}) || {}
-      : {};
-  const normalized = normalizeDeliverable(source);
-  const attachments = normalizeAttachments(normalized.attachments)
-    .map((attachment) => sanitizeAttachmentForCloud(attachment))
-    .filter(Boolean);
-  const emailRefs = buildLegacyEmailRefsFromAttachments(attachments);
-  const sanitized = {
-    ...source,
-    ...normalized,
-    attachments,
-    links: buildLegacyLinksFromAttachments(attachments),
-    emailRefs,
-    emailRef: emailRefs[0] || null,
-    tasks: (Array.isArray(normalized.tasks) ? normalized.tasks : []).map((task) => {
-      const taskAttachments = normalizeAttachments(task.attachments)
-        .map((attachment) => sanitizeAttachmentForCloud(attachment))
-        .filter(Boolean);
-      return {
-        ...task,
-        attachments: taskAttachments,
-        links: buildLegacyLinksFromAttachments(taskAttachments),
-        emailRefs: buildLegacyEmailRefsFromAttachments(taskAttachments),
-      };
-    }),
-    noteItems: normalizeDeliverableNoteItems(
-      normalized.noteItems,
-      normalized.notes || ""
-    ).map((noteItem) => {
-      const noteAttachments = normalizeAttachments(noteItem.attachments)
-        .map((attachment) => sanitizeAttachmentForCloud(attachment))
-        .filter(Boolean);
-      return {
-        ...noteItem,
-        attachments: noteAttachments,
-        links: buildLegacyLinksFromAttachments(noteAttachments),
-        emailRefs: buildLegacyEmailRefsFromAttachments(noteAttachments),
-      };
-    }),
-  };
-  delete sanitized.active;
-  return sanitized;
-}
-
-function getCloudDeliverableKey(deliverable, index = 0) {
-  const id = String(deliverable?.id || "").trim().toLowerCase();
-  if (id) return `id:${id}`;
-  const name = String(deliverable?.name || "").trim().toLowerCase();
-  const due = String(deliverable?.due || "").trim().toLowerCase();
-  if (name || due) return `name:${name}|due:${due}`;
-  return `index:${index}`;
-}
-
-function mergeLocalDeliverableFields(remoteDeliverable, localDeliverable) {
-  const merged = {
-    ...(deepCloneJson(localDeliverable, {}) || {}),
-    ...(deepCloneJson(remoteDeliverable, {}) || {}),
-  };
-  merged.attachments = mergeCloudAndLocalAttachments(
-    normalizeAttachments(remoteDeliverable?.attachments, {
-      legacyLinks: remoteDeliverable?.links,
-      legacyEmailRefs: remoteDeliverable?.emailRefs,
-      legacyEmailRef: remoteDeliverable?.emailRef,
-    }),
-    normalizeAttachments(localDeliverable?.attachments, {
-      legacyLinks: localDeliverable?.links,
-      legacyEmailRefs: localDeliverable?.emailRefs,
-      legacyEmailRef: localDeliverable?.emailRef,
-    })
-  );
-  const emailRefs = mergeCloudAndLocalEmailRefs(
-    remoteDeliverable?.emailRefs,
-    localDeliverable?.emailRefs
-  );
-  merged.emailRefs = emailRefs;
-  merged.emailRef = emailRefs[0] || null;
-  return merged;
-}
-
-function sanitizeProjectForCloud(project = {}) {
-  const source =
-    project && typeof project === "object"
-      ? deepCloneJson(project, {}) || {}
-      : {};
-  const normalized = normalizeProject(source);
-  const attachments = normalizeAttachments(normalized.attachments)
-    .map((attachment) => sanitizeAttachmentForCloud(attachment))
-    .filter(Boolean);
-  const sanitized = {
-    ...source,
-    ...normalized,
-    path: "",
-    localProjectPath: "",
-    workroomRootPath: "",
-    attachments,
-    refs: (Array.isArray(source.refs) ? source.refs : [])
-      .map((ref) => sanitizeLinkForCloud(ref))
-      .filter(Boolean),
-    links: buildLegacyLinksFromAttachments(attachments),
-    deliverables: getProjectDeliverables(normalized).map((deliverable) =>
-      sanitizeDeliverableForCloud(deliverable)
-    ),
-    lightingSchedule: normalized.lightingSchedule
-      ? {
-          ...deepCloneJson(normalized.lightingSchedule, {}),
-          targetDwgPath: "",
-        }
-      : createDefaultLightingSchedule(),
-    title24: normalized.title24
-      ? {
-          ...deepCloneJson(normalized.title24, {}),
-          roomAreas: {
-            ...(deepCloneJson(normalized.title24.roomAreas, {}) || {}),
-            sourcePath: "",
-          },
-        }
-      : createDefaultTitle24(),
-  };
-  delete sanitized.overviewDeliverableId;
-  return sanitized;
-}
-
-function getCloudProjectKey(project, index = 0) {
-  const id = String(project?.id || "").trim().toLowerCase();
-  if (id) return `id:${id}`;
-  const name = String(project?.name || "").trim().toLowerCase();
-  const nick = String(project?.nick || "").trim().toLowerCase();
-  if (name || nick) return `name:${name}|nick:${nick}`;
-  return `index:${index}`;
-}
-
-function mergeLocalProjectFields(remoteProject, localProject) {
-  const merged = {
-    ...(deepCloneJson(localProject, {}) || {}),
-    ...(deepCloneJson(remoteProject, {}) || {}),
-  };
-  merged.path = String(localProject?.path || merged.path || "").trim();
-  merged.localProjectPath = String(
-    localProject?.localProjectPath || merged.localProjectPath || ""
-  ).trim();
-  merged.workroomRootPath = String(
-    localProject?.workroomRootPath || merged.workroomRootPath || ""
-  ).trim();
-  merged.refs = mergeCloudAndLocalLinks(remoteProject?.refs, localProject?.refs);
-  merged.attachments = mergeCloudAndLocalAttachments(
-    normalizeAttachments(remoteProject?.attachments, {
-      legacyLinks: remoteProject?.links,
-    }),
-    normalizeAttachments(localProject?.attachments, {
-      legacyLinks: localProject?.links,
-    })
-  );
-
-  const localDeliverables = Array.isArray(localProject?.deliverables)
-    ? localProject.deliverables
-    : [];
-  const localDeliverableMap = new Map(
-    localDeliverables.map((deliverable, index) => [
-      getCloudDeliverableKey(deliverable, index),
-      deliverable,
-    ])
-  );
-  merged.deliverables = getProjectDeliverables(remoteProject).map(
-    (deliverable, index) =>
-      mergeLocalDeliverableFields(
-        deliverable,
-        localDeliverableMap.get(getCloudDeliverableKey(deliverable, index))
-      )
-  );
-
-  if (merged.lightingSchedule) {
-    merged.lightingSchedule.targetDwgPath = String(
-      localProject?.lightingSchedule?.targetDwgPath ||
-        merged.lightingSchedule.targetDwgPath ||
-        ""
-    ).trim();
-  }
-  if (merged.title24?.roomAreas) {
-    merged.title24.roomAreas.sourcePath = normalizeTitle24Text(
-      localProject?.title24?.roomAreas?.sourcePath ||
-        merged.title24.roomAreas.sourcePath ||
-        ""
-    );
-  }
-  return normalizeProject(merged);
-}
-
-function restoreLocalOnlyProjectFields(remoteProjects, localProjects = db) {
-  const localMap = new Map(
-    (Array.isArray(localProjects) ? localProjects : []).map((project, index) => [
-      getCloudProjectKey(project, index),
-      project,
-    ])
-  );
-  return (Array.isArray(remoteProjects) ? remoteProjects : [])
-    .map((project, index) =>
-      mergeLocalProjectFields(
-        project,
-        localMap.get(getCloudProjectKey(project, index))
-      )
-    )
-    .filter(Boolean);
-}
-
-function buildTasksCloudDoc() {
-  return {
-    projects: deepCloneJson(db, []).map((project) => sanitizeProjectForCloud(project)),
-    updatedAt:
-      normalizeIsoTimestamp(localSyncTimestamps.tasks) || new Date().toISOString(),
-  };
-}
-
-function normalizeCloudTasksDoc(raw = {}) {
-  const source = Array.isArray(raw)
-    ? { projects: raw }
-    : raw && typeof raw === "object"
-      ? raw
-      : {};
-  const migrated = migrateProjects(
-    Array.isArray(source.projects) ? source.projects : []
-  );
-  return {
-    projects: migrated.data,
-    updatedAt:
-      normalizeIsoTimestamp(source.updatedAt) ||
-      normalizeIsoTimestamp(source.lastModified),
-  };
-}
-
-function hasMeaningfulTasksState(doc) {
-  return Array.isArray(doc?.projects) && doc.projects.length > 0;
-}
-
 function serializeGlobalPagesForStore() {
   return (Array.isArray(globalPages) ? globalPages : []).map((p) => {
     const page = { html: p.page?.html || "", updatedAt: p.page?.updatedAt || "" };
@@ -13733,16 +12041,7 @@ function serializeGlobalPagesForStore() {
   });
 }
 
-function buildNotesCloudDoc() {
-  return {
-    version: 2,
-    pages: serializeGlobalPagesForStore(),
-    updatedAt:
-      normalizeIsoTimestamp(localSyncTimestamps.notes) || new Date().toISOString(),
-  };
-}
 
-// Migrate the legacy notes shape ({tabs, general, keyed}) into global pages.
 function migrateLegacyNotesToPages(source = {}) {
   const data = source && typeof source === "object" ? source : {};
   const tabs = Array.isArray(data.tabs) ? data.tabs : [];
@@ -13766,6 +12065,7 @@ function migrateLegacyNotesToPages(source = {}) {
   return pages;
 }
 
+
 function readGlobalPagesData(raw = {}) {
   const source = raw && typeof raw === "object" ? raw : {};
   if (Number(source.version) >= 2 && Array.isArray(source.pages)) {
@@ -13774,886 +12074,6 @@ function readGlobalPagesData(raw = {}) {
   return migrateLegacyNotesToPages(source);
 }
 
-function normalizeCloudNotesDoc(raw = {}) {
-  const source = raw && typeof raw === "object" ? raw : {};
-  return {
-    pages: readGlobalPagesData(source),
-    updatedAt:
-      normalizeIsoTimestamp(source.updatedAt) ||
-      normalizeIsoTimestamp(source.lastModified),
-  };
-}
-
-function hasMeaningfulNotesState(doc) {
-  if (!doc) return false;
-  const pages = Array.isArray(doc.pages) ? doc.pages : [];
-  return pages.some(
-    (p) => String(p?.title || "").trim() || String(p?.page?.html || "").trim()
-  );
-}
-
-function buildTemplateSourceName(template) {
-  return basename(template?.sourcePath || template?.sourceName || "");
-}
-
-function sanitizeTemplateForCloud(template = {}) {
-  const source =
-    template && typeof template === "object"
-      ? deepCloneJson(template, {}) || {}
-      : {};
-  const sourceName = buildTemplateSourceName(source);
-  return {
-    ...source,
-    sourcePath: "",
-    sourceName,
-    cloudNeedsRelink: !source.isDefault && !!sourceName,
-  };
-}
-
-function mergeLocalTemplateFields(remoteTemplate, localTemplate) {
-  const merged = {
-    ...(deepCloneJson(remoteTemplate, {}) || {}),
-  };
-  const localSourcePath = String(localTemplate?.sourcePath || "").trim();
-  if (!String(merged.sourcePath || "").trim() && localSourcePath) {
-    merged.sourcePath = localSourcePath;
-    merged.cloudNeedsRelink = false;
-  }
-  if (!String(merged.sourceName || "").trim()) {
-    merged.sourceName = buildTemplateSourceName(localTemplate) || "";
-  }
-  return merged;
-}
-
-function mergeLocalTemplatePaths(remoteDoc, localDoc = templatesDb) {
-  const localMap = new Map(
-    (Array.isArray(localDoc?.templates) ? localDoc.templates : []).map((template) => [
-      String(template?.id || "").trim(),
-      template,
-    ])
-  );
-  return {
-    templates: (Array.isArray(remoteDoc?.templates) ? remoteDoc.templates : []).map(
-      (template) =>
-        mergeLocalTemplateFields(
-          template,
-          localMap.get(String(template?.id || "").trim())
-        )
-    ),
-    defaultTemplatesInstalled: remoteDoc?.defaultTemplatesInstalled === true,
-    lastModified: normalizeIsoTimestamp(
-      remoteDoc?.lastModified || remoteDoc?.updatedAt
-    ),
-    updatedAt: normalizeIsoTimestamp(remoteDoc?.updatedAt),
-  };
-}
-
-function buildTemplatesCloudDoc() {
-  const updatedAt =
-    normalizeIsoTimestamp(localSyncTimestamps.templates) ||
-    normalizeIsoTimestamp(templatesDb?.lastModified) ||
-    new Date().toISOString();
-  return {
-    templates: (Array.isArray(templatesDb?.templates) ? templatesDb.templates : []).map(
-      (template) => sanitizeTemplateForCloud(template)
-    ),
-    defaultTemplatesInstalled: templatesDb?.defaultTemplatesInstalled === true,
-    lastModified: updatedAt,
-    updatedAt,
-  };
-}
-
-function normalizeCloudTemplatesDoc(raw = {}) {
-  const source = raw && typeof raw === "object" ? raw : {};
-  return {
-    templates: (Array.isArray(source.templates) ? source.templates : []).map((template) => ({
-      ...(deepCloneJson(template, {}) || {}),
-      sourcePath: String(template?.sourcePath || "").trim(),
-      sourceName: String(template?.sourceName || "").trim(),
-      cloudNeedsRelink:
-        template?.cloudNeedsRelink === true ||
-        (!template?.isDefault &&
-          !String(template?.sourcePath || "").trim() &&
-          !!String(template?.sourceName || "").trim()),
-    })),
-    defaultTemplatesInstalled: source.defaultTemplatesInstalled === true,
-    lastModified:
-      normalizeIsoTimestamp(source.lastModified) ||
-      normalizeIsoTimestamp(source.updatedAt),
-    updatedAt:
-      normalizeIsoTimestamp(source.updatedAt) ||
-      normalizeIsoTimestamp(source.lastModified),
-  };
-}
-
-function hasMeaningfulTemplatesState(doc) {
-  return Array.isArray(doc?.templates) && doc.templates.length > 0;
-}
-
-function buildChecklistsCloudDoc() {
-  const updatedAt =
-    normalizeIsoTimestamp(localSyncTimestamps.checklists) ||
-    normalizeIsoTimestamp(checklistsDb?.lastModified) ||
-    new Date().toISOString();
-  return {
-    ...deepCloneJson(checklistsDb, {
-      checklists: [],
-      templateOverrides: {},
-      lastModified: null,
-    }),
-    lastModified: updatedAt,
-    updatedAt,
-  };
-}
-
-function normalizeCloudChecklistsDoc(raw = {}) {
-  const source = raw && typeof raw === "object" ? raw : {};
-  const normalized = normalizeChecklistsDb(source || {});
-  return {
-    ...normalized.data,
-    updatedAt:
-      normalizeIsoTimestamp(source.updatedAt) ||
-      normalizeIsoTimestamp(source.lastModified) ||
-      normalizeIsoTimestamp(normalized.data.lastModified),
-  };
-}
-
-function hasMeaningfulChecklistsState(doc) {
-  return (
-    (Array.isArray(doc?.checklists) && doc.checklists.length > 0) ||
-    (doc?.templateOverrides &&
-      Object.keys(doc.templateOverrides).length > 0)
-  );
-}
-
-function buildTimesheetsCloudState() {
-  const updatedAt =
-    normalizeIsoTimestamp(localSyncTimestamps.timesheets) ||
-    normalizeIsoTimestamp(timesheetDb?.lastModified) ||
-    new Date().toISOString();
-  const weeks =
-    timesheetDb?.weeks && typeof timesheetDb.weeks === "object"
-      ? deepCloneJson(timesheetDb.weeks, {})
-      : {};
-  const expenses =
-    timesheetDb?.expenses && typeof timesheetDb.expenses === "object"
-      ? deepCloneJson(timesheetDb.expenses, {})
-      : {};
-  const weekKeys = Object.keys(weeks || {}).filter(Boolean);
-  const expenseWeeks = Object.keys(expenses || {}).filter((weekKey) => {
-    const projects = expenses?.[weekKey]?.projects;
-    return Array.isArray(projects) && projects.length > 0;
-  });
-  const knownWeeks = [...new Set([...weekKeys, ...expenseWeeks])].sort();
-  return {
-    weeks,
-    expenses,
-    knownWeeks,
-    updatedAt,
-  };
-}
-
-function normalizeRemoteTimesheetsState(metaDoc = {}, docs = []) {
-  const weeks = {};
-  const expenses = {};
-  const knownWeeks = [];
-  let updatedAt =
-    normalizeIsoTimestamp(metaDoc?.updatedAt) ||
-    normalizeIsoTimestamp(metaDoc?.lastModified);
-  (Array.isArray(docs) ? docs : []).forEach((doc) => {
-    const docId = String(doc?.id || "").trim();
-    if (!docId || docId === CLOUD_SYNC_TIMESHEETS_META_DOC_ID) return;
-    const payload = doc?.data && typeof doc.data === "object" ? doc.data : {};
-    const weekData = deepCloneJson(payload.data, {}) || {};
-    if (weekData.expenses && typeof weekData.expenses === "object") {
-      expenses[docId] = deepCloneJson(weekData.expenses, { projects: [] }) || {
-        projects: [],
-      };
-      delete weekData.expenses;
-    }
-    weeks[docId] = weekData;
-    knownWeeks.push(docId);
-    if (isIsoAfter(payload.updatedAt, updatedAt)) {
-      updatedAt = normalizeIsoTimestamp(payload.updatedAt);
-    }
-  });
-  const metaKnownWeeks = Array.isArray(metaDoc?.knownWeeks)
-    ? metaDoc.knownWeeks.map((weekKey) => String(weekKey || "").trim()).filter(Boolean)
-    : [];
-  return {
-    weeks,
-    expenses,
-    knownWeeks: [...new Set(metaKnownWeeks.length ? metaKnownWeeks : knownWeeks)].sort(),
-    updatedAt,
-  };
-}
-
-function hasMeaningfulTimesheetsState(state) {
-  return (
-    Object.keys(state?.weeks || {}).length > 0 ||
-    Object.keys(state?.expenses || {}).some((weekKey) => {
-      const projects = state?.expenses?.[weekKey]?.projects;
-      return Array.isArray(projects) && projects.length > 0;
-    })
-  );
-}
-
-function getLocalCloudDoc(domain) {
-  if (domain === "settings") return sanitizeSettingsForCloud(userSettings);
-  if (domain === "tasks") return buildTasksCloudDoc();
-  if (domain === "notes") return buildNotesCloudDoc();
-  if (domain === "templates") return buildTemplatesCloudDoc();
-  if (domain === "checklists") return buildChecklistsCloudDoc();
-  if (domain === "timesheets") return buildTimesheetsCloudState();
-  return null;
-}
-
-function hasMeaningfulCloudDoc(domain, doc) {
-  if (domain === "settings") return hasMeaningfulSettingsState(doc);
-  if (domain === "tasks") return hasMeaningfulTasksState(doc);
-  if (domain === "notes") return hasMeaningfulNotesState(doc);
-  if (domain === "templates") return hasMeaningfulTemplatesState(doc);
-  if (domain === "checklists") return hasMeaningfulChecklistsState(doc);
-  if (domain === "timesheets") return hasMeaningfulTimesheetsState(doc);
-  return false;
-}
-
-function buildComparableCloudDoc(domain, doc = getLocalCloudDoc(domain)) {
-  const comparable = deepCloneJson(doc, null);
-  if (!comparable || typeof comparable !== "object") return comparable;
-  delete comparable.updatedAt;
-  if (domain === "templates" || domain === "checklists") {
-    delete comparable.lastModified;
-  }
-  return comparable;
-}
-
-function getCloudComparableFingerprint(domain, doc = getLocalCloudDoc(domain)) {
-  return stableStringify(buildComparableCloudDoc(domain, doc));
-}
-
-function syncCloudComparableFingerprint(domain, doc = getLocalCloudDoc(domain)) {
-  const fingerprint = getCloudComparableFingerprint(domain, doc);
-  lastCloudComparableFingerprints[domain] = fingerprint;
-  return fingerprint;
-}
-
-function syncAllCloudComparableFingerprints() {
-  [
-    "settings",
-    "tasks",
-    "notes",
-    "templates",
-    "checklists",
-    "timesheets",
-  ].forEach((domain) => {
-    syncCloudComparableFingerprint(domain);
-  });
-}
-
-async function prepareLocalStateForUserSwitch(nextUid) {
-  const currentMetadata = ensureCloudSyncSettingsObject();
-  const previousUid = String(currentMetadata.firebaseUid || "").trim();
-  if (!previousUid || previousUid === nextUid) return false;
-
-  await createCloudSyncBackup("cloud-user-switch", {
-    previousFirebaseUid: previousUid,
-    nextFirebaseUid: nextUid,
-  });
-
-  const resetAt = new Date().toISOString();
-  userSettings = {
-    ...userSettings,
-    ...getDefaultSyncableSettings(),
-    googleAuth: userSettings.googleAuth,
-    cloudSync: {
-      ...currentMetadata,
-      enabled: false,
-      migrationCompleted: false,
-      lastSyncedAt: "",
-    },
-  };
-  db = [];
-  globalPages = [];
-  activeGlobalPageId = null;
-  notesSearchQuery = "";
-  checklistSearchQuery = "";
-  timesheetDb = { weeks: {}, expenses: {}, lastModified: null };
-  templatesDb = {
-    templates: [],
-    defaultTemplatesInstalled: false,
-    lastModified: null,
-  };
-  checklistsDb = {
-    checklists: [],
-    templateOverrides: {},
-    lastModified: null,
-  };
-  activeChecklistTabId = null;
-  cloudSyncRemoteTimesheetMeta = {
-    updatedAt: "",
-    knownWeeks: [],
-  };
-
-  await persistUserSettingsLocally({
-    skipCloud: true,
-    timestamp: resetAt,
-    silent: true,
-  });
-  await save({ skipCloud: true, timestamp: resetAt, silent: true });
-  await saveGlobalPages({ skipCloud: true, timestamp: resetAt, silent: true });
-  await saveTimesheets({ skipCloud: true, timestamp: resetAt, silent: true });
-  await saveTemplates({ skipCloud: true, timestamp: resetAt, silent: true });
-  templatesDb = (await loadTemplates()) || templatesDb;
-  await saveChecklists({ skipCloud: true, timestamp: resetAt, silent: true });
-  syncAllCloudComparableFingerprints();
-  renderGlobalPagesView();
-  renderChecklistTabs();
-  renderChecklistsView();
-  renderTemplates();
-  renderTimesheets();
-  render();
-  return true;
-}
-
-async function pushCloudDomain(domain) {
-  if (!cloudSyncState.enabled || !firebaseFirestoreInstance || !cloudSyncState.firebaseUid) {
-    return "";
-  }
-  const refs = getCloudSyncDocRefs(cloudSyncState.firebaseUid);
-  if (domain === "timesheets") {
-    return pushCloudTimesheetsState();
-  }
-  const payload = getLocalCloudDoc(domain);
-  if (!payload) return "";
-  const updatedAt = normalizeIsoTimestamp(payload.updatedAt) || new Date().toISOString();
-  const ref = refs[domain];
-  if (!ref) return "";
-  await ref.set(payload, { merge: false });
-  return updatedAt;
-}
-
-async function pushCloudTimesheetsState() {
-  if (!cloudSyncState.enabled || !firebaseFirestoreInstance || !cloudSyncState.firebaseUid) {
-    return "";
-  }
-  const refs = getCloudSyncDocRefs(cloudSyncState.firebaseUid);
-  const state = buildTimesheetsCloudState();
-  const upserts = state.knownWeeks.map((weekKey) => {
-    const data = deepCloneJson(state.weeks[weekKey], {}) || {};
-    const expenseData = state.expenses?.[weekKey];
-    if (expenseData && Array.isArray(expenseData.projects) && expenseData.projects.length) {
-      data.expenses = deepCloneJson(expenseData, { projects: [] });
-    }
-    return refs.timesheets.doc(weekKey).set(
-      {
-        weekKey,
-        data,
-        updatedAt: state.updatedAt,
-      },
-      { merge: false }
-    );
-  });
-  const previousKnownWeeks = Array.isArray(cloudSyncRemoteTimesheetMeta.knownWeeks)
-    ? cloudSyncRemoteTimesheetMeta.knownWeeks
-    : [];
-  const removals = previousKnownWeeks
-    .filter((weekKey) => !state.knownWeeks.includes(weekKey))
-    .map((weekKey) => refs.timesheets.doc(weekKey).delete());
-  await Promise.all([
-    ...upserts,
-    ...removals,
-    refs.timesheetsMeta.set(
-      {
-        updatedAt: state.updatedAt,
-        knownWeeks: state.knownWeeks,
-      },
-      { merge: false }
-    ),
-  ]);
-  cloudSyncRemoteTimesheetMeta = {
-    updatedAt: state.updatedAt,
-    knownWeeks: state.knownWeeks,
-  };
-  return state.updatedAt;
-}
-
-
-
-async function pushUserState(domains = null) {
-  if (!cloudSyncState.enabled || isCloudSyncApplying()) return "";
-  const requested =
-    Array.isArray(domains) && domains.length
-      ? domains
-      : ["settings", "tasks", "notes", "templates", "checklists", "timesheets"];
-  const uniqueDomains = [...new Set(requested)];
-  updateCloudSyncState({
-    busy: true,
-    status: "syncing",
-    message: "Uploading local changes...",
-    error: "",
-  });
-  try {
-    const timestamps = [];
-    for (const domain of uniqueDomains) {
-      const updatedAt = await pushCloudDomain(domain);
-      if (updatedAt) timestamps.push(updatedAt);
-    }
-    const lastSyncedAt = new Date().toISOString();
-    await updateLocalCloudSyncMetadata(
-      {
-        enabled: true,
-        firebaseUid: cloudSyncState.firebaseUid,
-        migrationCompleted: true,
-        lastSyncedAt,
-      },
-      { persist: true }
-    );
-    updateCloudSyncState({
-      busy: false,
-      enabled: true,
-      status: "synced",
-      message: lastSyncedAt
-        ? `Last sync ${formatSyncTimestamp(lastSyncedAt)}`
-        : "Cloud sync ready",
-      error: "",
-      lastSyncedAt,
-    });
-    return lastSyncedAt;
-  } catch (e) {
-    updateCloudSyncState({
-      busy: false,
-      status: "error",
-      error: String(e?.message || "Cloud push failed."),
-    });
-    throw e;
-  }
-}
-
-async function fetchRemoteUserState(uid = cloudSyncState.firebaseUid) {
-  if (!uid || !firebaseFirestoreInstance) {
-    return {
-      settings: null,
-      tasks: null,
-      notes: null,
-      templates: null,
-      checklists: null,
-      timesheets: normalizeRemoteTimesheetsState({}, []),
-    };
-  }
-  const refs = getCloudSyncDocRefs(uid);
-  const [
-    settingsSnap,
-    tasksSnap,
-    notesSnap,
-    templatesSnap,
-    checklistsSnap,
-    timesheetsSnap,
-  ] = await Promise.all([
-    refs.settings.get(),
-    refs.tasks.get(),
-    refs.notes.get(),
-    refs.templates.get(),
-    refs.checklists.get(),
-    refs.timesheets.get(),
-  ]);
-
-  let timesheetsMeta = {};
-  const timesheetDocs = [];
-  timesheetsSnap.forEach((doc) => {
-    if (doc.id === CLOUD_SYNC_TIMESHEETS_META_DOC_ID) {
-      timesheetsMeta = doc.data() || {};
-      return;
-    }
-    timesheetDocs.push({
-      id: doc.id,
-      data: doc.data() || {},
-    });
-  });
-
-  return {
-    settings: settingsSnap.exists ? normalizeCloudSettingsDoc(settingsSnap.data()) : null,
-    tasks: tasksSnap.exists ? normalizeCloudTasksDoc(tasksSnap.data()) : null,
-    notes: notesSnap.exists ? normalizeCloudNotesDoc(notesSnap.data()) : null,
-    templates: templatesSnap.exists
-      ? normalizeCloudTemplatesDoc(templatesSnap.data())
-      : null,
-    checklists: checklistsSnap.exists
-      ? normalizeCloudChecklistsDoc(checklistsSnap.data())
-      : null,
-    timesheets: normalizeRemoteTimesheetsState(timesheetsMeta, timesheetDocs),
-  };
-}
-
-async function applyRemoteCloudDoc(domain, remoteDoc) {
-  beginCloudSyncApply();
-  try {
-    if (domain === "settings") {
-      const cloudSettings = normalizeCloudSettingsDoc(remoteDoc);
-      const currentCloudSync = ensureCloudSyncSettingsObject();
-      userSettings = {
-        ...userSettings,
-        ...cloudSettings,
-        apiKey: userSettings.apiKey,
-        autocadPath: userSettings.autocadPath,
-        googleAuth: userSettings.googleAuth,
-        cloudSync: currentCloudSync,
-      };
-      userSettings.discipline = normalizeConfiguredDisciplineList(userSettings.discipline);
-      syncActiveDisciplineWithConfigured();
-      touchLocalSyncTimestamp("settings", cloudSettings.updatedAt);
-      await persistUserSettingsLocally({
-        skipCloud: true,
-        saveTimestamp: false,
-        silent: true,
-      });
-      syncProjectViewPreferencesFromSettings();
-      applyTheme(userSettings.theme);
-      syncUnderConstructionToolsAvailability();
-      refreshActiveDisciplineDependentUi();
-      render();
-      return cloudSettings.updatedAt;
-    }
-    if (domain === "tasks") {
-      const cloudTasks = normalizeCloudTasksDoc(remoteDoc);
-      db = restoreLocalOnlyProjectFields(cloudTasks.projects, db);
-      touchLocalSyncTimestamp("tasks", cloudTasks.updatedAt);
-      await save({
-        skipCloud: true,
-        saveTimestamp: false,
-        silent: true,
-      });
-      render();
-      return cloudTasks.updatedAt;
-    }
-    if (domain === "notes") {
-      const cloudNotes = normalizeCloudNotesDoc(remoteDoc);
-      globalPages = cloudNotes.pages;
-      activeGlobalPageId =
-        getGlobalPageById(activeGlobalPageId)?.id || globalPages[0]?.id || null;
-      touchLocalSyncTimestamp("notes", cloudNotes.updatedAt);
-      await saveGlobalPages({
-        skipCloud: true,
-        saveTimestamp: false,
-        silent: true,
-      });
-      renderGlobalPagesView();
-      return cloudNotes.updatedAt;
-    }
-    if (domain === "templates") {
-      const cloudTemplates = mergeLocalTemplatePaths(
-        normalizeCloudTemplatesDoc(remoteDoc),
-        templatesDb
-      );
-      templatesDb = {
-        templates: cloudTemplates.templates,
-        defaultTemplatesInstalled: cloudTemplates.defaultTemplatesInstalled,
-        lastModified: cloudTemplates.updatedAt || cloudTemplates.lastModified,
-      };
-      touchLocalSyncTimestamp("templates", cloudTemplates.updatedAt);
-      await saveTemplates({
-        skipCloud: true,
-        saveTimestamp: false,
-        silent: true,
-      });
-      templatesDb = (await loadTemplates()) || templatesDb;
-      renderTemplates();
-      return cloudTemplates.updatedAt;
-    }
-    if (domain === "checklists") {
-      const cloudChecklists = normalizeCloudChecklistsDoc(remoteDoc);
-      checklistsDb = {
-        checklists: cloudChecklists.checklists,
-        templateOverrides: cloudChecklists.templateOverrides,
-        lastModified: cloudChecklists.updatedAt || cloudChecklists.lastModified,
-      };
-      activeChecklistTabId =
-        checklistsDb.checklists.find((checklist) => checklist.id === activeChecklistTabId)
-          ?.id || checklistsDb.checklists[0]?.id || null;
-      touchLocalSyncTimestamp("checklists", cloudChecklists.updatedAt);
-      await saveChecklists({
-        skipCloud: true,
-        saveTimestamp: false,
-        silent: true,
-      });
-      renderChecklistTabs();
-      renderChecklistsView();
-      return cloudChecklists.updatedAt;
-    }
-  } finally {
-    endCloudSyncApply();
-  }
-  return "";
-}
-
-async function pullUserState({ silent = false } = {}) {
-  if (!cloudSyncState.enabled || !cloudSyncState.firebaseUid) return false;
-  updateCloudSyncState({
-    busy: true,
-    status: "syncing",
-    message: "Checking for remote updates...",
-    error: "",
-  });
-
-  let backupCreated = false;
-  const maybeBackup = async (reason, metadata = {}) => {
-    if (backupCreated) return;
-    backupCreated = true;
-    await createCloudSyncBackup(reason, metadata);
-  };
-
-  try {
-    const remote = await fetchRemoteUserState(cloudSyncState.firebaseUid);
-    const domains = ["settings", "tasks", "notes", "templates", "checklists"];
-    const syncedAtValues = [];
-
-    for (const domain of domains) {
-      const localDoc = getLocalCloudDoc(domain);
-      const remoteDoc = remote[domain];
-      const localHasData = hasMeaningfulCloudDoc(domain, localDoc);
-      const remoteHasData = hasMeaningfulCloudDoc(domain, remoteDoc);
-      const localUpdatedAt =
-        normalizeIsoTimestamp(localDoc?.updatedAt) ||
-        normalizeIsoTimestamp(localSyncTimestamps[domain]);
-      const remoteUpdatedAt = normalizeIsoTimestamp(remoteDoc?.updatedAt);
-
-      if (
-        remoteHasData &&
-        (!localHasData || isIsoAfter(remoteUpdatedAt, localUpdatedAt))
-      ) {
-        if (localHasData && isIsoAfter(remoteUpdatedAt, localUpdatedAt)) {
-          await maybeBackup(`cloud-remote-${domain}`, {
-            domain,
-            localUpdatedAt,
-            remoteUpdatedAt,
-            firebaseUid: cloudSyncState.firebaseUid,
-          });
-        }
-        const appliedAt = await applyRemoteCloudDoc(domain, remoteDoc);
-        if (appliedAt) syncedAtValues.push(appliedAt);
-        continue;
-      }
-
-      if (
-        localHasData &&
-        (!remoteHasData || isIsoAfter(localUpdatedAt, remoteUpdatedAt))
-      ) {
-        const pushedAt = await pushCloudDomain(domain);
-        if (pushedAt) syncedAtValues.push(pushedAt);
-      }
-    }
-
-    const localTimesheets = getLocalCloudDoc("timesheets");
-    const remoteTimesheets = remote.timesheets || normalizeRemoteTimesheetsState({}, []);
-    const localTimesheetsHasData = hasMeaningfulCloudDoc("timesheets", localTimesheets);
-    const remoteTimesheetsHasData = hasMeaningfulCloudDoc("timesheets", remoteTimesheets);
-    const localTimesheetsUpdatedAt =
-      normalizeIsoTimestamp(localTimesheets?.updatedAt) ||
-      normalizeIsoTimestamp(localSyncTimestamps.timesheets);
-    const remoteTimesheetsUpdatedAt = normalizeIsoTimestamp(remoteTimesheets?.updatedAt);
-
-    if (
-      remoteTimesheetsHasData &&
-      (!localTimesheetsHasData ||
-        isIsoAfter(remoteTimesheetsUpdatedAt, localTimesheetsUpdatedAt))
-    ) {
-      if (
-        localTimesheetsHasData &&
-        isIsoAfter(remoteTimesheetsUpdatedAt, localTimesheetsUpdatedAt)
-      ) {
-        await maybeBackup("cloud-remote-timesheets", {
-          domain: "timesheets",
-          localUpdatedAt: localTimesheetsUpdatedAt,
-          remoteUpdatedAt: remoteTimesheetsUpdatedAt,
-          firebaseUid: cloudSyncState.firebaseUid,
-        });
-      }
-      timesheetDb = {
-        weeks: deepCloneJson(remoteTimesheets.weeks, {}),
-        expenses: deepCloneJson(remoteTimesheets.expenses, {}),
-        lastModified: remoteTimesheets.updatedAt || null,
-      };
-      cloudSyncRemoteTimesheetMeta = {
-        updatedAt: remoteTimesheets.updatedAt || "",
-        knownWeeks: remoteTimesheets.knownWeeks || [],
-      };
-      touchLocalSyncTimestamp("timesheets", remoteTimesheets.updatedAt);
-      await saveTimesheets({
-        skipCloud: true,
-        saveTimestamp: false,
-        silent: true,
-      });
-      renderTimesheets();
-      await refreshTimesheetsInfo();
-      if (remoteTimesheets.updatedAt) {
-        syncedAtValues.push(remoteTimesheets.updatedAt);
-      }
-    } else if (
-      localTimesheetsHasData &&
-      (!remoteTimesheetsHasData ||
-        isIsoAfter(localTimesheetsUpdatedAt, remoteTimesheetsUpdatedAt))
-    ) {
-      const pushedAt = await pushCloudTimesheetsState();
-      if (pushedAt) syncedAtValues.push(pushedAt);
-    } else {
-      cloudSyncRemoteTimesheetMeta = {
-        updatedAt: remoteTimesheets.updatedAt || "",
-        knownWeeks: remoteTimesheets.knownWeeks || [],
-      };
-    }
-
-    const lastSyncedAt = new Date().toISOString();
-    await updateLocalCloudSyncMetadata(
-      {
-        enabled: true,
-        firebaseUid: cloudSyncState.firebaseUid,
-        migrationCompleted: true,
-        lastSyncedAt,
-      },
-      { persist: true }
-    );
-    updateCloudSyncState({
-      busy: false,
-      enabled: true,
-      status: "synced",
-      message: lastSyncedAt
-        ? `Last sync ${formatSyncTimestamp(lastSyncedAt)}`
-        : "Cloud sync ready",
-      error: "",
-      lastSyncedAt,
-    });
-    return true;
-  } catch (e) {
-    if (!silent) {
-      toast(e?.message || "Cloud sync failed.");
-    }
-    updateCloudSyncState({
-      busy: false,
-      status: "error",
-      error: String(e?.message || "Cloud sync failed."),
-    });
-    throw e;
-  }
-}
-
-async function bootstrapCloudSync({ session = null, silent = true } = {}) {
-  if (cloudSyncInitPromise) return cloudSyncInitPromise;
-  cloudSyncInitPromise = (async () => {
-    await loadCloudSyncConfig();
-    if (!cloudSyncState.configured) {
-      updateCloudSyncState({
-        enabled: false,
-        status: "local-only",
-        message: "Firebase is not configured.",
-      });
-      return { enabled: false };
-    }
-    if (!googleAuthState.signedIn) {
-      updateCloudSyncState({
-        enabled: false,
-        signedIn: false,
-        status: "idle",
-        message: "Sign in to enable sync.",
-      });
-      return { enabled: false };
-    }
-
-    updateCloudSyncState({
-      busy: true,
-      signedIn: true,
-      status: "syncing",
-      message: "Connecting cloud sync...",
-      error: "",
-    });
-
-    const user = await signInToCloud(session);
-    if (!user?.uid) {
-      updateCloudSyncState({
-        busy: false,
-        enabled: false,
-        status: "idle",
-        message: "Google is signed in locally.",
-      });
-      return { enabled: false };
-    }
-
-    await prepareLocalStateForUserSwitch(user.uid);
-    updateCloudSyncState({
-      enabled: true,
-      signedIn: true,
-      firebaseUid: user.uid,
-    });
-    await updateLocalCloudSyncMetadata(
-      {
-        enabled: true,
-        firebaseUid: user.uid,
-      },
-      { persist: true }
-    );
-    await pullUserState({ silent });
-    subscribeToUserState(user.uid);
-    return { enabled: true, uid: user.uid };
-  })()
-    .catch((error) => {
-      if (!silent) {
-        toast(error?.message || "Cloud sync failed.");
-      }
-      updateCloudSyncState({
-        busy: false,
-        enabled: false,
-        status: "error",
-        error: String(error?.message || "Cloud sync failed."),
-      });
-      return { enabled: false, error };
-    })
-    .finally(() => {
-      cloudSyncInitPromise = null;
-    });
-  return cloudSyncInitPromise;
-}
-
-async function signOutCloud({ preserveMetadata = true } = {}) {
-  clearCloudSyncSubscriptions();
-  Object.values(cloudSyncPushTimers).forEach((timer) => clearTimeout(timer));
-  cloudSyncPushTimers = {};
-  if (cloudSyncTimesheetsPushTimer) {
-    clearTimeout(cloudSyncTimesheetsPushTimer);
-    cloudSyncTimesheetsPushTimer = null;
-  }
-  if (firebaseAuthInstance) {
-    try {
-      await firebaseAuthInstance.signOut();
-    } catch (e) {
-      console.warn("Failed to sign out of Firebase:", e);
-    }
-  }
-  cloudSyncRemoteTimesheetMeta = {
-    updatedAt: "",
-    knownWeeks: [],
-  };
-  await updateLocalCloudSyncMetadata(
-    {
-      enabled: false,
-      migrationCompleted: false,
-      ...(preserveMetadata ? {} : { firebaseUid: "", lastSyncedAt: "" }),
-    },
-    { persist: true }
-  );
-  updateCloudSyncState({
-    enabled: false,
-    busy: false,
-    signedIn: false,
-    status: "idle",
-    message: "Sign in to enable sync.",
-    error: "",
-    ...(preserveMetadata
-      ? {}
-      : {
-          firebaseUid: "",
-          lastSyncedAt: "",
-        }),
-  });
-}
 
 // ===================== THEMING =====================
 function readLocalTheme() {
@@ -14667,16 +12087,8 @@ function readLocalTheme() {
 function applyTheme(theme) {
   const resolved = theme === "light" ? "light" : "dark";
   document.documentElement.setAttribute("data-theme", resolved);
-  const toggle = document.getElementById("themeToggleBtn");
-  if (toggle) {
-    const isLight = resolved === "light";
-    const label = isLight ? "Switch to dark mode" : "Switch to light mode";
-    const sunIcon = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>`;
-    const moonIcon = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>`;
-    toggle.innerHTML = isLight ? moonIcon : sunIcon;
-    toggle.setAttribute("aria-label", label);
-    toggle.title = label;
-  }
+  const themeSelect = document.getElementById("settings_theme");
+  if (themeSelect) themeSelect.value = resolved;
   try {
     localStorage.setItem(THEME_STORAGE_KEY, resolved);
   } catch (e) {
@@ -14701,33 +12113,11 @@ function initThemeFromPreferences() {
   applyTheme(nextTheme);
 }
 
-async function persistUserSettingsLocally({
-  skipCloud = false,
-  saveTimestamp = true,
-  timestamp = new Date().toISOString(),
-  silent = false,
-} = {}) {
-  const resolvedTimestamp =
-    normalizeIsoTimestamp(timestamp) || new Date().toISOString();
-  const comparableChanged =
-    getCloudComparableFingerprint("settings") !==
-    lastCloudComparableFingerprints.settings;
-  if (saveTimestamp && comparableChanged) {
-    touchLocalSyncTimestamp("settings", resolvedTimestamp);
-  }
+async function persistUserSettingsLocally({ silent = false } = {}) {
   try {
     const response = await window.pywebview.api.save_user_settings(userSettings);
     if (response?.status && response.status !== "success") {
       throw new Error(response.message || "Failed to save settings.");
-    }
-    syncCloudComparableFingerprint("settings");
-    if (
-      !skipCloud &&
-      comparableChanged &&
-      cloudSyncState.enabled &&
-      !isCloudSyncApplying()
-    ) {
-      queueCloudStatePush("settings");
     }
     return true;
   } catch (e) {
@@ -14755,12 +12145,7 @@ async function load() {
   }
 }
 
-async function save({
-  skipCloud = false,
-  saveTimestamp = true,
-  timestamp = new Date().toISOString(),
-  silent = false,
-} = {}) {
+async function save({ silent = false } = {}) {
   syncPinnedProjectOrders(db, { seedMissing: true });
   db.forEach((project) => {
     syncProjectAttachmentFields(project);
@@ -14769,26 +12154,9 @@ async function save({
       syncDeliverableWorkItemFields(deliverable);
     });
   });
-  const resolvedTimestamp =
-    normalizeIsoTimestamp(timestamp) || new Date().toISOString();
-  const comparableChanged =
-    getCloudComparableFingerprint("tasks") !==
-    lastCloudComparableFingerprints.tasks;
-  if (saveTimestamp && comparableChanged) {
-    touchLocalSyncTimestamp("tasks", resolvedTimestamp);
-  }
   try {
     const response = await window.pywebview.api.save_tasks(db);
     if (response.status !== "success") throw new Error(response.message);
-    syncCloudComparableFingerprint("tasks");
-    if (
-      !skipCloud &&
-      comparableChanged &&
-      cloudSyncState.enabled &&
-      !isCloudSyncApplying()
-    ) {
-      queueCloudStatePush("tasks");
-    }
     return true;
   } catch (e) {
     console.warn("Backend save failed:", e);
@@ -14939,34 +12307,12 @@ async function loadGlobalPages() {
   }
 }
 
-async function saveGlobalPages({
-  skipCloud = false,
-  saveTimestamp = true,
-  timestamp = new Date().toISOString(),
-  silent = false,
-} = {}) {
-  const resolvedTimestamp =
-    normalizeIsoTimestamp(timestamp) || new Date().toISOString();
-  const comparableChanged =
-    getCloudComparableFingerprint("notes") !==
-    lastCloudComparableFingerprints.notes;
-  if (saveTimestamp && comparableChanged) {
-    touchLocalSyncTimestamp("notes", resolvedTimestamp);
-  }
+async function saveGlobalPages({ silent = false } = {}) {
   try {
     const dataToSave = buildGlobalPagesData();
     const response = await window.pywebview.api.save_notes(dataToSave);
     if (response?.status && response.status !== "success") {
       throw new Error(response.message || "Failed to save pages.");
-    }
-    syncCloudComparableFingerprint("notes");
-    if (
-      !skipCloud &&
-      comparableChanged &&
-      cloudSyncState.enabled &&
-      !isCloudSyncApplying()
-    ) {
-      queueCloudStatePush("notes");
     }
     return true;
   } catch (e) {
@@ -15039,14 +12385,8 @@ async function loadUserSettings() {
       userSettings.minimizeEmptyProjectColumns !== false;
     userSettings.hideEmptyProjectColumns =
       userSettings.hideEmptyProjectColumns === true;
-    userSettings.cloudSync = normalizeCloudSyncSettings(userSettings.cloudSync);
+    delete userSettings.cloudSync;
     syncProjectViewPreferencesFromSettings();
-    updateCloudSyncState({
-      enabled: userSettings.cloudSync.enabled,
-      firebaseUid: userSettings.cloudSync.firebaseUid,
-      lastSyncedAt: userSettings.cloudSync.lastSyncedAt,
-    });
-    syncCloudComparableFingerprint("settings");
     syncUnderConstructionToolsAvailability();
     refreshActiveDisciplineDependentUi();
     renderGoogleAuthUi();
@@ -16129,7 +13469,7 @@ function normalizeProjectSubpages(rawSubpages = []) {
 // clone, orphaning live references held by the open page editor
 // (pageNav.subpage / pageEditorTarget) and silently dropping edits. Normalize
 // only when this exact array hasn't been normalized yet; the marker is
-// non-enumerable so it never reaches JSON persistence or the cloud.
+// non-enumerable so it never reaches JSON persistence.
 function getProjectSubpages(project) {
   if (!project) return [];
   if (!Array.isArray(project.subpages) || !project.subpages.__normalized) {
@@ -17343,7 +14683,7 @@ function renderCopyProjectLocallyFolderList(container, items) {
   if (!items.length) {
     container.appendChild(
       el("div", {
-        className: "deliverable-notepad-empty",
+        className: "local-project-manager-empty",
         textContent: "No subfolders were found in the selected server project folder.",
       })
     );
@@ -17521,7 +14861,7 @@ function renderLocalProjectManagerEmptyState(container, message = "") {
   if (!container) return;
   container.replaceChildren(
     el("div", {
-      className: "deliverable-notepad-empty",
+      className: "local-project-manager-empty",
       textContent: message || "No items are available.",
     })
   );
@@ -18575,7 +15915,7 @@ function renderLocalProjectManagerDirectionRecommendations(
   if (directionState.previewLoading) {
     container.appendChild(
       el("div", {
-        className: "deliverable-notepad-empty",
+        className: "local-project-manager-empty",
         textContent: loadingMessage,
       })
     );
@@ -18585,7 +15925,7 @@ function renderLocalProjectManagerDirectionRecommendations(
   if (directionState.previewError) {
     container.appendChild(
       el("div", {
-        className: "deliverable-notepad-empty",
+        className: "local-project-manager-empty",
         textContent: directionState.previewError,
       })
     );
@@ -18595,7 +15935,7 @@ function renderLocalProjectManagerDirectionRecommendations(
   if (!directionState.previewLoaded) {
     container.appendChild(
       el("div", {
-        className: "deliverable-notepad-empty",
+        className: "local-project-manager-empty",
         textContent: emptyMessage,
       })
     );
@@ -18605,7 +15945,7 @@ function renderLocalProjectManagerDirectionRecommendations(
   if (!items.length) {
     container.appendChild(
       el("div", {
-        className: "deliverable-notepad-empty",
+        className: "local-project-manager-empty",
         textContent: emptyMessage,
       })
     );
@@ -18692,7 +16032,7 @@ function createLocalProjectManagerReviewSection(title, items, emptyMessage, acti
   if (!items.length) {
     list.appendChild(
       el("div", {
-        className: "deliverable-notepad-empty local-project-manager-review-empty",
+        className: "local-project-manager-empty local-project-manager-review-empty",
         textContent: emptyMessage,
       })
     );
@@ -18779,7 +16119,7 @@ function renderLocalProjectManagerConflictResolutionView(container) {
   if (conflicts.length === 0) {
     container.appendChild(
       el("div", {
-        className: "deliverable-notepad-empty",
+        className: "local-project-manager-empty",
         textContent: "All conflicts have been resolved.",
       })
     );
@@ -19694,579 +17034,6 @@ async function runLocalProjectManagerTimestampComparison() {
   }
 }
 
-let deliverableNotepadEntries = [];
-let deliverableNotepadSelectedEntryIds = [];
-let deliverableNotepadScope = "incomplete";
-let deliverableNotepadSummary = null;
-let deliverableNotepadSummaryLoading = false;
-const DELIVERABLE_SUMMARY_MAX_ROWS = 150;
-
-function formatDeliverableExportField(value, fallback = "--") {
-  const normalized = String(value ?? "")
-    .replace(/\s+/g, " ")
-    .trim();
-  return normalized || fallback;
-}
-
-function getDeliverableStatusText(deliverable) {
-  const statuses = Array.isArray(deliverable?.statuses)
-    ? deliverable.statuses
-      .map((status) => String(status || "").trim())
-      .filter(Boolean)
-    : [];
-  if (statuses.length) return [...new Set(statuses)].join(", ");
-
-  const singleStatus = String(deliverable?.status || "").trim();
-  return singleStatus || "None";
-}
-
-function hasDeliverableExportContent(deliverable) {
-  if (!deliverable || typeof deliverable !== "object") return false;
-  if (String(deliverable.name || "").trim()) return true;
-  if (String(deliverable.due || "").trim()) return true;
-  if (String(deliverable.hardDue || "").trim()) return true;
-  if (String(deliverable.notes || "").trim()) return true;
-  if (String(deliverable.status || "").trim()) return true;
-  if (
-    Array.isArray(deliverable.statuses) &&
-    deliverable.statuses.some((status) => String(status || "").trim())
-  ) {
-    return true;
-  }
-  if (
-    Array.isArray(deliverable.tasks) &&
-    deliverable.tasks.some((task) => String(task?.text || "").trim())
-  ) {
-    return true;
-  }
-  return false;
-}
-
-function buildDeliverableNotepadEntries(projects = db, scope = "incomplete") {
-  const candidates = Array.isArray(projects) ? projects : [];
-  return candidates
-    .flatMap((project, projectIndex) =>
-      getProjectDeliverables(project)
-        .filter((deliverable) => scope === "all" || !isFinished(deliverable))
-        .filter((deliverable) => hasDeliverableExportContent(deliverable))
-        .map((deliverable, deliverableIndex) => {
-          const projectId = String(project?.id || "").trim();
-          const projectName = String(project?.name || "").trim();
-          const deliverableId = String(deliverable?.id || "").trim();
-          const deliverableName = String(deliverable?.name || "").trim();
-          return {
-            id: `${projectId || projectName || `project-${projectIndex}`}::${
-              deliverableId ||
-              deliverableName ||
-              `deliverable-${deliverableIndex}`
-            }`,
-            projectId,
-            projectName,
-            projectPath: String(project?.path || "").trim(),
-            deliverableName,
-            due: String(deliverable?.due || "").trim(),
-            hardDue: getHardDueStr(deliverable),
-            dueIso: toDeliverableSummaryIsoDate(
-              parseDueStr(String(deliverable?.due || "").trim())
-            ),
-            hardDueIso: toDeliverableSummaryIsoDate(
-              parseDueStr(getHardDueStr(deliverable))
-            ),
-            dueBucket: getDeliverableSummaryBucket(deliverable),
-            dueLabel: humanDate(getEffectiveDueStr(deliverable)) || "No date",
-            statusText: getDeliverableStatusText(deliverable),
-            project,
-            deliverable,
-          };
-        })
-    )
-    .sort((a, b) => {
-      const dueCompare = compareDeliverablesByDueDesc(a.deliverable, b.deliverable);
-      if (dueCompare) return dueCompare;
-      const projectCompare = String(a.projectId || a.projectName || "").localeCompare(
-        String(b.projectId || b.projectName || ""),
-        undefined,
-        { numeric: true, sensitivity: "base" }
-      );
-      if (projectCompare) return projectCompare;
-      return String(a.deliverableName || "").localeCompare(
-        String(b.deliverableName || ""),
-        undefined,
-        { numeric: true, sensitivity: "base" }
-      );
-    });
-}
-
-// parseDueStr builds dates at local noon; toISOString() would shift the day in
-// far-eastern timezones, so format from the local components instead.
-function toDeliverableSummaryIsoDate(date) {
-  if (!(date instanceof Date) || isNaN(date)) return "";
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${date.getFullYear()}-${month}-${day}`;
-}
-
-// dueState() returns "ok" for undated items, so the undated check must come first
-// or deliverables with no date get filed as on-track.
-function getDeliverableSummaryBucket(deliverable) {
-  if (!parseDueStr(getEffectiveDueStr(deliverable))) return "undated";
-  const state = deliverableDueState(deliverable);
-  if (state === "critical") return "missedHardDeadline";
-  if (state === "overdue") return "overdue";
-  if (state === "dueSoon") return "dueThisWeek";
-  return "upcoming";
-}
-
-const DELIVERABLE_SUMMARY_BUCKET_ORDER = [
-  "missedHardDeadline",
-  "overdue",
-  "dueThisWeek",
-  "upcoming",
-  "undated",
-];
-
-function buildDeliverableSummaryRequest(selectedItems = []) {
-  const items = Array.isArray(selectedItems) ? selectedItems.filter(Boolean) : [];
-  const byBucket = new Map(
-    DELIVERABLE_SUMMARY_BUCKET_ORDER.map((bucket) => [bucket, []])
-  );
-  items.forEach((item) => {
-    const bucket = item.dueBucket || getDeliverableSummaryBucket(item.deliverable);
-    (byBucket.get(bucket) || byBucket.get("undated")).push(item);
-  });
-
-  const buckets = [];
-  let remaining = DELIVERABLE_SUMMARY_MAX_ROWS;
-  let omittedCount = 0;
-
-  DELIVERABLE_SUMMARY_BUCKET_ORDER.forEach((bucket) => {
-    // A briefing reads soonest-first, unlike the Excel sheet's descending sort.
-    const all = (byBucket.get(bucket) || [])
-      .slice()
-      .sort((a, b) => compareDeliverablesByDue(a?.deliverable, b?.deliverable));
-    const take = Math.max(0, Math.min(remaining, all.length));
-    remaining -= take;
-    omittedCount += all.length - take;
-    buckets.push({
-      bucket,
-      totalCount: all.length,
-      deliverables: all.slice(0, take).map((item) => ({
-        projectId: item.projectId,
-        projectName: item.projectName,
-        deliverableName: item.deliverableName || "Untitled Deliverable",
-        due: item.dueIso || "",
-        hardDue: item.hardDueIso || "",
-        statusText: item.statusText || "None",
-      })),
-    });
-  });
-
-  return {
-    scope: deliverableNotepadScope,
-    today: toDeliverableSummaryIsoDate(new Date()),
-    deliverableCount: items.length,
-    omittedCount,
-    buckets,
-  };
-}
-
-function buildSelectedDeliverablesExcelRows(entries = []) {
-  const selectedEntries = Array.isArray(entries) ? entries.filter(Boolean) : [];
-  const sortedEntries = selectedEntries.slice().sort((a, b) => {
-    const dueCompare = compareDeliverablesByDueDesc(a?.deliverable, b?.deliverable);
-    if (dueCompare) return dueCompare;
-    const projectCompare = String(a?.projectId || a?.projectName || "").localeCompare(
-      String(b?.projectId || b?.projectName || ""),
-      undefined,
-      { numeric: true, sensitivity: "base" }
-    );
-    if (projectCompare) return projectCompare;
-    return String(a?.deliverableName || "").localeCompare(
-      String(b?.deliverableName || ""),
-      undefined,
-      { numeric: true, sensitivity: "base" }
-    );
-  });
-
-  return {
-    entries: sortedEntries.map((item) => ({
-      projectId: String(item?.projectId || "").trim(),
-      projectName: String(item?.projectName || "").trim(),
-      deliverableName:
-        String(item?.deliverableName || "").trim() || "Untitled Deliverable",
-      due: String(item?.due || "").trim(),
-      hardDue: String(item?.hardDue || "").trim(),
-      statusText: String(item?.statusText || "").trim() || "None",
-      projectPath: String(item?.projectPath || "").trim(),
-    })),
-    deliverableCount: sortedEntries.length,
-  };
-}
-
-function createDeliverableNotepadListItem(item) {
-  return el("label", { className: "deliverable-notepad-item", role: "listitem" }, [
-    el("input", {
-      type: "checkbox",
-      value: item.id,
-      "aria-label": `Select ${item.deliverableName || "untitled deliverable"}`,
-    }),
-    el("div", { className: "deliverable-notepad-item-content" }, [
-      el("div", {
-        className: "deliverable-notepad-item-title",
-        textContent: item.deliverableName || "Untitled Deliverable",
-      }),
-      el("div", {
-        className: "deliverable-notepad-item-subtitle",
-        textContent: `Project ID: ${formatDeliverableExportField(item.projectId)}`,
-      }),
-      el("div", {
-        className: "deliverable-notepad-item-subtitle",
-        textContent: `Project Name: ${formatDeliverableExportField(
-          item.projectName
-        )}`,
-      }),
-      el("div", {
-        className: "deliverable-notepad-item-meta",
-        textContent: `Due: ${item.dueLabel} | Status: ${item.statusText}`,
-      }),
-    ]),
-  ]);
-}
-
-function renderDeliverableNotepadList(container, items, emptyMessage) {
-  if (!container) return;
-  container.replaceChildren();
-  if (!items.length) {
-    container.appendChild(
-      el("div", {
-        className: "deliverable-notepad-empty",
-        textContent: emptyMessage,
-      })
-    );
-    return;
-  }
-  items.forEach((item) => container.appendChild(createDeliverableNotepadListItem(item)));
-}
-
-function renderDeliverableNotepadDialog() {
-  const availableList = document.getElementById("deliverableNotepadAvailableList");
-  const selectedList = document.getElementById("deliverableNotepadSelectedList");
-  if (!availableList || !selectedList) return;
-
-  const entryMap = new Map(deliverableNotepadEntries.map((item) => [item.id, item]));
-  const selectedIdSet = new Set(deliverableNotepadSelectedEntryIds);
-  const availableItems = deliverableNotepadEntries.filter(
-    (item) => !selectedIdSet.has(item.id)
-  );
-  const selectedItems = deliverableNotepadSelectedEntryIds
-    .map((id) => entryMap.get(id))
-    .filter(Boolean);
-
-  // With everything preselected the available panel starts empty, so the message
-  // has to explain that rather than reading as "nothing was found".
-  renderDeliverableNotepadList(
-    availableList,
-    availableItems,
-    deliverableNotepadScope === "incomplete"
-      ? "All incomplete deliverables are already selected for export."
-      : "No deliverables are available to add."
-  );
-  renderDeliverableNotepadList(
-    selectedList,
-    selectedItems,
-    "No deliverables have been selected for export."
-  );
-
-  const availableTitle = document.getElementById(
-    "deliverableNotepadAvailablePanelTitle"
-  );
-  if (availableTitle) {
-    availableTitle.textContent =
-      deliverableNotepadScope === "incomplete"
-        ? "Incomplete Deliverables"
-        : "All Deliverables";
-  }
-
-  document.querySelectorAll("[data-notepad-scope]").forEach((chip) => {
-    const isActive = chip.dataset.notepadScope === deliverableNotepadScope;
-    chip.classList.toggle("is-active", isActive);
-    chip.setAttribute("aria-pressed", isActive ? "true" : "false");
-  });
-
-  const availableCount = document.getElementById("deliverableNotepadAvailableCount");
-  if (availableCount) {
-    availableCount.textContent = `${availableItems.length} deliverable${
-      availableItems.length === 1 ? "" : "s"
-    }`;
-  }
-
-  const selectedCount = document.getElementById("deliverableNotepadSelectedCount");
-  if (selectedCount) {
-    selectedCount.textContent = `${selectedItems.length} deliverable${
-      selectedItems.length === 1 ? "" : "s"
-    }`;
-  }
-
-  const addBtn = document.getElementById("deliverableNotepadAddBtn");
-  if (addBtn) addBtn.disabled = !availableItems.length;
-
-  const removeBtn = document.getElementById("deliverableNotepadRemoveBtn");
-  if (removeBtn) removeBtn.disabled = !selectedItems.length;
-
-  const exportBtn = document.getElementById("deliverableNotepadExportBtn");
-  if (exportBtn) exportBtn.disabled = !selectedItems.length;
-
-  const summaryBtn = document.getElementById("deliverableNotepadSummaryBtn");
-  if (summaryBtn) {
-    summaryBtn.disabled = !selectedItems.length || deliverableNotepadSummaryLoading;
-  }
-
-  renderDeliverableNotepadSummary();
-}
-
-function renderDeliverableNotepadSummary() {
-  const panel = document.getElementById("deliverableNotepadSummaryPanel");
-  const body = document.getElementById("deliverableNotepadSummaryBody");
-  const meta = document.getElementById("deliverableNotepadSummaryMeta");
-  if (!panel || !body) return;
-
-  if (deliverableNotepadSummaryLoading) {
-    panel.hidden = false;
-    if (meta) meta.textContent = "";
-    body.replaceChildren(
-      el("p", { textContent: "Generating status briefing..." })
-    );
-    return;
-  }
-
-  if (!deliverableNotepadSummary) {
-    panel.hidden = true;
-    body.replaceChildren();
-    if (meta) meta.textContent = "";
-    return;
-  }
-
-  panel.hidden = false;
-  if (meta) {
-    const count = deliverableNotepadSummary.deliverableCount;
-    meta.textContent = `${count} deliverable${
-      count === 1 ? "" : "s"
-    } - included as a second Excel sheet`;
-  }
-
-  const nodes = [];
-  if (deliverableNotepadSummary.headline) {
-    nodes.push(
-      el("p", {
-        className: "deliverable-notepad-summary-headline",
-        textContent: deliverableNotepadSummary.headline,
-      })
-    );
-  }
-  (deliverableNotepadSummary.paragraphs || []).forEach((text) => {
-    nodes.push(el("p", { textContent: text }));
-  });
-  body.replaceChildren(...nodes);
-}
-
-function getCheckedDeliverableNotepadEntryIds(listId) {
-  const list = document.getElementById(listId);
-  if (!list) return [];
-  return [...list.querySelectorAll('input[type="checkbox"]:checked')].map(
-    (input) => input.value
-  );
-}
-
-function addDeliverablesToNotepadSelection() {
-  const ids = getCheckedDeliverableNotepadEntryIds("deliverableNotepadAvailableList");
-  if (!ids.length) {
-    toast("Select at least one deliverable to add.");
-    return;
-  }
-
-  clearDeliverableNotepadSummary();
-  const selectedIdSet = new Set(deliverableNotepadSelectedEntryIds);
-  ids.forEach((id) => {
-    if (!selectedIdSet.has(id)) {
-      deliverableNotepadSelectedEntryIds.push(id);
-      selectedIdSet.add(id);
-    }
-  });
-  renderDeliverableNotepadDialog();
-}
-
-function removeDeliverablesFromNotepadSelection() {
-  const ids = new Set(
-    getCheckedDeliverableNotepadEntryIds("deliverableNotepadSelectedList")
-  );
-  if (!ids.size) {
-    toast("Select at least one deliverable to remove.");
-    return;
-  }
-
-  clearDeliverableNotepadSummary();
-  deliverableNotepadSelectedEntryIds = deliverableNotepadSelectedEntryIds.filter(
-    (id) => !ids.has(id)
-  );
-  renderDeliverableNotepadDialog();
-}
-
-async function exportSelectedDeliverablesToExcel() {
-  const entryMap = new Map(deliverableNotepadEntries.map((item) => [item.id, item]));
-  const selectedItems = deliverableNotepadSelectedEntryIds
-    .map((id) => entryMap.get(id))
-    .filter(Boolean);
-
-  if (!selectedItems.length) {
-    toast("Select at least one deliverable to export.");
-    return;
-  }
-
-  if (!window.pywebview?.api?.export_deliverables_excel) {
-    toast("Excel export is unavailable.");
-    return;
-  }
-
-  const { entries, deliverableCount } =
-    buildSelectedDeliverablesExcelRows(selectedItems);
-
-  const payload = { entries };
-  if (deliverableNotepadSummary) {
-    payload.summary = {
-      headline: deliverableNotepadSummary.headline,
-      paragraphs: deliverableNotepadSummary.paragraphs,
-      generatedAt: deliverableNotepadSummary.generatedAt,
-      scope: deliverableNotepadSummary.scope,
-      deliverableCount: deliverableNotepadSummary.deliverableCount,
-    };
-  }
-
-  try {
-    const response = await window.pywebview.api.export_deliverables_excel(payload);
-    if (response?.status === "success") {
-      closeDlg("deliverableNotepadDlg");
-      toast(
-        `Exported ${deliverableCount} deliverable${
-          deliverableCount === 1 ? "" : "s"
-        } to Excel.`
-      );
-      return;
-    }
-    toast(response?.message || "Failed to export deliverables to Excel.");
-  } catch (error) {
-    console.error("Failed to export deliverables to Excel:", error);
-    toast("Failed to export deliverables to Excel.");
-  }
-}
-
-function clearDeliverableNotepadSummary() {
-  deliverableNotepadSummary = null;
-  deliverableNotepadSummaryLoading = false;
-}
-
-// Entries hold live project/deliverable references, so a cloud sync that replaces
-// db mid-dialog would leave this operating on detached objects. Pre-existing.
-function openDeliverablesExcelDialog() {
-  const dialog = document.getElementById("deliverableNotepadDlg");
-  if (!dialog) return;
-
-  deliverableNotepadScope = "incomplete";
-  clearDeliverableNotepadSummary();
-  deliverableNotepadEntries = buildDeliverableNotepadEntries(
-    db,
-    deliverableNotepadScope
-  );
-
-  if (!deliverableNotepadEntries.length) {
-    // Everything is Complete/Delivered - fall back to the full list rather than
-    // dead-ending the user on an empty dialog.
-    deliverableNotepadScope = "all";
-    deliverableNotepadEntries = buildDeliverableNotepadEntries(db, "all");
-    if (!deliverableNotepadEntries.length) {
-      toast("No deliverables found on projects.");
-      return;
-    }
-    toast("No incomplete deliverables - showing all deliverables.");
-  }
-
-  deliverableNotepadSelectedEntryIds = deliverableNotepadEntries.map(
-    (item) => item.id
-  );
-  renderDeliverableNotepadDialog();
-  dialog.showModal();
-}
-
-function setDeliverableNotepadScope(scope) {
-  const next = scope === "all" ? "all" : "incomplete";
-  if (next === deliverableNotepadScope) return;
-
-  deliverableNotepadScope = next;
-  deliverableNotepadEntries = buildDeliverableNotepadEntries(db, next);
-  if (next === "incomplete") {
-    // Keep Export immediately clickable when returning to the default scope.
-    deliverableNotepadSelectedEntryIds = deliverableNotepadEntries.map(
-      (item) => item.id
-    );
-  } else {
-    const availableIds = new Set(
-      deliverableNotepadEntries.map((item) => item.id)
-    );
-    deliverableNotepadSelectedEntryIds =
-      deliverableNotepadSelectedEntryIds.filter((id) => availableIds.has(id));
-  }
-  clearDeliverableNotepadSummary();
-  renderDeliverableNotepadDialog();
-}
-
-async function generateDeliverableStatusBriefing() {
-  const entryMap = new Map(deliverableNotepadEntries.map((item) => [item.id, item]));
-  const selectedItems = deliverableNotepadSelectedEntryIds
-    .map((id) => entryMap.get(id))
-    .filter(Boolean);
-
-  if (!selectedItems.length) {
-    toast("Select at least one deliverable to summarize.");
-    return;
-  }
-  if (!window.pywebview?.api?.generate_deliverable_status_summary) {
-    toast("AI status briefing is unavailable.");
-    return;
-  }
-  if (deliverableNotepadSummaryLoading) return;
-
-  deliverableNotepadSummaryLoading = true;
-  deliverableNotepadSummary = null;
-  renderDeliverableNotepadDialog();
-
-  try {
-    const request = buildDeliverableSummaryRequest(selectedItems);
-    const response =
-      await window.pywebview.api.generate_deliverable_status_summary({
-        ...request,
-        apiKey: userSettings.apiKey || "",
-      });
-    if (response?.status === "success") {
-      deliverableNotepadSummary = {
-        headline: String(response.headline || "").trim(),
-        paragraphs: Array.isArray(response.paragraphs)
-          ? response.paragraphs.map((p) => String(p || "").trim()).filter(Boolean)
-          : [],
-        generatedAt: String(response.generatedAt || ""),
-        scope: request.scope,
-        deliverableCount: request.deliverableCount,
-      };
-    } else {
-      toast(response?.message || "Failed to generate the status briefing.");
-    }
-  } catch (error) {
-    console.error("Failed to generate deliverable status briefing:", error);
-    toast(error?.message || "Failed to generate the status briefing.");
-  } finally {
-    deliverableNotepadSummaryLoading = false;
-    renderDeliverableNotepadDialog();
-  }
-}
-
 function compareDeliverablesByDue(a, b) {
   const da = parseDueStr(getEffectiveDueStr(a));
   const dbb = parseDueStr(getEffectiveDueStr(b));
@@ -20356,7 +17123,6 @@ function matchesProjectDeliverablesFilter(deliverable, filter) {
 
 function matchesDueFilter(deliverable, filter) {
   if (filter === "all") return true;
-  if (filter === "attention") return deliverableNeedsAttention(deliverable);
   const d = parseDueStr(getEffectiveDueStr(deliverable));
   if (!d) return false;
   const today = new Date();
@@ -20380,46 +17146,7 @@ function matchesDueFilter(deliverable, filter) {
   return true;
 }
 
-function deliverableNeedsAttention(deliverable, now = new Date()) {
-  if (isFinished(deliverable)) return false;
-  const endOfWeek = getWeekStartDate(now);
-  endOfWeek.setDate(endOfWeek.getDate() + 6);
-  endOfWeek.setHours(23, 59, 59, 999);
-  return [getEffectiveDueStr(deliverable), getHardDueStr(deliverable)]
-    .some((value) => {
-      const due = parseDueStr(value);
-      return due !== null && due <= endOfWeek;
-    });
-}
-
-function toggleProjectAttentionView() {
-  if (dueFilter === "attention") {
-    const previous = projectAttentionPreviousFilters;
-    dueFilter = previous?.dueFilter || "all";
-    statusFilter = previous?.statusFilter || "all";
-    deliverablesFilter = previous?.deliverablesFilter || "all";
-    if (previous) {
-      currentSort = previous.currentSort;
-      projectCardWeek = previous.projectCardWeek;
-    }
-    projectAttentionPreviousFilters = null;
-  } else {
-    projectAttentionPreviousFilters = {
-      dueFilter, statusFilter, deliverablesFilter,
-      currentSort: { ...currentSort }, projectCardWeek: new Date(projectCardWeek),
-    };
-    dueFilter = "attention";
-    statusFilter = "all";
-    deliverablesFilter = "all";
-    currentSort = { key: "due", dir: "asc" };
-    projectCardWeek = getWeekStartDate(new Date());
-  }
-  resetProjectsListPagination();
-  render();
-}
-
 function getTimeframeFilterLabel(filter) {
-  if (filter === "attention") return "unfinished work due this week or overdue";
   if (filter === "lastWeek") return "last week";
   if (filter === "soon") return "this week";
   if (filter === "future") return "upcoming weeks";
@@ -20555,10 +17282,6 @@ function getProjectsFilterValue(filterKey) {
 function setProjectsFilterValue(filterKey, value) {
   resetProjectsListPagination();
   if (filterKey === "timeframe") {
-    if (value === "attention" && dueFilter !== "attention") {
-      toggleProjectAttentionView();
-      return;
-    }
     dueFilter = value;
     if (currentSort.key === "due") {
       currentSort.dir = value === "all" ? "asc" : "desc";
@@ -26276,30 +22999,16 @@ function renderGroupedProjectDeliverablesCell(
   const visibleDeliverables = projectListContext.visibleDeliverables;
 
   if (visibleDeliverables.length) {
-    if (projectListContext.showTimeframeNote && projectListContext.timeframeNote) {
-      deliverablesCell.appendChild(
-        el("div", {
-          className: "project-timeframe-note",
-          textContent: projectListContext.timeframeNote,
-        })
-      );
-    }
-
-    const cardsContainer = el("div", { className: "deliverable-cards-container" });
-    visibleDeliverables.forEach((deliverable) => {
-      cardsContainer.appendChild(renderDeliverableCard(deliverable, project));
-    });
-
-    deliverablesCell.appendChild(cardsContainer);
+    renderDeliverableRegisterCellGroup(
+      deliverablesCell,
+      visibleDeliverables,
+      project,
+      projectListContext.showTimeframeNote ? projectListContext.timeframeNote : ""
+    );
     return;
   }
 
-  deliverablesCell.appendChild(
-    el("div", {
-      className: "deliverable-empty",
-      textContent: "--",
-    })
-  );
+  renderDeliverableRegisterCellGroup(deliverablesCell, [], project);
 }
 
 function renderProjectDeliverableCell(
@@ -26318,7 +23027,7 @@ function renderProjectDeliverableCell(
     );
     return;
   }
-  deliverablesCell.appendChild(renderDeliverableCard(deliverable, project));
+  renderDeliverableRegisterCell(deliverablesCell, deliverable, project);
 }
 
 function appendProjectSearchContextRow(tbody, query, project, matchContextMap) {
@@ -26366,6 +23075,7 @@ function renderGroupedProjectRows({
     }
 
     const tr = buildProjectTableRow(project, db.indexOf(project), rowTemplate);
+    decorateProjectRegisterRow(tr, project, projectListContext.priorityDeliverable);
     renderGroupedProjectDeliverablesCell(
       tr.querySelector(".cell-deliverables"),
       project,
@@ -26437,6 +23147,7 @@ function renderUngroupedDeliverableRows({
     }
 
     const tr = buildProjectTableRow(project, projectIndex, rowTemplate);
+    decorateProjectRegisterRow(tr, project, deliverable);
     renderProjectDeliverableCell(
       tr.querySelector(".cell-deliverables"),
       deliverable,
@@ -26674,9 +23385,7 @@ function renderCardView(items = db, projectListContextMap = null) {
   const currentWeekStart = getWeekStartDate(new Date());
   const isCurrentWeek = weekStart.getTime() === currentWeekStart.getTime();
 
-  const visibleColumns = dueFilter === "attention"
-    ? projectCardColumns.filter((c) => !["Complete", "Completed (by others)", "Delivered", "nodate"].includes(c.key))
-    : projectCardColumns.filter((c) => !c.hidden);
+  const visibleColumns = projectCardColumns.filter((c) => !c.hidden);
   const pinnedShown = visibleColumns.some((c) => c.key === "pinned");
   const nodateShown = visibleColumns.some((c) => c.key === "nodate");
 
@@ -26715,7 +23424,7 @@ function renderCardView(items = db, projectListContextMap = null) {
     const overduePull =
       isCurrentWeek &&
       deliverableIsOverdueIncomplete(deliverable, weekStart);
-    if (dueFilter !== "attention" && !inWeek && !overduePull) continue;
+    if (!inWeek && !overduePull) continue;
 
     const primary =
       STATUS_PRIORITY.find((s) => hasStatus(deliverable, s)) || "none";
@@ -26730,7 +23439,7 @@ function renderCardView(items = db, projectListContextMap = null) {
   }
 
   const renderColumns =
-    hideEmptyProjectColumns === true || dueFilter === "attention"
+    hideEmptyProjectColumns === true
       ? visibleColumns.filter(
           (column) => (buckets.get(column.key) || []).length > 0
         )
@@ -26783,9 +23492,11 @@ function renderCardView(items = db, projectListContextMap = null) {
       );
     } else {
       for (const { project, deliverable } of bucketRows) {
-        const card = renderDeliverableCard(deliverable, project);
+        const card = renderDeliverablePlateCard(deliverable, project);
         card.draggable = true;
-        const projectMeta = buildCardProjectMeta(project, db.indexOf(project), deliverable);
+        const projectMeta = card.classList.contains("plate-card")
+          ? null
+          : buildCardProjectMeta(project, db.indexOf(project), deliverable);
         if (projectMeta) {
           card.insertBefore(projectMeta, card.firstChild);
         }
@@ -26945,7 +23656,6 @@ function setupProjectsViewModeControls() {
     "projectsHideEmptyColumnsToggle"
   );
   if (listBtn) listBtn.addEventListener("click", () => setProjectsViewMode("list"));
-  document.getElementById("projectsAttentionBtn")?.addEventListener("click", toggleProjectAttentionView);
   if (cardBtn) cardBtn.addEventListener("click", () => setProjectsViewMode("card"));
   if (widthBtn) {
     widthBtn.addEventListener("click", () =>
@@ -27351,16 +24061,6 @@ function attachKanbanDragHandlers(host) {
 }
 
 function render() {
-  const attentionButton = document.getElementById("projectsAttentionBtn");
-  const attentionActive = dueFilter === "attention";
-  attentionButton?.setAttribute("aria-pressed", String(attentionActive));
-  attentionButton?.classList.toggle("is-active", attentionActive);
-  const attentionHint = document.getElementById("projectsAttentionHint");
-  if (attentionHint) attentionHint.hidden = !attentionActive;
-  for (const id of ["weekNavPrev", "weekNavNext"]) {
-    const button = document.getElementById(id);
-    if (button) button.disabled = attentionActive;
-  }
   const tbody = document.getElementById("tbody");
   const emptyState = document.getElementById("emptyState");
   syncProjectsFilterDropdowns();
@@ -27386,6 +24086,7 @@ function render() {
   });
 
   sortProjectsByCurrent(items, projectListContextMap);
+  updateProjectsIndustryChrome();
 
   if (isCardView) {
     emptyState.style.display = "none";
@@ -27442,6 +24143,7 @@ function render() {
       query: q,
       appendSectionSeparator,
     });
+    finalizeProjectsRegister(tbody, pagination);
     return;
   }
 
@@ -27464,6 +24166,7 @@ function render() {
     appendSectionSeparator,
     paginatedDeliverableRows: pagination.items,
   });
+  finalizeProjectsRegister(tbody, pagination);
 }
 
 function renderStatusToggles(p) {
@@ -38167,38 +34870,6 @@ function initEventListeners() {
     });
   }
   setupProjectsViewModeControls();
-  const deliverableNotepadAddBtn = document.getElementById(
-    "deliverableNotepadAddBtn"
-  );
-  if (deliverableNotepadAddBtn) {
-    deliverableNotepadAddBtn.onclick = () => addDeliverablesToNotepadSelection();
-  }
-  const deliverableNotepadRemoveBtn = document.getElementById(
-    "deliverableNotepadRemoveBtn"
-  );
-  if (deliverableNotepadRemoveBtn) {
-    deliverableNotepadRemoveBtn.onclick = () =>
-      removeDeliverablesFromNotepadSelection();
-  }
-  const deliverableNotepadExportBtn = document.getElementById(
-    "deliverableNotepadExportBtn"
-  );
-  if (deliverableNotepadExportBtn) {
-    deliverableNotepadExportBtn.onclick = () =>
-      exportSelectedDeliverablesToExcel();
-  }
-  const deliverableNotepadSummaryBtn = document.getElementById(
-    "deliverableNotepadSummaryBtn"
-  );
-  if (deliverableNotepadSummaryBtn) {
-    deliverableNotepadSummaryBtn.onclick = () =>
-      generateDeliverableStatusBriefing();
-  }
-  document.querySelectorAll("[data-notepad-scope]").forEach((chip) => {
-    chip.addEventListener("click", () =>
-      setDeliverableNotepadScope(chip.dataset.notepadScope)
-    );
-  });
   const copyProjectLocallyFolderList = document.getElementById(
     "copyProjectLocallyFolderList"
   );
@@ -38518,14 +35189,9 @@ function initEventListeners() {
     saveCustomExpense();
   initImagePreviewDialog();
 
-  document.getElementById("checkUpdateBtn").onclick = () =>
-    refreshAppUpdateStatus({ manual: true });
   document.getElementById("appUpdateBtn").onclick = installAppUpdate;
-  document.getElementById("themeToggleBtn").onclick = () => {
-    const currentTheme =
-      document.documentElement.getAttribute("data-theme") || "dark";
-    const nextTheme = currentTheme === "light" ? "dark" : "light";
-    persistThemePreference(nextTheme);
+  document.getElementById("settings_theme").onchange = (event) => {
+    persistThemePreference(event.target.value);
   };
 
   const mergeSimilarBtn = document.getElementById("btnMergeSimilarProjects");
@@ -38548,10 +35214,6 @@ function initEventListeners() {
     }
   });
   document.getElementById("statsBtn").onclick = () => showStatsModal();
-  const exportDeliverablesBtn = document.getElementById("exportDeliverablesBtn");
-  if (exportDeliverablesBtn) {
-    exportDeliverablesBtn.onclick = () => openDeliverablesExcelDialog();
-  }
   const scratchpadBtn = document.getElementById("scratchpadBtn");
   if (scratchpadBtn) scratchpadBtn.onclick = () => toggleScratchpad();
   document.getElementById("settings_howToSetupBtn").onclick = () =>
@@ -38565,14 +35227,6 @@ function initEventListeners() {
   const googleSignOutBtn = document.getElementById("googleSignOutBtn");
   if (googleSignOutBtn) {
     googleSignOutBtn.onclick = () => handleGoogleSignOut();
-  }
-  const outlookScanBtn = document.getElementById("outlookScanBtn");
-  if (outlookScanBtn) {
-    outlookScanBtn.onclick = () => openOutlookScanDialog();
-  }
-  const btnProcessEmail = document.getElementById("btnProcessEmail");
-  if (btnProcessEmail) {
-    btnProcessEmail.onclick = () => processEmailIntakePaste();
   }
   const headerAccountSignOutBtn = document.getElementById(
     "headerAccountSignOutBtn"
@@ -39985,7 +36639,6 @@ function initEventListeners() {
       }
       try {
         const saved = await persistUserSettingsLocally({
-          skipCloud: true,
           silent: true,
         });
         if (!saved) {
@@ -40475,12 +37128,7 @@ async function init() {
       templateOverrides: {},
       lastModified: null,
     };
-    await loadLocalSyncMetadata();
-    syncAllCloudComparableFingerprints();
 
-    if (googleAuthState.signedIn) {
-      await bootstrapCloudSync({ silent: true });
-    }
 
     if (checklistsDb.checklists.length > 0) {
       activeChecklistTabId =

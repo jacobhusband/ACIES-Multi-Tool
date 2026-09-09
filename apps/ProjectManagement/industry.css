@@ -692,10 +692,6 @@
   min-width: 0;
 }
 
-.reg-field .reg-kick {
-  font-size: 10px;
-}
-
 .reg-field:hover .reg-val {
   color: var(--accent-hover);
 }
@@ -708,10 +704,6 @@
   border-left-color: var(--ind-plate);
 }
 
-.reg-field.is-late .reg-kick {
-  color: var(--ind-plate);
-}
-
 .reg-field.is-late .reg-val {
   font-weight: 700;
 }
@@ -720,13 +712,35 @@
   min-width: 0;
 }
 
-.reg-sub {
-  font: 400 11px var(--font-main);
-  color: var(--ind-ink-55);
-  margin-top: 3px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+/* Unset dates and statuses render as empty cells; the "+" appears only on
+   hover so the cell still reads as somewhere you can click. */
+.reg-field .reg-val,
+.reg-status.is-blank {
+  min-height: 17px;
+}
+
+.reg-status.is-blank {
+  cursor: pointer;
+}
+
+.reg-field.is-blank .reg-val::after,
+.reg-status.is-blank::after {
+  content: "+";
+  font: 500 12.5px var(--font-main);
+  color: var(--ind-ink-45);
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.reg-row:hover .reg-field.is-blank .reg-val::after,
+.reg-row:hover .reg-status.is-blank::after,
+.reg-line:hover .reg-field.is-blank .reg-val::after,
+.reg-line:hover .reg-status.is-blank::after,
+.reg-field.is-blank:hover .reg-val::after,
+.reg-field.is-blank:focus-visible .reg-val::after,
+.reg-status.is-blank:hover::after,
+.reg-status.is-blank:focus-visible::after {
+  opacity: 1;
 }
 
 .reg-stamp {
@@ -1127,7 +1141,6 @@
   font: 500 13px/1.4 var(--font-main);
   color: var(--text);
   margin-top: 9px;
-  cursor: pointer;
   overflow: hidden;
   text-overflow: ellipsis;
   display: -webkit-box;
@@ -1135,11 +1148,8 @@
   -webkit-box-orient: vertical;
 }
 
-.plate-project:hover {
-  color: var(--accent-hover);
-  text-decoration: underline;
-  text-decoration-style: dotted;
-  text-underline-offset: 3px;
+.plate-project[data-project-directory-menu] {
+  cursor: context-menu;
 }
 
 .plate-rule {
@@ -1218,6 +1228,10 @@
 
 .plate-foot .reg-ico {
   opacity: 0.8;
+}
+
+.plate-folder svg {
+  display: block;
 }
 
 /* ==========================================================================
@@ -1563,6 +1577,271 @@ body.scratchpad-open .cmd-dock {
 
 .cmd-more[hidden] {
   display: none;
+}
+
+/* Interactive command line prompt (e.g. Add Deliverable) */
+.cmd-prompt-view {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 20px;
+  max-height: min(46vh, 420px);
+  overflow-y: auto;
+  box-sizing: border-box;
+}
+
+.cmd-prompt-view[hidden] {
+  display: none !important;
+}
+
+.cmd-prompt-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cmd-prompt-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font-heading);
+  font-size: 15px;
+  font-weight: 600;
+  min-width: 0;
+}
+
+.cmd-prompt-tag {
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  background: var(--accent);
+  color: var(--btn-text-on-accent);
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.cmd-prompt-project-name {
+  color: var(--ind-ink-60);
+  font-size: 13.5px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cmd-prompt-cancel-btn {
+  flex: 0 0 auto;
+  background: transparent;
+  border: 1px solid var(--ind-line);
+  color: var(--ind-ink-60);
+  font-family: var(--font-main);
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.cmd-prompt-cancel-btn:hover {
+  border-color: var(--ind-plate);
+  color: var(--ind-plate);
+}
+
+.cmd-prompt-stepper {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  background: var(--ind-surface);
+  border: 1px solid var(--ind-line);
+  overflow-x: auto;
+}
+
+.cmd-prompt-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  opacity: 0.55;
+  transition: opacity 0.15s ease;
+  user-select: none;
+}
+
+.cmd-prompt-step.is-active {
+  opacity: 1;
+  font-weight: 600;
+}
+
+.cmd-prompt-step.is-completed {
+  opacity: 0.9;
+  cursor: pointer;
+}
+
+.cmd-prompt-step.is-completed:hover {
+  opacity: 1;
+}
+
+.cmd-prompt-step-num {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1.5px solid var(--ind-line-strong);
+  font-size: 11px;
+  font-weight: 700;
+  flex: 0 0 auto;
+}
+
+.cmd-prompt-step.is-active .cmd-prompt-step-num {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--btn-text-on-accent);
+}
+
+.cmd-prompt-step.is-completed .cmd-prompt-step-num {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+}
+
+.cmd-prompt-step-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.cmd-prompt-step-label {
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.cmd-prompt-step-val {
+  font-size: 11px;
+  color: var(--ind-ink-60);
+  white-space: nowrap;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cmd-prompt-step-divider {
+  color: var(--ind-ink-45);
+  font-size: 14px;
+  flex: 0 0 auto;
+}
+
+.cmd-prompt-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 720px) {
+  .cmd-prompt-body {
+    grid-template-columns: 1fr;
+  }
+}
+
+.cmd-prompt-guide {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cmd-prompt-instruction {
+  font-size: 13.5px;
+  color: var(--text);
+  line-height: 1.4;
+  font-weight: 500;
+}
+
+.cmd-prompt-subinstruction {
+  font-size: 12px;
+  color: var(--ind-ink-60);
+  line-height: 1.35;
+}
+
+.cmd-prompt-chips-label {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ind-ink-45);
+  margin-top: 4px;
+}
+
+.cmd-prompt-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.cmd-prompt-chip {
+  padding: 4px 10px;
+  border: 1px solid var(--ind-line);
+  background: var(--ind-paper);
+  color: var(--text);
+  font-family: var(--font-main);
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 0;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.cmd-prompt-chip:hover {
+  border-color: var(--accent);
+  background: var(--ind-tint-strong);
+}
+
+.cmd-prompt-chip.is-primary {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.cmd-prompt-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 14px;
+  background: var(--ind-surface);
+  border: 1px solid var(--ind-line);
+}
+
+.cmd-prompt-preview-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ind-ink-60);
+  margin-bottom: 2px;
+}
+
+.cmd-prompt-preview-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+}
+
+.cmd-prompt-preview-label {
+  color: var(--ind-ink-60);
+  font-size: 11.5px;
+}
+
+.cmd-prompt-preview-val {
+  font-weight: 500;
+  color: var(--text);
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* selection highlight — the row the command line acts on */

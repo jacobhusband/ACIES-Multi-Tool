@@ -22830,6 +22830,29 @@ function attachProjectDirectoryContextMenu(target, project) {
   return target;
 }
 
+// Opens the project's saved folder. Shared by the card project name and by the
+// folder button on the deliverable plate card.
+async function openProjectPathFolder(project) {
+  const path = String(project?.path || "").trim();
+  if (!path) {
+    toast("No project path saved.");
+    return;
+  }
+  if (!window.pywebview?.api?.open_path) {
+    toast("Open path is unavailable.");
+    return;
+  }
+  try {
+    const result = await window.pywebview.api.open_path(convertPath(path));
+    if (result?.status && result.status !== "success") {
+      throw new Error(result.message || "Unable to open folder.");
+    }
+    toast("Opening folder...");
+  } catch (error) {
+    toast(error?.message || "Failed to open path.");
+  }
+}
+
 function attachCardProjectPathOpen(target, project) {
   if (!target) return target;
   target.dataset.projectPathOpen = "true";
@@ -22839,26 +22862,10 @@ function attachCardProjectPathOpen(target, project) {
   if (path) {
     target.title = `Open: ${path}`;
   }
-  const openPath = async (event) => {
+  const openPath = (event) => {
     event.preventDefault();
     event.stopPropagation();
-    if (!path) {
-      toast("No project path saved.");
-      return;
-    }
-    if (!window.pywebview?.api?.open_path) {
-      toast("Open path is unavailable.");
-      return;
-    }
-    try {
-      const result = await window.pywebview.api.open_path(convertPath(path));
-      if (result?.status && result.status !== "success") {
-        throw new Error(result.message || "Unable to open folder.");
-      }
-      toast("Opening folder...");
-    } catch (error) {
-      toast(error?.message || "Failed to open path.");
-    }
+    return openProjectPathFolder(project);
   };
   target.addEventListener("click", openPath);
   target.addEventListener("keydown", (event) => {

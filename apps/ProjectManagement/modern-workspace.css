@@ -87,7 +87,24 @@
 .modern-menu-panel > button[aria-pressed="true"]::after { content: "✓"; margin-left: auto; color: var(--accent); }
 .modern-menu-panel > button:focus-visible,
 .modern-action-menu > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-#boardOptionsMenu #columnConfigMenu {
+#projectOptionsMenu > summary {
+  width: 34px;
+  height: 34px;
+  padding: 8px;
+  justify-content: center;
+  box-sizing: border-box;
+}
+#projectOptionsMenu > summary::after { content: none; }
+#projectOptionsMenu > summary svg { width: 16px; height: 16px; }
+.modern-menu-heading {
+  margin: 6px 4px 2px;
+  padding: 10px 6px 4px;
+  border-top: 1px solid var(--modern-line);
+  color: var(--modern-muted);
+  font: 500 11px/1.4 var(--modern-font);
+}
+body:not([data-projects-view-mode="card"]) #projects-panel #projectOptionsMenu .modern-board-option { display: none; }
+#projectOptionsMenu #columnConfigMenu {
   position: static;
   width: 100%;
   min-width: 0;

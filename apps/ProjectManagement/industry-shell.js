@@ -568,7 +568,12 @@ function installModernWorkspaceMenus() {
   function group(id, label, anchor, controls) {
     if (!anchor) return;
     const details = el("details", { id, className: "modern-action-menu" });
-    const summary = el("summary", { textContent: label });
+    const summary = el("summary", { "aria-label": label, title: label });
+    const cog = document.querySelector("#settingsBtn svg")?.cloneNode(true);
+    if (cog) {
+      cog.setAttribute("aria-hidden", "true");
+      summary.appendChild(cog);
+    } else summary.textContent = "⚙";
     const panel = el("div", { className: "modern-menu-panel" });
     details.append(summary, panel);
     anchor.before(details);
@@ -583,7 +588,7 @@ function installModernWorkspaceMenus() {
         menus.forEach(other => { if (other !== details) other.open = false; });
         positionPanel();
       }
-      else if (id === "boardOptionsMenu") closeColumnConfigMenu();
+      else closeColumnConfigMenu();
     });
     function positionPanel() {
       if (!details.open) return;
@@ -596,7 +601,7 @@ function installModernWorkspaceMenus() {
     window.addEventListener("resize", positionPanel);
     panel.addEventListener("click", event => {
       const button = event.target.closest("button");
-      if (!button || id === "boardOptionsMenu" || button.hasAttribute("aria-pressed")) return;
+      if (!button || button.closest("#columnConfigMenu") || button.id === "columnConfigBtn" || button.hasAttribute("aria-pressed")) return;
       // Close before an existing handler opens a modal or changes focus.
       details.open = false;
     }, true);
@@ -605,22 +610,30 @@ function installModernWorkspaceMenus() {
       event.preventDefault();
       event.stopPropagation();
       details.open = false;
-      if (id === "boardOptionsMenu") closeColumnConfigMenu();
+      closeColumnConfigMenu();
       summary.focus();
     });
     menus.push(details);
     return panel;
   }
-  group("projectOptionsMenu", "Project options", document.getElementById("quickNew"), [
+  const panel = group("projectOptionsMenu", "Project and board settings", document.getElementById("quickNew"), [
     ["quickNew", "New project"], ["statsBtn", "Statistics"], ["projectsWidthToggle", "Wide layout"],
-  ]);
-  const boardPanel = group("boardOptionsMenu", "Board options", document.getElementById("projectsEmptyColumnsToggle"), [
     ["projectsEmptyColumnsToggle", "Minimize empty columns"],
     ["projectsHideEmptyColumnsToggle", "Hide empty columns"],
     ["columnConfigBtn", "Configure columns"],
   ]);
+  if (panel) {
+    const boardHeading = el("div", { className: "modern-menu-heading modern-board-option", textContent: "Board" });
+    panel.querySelector("#projectsEmptyColumnsToggle")?.before(boardHeading);
+    ["projectsEmptyColumnsToggle", "projectsHideEmptyColumnsToggle", "columnConfigBtn"].forEach(id => {
+      document.getElementById(id)?.classList.add("modern-board-option");
+    });
+  }
   const columns = document.getElementById("columnConfigMenu");
-  if (boardPanel && columns) boardPanel.appendChild(columns);
+  if (panel && columns) {
+    columns.classList.add("modern-board-option");
+    panel.appendChild(columns);
+  }
   document.addEventListener("click", event => {
     menus.forEach(menu => { if (!menu.contains(event.target)) menu.open = false; });
   }, true);

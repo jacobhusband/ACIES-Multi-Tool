@@ -97,18 +97,15 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_JS_PATH = REPO_ROOT / "script.js"
 
 
-class CloudSyncHelperTests(unittest.TestCase):
+class LocalSettingsHelperTests(unittest.TestCase):
     def setUp(self):
         self.api = Api.__new__(Api)
 
-    def test_build_default_user_settings_includes_cloud_sync_defaults(self):
+    def test_build_default_user_settings_omits_cloud_sync(self):
         settings = main_module.build_default_user_settings()
 
-        self.assertIn("cloudSync", settings)
+        self.assertNotIn("cloudSync", settings)
         self.assertEqual("Electrical", settings["activeDiscipline"])
-        self.assertEqual(
-            main_module.build_default_cloud_sync_settings(), settings["cloudSync"]
-        )
         self.assertEqual(
             main_module.build_default_workflow_cad_defaults(),
             settings["workflowCadDefaults"],
@@ -224,96 +221,9 @@ class CloudSyncHelperTests(unittest.TestCase):
         self.assertEqual("refresh-token", record["refreshToken"])
         self.assertEqual("access-token", record["accessToken"])
 
-    def test_get_cloud_sync_config_reports_enabled_only_with_required_env(self):
-        required_env = {
-            main_module.FIREBASE_API_KEY_ENV: "api-key",
-            main_module.FIREBASE_AUTH_DOMAIN_ENV: "project.firebaseapp.com",
-            main_module.FIREBASE_PROJECT_ID_ENV: "project-id",
-            main_module.FIREBASE_APP_ID_ENV: "app-id",
-            main_module.FIREBASE_STORAGE_BUCKET_ENV: "",
-            main_module.FIREBASE_MESSAGING_SENDER_ID_ENV: "",
-        }
-        with patch.dict(main_module.os.environ, required_env, clear=False):
-            enabled_result = self.api.get_cloud_sync_config()
 
-        self.assertEqual("success", enabled_result["status"])
-        self.assertTrue(enabled_result["enabled"])
-        self.assertEqual("api-key", enabled_result["config"]["apiKey"])
 
-        missing_env = dict(required_env)
-        missing_env[main_module.FIREBASE_PROJECT_ID_ENV] = ""
-        with patch.dict(main_module.os.environ, missing_env, clear=False):
-            disabled_result = self.api.get_cloud_sync_config()
 
-        self.assertEqual("success", disabled_result["status"])
-        self.assertFalse(disabled_result["enabled"])
-
-    def test_get_google_sync_session_returns_tokens_and_auth_state(self):
-        auth_record = {
-            "provider": "google",
-            "email": "user@example.com",
-            "displayName": "User Example",
-            "avatarUrl": "https://example.com/avatar.png",
-            "signedInAt": "2026-01-01T00:00:00Z",
-            "expiresAt": "2026-01-01T01:00:00Z",
-            "idToken": "id-token",
-            "accessToken": "access-token",
-            "refreshToken": "refresh-token",
-        }
-
-        with patch.object(self.api, "_load_google_auth_record", return_value=auth_record), patch.object(
-            self.api, "_refresh_google_auth_record_if_needed", return_value=auth_record
-        ):
-            result = self.api.get_google_sync_session()
-
-        self.assertEqual("success", result["status"])
-        self.assertTrue(result["signedIn"])
-        self.assertTrue(result["firebaseReady"])
-        self.assertEqual("id-token", result["idToken"])
-        self.assertEqual("access-token", result["accessToken"])
-        self.assertEqual("user@example.com", result["auth"]["email"])
-
-    def test_create_cloud_sync_backup_copies_tracked_files_and_metadata(self):
-        with tempfile.TemporaryDirectory() as tempdir:
-            backups_dir = os.path.join(tempdir, "sync_backups")
-            os.makedirs(backups_dir, exist_ok=True)
-            tracked_files = {}
-            for name in ("settings", "tasks", "notes"):
-                file_path = os.path.join(tempdir, f"{name}.json")
-                with open(file_path, "w", encoding="utf-8") as handle:
-                    json.dump({"name": name}, handle)
-                tracked_files[name] = file_path
-
-            with patch.object(main_module, "SYNC_BACKUPS_DIR", backups_dir), patch.object(
-                main_module, "SYNC_TRACKED_FILES", tracked_files
-            ):
-                result = main_module._create_cloud_sync_backup(
-                    reason="remote overwrite",
-                    metadata={"firebaseUid": "user-123"},
-                )
-
-            self.assertTrue(os.path.isdir(result["path"]))
-            self.assertEqual(3, len(result["files"]))
-            metadata_path = os.path.join(result["path"], "metadata.json")
-            self.assertTrue(os.path.exists(metadata_path))
-
-            with open(metadata_path, "r", encoding="utf-8") as handle:
-                metadata = json.load(handle)
-
-            self.assertEqual("remote overwrite", metadata["reason"])
-            self.assertEqual("user-123", metadata["metadata"]["firebaseUid"])
-            self.assertEqual(3, len(metadata["files"]))
-
-    def test_timesheet_cloud_sync_includes_expense_only_weeks(self):
-        script = SCRIPT_JS_PATH.read_text(encoding="utf-8")
-
-        self.assertIn("const expenses =", script)
-        self.assertIn("const expenseWeeks = Object.keys(expenses || {}).filter((weekKey) => {", script)
-        self.assertIn("const knownWeeks = [...new Set([...weekKeys, ...expenseWeeks])].sort();", script)
-        self.assertIn("expenses[docId] = deepCloneJson(weekData.expenses, { projects: [] })", script)
-        self.assertIn("delete weekData.expenses;", script)
-        self.assertIn("expenses: deepCloneJson(remoteTimesheets.expenses, {}),", script)
-        self.assertIn("data.expenses = deepCloneJson(expenseData, { projects: [] });", script)
 
 
 if __name__ == "__main__":

@@ -194,9 +194,10 @@ class PageEmailAttachmentUiTests(unittest.TestCase):
             page_block.index("captureEmailDropSources(event?.dataTransfer)"),
             page_block.index("await resolveEmailRefFromCapturedDrop"),
         )
-        self.assertIn("if (result?.outlookDrop) {", page_block)
+        self.assertIn("const outlookDrop = looksLikeOutlookDrop(captured?.types);", page_block)
+        self.assertIn("if (outlookDrop || (unreadableFileDrop &&", page_block)
         self.assertIn("await saveActiveOutlookSelectionRef(context)", page_block)
-        self.assertIn("showEmailLinkFallbackGuidance();", page_block)
+        self.assertIn("Type /email in your notes", page_block)
         self.assertIn(
             "window.pywebview.api.save_active_outlook_selection(context)", script
         )

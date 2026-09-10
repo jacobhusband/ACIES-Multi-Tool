@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { Extension, Node, mergeAttributes } from "@tiptap/core";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
@@ -98,7 +99,8 @@ function looksLikeExternalEmailDrop(dataTransfer) {
   const types = Array.from(dataTransfer?.types || []).map((type) => String(type).toLowerCase());
   if (types.includes("files")) return true;
   return types.some(
-    (type) => type.startsWith("filegroupdescriptor") || type.startsWith("renprivate")
+    (type) => type.startsWith("filegroupdescriptor") || type.startsWith("renprivate") ||
+      type.startsWith("filecontents") || type.startsWith("application/x-moz-file-promise")
   );
 }
 
@@ -658,13 +660,94 @@ function commandMatches(command, query) {
   return command.label.toLowerCase().includes(q) || command.id.includes(q);
 }
 
+function NotesSidebar({ context, editor = null }) {
+  const globalPages = Array.isArray(context.globalPages) ? context.globalPages : [];
+  return (
+      <aside className="notes-sidebar" aria-label="Notes navigation">
+        <div className="notes-project-summary">
+          <span className="notes-eyebrow">ACIES / {context.kind === "global" ? "Workspace" : "Project"}</span>
+          <strong>{context.project?.name || context.title || "Untitled"}</strong>
+        </div>
+        <nav className="notes-page-nav" aria-label="Pages">
+          <div className="page-child-links-label">Notes</div>
+          {context.kind !== "global" ? <>
+            <button type="button" className={`notes-nav-link ${context.kind === "project" ? "is-active" : ""}`}
+              aria-current={context.kind === "project" ? "page" : undefined}
+              onClick={() => context.onOpenOverview?.()}>
+              <span aria-hidden="true">▤</span> Overview
+            </button>
+            {(context.navigationPages || context.childPages || []).map((child) => (
+              <div className={`notes-nav-row ${context.subpage?.id === child.id ? "is-active" : ""}`} key={child.id}>
+                <button type="button" className="notes-nav-link"
+                  style={{ paddingLeft: `${12 + Math.min(child.depth || 0, 5) * 14}px` }}
+                  aria-current={context.subpage?.id === child.id ? "page" : undefined}
+                  title={child.title} onClick={() => context.onOpenSubpage?.(child.id)}>
+                  <span aria-hidden="true">{child.canvas ? "◇" : "▤"}</span>
+                  <span className="notes-nav-title">{child.title || "Untitled"}</span>
+                </button>
+                <button type="button" className="notes-nav-delete" aria-label={`Delete ${child.title || "Untitled"}`}
+                  title="Delete subpage" onClick={() => context.onDeleteSubpage?.(child.id)}>×</button>
+              </div>
+            ))}
+            <button type="button" className="notes-nav-link notes-nav-add" onClick={() => context.onCreateSubpage?.()}>
+              <span aria-hidden="true">+</span> Add subpage
+            </button>
+            <button type="button" className="notes-nav-link notes-nav-add" onClick={() => context.onCreateSubpage?.("canvas")}>
+              <span aria-hidden="true">+</span> Add canvas
+            </button>
+          </> : globalPages.map((page) => (
+            <button type="button" key={page.id}
+              className={`notes-nav-link ${context.globalPage?.id === page.id ? "is-active" : ""}`}
+              aria-current={context.globalPage?.id === page.id ? "page" : undefined}
+              onClick={() => context.onOpenGlobalPage?.(page.id)}>
+              <span aria-hidden="true">▤</span><span className="notes-nav-title">{page.title || "Untitled"}</span>
+            </button>
+          ))}
+        </nav>
+        <NotesOutline editor={editor} documentKey={context.documentKey} />
+      </aside>
+  );
+}
+
 function PageEditorApp() {
   const [context, setContext] = useState(currentContext);
 
   useEffect(() => subscribe(setContext), []);
 
   if (!context) return null;
+  if (context.navigationOnly) {
+    const sidebar = document.getElementById("pageCanvasSidebarRoot");
+    return sidebar ? createPortal(<NotesSidebar context={context} />, sidebar) : null;
+  }
   return <PageEditor context={context} options={currentOptions} />;
+}
+
+function NotesOutline({ editor, documentKey }) {
+  const [headings, setHeadings] = useState([]);
+  useEffect(() => {
+    if (!editor) return;
+    const refresh = () => {
+      setHeadings(Array.from(editor.view.dom.querySelectorAll("h1, h2, h3"))
+        .filter((node) => node.textContent.trim())
+        .map((node) => ({ node, title: node.textContent, level: node.tagName })));
+    };
+    const frame = requestAnimationFrame(refresh);
+    editor.on("update", refresh);
+    return () => {
+      cancelAnimationFrame(frame);
+      editor.off("update", refresh);
+    };
+  }, [editor, documentKey]);
+  if (!headings.length) return null;
+  return <nav className="notes-outline" aria-label="On this page">
+    <div className="page-child-links-label">On this page</div>
+    {headings.map(({ node, title, level }, index) => (
+      <button type="button" key={index} className={`notes-outline-link ${level.toLowerCase()}`}
+        onClick={() => node.scrollIntoView({ block: "center", behavior: "smooth" })}>
+        {title}
+      </button>
+    ))}
+  </nav>;
 }
 
 function PageEditor({ context, options }) {
@@ -862,6 +945,7 @@ function PageEditor({ context, options }) {
           if (!context.onAttachEmailDrop || !looksLikeExternalEmailDrop(event.dataTransfer)) {
             return false;
           }
+          event.preventDefault();
           if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
           const coords = view.posAtCoords({ left: event.clientX, top: event.clientY });
           setEmailDropTarget(view, coords ? coords.pos : null);
@@ -977,7 +1061,8 @@ function PageEditor({ context, options }) {
     setSlash({ open: false, query: "", selected: 0, range: null, pos: null });
     setPageLink({ open: false, query: "", selected: 0, range: null, pos: null });
     setWorkbookDialog(createWorkbookDialogState());
-    requestAnimationFrame(() => {
+    const frame = requestAnimationFrame(() => {
+      if (editor.isDestroyed) return;
       void hydrateImages();
       void hydrateWorkbooks();
       if (context.focusImportant) {
@@ -992,6 +1077,7 @@ function PageEditor({ context, options }) {
       }
       editor.commands.focus("end");
     });
+    return () => cancelAnimationFrame(frame);
   }, [context.documentKey, editor]);
 
   useEffect(() => {
@@ -1511,6 +1597,9 @@ function PageEditor({ context, options }) {
 
   return (
     <div className="project-pages-editor" onClick={handleEditorClick}>
+      <NotesSidebar context={context} editor={editor} />
+      <div className="notes-document">
+      <div className="notes-eyebrow">{context.kind === "global" ? "Workspace notes" : "Project notes"}</div>
       <h1
         ref={titleElementRef}
         id="pageTitle"
@@ -1530,58 +1619,9 @@ function PageEditor({ context, options }) {
         }}
       />
 
-      {context.kind !== "global" && (
-        <div className="page-child-links" id="pageChildLinks" aria-label="Child pages">
-          <div className="page-child-links-label">Subpages</div>
-          {(context.childPages || []).map((child) => (
-            <button
-              className="page-child-link"
-              type="button"
-              key={child.id}
-              title={child.title || "Untitled"}
-              onClick={() => context.onOpenSubpage?.(child.id)}
-            >
-              <span className="page-child-link-icon">Pg</span>
-              <span className="page-child-link-title">{child.title || "Untitled"}</span>
-              <span className="page-child-link-meta">
-                {child.childCount
-                  ? `${child.childCount} subpage${child.childCount === 1 ? "" : "s"}`
-                  : ""}
-              </span>
-              <span
-                className="tab-delete-icon"
-                role="button"
-                tabIndex={0}
-                title="Delete subpage"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  context.onDeleteSubpage?.(child.id);
-                }}
-              >
-                x
-              </span>
-            </button>
-          ))}
-          <button
-            className="page-child-link page-child-link-add"
-            type="button"
-            onClick={() => context.onCreateSubpage?.()}
-          >
-            + Add subpage
-          </button>
-          <button
-            className="page-child-link page-child-link-add"
-            type="button"
-            title="Freeform canvas for connecting ideas"
-            onClick={() => context.onCreateSubpage?.("canvas")}
-          >
-            + Add canvas
-          </button>
-        </div>
-      )}
-
       <div className="project-pages-editor-surface">
         <EditorContent editor={editor} />
+      </div>
       </div>
 
       <input

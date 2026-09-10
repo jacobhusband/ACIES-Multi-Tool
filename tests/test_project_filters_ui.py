@@ -62,18 +62,6 @@ class ProjectFiltersUiTests(unittest.TestCase):
         user_settings_start = script.index("let userSettings = {")
         user_settings_end = script.index("const DEFAULT_GOOGLE_AUTH_STATE = {")
         user_settings_block = script[user_settings_start:user_settings_end]
-        defaults_start = script.index("function getDefaultSyncableSettings() {")
-        defaults_end = script.index("function sanitizeSettingsForCloud(settings = userSettings) {")
-        defaults_block = script[defaults_start:defaults_end]
-        sanitize_start = defaults_end
-        sanitize_end = script.index("function normalizeCloudSettingsDoc(raw = {}) {")
-        sanitize_block = script[sanitize_start:sanitize_end]
-        normalize_start = sanitize_end
-        normalize_end = script.index("function hasMeaningfulSettingsState(doc) {")
-        normalize_block = script[normalize_start:normalize_end]
-        remote_apply_start = script.index('if (domain === "settings") {')
-        remote_apply_end = script.index('if (domain === "tasks") {')
-        remote_apply_block = script[remote_apply_start:remote_apply_end]
         load_settings_start = script.index("async function loadUserSettings() {")
         load_settings_end = script.index("function setCheckboxValue(id, value) {")
         load_settings_block = script[load_settings_start:load_settings_end]
@@ -116,24 +104,6 @@ class ProjectFiltersUiTests(unittest.TestCase):
         )
         self.assertIn("separateDeliverableCompletionGroups: true,", user_settings_block)
         self.assertIn("groupDeliverablesByProject: false,", user_settings_block)
-        self.assertIn("separateDeliverableCompletionGroups: true,", defaults_block)
-        self.assertIn("groupDeliverablesByProject: false,", defaults_block)
-        self.assertIn(
-            "source.separateDeliverableCompletionGroups !== false,",
-            sanitize_block,
-        )
-        self.assertIn(
-            "groupDeliverablesByProject: source.groupDeliverablesByProject === true,",
-            sanitize_block,
-        )
-        self.assertIn(
-            "source.separateDeliverableCompletionGroups !== false,",
-            normalize_block,
-        )
-        self.assertIn(
-            "groupDeliverablesByProject: source.groupDeliverablesByProject === true,",
-            normalize_block,
-        )
         self.assertIn(
             "userSettings.separateDeliverableCompletionGroups =\n      userSettings.separateDeliverableCompletionGroups !== false;",
             load_settings_block,
@@ -164,8 +134,6 @@ class ProjectFiltersUiTests(unittest.TestCase):
         self.assertIn('"settings_groupDeliverablesByProject"', save_block)
         self.assertIn("userSettings.groupDeliverablesByProject =", save_block)
         self.assertIn("syncProjectViewPreferencesFromSettings();", save_block)
-        self.assertIn("syncProjectViewPreferencesFromSettings();", remote_apply_block)
-        self.assertIn("render();", remote_apply_block)
         self.assertIn(
             '"settings_separateDeliverableCompletionGroups"',
             settings_handlers_block,

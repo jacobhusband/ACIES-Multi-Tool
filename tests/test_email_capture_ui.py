@@ -61,10 +61,10 @@ class EmailCaptureUiRemovalTests(unittest.TestCase):
         ):
             self.assertNotIn(selector, self.styles)
 
-    def test_manual_email_intake_remains_available(self):
-        self.assertIn('id="outlookScanBtn"', self.html)
-        self.assertIn('<dialog id="outlookScanDlg">', self.html)
-        self.assertIn('id="emailIntakePastePanel"', self.html)
+    def test_manual_email_intake_is_removed(self):
+        self.assertNotIn('id="outlookScanBtn"', self.html)
+        self.assertNotIn('<dialog id="outlookScanDlg">', self.html)
+        self.assertNotIn('id="emailIntakePastePanel"', self.html)
 
     def test_legacy_outlook_scan_ids_remain_absent(self):
         for legacy_id in (

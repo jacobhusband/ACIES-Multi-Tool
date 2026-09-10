@@ -8,6 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;700&family=Barlow+Condensed:wght@400;500;600&display=swap" rel="stylesheet">
     <script>
         (function () {
             try {
@@ -20,16 +21,35 @@
             }
         })();
     </script>
-    <link rel="stylesheet" href="styles.css?v=20260708-richer-blocks-p6" />
+    <link rel="stylesheet" href="styles.css?v=20260910-canvas-sidebar" />
     <link rel="stylesheet" href="symbol_counter.css?v=20260818-delete-actions" />
-    <link rel="stylesheet" href="project-pages-editor/dist/project-pages-editor-project-pages-editor.css?v=20260729-page-email-attach" />
+    <link rel="stylesheet" href="industry.css?v=20260909-cmd-add-deliverable" />
+    <link rel="stylesheet" href="modern-workspace.css?v=20260909-deliverables" />
+    <link rel="stylesheet" href="deliverables-workspace.css?v=20260909" />
+    <link rel="stylesheet" href="project-pages-editor/dist/project-pages-editor-project-pages-editor.css?v=20260910-canvas-sidebar" />
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 
 <body data-active-tab="projects" data-projects-layout-width="wide">
+    <!-- Extract the existing wordmark as alpha; theme color supplies the ink. -->
+    <svg width="0" height="0" aria-hidden="true" focusable="false" style="position: absolute; pointer-events: none;">
+        <defs>
+            <filter id="acies-logo-ink" color-interpolation-filters="sRGB">
+                <feColorMatrix in="SourceGraphic" type="matrix" result="lettering" values="
+                    0 0 0 0 1
+                    0 0 0 0 1
+                    0 0 0 0 1
+                    0.24159 0.81273 0.08205 0 -0.13636" />
+                <feFlood style="flood-color: var(--text);" />
+                <feComposite in2="lettering" operator="in" />
+            </filter>
+        </defs>
+    </svg>
     <div id="appLoader" class="app-loader" role="status" aria-live="polite" aria-label="Loading">
         <div class="app-loader-content">
-            <img src="./assets/acies.png" alt="ACIES" class="app-loader-logo" onerror="this.style.display='none'" />
+            <span class="brand-mark app-loader-mark supplied-logo" aria-hidden="true">
+                <img src="assets/acies-modern-logo.png" alt="" width="1774" height="887" />
+            </span>
             <div class="app-loader-dots" aria-hidden="true">
                 <span></span>
                 <span></span>
@@ -40,12 +60,14 @@
     <header class="app-header">
         <div class="header-start">
             <div class="brand">
-                <img src="./assets/acies.png" alt="ACIES" class="logo-img" onerror="this.style.display='none'" />
+                <span class="brand-mark supplied-logo" role="img" aria-label="ACIES Engineering">
+                    <img src="assets/acies-modern-logo.png" alt="" width="1774" height="887" />
+                </span>
             </div>
         </div>
-        <!-- Centered navigation -->
+        <!-- Navigation flows beside the wordmark and wraps on small windows. -->
         <div class="header-center">
-            <nav class="main-nav">
+            <nav class="main-nav" aria-label="Main navigation">
                 <button class="main-tab-btn active" data-tab="projects">Projects</button>
                 <button class="main-tab-btn" data-tab="notes">Pages</button>
                 <button class="main-tab-btn" data-tab="tools">Tools</button>
@@ -56,30 +78,8 @@
             <div class="version-chip header-version-corner" id="versionChip" title="Current version">
                 <span class="version-dot" id="versionDot"></span>
                 <span id="appVersionLabel">v0.0.0</span>
-                <button class="icon-btn mini" id="checkUpdateBtn" aria-label="Check for updates"
-                    title="Check for updates">
-                    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
-                        <path fill="currentColor"
-                            d="M12 4a8 8 0 1 0 7.45 10.67 1 1 0 1 1 1.9.66A10 10 0 1 1 12 2a1 1 0 1 1 0 2Zm6.71-3.29a1 1 0 0 0-1.42 0l-3 3a1 1 0 0 0 1.42 1.42L17 5.41V10a1 1 0 1 0 2 0V3.41l1.29 1.3a1 1 0 0 0 1.42-1.42Z" />
-                    </svg>
-                </button>
             </div>
             <button class="btn btn-primary tiny" id="appUpdateBtn" style="display:none;">Update</button>
-            <button class="icon-btn theme-toggle" id="themeToggleBtn" aria-label="Toggle theme"
-                title="Toggle light/dark mode">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                    stroke-linecap="round" stroke-linejoin="round">
-                    <circle cx="12" cy="12" r="5"></circle>
-                    <line x1="12" y1="1" x2="12" y2="3"></line>
-                    <line x1="12" y1="21" x2="12" y2="23"></line>
-                    <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
-                    <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
-                    <line x1="1" y1="12" x2="3" y2="12"></line>
-                    <line x1="21" y1="12" x2="23" y2="12"></line>
-                    <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
-                    <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
-                </svg>
-            </button>
             <button class="icon-btn" id="settingsBtn" aria-label="Settings" title="Settings">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                     stroke-linecap="round" stroke-linejoin="round">
@@ -140,13 +140,6 @@
                             </div>
                         </div>
                     </div>
-                    <div class="header-account-sync" id="headerAccountPopoverSync">
-                        <span class="header-account-sync-dot" id="headerAccountPopoverSyncDot" aria-hidden="true"></span>
-                        <span id="headerAccountPopoverStatus">Cloud sync not configured</span>
-                    </div>
-                    <div class="header-account-note" id="headerAccountPopoverNote">
-                        Cloud sync is not configured yet.
-                    </div>
                     <div class="header-account-actions">
                         <button class="btn tiny" id="headerAccountSignOutBtn" type="button">Sign out</button>
                     </div>
@@ -174,6 +167,10 @@
         <!-- Tab Panel for Projects -->
         <div id="projects-panel" class="tab-panel active">
             <section class="panel stack">
+                <div class="projects-board-heading">
+                    <span class="projects-board-heading__eyebrow">Workspace</span>
+                    <h1 id="projectsWorkspaceTitle">Projects</h1>
+                </div>
                 <div class="panel-toolbar">
                     <div class="nav-search expanded-search">
                         <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none"
@@ -181,7 +178,7 @@
                             <circle cx="11" cy="11" r="8"></circle>
                             <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
                         </svg>
-                        <input id="search" type="search" placeholder="Search projects..." />
+                        <input id="search" type="search" placeholder="Search projects or deliverables…" aria-label="Search projects or deliverables" />
                     </div>
                     <div class="toolbar-actions">
                         <button class="icon-btn quick-add" id="quickNew" aria-label="New project" title="New project">
@@ -189,13 +186,6 @@
                                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                 <line x1="12" y1="5" x2="12" y2="19"></line>
                                 <line x1="5" y1="12" x2="19" y2="12"></line>
-                            </svg>
-                        </button>
-                        <button class="icon-btn" id="outlookScanBtn" aria-label="Email intake" title="Email intake">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <path d="M4 4h16v16H4z"></path>
-                                <path d="m4 8 8 6 8-6"></path>
                             </svg>
                         </button>
                         <button class="icon-btn" id="statsBtn" aria-label="Statistics" title="View Statistics">
@@ -206,32 +196,9 @@
                                 <line x1="6" y1="20" x2="6" y2="14"></line>
                             </svg>
                         </button>
-                        <button class="icon-btn" id="exportDeliverablesBtn" aria-label="Export deliverables"
-                            title="Export incomplete deliverables to Excel">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                                <polyline points="7 10 12 15 17 10"></polyline>
-                                <line x1="12" y1="15" x2="12" y2="3"></line>
-                            </svg>
-                        </button>
                         <div class="projects-view-toggle" role="group" aria-label="Projects view mode">
-                            <button type="button" class="view-toggle-btn is-active" id="viewToggleList" data-view-mode="list" aria-pressed="true" title="List view">
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                    <line x1="8" y1="6" x2="21" y2="6"></line>
-                                    <line x1="8" y1="12" x2="21" y2="12"></line>
-                                    <line x1="8" y1="18" x2="21" y2="18"></line>
-                                    <line x1="3" y1="6" x2="3.01" y2="6"></line>
-                                    <line x1="3" y1="12" x2="3.01" y2="12"></line>
-                                    <line x1="3" y1="18" x2="3.01" y2="18"></line>
-                                </svg>
-                            </button>
-                            <button type="button" class="view-toggle-btn" id="viewToggleCard" data-view-mode="card" aria-pressed="false" title="Card view">
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                    <rect x="3" y="3" width="7" height="18" rx="1"></rect>
-                                    <rect x="14" y="3" width="7" height="11" rx="1"></rect>
-                                </svg>
-                            </button>
+                            <button type="button" class="view-toggle-btn is-active" id="viewToggleList" data-view-mode="list" aria-pressed="true" title="List view">List</button>
+                            <button type="button" class="view-toggle-btn" id="viewToggleCard" data-view-mode="card" aria-pressed="false" title="Card view">Board</button>
                         </div>
                         <button class="icon-btn projects-width-toggle is-active" id="projectsWidthToggle" type="button" aria-label="Wide project layout" aria-pressed="true" title="Wide project layout">
                             <svg class="projects-width-toggle__wide" width="16" height="16" viewBox="0 0 24 24" fill="none"
@@ -318,10 +285,12 @@
                                 >
                                     <button type="button" class="projects-filter-option is-selected" data-filter-value="all" role="menuitemradio" aria-checked="true" tabindex="-1">All</button>
                                     <button type="button" class="projects-filter-option" data-filter-value="incomplete" role="menuitemradio" aria-checked="false" tabindex="-1">Incomplete</button>
+                                    <button type="button" class="projects-filter-option" data-filter-value="In progress" role="menuitemradio" aria-checked="false" tabindex="-1">In progress</button>
                                     <button type="button" class="projects-filter-option" data-filter-value="Waiting" role="menuitemradio" aria-checked="false" tabindex="-1">Waiting</button>
                                     <button type="button" class="projects-filter-option" data-filter-value="On hold" role="menuitemradio" aria-checked="false" tabindex="-1">On hold</button>
                                     <button type="button" class="projects-filter-option" data-filter-value="Pending Review" role="menuitemradio" aria-checked="false" tabindex="-1">Pending Review</button>
                                     <button type="button" class="projects-filter-option" data-filter-value="Complete" role="menuitemradio" aria-checked="false" tabindex="-1">Complete</button>
+                                    <button type="button" class="projects-filter-option" data-filter-value="Completed (by others)" role="menuitemradio" aria-checked="false" tabindex="-1">Completed (by others)</button>
                                     <button type="button" class="projects-filter-option" data-filter-value="Delivered" role="menuitemradio" aria-checked="false" tabindex="-1">Delivered</button>
                                 </div>
                             </div>
@@ -409,10 +378,15 @@
                 <div class="projects-card-view" id="projectsCardView" hidden></div>
                 <table class="table projects-table">
                     <thead>
-                        <tr>
-                            <th style="width:90px" data-sort="id">ID</th>
-                            <th data-sort="name">Project Details</th>
-                            <th class="deliverables-header" data-sort="due" colspan="3">Deliverable</th>
+                        <tr class="reg-head">
+                            <th class="reg-th reg-th--rail" aria-hidden="true"></th>
+                            <th class="reg-th" data-sort="id">ID</th>
+                            <th class="reg-th" data-sort="name">Project</th>
+                            <th class="reg-th deliverables-header" data-sort="due">Deliverable</th>
+                            <th class="reg-th">Internal</th>
+                            <th class="reg-th">External</th>
+                            <th class="reg-th">Status</th>
+                            <th class="reg-th reg-th--right">Notes</th>
                         </tr>
                     </thead>
                     <tbody id="tbody"></tbody>
@@ -437,6 +411,10 @@
                         <button type="button" class="projects-pagination-btn" id="projectsPageLast" aria-label="Last page" title="Last page">Last</button>
                     </div>
                 </nav>
+                <div id="registerFooter" class="register-footer">
+                    <span id="registerFooterCount" class="reg-kick">0 of 0 shown</span>
+                    <span class="register-legend">Select a row for actions · Select a date or status to edit</span>
+                </div>
                 <div id="emptyState" class="empty" style="display:none">
                     <div class="empty-icon">
                         <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -456,6 +434,10 @@
         <!-- Tab Panel for Notes -->
         <div id="notes-panel" class="tab-panel" hidden>
             <div class="panel stack full-height">
+                <div class="global-pages-header">
+                    <h3 class="section-title">Pages</h3>
+                    <button class="btn btn-accent" type="button" id="globalPagesNewBtn">+ New page</button>
+                </div>
                 <div class="panel-toolbar texts-toolbar">
                     <div class="texts-toolbar-main">
                         <div class="nav-search expanded-search">
@@ -480,10 +462,6 @@
                 </div>
                 <div class="texts-content">
                     <div class="global-pages">
-                        <div class="global-pages-header">
-                            <h3 class="section-title">Pages</h3>
-                            <button class="btn btn-accent" type="button" id="globalPagesNewBtn">+ New page</button>
-                        </div>
                         <div class="notebook-empty-state" id="notesEmptyState" hidden>
                             <div class="notebook-empty-state-icon">
                                 <svg width="40" height="40" viewBox="0 0 24 24" fill="none"
@@ -576,6 +554,26 @@
                             </div>
                             <div class="tool-card-status"></div>
                         </div>
+                        <!-- Repair XREF Saved Paths -->
+                        <div id="toolRepairXrefPaths" class="tool-card" role="button" tabindex="0">
+                            <div class="tool-card-content">
+                                <div class="tool-icon">
+                                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                        stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <path d="M10 13a5 5 0 0 0 7.5.5l2-2a5 5 0 0 0-7-7l-1.1 1.1"></path>
+                                        <path d="M14 11a5 5 0 0 0-7.5-.5l-2 2a5 5 0 0 0 7 7l1.1-1.1"></path>
+                                        <path d="M12 8v8"></path>
+                                        <path d="m9.5 13.5 2.5 2.5 2.5-2.5"></path>
+                                    </svg>
+                                </div>
+                                <div class="tool-card-header">Repair XREF Paths</div>
+                                <div class="tool-card-body">
+                                    Scans selected DWGs, shows each unique XREF and its status, and replaces editable saved paths
+                                    across every selected host drawing.
+                                </div>
+                            </div>
+                            <div class="tool-card-status"></div>
+                        </div>
                         <!-- Card 4: Clean XREFs -->
                         <div id="toolCleanXrefs" class="tool-card" role="button" tabindex="0">
                             <button type="button" class="tool-card-settings" data-settings-target="cleanSettingsDlg"
@@ -593,6 +591,13 @@
                                 <div class="tool-card-body">
                                     Strips saved XREF paths. Sets all objects color to "by layer". Purges & Audits.
                                 </div>
+                            </div>
+                            <div class="tool-card-status"></div>
+                        </div>
+                        <div id="toolCleanDrawings" class="tool-card" role="button" tabindex="0">
+                            <div class="tool-card-content">
+                                <div class="tool-card-header">Clean Drawings</div>
+                                <div class="tool-card-body">Clean a titleblock and electrical drawings on local copies, then deliver validated CAD in a dated folder.</div>
                             </div>
                             <div class="tool-card-status"></div>
                         </div>
@@ -806,6 +811,10 @@
         <!-- Tab Panel for Timesheets -->
         <div id="timesheets-panel" class="tab-panel" hidden>
             <section class="panel stack">
+                <div class="modern-page-heading">
+                    <span class="modern-eyebrow">Workspace</span>
+                    <h1>Timesheets</h1>
+                </div>
                 <div class="panel-toolbar">
                     <div class="timesheets-week-selector">
                         <button class="btn tiny" id="prevWeekBtn" aria-label="Previous week">
@@ -1012,7 +1021,7 @@
                     <line x1="19" y1="12" x2="5" y2="12"></line>
                     <polyline points="12 19 5 12 12 5"></polyline>
                 </svg>
-                <span>Back</span>
+                <span class="sr-only">Back</span>
             </button>
             <nav class="page-breadcrumb" id="pageBreadcrumb" aria-label="Breadcrumb"></nav>
             <div class="page-view-spacer"></div>
@@ -1024,7 +1033,8 @@
                         <circle cx="11" cy="11" r="8"></circle>
                         <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
                     </svg>
-                    <input id="pageFindInput" type="search" placeholder="Find in page..." autocomplete="off" />
+                    <input id="pageFindInput" type="search" placeholder="Find in page…" aria-label="Find in page" autocomplete="off" />
+                    <kbd class="page-find-shortcut" aria-hidden="true">Ctrl F</kbd>
                 </div>
                 <span class="page-find-count" id="pageFindCount" aria-live="polite"></span>
                 <button type="button" class="icon-btn mini" id="pageFindPrevBtn" aria-label="Previous match"
@@ -1043,10 +1053,6 @@
                 </button>
             </div>
             <div class="page-save-status" id="pageSaveStatus" aria-live="polite"></div>
-            <button type="button" class="btn ghost text-danger mini" id="pageDeleteProjectBtn"
-                aria-label="Delete this project" title="Delete this project" style="display:none;" onclick="onDeleteActiveProjectFromPageView()">
-                Delete Project
-            </button>
             <button type="button" class="page-view-publish" id="pagePublishPdfBtn"
                 aria-label="Publish page as PDF" title="Publish page as PDF">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -1058,13 +1064,16 @@
                 </svg>
                 <span>Publish PDF</span>
             </button>
-            <button type="button" class="icon-btn mini" id="pageViewCloseBtn" aria-label="Close page" title="Close">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                    stroke-linecap="round" stroke-linejoin="round">
-                    <line x1="18" y1="6" x2="6" y2="18"></line>
-                    <line x1="6" y1="6" x2="18" y2="18"></line>
-                </svg>
+            <details class="page-actions-menu" id="pageActionsMenu">
+                <summary aria-label="More page actions" title="More page actions">⋯</summary>
+                <div class="page-actions-panel" aria-label="Page actions">
+                    <button type="button" id="pageViewCloseBtn">Close page</button>
+            <button type="button" class="btn ghost text-danger mini" id="pageDeleteProjectBtn"
+                aria-label="Delete this project" title="Delete this project" style="display:none;" onclick="onDeleteActiveProjectFromPageView()">
+                Delete Project
             </button>
+                </div>
+            </details>
         </header>
         <div class="page-view-scroll">
             <div class="page-view-body">
@@ -1091,6 +1100,7 @@
         </div>
         <input type="file" id="pageImageInput" accept="image/*" multiple hidden />
         <div id="pageCanvasRoot" class="page-canvas-root" hidden>
+            <div id="pageCanvasSidebarRoot"></div>
             <div class="page-canvas-toolbar">
                 <input id="pageCanvasTitle" class="page-canvas-title" type="text" aria-label="Page title"
                     placeholder="Untitled" autocomplete="off" spellcheck="true" />
@@ -1203,62 +1213,7 @@
             </div>
         </div>
     </dialog>
-    <dialog id="deliverableNotepadDlg" class="deliverable-notepad-dialog">
-        <div class="modal-header">
-            <div>
-                <div class="title">Export Deliverables to Excel</div>
-                <div class="muted tiny">Incomplete deliverables are preselected. Generate an AI status briefing to
-                    include it as a second sheet.</div>
-            </div>
-            <button class="btn ghost" type="button" onclick="closeDlg('deliverableNotepadDlg')">Cancel</button>
-        </div>
-        <div class="modal-body stack">
-            <div class="deliverable-notepad-toolbar">
-                <div class="projects-filter-chip-list" role="group" aria-label="Deliverable scope">
-                    <button type="button" class="projects-filter-chip is-active"
-                        id="deliverableNotepadScopeIncompleteBtn" data-notepad-scope="incomplete"
-                        aria-pressed="true">Incomplete only</button>
-                    <button type="button" class="projects-filter-chip" id="deliverableNotepadScopeAllBtn"
-                        data-notepad-scope="all" aria-pressed="false">All deliverables</button>
-                </div>
-                <button class="btn ghost" id="deliverableNotepadSummaryBtn" type="button">Generate Status
-                    Briefing</button>
-            </div>
-            <div class="deliverable-notepad-layout">
-                <section class="deliverable-notepad-panel">
-                    <div class="deliverable-notepad-panel-header">
-                        <div class="deliverable-notepad-panel-title" id="deliverableNotepadAvailablePanelTitle">
-                            Incomplete Deliverables</div>
-                        <div id="deliverableNotepadAvailableCount" class="muted tiny">0 deliverables</div>
-                    </div>
-                    <div id="deliverableNotepadAvailableList" class="deliverable-notepad-list" role="list"></div>
-                </section>
-                <div class="deliverable-notepad-transfer">
-                    <button class="btn" id="deliverableNotepadAddBtn" type="button">Add Selected &gt;</button>
-                    <button class="btn ghost" id="deliverableNotepadRemoveBtn" type="button">&lt; Remove Selected</button>
-                </div>
-                <section class="deliverable-notepad-panel">
-                    <div class="deliverable-notepad-panel-header">
-                        <div class="deliverable-notepad-panel-title">Excel Export</div>
-                        <div id="deliverableNotepadSelectedCount" class="muted tiny">0 deliverables</div>
-                    </div>
-                    <div id="deliverableNotepadSelectedList" class="deliverable-notepad-list" role="list"></div>
-                </section>
-            </div>
-            <section id="deliverableNotepadSummaryPanel" class="deliverable-notepad-summary" hidden
-                aria-live="polite">
-                <div class="deliverable-notepad-summary-header">
-                    <div class="deliverable-notepad-panel-title">AI Status Briefing</div>
-                    <div id="deliverableNotepadSummaryMeta" class="muted tiny"></div>
-                </div>
-                <div id="deliverableNotepadSummaryBody" class="deliverable-notepad-summary-body"></div>
-            </section>
-            <div class="modal-footer">
-                <button class="btn-primary" id="deliverableNotepadExportBtn" type="button" disabled>Export to Excel</button>
-            </div>
-        </div>
-    </dialog>
-    <dialog id="copyProjectLocallyDlg" class="deliverable-notepad-dialog copy-project-locally-dialog local-project-manager-dialog">
+    <dialog id="copyProjectLocallyDlg" class="copy-project-locally-dialog local-project-manager-dialog">
         <div class="modal-header">
             <div>
                 <div class="title">Work Locally</div>
@@ -1278,7 +1233,7 @@
                     </div>
                 </section>
                 <div id="copyProjectLocallyFolderList"
-                    class="deliverable-notepad-list copy-project-locally-list local-project-manager-sync-list"
+                    class="local-project-manager-list copy-project-locally-list local-project-manager-sync-list"
                     role="list"></div>
                 <div id="localProjectManagerBlockedSection" class="local-project-manager-blocked-section" hidden>
                     <div class="local-project-manager-blocked-title">Blocked Entries</div>
@@ -1383,25 +1338,6 @@
                 </div>
                 <div id="refList" class="stack"></div>
             </div>
-        </div>
-    </dialog>
-    <dialog id="outlookScanDlg">
-        <div class="modal-header">
-            <div class="title">Email Intake</div>
-            <button class="btn ghost" onclick="closeDlg('outlookScanDlg')">Close</button>
-        </div>
-        <div class="modal-body stack">
-            <section id="emailIntakePastePanel" class="email-intake-panel stack">
-                <div class="email-intake-panel-head">
-                    <div>
-                        <div class="label">Paste Email</div>
-                        <div class="tiny muted">Paste the full email content below. The AI will match the project and
-                            extract either a deliverable or an important page item.</div>
-                    </div>
-                    <button type="button" class="btn-primary tiny" id="btnProcessEmail">Process with AI</button>
-                </div>
-                <textarea id="emailArea" rows="15" placeholder="Paste email content here..."></textarea>
-            </section>
         </div>
     </dialog>
     <dialog id="aiNoMatchDlg">
@@ -1568,6 +1504,13 @@
                 </div>
             </div>
 
+            <h3 class="section-title" style="margin-top: 1rem;">Appearance</h3>
+            <label class="label" for="settings_theme">Color mode</label>
+            <select id="settings_theme">
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+            </select>
+
             <!-- Integrations Section -->
             <h3 class="section-title" style="margin-top: 1rem;">Integrations</h3>
             <div class="modal-grid">
@@ -1593,15 +1536,6 @@
                                 </div>
                             </div>
                             <button type="button" class="btn tiny" id="settings_googleAuthActionBtn">Sign in</button>
-                        </div>
-                        <div class="sync-auth-row" style="margin-top: 0.9rem;">
-                            <div class="sync-auth-copy">
-                                <label class="label" style="margin-bottom: 0.25rem;">Cloud sync</label>
-                                <div id="settings_cloudSyncStatus" class="sync-auth-status">Cloud sync not configured</div>
-                                <div id="settings_cloudSyncDetails" class="tiny muted">
-                                    Add Firebase config to enable sync.
-                                </div>
-                            </div>
                         </div>
                     </div>
                 </div>
@@ -1636,36 +1570,52 @@
 
             <!-- AutoCAD Version Section -->
             <h3 class="section-title" style="margin-top: 1rem;">AutoCAD Version</h3>
-            <div class="modal-grid">
-                <div class="col-12">
-                    <label class="label">Select Preferred AutoCAD Version</label>
-                    <div id="autocad_versions_container" class="radio-group" style="flex-wrap: wrap;">
+            <div class="cad-settings-panel">
+                <p class="cad-settings-intro">Choose the version ACIES uses for CAD automation.</p>
+                <fieldset class="cad-version-fieldset">
+                    <legend>Preferred version</legend>
+                    <div id="autocad_versions_container" class="cad-version-choices" aria-live="polite">
                         <!-- Detected versions will be inserted here -->
                     </div>
-                    <div class="input-with-button" style="margin-top: 0.5rem;">
-                        <input id="settings_autocadPath" placeholder="Custom AutoCAD executable path..." readonly />
-                        <button class="btn tiny" id="btnBrowseAutocad">Browse...</button>
-                    </div>
+                </fieldset>
+                <label class="cad-settings-label" for="settings_autocadPath">Core Console executable</label>
+                <textarea id="settings_autocadPath" rows="3" placeholder="No executable selected" aria-describedby="cad-executable-help" readonly></textarea>
+                <p id="cad-executable-help" class="cad-settings-help">Used to run CAD tasks in the background. Change this path if AutoCAD is installed in a different location.</p>
+                <div class="cad-settings-actions">
+                    <button type="button" class="btn tiny" id="btnBrowseAutocad">Change location…</button>
                 </div>
             </div>
 
             <!-- CAD Cleanup Defaults Section -->
             <h3 class="section-title" style="margin-top: 1rem;">CAD Cleanup Defaults</h3>
-            <div class="modal-grid">
-                <div class="col-12">
-                    <label class="label">XREF</label>
-                    <div class="stack" style="gap: 0.35rem;">
-                        <label class="radio-label"><input type="checkbox" id="settings_clean_stripXrefs"> Strip saved
-                            XREF paths</label>
-                        <label class="radio-label"><input type="checkbox" id="settings_clean_setByLayer"> Set all
-                            objects to &quot;ByLayer&quot;</label>
-                        <label class="radio-label"><input type="checkbox" id="settings_clean_purge"> Purge</label>
-                        <label class="radio-label"><input type="checkbox" id="settings_clean_audit"> Audit</label>
-                        <label class="radio-label"><input type="checkbox" id="settings_clean_hatchColor"> Set all
-                            non-wall hatches to color &quot;9&quot;</label>
-                    </div>
-                    <div class="tiny muted" style="margin-top: 0.35rem;">Applied when running &quot;XREF&quot;.</div>
-                </div>
+            <div class="cad-settings-panel">
+                <p class="cad-settings-intro">Choose the cleanup steps applied when you run <code>XREF</code>.</p>
+                <fieldset class="cad-cleanup-group">
+                    <legend>References &amp; appearance</legend>
+                    <label class="cad-cleanup-row">
+                        <span><span class="cad-cleanup-title">Strip saved XREF paths</span><span class="cad-settings-help" id="clean-strip-help">Remove stored folder paths from external references.</span></span>
+                        <input type="checkbox" role="switch" id="settings_clean_stripXrefs" aria-describedby="clean-strip-help" aria-label="Strip saved XREF paths">
+                    </label>
+                    <label class="cad-cleanup-row">
+                        <span><span class="cad-cleanup-title">Set object properties to ByLayer</span><span class="cad-settings-help" id="clean-layer-help">Use layer settings for object appearance.</span></span>
+                        <input type="checkbox" role="switch" id="settings_clean_setByLayer" aria-describedby="clean-layer-help" aria-label="Set object properties to ByLayer">
+                    </label>
+                    <label class="cad-cleanup-row">
+                        <span><span class="cad-cleanup-title">Set non-wall hatches to color 9</span><span class="cad-settings-help" id="clean-hatch-help">Apply AutoCAD color 9 to hatches other than walls.</span></span>
+                        <input type="checkbox" role="switch" id="settings_clean_hatchColor" aria-describedby="clean-hatch-help" aria-label="Set non-wall hatches to color 9">
+                    </label>
+                </fieldset>
+                <fieldset class="cad-cleanup-group">
+                    <legend>Drawing maintenance</legend>
+                    <label class="cad-cleanup-row">
+                        <span><span class="cad-cleanup-title">Purge unused items</span><span class="cad-settings-help" id="clean-purge-help">Remove unused definitions from the drawing.</span></span>
+                        <input type="checkbox" role="switch" id="settings_clean_purge" aria-describedby="clean-purge-help" aria-label="Purge unused items">
+                    </label>
+                    <label class="cad-cleanup-row">
+                        <span><span class="cad-cleanup-title">Audit drawing</span><span class="cad-settings-help" id="clean-audit-help">Check the drawing for errors.</span></span>
+                        <input type="checkbox" role="switch" id="settings_clean_audit" aria-describedby="clean-audit-help" aria-label="Audit drawing">
+                    </label>
+                </fieldset>
             </div>
 
             <!-- CAD Tool Defaults Section -->
@@ -1780,16 +1730,7 @@
                         <span class="slider round"></span>
                     </label>
                 </div>
-                <div class="setting-row">
-                    <div class="setting-info">
-                        <div class="setting-label">Group Deliverables by Project</div>
-                        <div class="setting-desc">When enabled, the Projects tab groups deliverables under each project instead of showing one row per deliverable.</div>
-                    </div>
-                    <label class="switch">
-                        <input type="checkbox" id="settings_groupDeliverablesByProject">
-                        <span class="slider round"></span>
-                    </label>
-                </div>
+
             </div>
 
             <!-- Danger Zone -->
@@ -2107,10 +2048,6 @@
                             <span>Manage projects and tasks</span>
                         </div>
                         <div class="feature-item">
-                            <span class="feature-icon">🤖</span>
-                            <span>AI-powered email processing</span>
-                        </div>
-                        <div class="feature-item">
                             <span class="feature-icon">🔧</span>
                             <span>AutoCAD automation tools</span>
                         </div>
@@ -2156,8 +2093,7 @@
                 <div class="onboarding-content">
                     <div class="onboarding-icon">🔑</div>
                     <h2>Set up your AI assistant</h2>
-                    <p>Add your Google Gemini API key to enable AI features like email processing and project
-                        creation.
+                    <p>Add your Google Gemini API key to enable AI features like panel schedule analysis.
                     </p>
                     <div class="onboarding-input-group">
                         <label class="label">Google Gemini API Key</label>
@@ -2323,9 +2259,6 @@
                         <div class="tiny muted" id="googleAccountEmail">Sign in to connect your Google account.</div>
                     </div>
                 </div>
-                <div class="google-account-note" id="googleAccountSyncNote">
-                    Cloud sync is not configured yet.
-                </div>
             </div>
             <div class="modal-footer">
                 <button class="btn ghost" onclick="closeDlg('googleAccountDlg')">Close</button>
@@ -2355,8 +2288,7 @@
 
                     <h3>Creating &amp; editing</h3>
                     <ul>
-                        <li><strong>Add a project:</strong> use the <em>New</em> button in the toolbar, or paste an
-                            Outlook email and let the AI assistant create one from the message.</li>
+                        <li><strong>Add a project:</strong> use the <em>New</em> button in the toolbar.</li>
                         <li><strong>Edit:</strong> click a project card or row to open the edit dialog. You can rename
                             it, change dates, add/remove deliverables, and adjust status.</li>
                     </ul>
@@ -2372,6 +2304,7 @@
                         <li><strong>On hold:</strong> explicitly paused, usually waiting on a client or stakeholder.</li>
                         <li><strong>Pending Review:</strong> finished on your end, awaiting QA or check.</li>
                         <li><strong>Complete:</strong> deliverable is done but not yet sent out.</li>
+                        <li><strong>Completed (by others):</strong> deliverable was completed by someone else.</li>
                         <li><strong>Delivered:</strong> final package has been sent.</li>
                     </ul>
 
@@ -2624,10 +2557,18 @@
             </header>
 
             <section class="psm-connection-bar" aria-label="Project and workbook connection">
-                <label class="psm-project-field" for="psmProjectSelect">
+                <div class="psm-project-field">
                     <span>Project</span>
-                    <select id="psmProjectSelect"></select>
-                </label>
+                    <details id="psmProjectPicker" class="psm-project-picker">
+                        <summary id="psmProjectLabel">Choose project</summary>
+                        <div class="psm-project-options">
+                            <label for="psmProjectSearch">Find a project</label>
+                            <input id="psmProjectSearch" type="search" placeholder="Project number, client or address" autocomplete="off" />
+                            <select id="psmProjectSelect" size="6" aria-label="Matching projects"></select>
+                            <span id="psmProjectResultCount" role="status"></span>
+                        </div>
+                    </details>
+                </div>
                 <div class="psm-workbook-field">
                     <span>Linked Excel file</span>
                     <button id="psmWorkbookPath" class="psm-workbook-path" type="button"
@@ -2801,7 +2742,7 @@
 
                     <section class="cb-section">
                         <div class="cb-section-title">2. Upload panel photos</div>
-                        <p class="tiny muted">Upload one or more breaker photos and one or more directory photos for the active panel tab depending on input mode selection.</p>
+                        <p class="tiny muted">Upload one or more breaker photos and one or more directory photos for the active panel tab. Panel-label and main-breaker photos are optional but improve the header data.</p>
                         <div class="cb-choice-row" style="margin-bottom: 12px;">
                             <button class="cb-choice-btn active" id="cbInputModeField" type="button">
                                 Field photos (Breakers &amp; Directory)
@@ -2813,7 +2754,7 @@
                         <div class="cb-upload-grid">
                             <div class="cb-upload-card" id="cbBreakerUploadCard">
                                 <div class="cb-upload-title">Circuit breaker photos</div>
-                                <p class="tiny muted">Clear photos of the breaker labels and handles. The same panel can be split into upper half, middle, and bottom half photos.</p>
+                                <p class="tiny muted">Clear photos of the breaker labels and handles. The same panel can be split into upper half, middle, and bottom half photos. Add the circuit coverage under each photo so split and overlapping views can be stitched together accurately.</p>
                                 <div id="cbBreakerDrop" class="cb-drop-zone" role="button" tabindex="0">
                                     <div class="cb-drop-icon" aria-hidden="true">
                                         <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -2846,6 +2787,42 @@
                                     <span id="cbDirectoryFile" class="cb-file-pill" data-empty="true">No photos selected</span>
                                 </div>
                                 <div id="cbDirectoryFileList" class="cb-file-list"></div>
+                            </div>
+                            <div class="cb-upload-card" id="cbPanelLabelUploadCard">
+                                <div class="cb-upload-title">Panel label / nameplate <span class="cb-optional-badge">Optional</span></div>
+                                <p class="tiny muted">Upload the manufacturer or panel label showing voltage, phase, wire, bus rating, AIC, enclosure, or other nameplate data.</p>
+                                <div id="cbPanelLabelDrop" class="cb-drop-zone cb-drop-zone-compact" role="button" tabindex="0">
+                                    <div class="cb-drop-icon" aria-hidden="true">
+                                        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                            <rect x="3" y="4" width="18" height="16" rx="2" stroke="currentColor" stroke-width="2"/>
+                                            <path d="M7 8H17M7 12H17M7 16H13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                                        </svg>
+                                    </div>
+                                    <div class="cb-drop-text">Add panel label photo(s)</div>
+                                    <div class="tiny muted">Used as the primary source for panel header fields.</div>
+                                </div>
+                                <div class="cb-upload-actions">
+                                    <span id="cbPanelLabelFile" class="cb-file-pill" data-empty="true">No photos selected</span>
+                                </div>
+                                <div id="cbPanelLabelFileList" class="cb-file-list"></div>
+                            </div>
+                            <div class="cb-upload-card" id="cbMainBreakerUploadCard">
+                                <div class="cb-upload-title">Main breaker <span class="cb-optional-badge">Optional</span></div>
+                                <p class="tiny muted">Upload a clear photo of the main breaker handle and markings so the main type and amp rating can be recorded.</p>
+                                <div id="cbMainBreakerDrop" class="cb-drop-zone cb-drop-zone-compact" role="button" tabindex="0">
+                                    <div class="cb-drop-icon" aria-hidden="true">
+                                        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                            <rect x="4" y="2" width="16" height="20" rx="2" stroke="currentColor" stroke-width="2"/>
+                                            <path d="M9 6H15V13H9V6ZM12 13V18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                        </svg>
+                                    </div>
+                                    <div class="cb-drop-text">Add main breaker photo(s)</div>
+                                    <div class="tiny muted">Used for MCB/MLO and main amp information.</div>
+                                </div>
+                                <div class="cb-upload-actions">
+                                    <span id="cbMainBreakerFile" class="cb-file-pill" data-empty="true">No photos selected</span>
+                                </div>
+                                <div id="cbMainBreakerFileList" class="cb-file-list"></div>
                             </div>
                         </div>
                     </section>
@@ -2924,7 +2901,7 @@
             <div class="cps-body">
                 <div id="cpsLoading" class="cps-loading">
                     <div class="spinner">Reading your selection</div>
-                    <p class="tiny muted">The AI is sorting your images into breaker photos and circuit directories.</p>
+                    <p class="tiny muted">The AI is sorting your images into branch breakers, circuit directories, panel labels, and main breakers.</p>
                 </div>
                 <div id="cpsError" class="cps-error" hidden></div>
 
@@ -3190,12 +3167,12 @@
                                     <div class="title24-room-panel-title-wrap">
                                         <div class="title24-room-panel-title">Room Areas</div>
                                         <div class="tiny muted">Import and edit room type totals from
-                                            <code>T24Output.json</code>.
+                                            <code>AreaLabel.json</code>.
                                         </div>
                                     </div>
                                     <div class="title24-room-panel-actions">
                                         <button class="btn tiny" id="title24ImportRoomAreasBtn" type="button">Import
-                                            T24Output.json</button>
+                                            AreaLabel.json</button>
                                         <button class="btn tiny ghost" id="title24RoomAreasAddRow" type="button">Add
                                             Row</button>
                                     </div>
@@ -3479,12 +3456,12 @@
                     aria-controls="activityTrayBody">
                     <span class="activity-tray-copy">
                         <span class="activity-tray-title">Activity</span>
-                        <span id="activityTrayCounts" class="activity-tray-counts">0 active, 0 completed</span>
+                        <span id="activityTrayCounts" class="activity-tray-counts">0 active, 0 queued, 0 completed</span>
                     </span>
                     <span id="activityTrayToggleIcon" class="activity-tray-toggle-icon" aria-hidden="true">⌄</span>
                 </button>
                 <button id="activityTrayClearAll" class="activity-tray-clear" type="button">
-                    Clear All
+                    Clear Completed
                 </button>
             </div>
             <div id="activityTrayBody" class="activity-tray-body">
@@ -3494,10 +3471,11 @@
         </div>
     </section>
     <div id="updateCheckIndicator" class="corner-status" hidden>Checking for updates...</div>
-    <script src="project-pages-editor/dist/project-pages-editor.js?v=20260729-page-email-attach"></script>
-    <script src="script.js?v=20260824-remove-active-projects-fix"></script>
+    <script src="project-pages-editor/dist/project-pages-editor.js?v=20260910-canvas-sidebar"></script>
+    <script src="script.js?v=20260910-canvas-sidebar"></script>
+    <script src="industry-projects.js?v=20260909-deliverables"></script>
+    <script src="industry-shell.js?v=20260909-modern-dialogs"></script>
     <script src="symbol_counter_ui.js?v=20260818-delete-actions"></script>
 </body>
 
 </html>
-

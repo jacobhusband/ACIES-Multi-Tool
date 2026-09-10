@@ -220,6 +220,45 @@ class WorkroomCadLaunchCommandTests(unittest.TestCase):
                 trace_result["entries"][1]["file_paths"],
             )
 
+    def test_open_project_cad_files_only_opens_working_drawings(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project = Path(temp_dir) / "123456 Test Project"
+            electrical = project / "Electrical"
+            electrical.mkdir(parents=True)
+            (electrical / "Archive").mkdir()
+            (electrical / "Archive" / "old.dwg").touch()
+            (electrical / "notes.txt").touch()
+            drawings = [electrical / "E01 power.dwg", electrical / "E02.DWG"]
+            for drawing in drawings:
+                drawing.touch()
+            with patch('main.os.startfile') as startfile:
+                result = self.api.open_project_cad_files({'projectPath': str(project)})
+            self.assertEqual('success', result['status'])
+            self.assertEqual([call(str(path)) for path in drawings], startfile.call_args_list)
+
+    def test_open_project_cad_files_reports_partial_failure(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            electrical = Path(temp_dir) / 'Electrical'
+            electrical.mkdir()
+            for name in ('one.dwg', 'two.dwg'):
+                (electrical / name).touch()
+            with patch('main.os.startfile', side_effect=[OSError('No association'), None]):
+                result = self.api.open_project_cad_files({'projectPath': str(electrical)})
+            self.assertEqual('error', result['status'])
+            self.assertEqual([str(electrical / 'two.dwg')], result['opened'])
+            self.assertEqual(str(electrical / 'one.dwg'), result['failed'][0]['path'])
+
+    def test_open_project_cad_files_requires_project_and_drawings(self):
+        with patch('main.os.startfile') as startfile:
+            self.assertEqual('error', self.api.open_project_cad_files()['status'])
+            with tempfile.TemporaryDirectory() as temp_dir:
+                context = {'projectPath': temp_dir}
+                self.assertEqual('error', self.api.open_project_cad_files(context)['status'])
+                (Path(temp_dir) / 'Electrical').mkdir()
+                result = self.api.open_project_cad_files(context)
+                self.assertIn('No DWG files', result['message'])
+            startfile.assert_not_called()
+
     def test_script_worker_is_non_daemon_and_stops_cleanly(self):
         progress_seen = threading.Event()
 

@@ -83,13 +83,6 @@ class GlobalPagesUiTests(unittest.TestCase):
         self.assertIn("pages: serializeGlobalPagesForStore(),", build_block)
         self.assertIn("scratchpad: scratchpadHtml,", build_block)
 
-        cloud_block = self._block(
-            script,
-            "function buildNotesCloudDoc() {",
-            "function migrateLegacyNotesToPages(source = {}) {",
-        )
-        self.assertIn("version: 2,", cloud_block)
-        self.assertIn("pages: serializeGlobalPagesForStore(),", cloud_block)
 
     def test_active_page_persistence_routing(self):
         script = SCRIPT_JS_PATH.read_text(encoding="utf-8")

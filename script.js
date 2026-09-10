@@ -1,41 +1,43 @@
 // ===================== CONFIGURATION & CONSTANTS =====================
 const STATUS_CANON = [
+  "In progress",
   "Waiting",
   "On hold",
   "Pending Review",
   "Complete",
+  "Completed (by others)",
   "Delivered",
 ];
 const STATUS_PRIORITY = [
   "Delivered",
   "Complete",
+  "Completed (by others)",
   "Pending Review",
   "On hold",
   "Waiting",
+  "In progress",
 ];
 const LABEL_TO_KEY = {
+  "In progress": "inProgress",
   Waiting: "waiting",
   "On hold": "onHold",
   "Pending Review": "pendingReview",
   Complete: "complete",
+  "Completed (by others)": "completed-by-others",
   Delivered: "delivered",
 };
 const KEY_TO_LABEL = {
+  inProgress: "In progress",
+  working: "In progress",
   waiting: "Waiting",
   onHold: "On hold",
   pendingReview: "Pending Review",
   complete: "Complete",
+  "completed-by-others": "Completed (by others)",
   delivered: "Delivered",
 };
 const HELP_TOPICS = ["projects", "notes", "tools", "timesheets", "misc"];
 const THEME_STORAGE_KEY = "acies-theme";
-const FIREBASE_JS_SDK_VERSION = "12.7.0";
-const FIREBASE_COMPAT_SCRIPT_URLS = [
-  `https://www.gstatic.com/firebasejs/${FIREBASE_JS_SDK_VERSION}/firebase-app-compat.js`,
-  `https://www.gstatic.com/firebasejs/${FIREBASE_JS_SDK_VERSION}/firebase-auth-compat.js`,
-  `https://www.gstatic.com/firebasejs/${FIREBASE_JS_SDK_VERSION}/firebase-firestore-compat.js`,
-];
-const CLOUD_SYNC_TIMESHEETS_META_DOC_ID = "__meta__";
 const LIGHTING_SCHEDULE_FIELDS = [
   "mark",
   "description",
@@ -263,10 +265,6 @@ const CHECKLIST_ICON_PATH =
 const CHECK_ICON_PATH =
   "M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z";
 const MAX_DELIVERABLE_EMAIL_REFS = 3;
-const EMAIL_INTAKE_PROJECT_CONTEXT_MAX_PROJECTS = 200;
-const EMAIL_INTAKE_PROJECT_CONTEXT_MAX_CHARS = 25000;
-const EMAIL_INTAKE_REQUEST_TIMEOUT_MS = 300000;
-const EMAIL_INTAKE_SLOW_NOTICE_MS = 90000;
 
 // Checklists Data
 let checklistsDb = {
@@ -294,27 +292,42 @@ let workroomToolStatusState = {
   phase: "idle",
 };
 const ACTIVITY_STATUS = Object.freeze({
+  QUEUED: "queued",
   RUNNING: "running",
   SUCCESS: "success",
   WARNING: "warning",
   ERROR: "error",
+  CANCELLED: "cancelled",
 });
 const activityTrayState = {
   items: [],
   collapsed: false,
   hasAutoExpanded: false,
   initialized: false,
+  timingTimerId: null,
+  nextQueueSequence: 1,
+  launchingQueuedActivityId: "",
 };
 const activeToolActivityIds = new Map();
+const activeDwgCompareLaunches = new Set();
 const ACTIVITY_RERUN_TOOL_IDS = new Set([
   "toolCopyProjectLocally",
   "toolPublishDwgs",
   "toolManageLayers",
+  "toolRepairXrefPaths",
   "toolCleanXrefs",
   "toolCreateNarrativeTemplate",
   "toolCreatePlanCheckTemplate",
   "toolCircuitBreaker",
   "toolBackupDrawings",
+]);
+const ACTIVITY_CANCELLABLE_TOOL_IDS = new Set([
+  "toolPublishDwgs",
+  "toolManageLayers",
+  "toolRepairXrefPaths",
+  "toolCleanXrefs",
+  "toolBackupDrawings",
+  "toolWorkflow",
 ]);
 
 // ===================== CHECKLISTS SYSTEM =====================
@@ -2150,32 +2163,18 @@ async function loadChecklists() {
 }
 
 async function saveChecklists({
-  skipCloud = false,
   saveTimestamp = true,
   timestamp = new Date().toISOString(),
   silent = false,
 } = {}) {
   const resolvedTimestamp =
     normalizeIsoTimestamp(timestamp) || new Date().toISOString();
-  const comparableChanged =
-    getCloudComparableFingerprint("checklists") !==
-    lastCloudComparableFingerprints.checklists;
-  if (saveTimestamp && comparableChanged) {
-    touchLocalSyncTimestamp("checklists", resolvedTimestamp);
+  if (saveTimestamp) {
     checklistsDb.lastModified = resolvedTimestamp;
   }
   try {
     const response = await window.pywebview.api.save_checklists(checklistsDb);
     if (response.status !== "success") throw new Error(response.message);
-    syncCloudComparableFingerprint("checklists");
-    if (
-      !skipCloud &&
-      comparableChanged &&
-      cloudSyncState.enabled &&
-      !isCloudSyncApplying()
-    ) {
-      queueCloudStatePush("checklists");
-    }
     return true;
   } catch (e) {
     console.warn("Failed to save checklists:", e);
@@ -2628,6 +2627,8 @@ const WORKROOM_AUTO_SELECT_CAD_TOOL_IDS = new Set([
 ]);
 const WORKROOM_CAD_TOOL_IDS = new Set([
   ...WORKROOM_AUTO_SELECT_CAD_TOOL_IDS,
+  "toolCleanDrawings",
+  "toolRepairXrefPaths",
   "toolCleanXrefs",
 ]);
 const WORKROOM_TEMPLATE_TOOL_IDS = new Set([
@@ -2658,7 +2659,7 @@ const WORKROOM_PHASE_CHECKLIST_MAP = {
   post_permit: null,
 };
 const WORKROOM_PHASE_TOOL_MAP = {
-  pre_design: ["toolCleanXrefs"],
+  pre_design: ["toolRepairXrefPaths", "toolCleanXrefs"],
   design: ["toolLightingSchedule", "toolPanelScheduleManager", "toolCircuitBreaker"],
   preflight: ["toolManageLayers", "toolPublishDwgs"],
   post_permit: ["toolCreateNarrativeTemplate", "toolCreatePlanCheckTemplate"],
@@ -3146,32 +3147,18 @@ async function loadTimesheets() {
 }
 
 async function saveTimesheets({
-  skipCloud = false,
   saveTimestamp = true,
   timestamp = new Date().toISOString(),
   silent = false,
 } = {}) {
   const resolvedTimestamp =
     normalizeIsoTimestamp(timestamp) || new Date().toISOString();
-  const comparableChanged =
-    getCloudComparableFingerprint("timesheets") !==
-    lastCloudComparableFingerprints.timesheets;
-  if (saveTimestamp && comparableChanged) {
-    touchLocalSyncTimestamp("timesheets", resolvedTimestamp);
+  if (saveTimestamp) {
     timesheetDb.lastModified = resolvedTimestamp;
   }
   try {
     const response = await window.pywebview.api.save_timesheets(timesheetDb);
     if (response.status !== "success") throw new Error(response.message);
-    syncCloudComparableFingerprint("timesheets");
-    if (
-      !skipCloud &&
-      comparableChanged &&
-      cloudSyncState.enabled &&
-      !isCloudSyncApplying()
-    ) {
-      queueCloudStatePush("timesheets");
-    }
     return true;
   } catch (e) {
     console.warn("Failed to save timesheets:", e);
@@ -3196,32 +3183,18 @@ async function loadTemplates() {
 }
 
 async function saveTemplates({
-  skipCloud = false,
   saveTimestamp = true,
   timestamp = new Date().toISOString(),
   silent = false,
 } = {}) {
   const resolvedTimestamp =
     normalizeIsoTimestamp(timestamp) || new Date().toISOString();
-  const comparableChanged =
-    getCloudComparableFingerprint("templates") !==
-    lastCloudComparableFingerprints.templates;
-  if (saveTimestamp && comparableChanged) {
-    touchLocalSyncTimestamp("templates", resolvedTimestamp);
+  if (saveTimestamp) {
     templatesDb.lastModified = resolvedTimestamp;
   }
   try {
     const response = await window.pywebview.api.save_templates(templatesDb);
     if (response.status !== "success") throw new Error(response.message);
-    syncCloudComparableFingerprint("templates");
-    if (
-      !skipCloud &&
-      comparableChanged &&
-      cloudSyncState.enabled &&
-      !isCloudSyncApplying()
-    ) {
-      queueCloudStatePush("templates");
-    }
     return true;
   } catch (e) {
     console.warn("Failed to save templates:", e);
@@ -3845,6 +3818,15 @@ function buildWorkroomCadLaunchContext() {
 
 const SHARED_TOOL_LAUNCH_REGISTRY = Object.freeze([
   {
+    id: "toolOpenCadFiles",
+    label: "Open CAD files",
+    menuLabel: "Open CAD files",
+    launchType: "project-manager",
+    category: "general",
+    iconSvg: '<path d="M3 7h7l2 2h9v11H3z"></path><path d="M3 7V4h7l2 3"></path>',
+    isReady: true,
+  },
+  {
     id: "toolCopyProjectLocally",
     label: "Work Locally",
     menuLabel: "Work Locally",
@@ -3872,6 +3854,25 @@ const SHARED_TOOL_LAUNCH_REGISTRY = Object.freeze([
     category: "general",
     iconSvg:
       '<line x1="2" x2="22" y1="12" y2="12"></line><line x1="12" x2="12" y1="2" y2="22"></line><path d="m20 16-4-4 4-4"></path><path d="m4 8 4 4-4 4"></path><path d="m16 4-4 4-4-4"></path><path d="m8 20 4-4 4 4"></path>',
+    isReady: true,
+  },
+  {
+    id: "toolRepairXrefPaths",
+    label: "Repair XREF Paths",
+    menuLabel: "Repair XREF Paths",
+    launchType: "user-selects-files",
+    category: "general",
+    iconSvg:
+      '<path d="M10 13a5 5 0 0 0 7.5.5l2-2a5 5 0 0 0-7-7l-1.1 1.1"></path><path d="M14 11a5 5 0 0 0-7.5-.5l-2 2a5 5 0 0 0 7 7l1.1-1.1"></path><path d="M12 8v8"></path><path d="m9.5 13.5 2.5 2.5 2.5-2.5"></path>',
+    isReady: true,
+  },
+  {
+    id: "toolCleanDrawings",
+    label: "Clean Drawings",
+    menuLabel: "Clean Drawings",
+    launchType: "user-selects-files",
+    category: "general",
+    iconSvg: '<path d="M4 3h12l4 4v14H4z"></path><path d="m8 13 3 3 6-7"></path>',
     isReady: true,
   },
   {
@@ -4006,8 +4007,11 @@ function getReadySharedToolLaunchEntries() {
 
 function getDeliverableToolMenuEntries() {
   const deliverableMenuOrder = [
+    "toolOpenCadFiles",
+    "toolCleanDrawings",
     "toolPublishDwgs",
     "toolManageLayers",
+    "toolRepairXrefPaths",
     "toolCleanXrefs",
     "toolCreateNarrativeTemplate",
     "toolCreatePlanCheckTemplate",
@@ -4096,6 +4100,10 @@ function queuePendingCadLaunchContext(launchContext = null) {
 function launchSharedToolCard(toolId, launchContext = null) {
   const entry = getSharedToolLaunchEntry(toolId);
   if (!entry || entry.isReady !== true) return false;
+  if (entry.id === "toolOpenCadFiles") {
+    void openProjectCadFiles(launchContext);
+    return true;
+  }
   if (entry.id === "toolCopyProjectLocally") {
     void runLocalProjectManager(launchContext);
     return true;
@@ -4110,6 +4118,26 @@ function launchSharedToolCard(toolId, launchContext = null) {
   }
   card.click();
   return true;
+}
+
+let openingProjectCadFiles = false;
+
+async function openProjectCadFiles(launchContext = null) {
+  if (openingProjectCadFiles) return;
+  const context = launchContext || resolveCadLaunchContextForTool();
+  if (!hasLaunchContextProjectPath(context)) {
+    toast("Select a project with a saved folder path first.");
+    return;
+  }
+  openingProjectCadFiles = true;
+  try {
+    const result = await window.pywebview.api.open_project_cad_files(context);
+    toast(result?.message || "Could not open CAD files.");
+  } catch (error) {
+    toast(error?.message || "Could not open CAD files.");
+  } finally {
+    openingProjectCadFiles = false;
+  }
 }
 
 function consumePendingCadLaunchContext() {
@@ -8205,7 +8233,7 @@ function captureDropFileEntries(dt) {
   return entries;
 }
 
-const OUTLOOK_DROP_TYPE_PREFIXES = ["filegroupdescriptor", "renprivate"];
+const OUTLOOK_DROP_TYPE_PREFIXES = ["filegroupdescriptor", "filecontents", "renprivate", "application/x-moz-file-promise"];
 
 function looksLikeOutlookDrop(types) {
   return Array.from(types || [])
@@ -8360,24 +8388,33 @@ async function resolvePageEmailDropRef(event, context = {}) {
   // editor's drop handler returns.
   const captured = captureEmailDropSources(event?.dataTransfer);
   let result = null;
+  let dropError = null;
   try {
     result = await resolveEmailRefFromCapturedDrop(captured, context);
   } catch (e) {
-    return { status: "error", message: e?.message || "Could not attach the dropped email." };
+    dropError = e;
   }
   if (result?.emailRef) {
     console.info(`[page-email] attached via ${result.source}`);
     return { status: "success", emailRef: result.emailRef };
   }
-  if (result?.outlookDrop) {
+  const outlookDrop = looksLikeOutlookDrop(captured?.types);
+  // Some WebView2 versions expose only an empty Files payload. Ask before
+  // using Outlook's selection because that payload cannot identify its source.
+  const unreadableFileDrop = captured && !captured.files.length &&
+    !captured.entries.length && !captured.urlCandidate &&
+    captured.types.some((type) => String(type).toLowerCase() === "files");
+  if (outlookDrop || (unreadableFileDrop &&
+      window.pywebview?.api?.save_active_outlook_selection &&
+      confirm("This drop contains no readable file. Attach the message currently selected in Outlook to these notes?"))) {
     const fromSelection = await saveActiveOutlookSelectionRef(context);
     if (fromSelection) {
       console.info("[page-email] attached via outlook-selection");
       return { status: "success", emailRef: fromSelection };
     }
   }
-  showEmailLinkFallbackGuidance();
-  return { status: "error", message: "" };
+  return { status: "error", message: dropError?.message ||
+    "Could not read the email drop. Type /email in your notes to attach the selected Outlook message, paste a link, or choose a .msg/.eml file." };
 }
 
 async function requestPageEmailRef(context = {}) {
@@ -8587,15 +8624,129 @@ function createActivityId(prefix = "activity") {
 }
 
 function isTerminalActivityStatus(status) {
-  return [ACTIVITY_STATUS.SUCCESS, ACTIVITY_STATUS.WARNING, ACTIVITY_STATUS.ERROR].includes(
-    String(status || "").trim().toLowerCase()
-  );
+  return [
+    ACTIVITY_STATUS.SUCCESS,
+    ACTIVITY_STATUS.WARNING,
+    ACTIVITY_STATUS.ERROR,
+    ACTIVITY_STATUS.CANCELLED,
+  ].includes(String(status || "").trim().toLowerCase());
+}
+
+function isRunningActivityStatus(status) {
+  return String(status || "").trim().toLowerCase() === ACTIVITY_STATUS.RUNNING;
+}
+
+function isQueuedActivityStatus(status) {
+  return String(status || "").trim().toLowerCase() === ACTIVITY_STATUS.QUEUED;
 }
 
 function clampActivityProgress(value, fallback = 0) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return Math.max(0, Math.min(100, Number(fallback) || 0));
   return Math.max(0, Math.min(100, Math.round(numeric)));
+}
+
+function normalizeActivityTimestamp(value, fallback = 0) {
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric > 0) {
+    // Accept seconds as well as the millisecond timestamps used by the client.
+    return numeric < 1e12 ? numeric * 1000 : numeric;
+  }
+  const parsed = Date.parse(String(value || ""));
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : Number(fallback) || 0;
+}
+
+function normalizeDwgComparePairs(value) {
+  const pairs = Array.isArray(value) ? value : value ? [value] : [];
+  const seen = new Set();
+  return pairs.reduce((normalized, pair) => {
+    if (!pair || typeof pair !== "object") return normalized;
+    const newPath = String(pair.newPath || pair.new_path || "").trim();
+    const oldPath = String(pair.oldPath || pair.old_path || "").trim();
+    if (!newPath || !oldPath) return normalized;
+    const key = `${normalizeWindowsPath(newPath).toLowerCase()}|${normalizeWindowsPath(
+      oldPath
+    ).toLowerCase()}`;
+    if (seen.has(key)) return normalized;
+    seen.add(key);
+    const fallbackLabel = getWindowsPathLeaf(newPath).replace(/\.dwg$/i, "");
+    normalized.push({
+      newPath,
+      oldPath,
+      label: String(pair.label || fallbackLabel || "Drawing").trim(),
+    });
+    return normalized;
+  }, []);
+}
+
+function appendDwgComparePair(pairs, pair) {
+  return normalizeDwgComparePairs([...(Array.isArray(pairs) ? pairs : []), pair]);
+}
+
+function formatActivityDateTime(timestamp) {
+  const normalized = normalizeActivityTimestamp(timestamp);
+  if (!normalized) return "Unknown";
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(new Date(normalized));
+}
+
+function formatActivityDuration(startedAt, endedAt = Date.now()) {
+  const start = normalizeActivityTimestamp(startedAt);
+  const end = normalizeActivityTimestamp(endedAt, Date.now());
+  const totalSeconds = Math.max(0, Math.floor((end - start) / 1000));
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const clock = [hours, minutes, seconds]
+    .map((part) => String(part).padStart(2, "0"))
+    .join(":");
+  return days ? `${days}d ${clock}` : clock;
+}
+
+function updateActivityTimingDurations(now = Date.now()) {
+  const { list } = getActivityTrayElements();
+  if (!list) return;
+  list.querySelectorAll("[data-activity-duration-id]").forEach((node) => {
+    const activityId = String(node.dataset.activityDurationId || "").trim();
+    const activity = getActivityById(activityId);
+    if (!activity) return;
+    const isTerminal = isTerminalActivityStatus(activity.status);
+    const isQueued = isQueuedActivityStatus(activity.status);
+    if (isQueued) {
+      node.textContent = "Waiting for earlier activities";
+      return;
+    }
+    const endedAt = isTerminal
+      ? normalizeActivityTimestamp(activity.endedAt, now)
+      : now;
+    node.textContent = `${isTerminal ? "Duration" : "Elapsed"}: ${formatActivityDuration(
+      activity.startedAt,
+      endedAt
+    )}`;
+  });
+}
+
+function syncActivityTimingTimer() {
+  const hasRunningActivity = activityTrayState.items.some((item) =>
+    isRunningActivityStatus(item?.status)
+  );
+  if (hasRunningActivity && activityTrayState.timingTimerId == null) {
+    activityTrayState.timingTimerId = window.setInterval(
+      () => updateActivityTimingDurations(),
+      1000
+    );
+  } else if (!hasRunningActivity && activityTrayState.timingTimerId != null) {
+    window.clearInterval(activityTrayState.timingTimerId);
+    activityTrayState.timingTimerId = null;
+  }
+  updateActivityTimingDurations();
 }
 
 function getActivityTrayElements() {
@@ -8736,6 +8887,100 @@ function canRerunActivity(activity) {
   return isRerunnableToolId(activity.toolId);
 }
 
+function canQueueActivity(activity) {
+  return canRerunActivity(activity) && Boolean(getActivityRerunLaunchContext(activity));
+}
+
+function canCancelActivity(activity) {
+  if (!activity || isTerminalActivityStatus(activity.status)) return false;
+  if (isQueuedActivityStatus(activity.status)) {
+    return activity.id !== activityTrayState.launchingQueuedActivityId;
+  }
+  return (
+    isRunningActivityStatus(activity.status) &&
+    ACTIVITY_CANCELLABLE_TOOL_IDS.has(String(activity.toolId || "").trim()) &&
+    activity.canCancel !== false
+  );
+}
+
+function getQueuedActivities() {
+  return activityTrayState.items
+    .filter((item) => isQueuedActivityStatus(item?.status))
+    .sort(
+      (left, right) =>
+        Number(left?.queueSequence || 0) - Number(right?.queueSequence || 0)
+    );
+}
+
+function scheduleNextQueuedActivity() {
+  window.setTimeout(() => {
+    void launchNextQueuedActivity();
+  }, 0);
+}
+
+async function launchNextQueuedActivity() {
+  if (activityTrayState.launchingQueuedActivityId) return false;
+  if (activityTrayState.items.some((item) => isRunningActivityStatus(item?.status))) {
+    return false;
+  }
+  const nextActivity = getQueuedActivities()[0];
+  if (!nextActivity) return false;
+
+  const toolId = String(nextActivity.toolId || "").trim();
+  activityTrayState.launchingQueuedActivityId = nextActivity.id;
+  updateActivity(nextActivity.id, {
+    status: ACTIVITY_STATUS.QUEUED,
+    message: "Starting queued activity...",
+    progress: 3,
+    cancelRequested: false,
+  });
+
+  const didLaunch = launchSharedToolCard(
+    toolId,
+    getActivityRerunLaunchContext(nextActivity)
+  );
+  if (!didLaunch) {
+    activityTrayState.launchingQueuedActivityId = "";
+    completeActivity(nextActivity.id, {
+      status: ACTIVITY_STATUS.WARNING,
+      message: `${nextActivity.label || "Tool"} is unavailable and was skipped.`,
+    });
+    return false;
+  }
+  return true;
+}
+
+function enqueueActivityRerun(activityId) {
+  const sourceActivity = getActivityById(activityId);
+  if (!canQueueActivity(sourceActivity)) {
+    toast("This activity cannot be queued.");
+    return false;
+  }
+  const queuedId = createActivityId(sourceActivity.toolId || "queued-tool");
+  const queueSequence = activityTrayState.nextQueueSequence++;
+  upsertActivity(
+    {
+      ...sourceActivity,
+      id: queuedId,
+      status: ACTIVITY_STATUS.QUEUED,
+      message: "Queued — waiting for earlier activities.",
+      progress: 0,
+      queueSequence,
+      createdAt: Date.now(),
+      startedAt: 0,
+      endedAt: 0,
+      cancelRequested: false,
+      openFolderPath: "",
+      combinedPdfPath: "",
+      dwgComparePairs: [],
+    },
+    { autoExpandReason: "update" }
+  );
+  toast(`${sourceActivity.label || "Tool"} added to the queue.`);
+  scheduleNextQueuedActivity();
+  return true;
+}
+
 function getActivityById(activityId) {
   return activityTrayState.items.find((item) => item.id === activityId) || null;
 }
@@ -8764,9 +9009,17 @@ function releaseToolActivity(toolId, activityId = "") {
 
 function sortActivityItems(items = []) {
   return [...items].sort((left, right) => {
-    const leftTerminal = isTerminalActivityStatus(left?.status);
-    const rightTerminal = isTerminalActivityStatus(right?.status);
-    if (leftTerminal !== rightTerminal) return leftTerminal ? 1 : -1;
+    const rank = (item) => {
+      if (isRunningActivityStatus(item?.status)) return 0;
+      if (isQueuedActivityStatus(item?.status)) return 1;
+      return 2;
+    };
+    const leftRank = rank(left);
+    const rightRank = rank(right);
+    if (leftRank !== rightRank) return leftRank - rightRank;
+    if (leftRank === 1) {
+      return Number(left?.queueSequence || 0) - Number(right?.queueSequence || 0);
+    }
     return Number(right?.updatedAt || 0) - Number(left?.updatedAt || 0);
   });
 }
@@ -8800,9 +9053,10 @@ function renderActivityTray() {
   if (!tray || !counts || !empty || !list) return;
 
   const items = sortActivityItems(activityTrayState.items);
-  const activeCount = items.filter((item) => !isTerminalActivityStatus(item.status)).length;
-  const completedCount = items.length - activeCount;
-  counts.textContent = `${activeCount} active, ${completedCount} completed`;
+  const activeCount = items.filter((item) => isRunningActivityStatus(item.status)).length;
+  const queuedCount = items.filter((item) => isQueuedActivityStatus(item.status)).length;
+  const completedCount = items.length - activeCount - queuedCount;
+  counts.textContent = `${activeCount} active, ${queuedCount} queued, ${completedCount} completed`;
 
   if (!items.length) {
     tray.hidden = true;
@@ -8811,12 +9065,13 @@ function renderActivityTray() {
     if (clearAll) clearAll.hidden = true;
     toggleActivityTrayCollapsed(false, { force: true });
     activityTrayState.hasAutoExpanded = false;
+    syncActivityTimingTimer();
     return;
   }
 
   tray.hidden = false;
   empty.hidden = true;
-  if (clearAll) clearAll.hidden = false;
+  if (clearAll) clearAll.hidden = completedCount === 0;
   list.replaceChildren();
 
   items.forEach((item) => {
@@ -8828,11 +9083,13 @@ function renderActivityTray() {
         ? `Workflow: ${workflowTitle}`
         : item.label || "Activity";
     const iconText =
-      status === ACTIVITY_STATUS.SUCCESS
+      status === ACTIVITY_STATUS.QUEUED
+        ? "#"
+        : status === ACTIVITY_STATUS.SUCCESS
         ? "✓"
         : status === ACTIVITY_STATUS.WARNING
           ? "!"
-          : status === ACTIVITY_STATUS.ERROR
+          : [ACTIVITY_STATUS.ERROR, ACTIVITY_STATUS.CANCELLED].includes(status)
             ? "×"
             : "•";
 
@@ -8864,17 +9121,56 @@ function renderActivityTray() {
         })
       );
     }
+    const queuedPosition = isQueuedActivityStatus(status)
+      ? getQueuedActivities().findIndex((queued) => queued.id === item.id) + 1
+      : 0;
     header.append(
       titleGroup,
       el("div", {
         className: "activity-card-percent",
-        textContent: `${clampActivityProgress(item.progress, 0)}%`,
+        textContent: queuedPosition
+          ? `Queued #${queuedPosition}`
+          : `${clampActivityProgress(item.progress, 0)}%`,
       })
     );
     const message = el("div", {
       className: "activity-card-message",
       textContent: item.message || "Working...",
     });
+    const isTerminal = isTerminalActivityStatus(status);
+    const isQueued = isQueuedActivityStatus(status);
+    const startedAt = normalizeActivityTimestamp(item.startedAt, item.createdAt);
+    const endedAt = isTerminal
+      ? normalizeActivityTimestamp(item.endedAt, item.updatedAt)
+      : 0;
+    const timing = el("div", { className: "activity-card-timing" }, [
+      el("span", {
+        className: "activity-card-timing-item",
+        textContent: `${isQueued ? "Queued" : "Started"}: ${formatActivityDateTime(startedAt)}`,
+        title: `${isQueued ? "Queued" : "Started"}: ${formatActivityDateTime(startedAt)}`,
+      }),
+    ]);
+    if (isTerminal) {
+      timing.appendChild(
+        el("span", {
+          className: "activity-card-timing-item",
+          textContent: `Ended: ${formatActivityDateTime(endedAt)}`,
+          title: `Ended: ${formatActivityDateTime(endedAt)}`,
+        })
+      );
+    }
+    timing.appendChild(
+      el("span", {
+        className: "activity-card-timing-item activity-card-duration",
+        textContent: isQueued
+          ? "Waiting for earlier activities"
+          : `${isTerminal ? "Duration" : "Elapsed"}: ${formatActivityDuration(
+              startedAt,
+              isTerminal ? endedAt : Date.now()
+            )}`,
+        "data-activity-duration-id": item.id,
+      })
+    );
     const progress = el("div", { className: "activity-card-progress" }, [
       el("div", {
         className: "activity-card-progress-bar",
@@ -8882,7 +9178,39 @@ function renderActivityTray() {
       }),
     ]);
     const actions = el("div", { className: "activity-card-actions" });
-    const isTerminal = isTerminalActivityStatus(status);
+    if (canCancelActivity(item)) {
+      actions.appendChild(
+        el("button", {
+          className: "activity-card-action cancel",
+          type: "button",
+          textContent: item.cancelRequested ? "Cancelling..." : isQueued ? "Remove" : "Cancel",
+          disabled: Boolean(item.cancelRequested),
+          "data-activity-action": "cancel",
+          "data-activity-id": item.id,
+          onclick: (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            void handleActivityTrayCancel(item.id);
+          },
+        })
+      );
+    }
+    if (canQueueActivity(item)) {
+      actions.appendChild(
+        el("button", {
+          className: "activity-card-action queue",
+          type: "button",
+          textContent: "Queue Again",
+          "data-activity-action": "queue",
+          "data-activity-id": item.id,
+          onclick: (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            enqueueActivityRerun(item.id);
+          },
+        })
+      );
+    }
     if (isTerminal && item.combinedPdfPath) {
       actions.appendChild(
         el("button", {
@@ -8928,6 +9256,31 @@ function renderActivityTray() {
           },
         })
       );
+    }
+    const dwgComparePairs = normalizeDwgComparePairs(item.dwgComparePairs);
+    if (isTerminal && dwgComparePairs.length) {
+      dwgComparePairs.forEach((pair, pairIndex) => {
+        const pairLabel = String(pair.label || `Drawing ${pairIndex + 1}`).trim();
+        actions.appendChild(
+          el("button", {
+            className: "activity-card-action compare",
+            type: "button",
+            textContent:
+              dwgComparePairs.length === 1
+                ? "Compare Old vs New"
+                : `Compare ${pairLabel}`,
+            title: `Open AutoCAD modelspace comparison for ${pairLabel}`,
+            "data-activity-action": "dwg-compare",
+            "data-activity-id": item.id,
+            "data-dwg-compare-index": String(pairIndex),
+            onclick: (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              void handleActivityTrayDwgCompare(item.id, pairIndex);
+            },
+          })
+        );
+      });
     }
     if (isTerminal && item.openFolderPath) {
       actions.appendChild(
@@ -8978,7 +9331,7 @@ function renderActivityTray() {
       );
     }
 
-    content.append(header, message, progress);
+    content.append(header, message, timing, progress);
     if (actions.childNodes.length) {
       content.appendChild(actions);
     }
@@ -8987,6 +9340,7 @@ function renderActivityTray() {
   });
 
   toggleActivityTrayCollapsed(activityTrayState.collapsed, { force: true });
+  syncActivityTimingTimer();
 }
 
 async function handleActivityTrayOpenFolder(activityId) {
@@ -9008,6 +9362,43 @@ async function handleActivityTrayOpenFolder(activityId) {
   } catch (error) {
     toast(error?.message || "Unable to open folder.");
     return false;
+  }
+}
+
+async function handleActivityTrayDwgCompare(activityId, pairIndex = 0) {
+  const activity = getActivityById(activityId);
+  const normalizedIndex = Number(pairIndex) || 0;
+  const pair = normalizeDwgComparePairs(activity?.dwgComparePairs)[normalizedIndex];
+  if (!pair) {
+    toast("The old and new XREF drawings are unavailable.");
+    return false;
+  }
+  if (!window.pywebview?.api?.launch_dwg_compare) {
+    toast("AutoCAD drawing comparison is unavailable.");
+    return false;
+  }
+
+  const launchKey = `${activityId}:${normalizedIndex}`;
+  if (activeDwgCompareLaunches.has(launchKey)) {
+    toast("That drawing comparison is already opening.");
+    return false;
+  }
+  activeDwgCompareLaunches.add(launchKey);
+  try {
+    const result = await window.pywebview.api.launch_dwg_compare(
+      pair.newPath,
+      pair.oldPath
+    );
+    if (String(result?.status || "").trim().toLowerCase() !== "success") {
+      throw new Error(result?.message || "Unable to open the AutoCAD comparison.");
+    }
+    toast(result?.message || "Opening the modelspace comparison in AutoCAD.");
+    return true;
+  } catch (error) {
+    toast(error?.message || "Unable to open the AutoCAD comparison.");
+    return false;
+  } finally {
+    activeDwgCompareLaunches.delete(launchKey);
   }
 }
 
@@ -9068,6 +9459,49 @@ async function handleActivityTrayOpenCombinedPdf(activityId) {
   }
 }
 
+async function handleActivityTrayCancel(activityId) {
+  const activity = getActivityById(activityId);
+  if (!canCancelActivity(activity)) {
+    toast("This activity cannot be cancelled.");
+    return false;
+  }
+  if (isQueuedActivityStatus(activity.status)) {
+    completeActivity(activityId, {
+      status: ACTIVITY_STATUS.CANCELLED,
+      message: "Removed from queue.",
+    });
+    return true;
+  }
+  if (!window.pywebview?.api?.cancel_activity) {
+    toast("Cancellation is unavailable.");
+    return false;
+  }
+
+  updateActivity(activityId, {
+    cancelRequested: true,
+    message: "Cancelling activity...",
+  });
+  try {
+    const result = await window.pywebview.api.cancel_activity(activityId);
+    if (String(result?.status || "").trim().toLowerCase() !== "success") {
+      throw new Error(result?.message || "Could not cancel the activity.");
+    }
+    completeActivity(activityId, {
+      status: ACTIVITY_STATUS.CANCELLED,
+      message: "Cancelled by user.",
+      cancelRequested: false,
+    });
+    return true;
+  } catch (error) {
+    updateActivity(activityId, {
+      cancelRequested: false,
+      message: error?.message || "Could not cancel the activity.",
+    });
+    toast(error?.message || "Could not cancel the activity.");
+    return false;
+  }
+}
+
 async function handleActivityTrayRerun(activityId) {
   const activity = getActivityById(activityId);
   if (!canRerunActivity(activity)) {
@@ -9095,13 +9529,20 @@ function handleActivityTrayAccept(activityId) {
 }
 
 function clearAllActivityNotifications() {
-  activityTrayState.items.forEach((item) => {
-    if (item?.toolId) {
-      releaseToolActivity(item.toolId, item.id);
-      setToolCardRunning(item.toolId, false);
-    }
-  });
-  activityTrayState.items = [];
+  activityTrayState.items
+    .filter((item) => isTerminalActivityStatus(item?.status))
+    .forEach((item) => {
+      if (item?.toolId) {
+        const activeId = activeToolActivityIds.get(item.toolId);
+        releaseToolActivity(item.toolId, item.id);
+        if (!activeId || activeId === item.id) {
+          setToolCardRunning(item.toolId, false);
+        }
+      }
+    });
+  activityTrayState.items = activityTrayState.items.filter(
+    (item) => !isTerminalActivityStatus(item?.status)
+  );
   renderActivityTray();
 }
 
@@ -9148,6 +9589,13 @@ function initActivityTray() {
       await handleActivityTrayOpenCombinedPdf(activityId);
       return;
     }
+    if (action === "dwg-compare") {
+      await handleActivityTrayDwgCompare(
+        activityId,
+        Number(button.dataset.dwgCompareIndex || 0)
+      );
+      return;
+    }
     if (action === "rerun") {
       await handleActivityTrayRerun(activityId);
     }
@@ -9175,6 +9623,29 @@ function upsertActivity(nextItem, { autoExpandReason = "update" } = {}) {
   const mergedOpenFolderPath = String(
     incoming.openFolderPath || existing?.openFolderPath || ""
   ).trim();
+  const hasIncomingDwgComparePairs = Object.prototype.hasOwnProperty.call(
+    incoming,
+    "dwgComparePairs"
+  );
+  const mergedDwgComparePairs = normalizeDwgComparePairs(
+    hasIncomingDwgComparePairs ? incoming.dwgComparePairs : existing?.dwgComparePairs
+  );
+  const mergedStatus = String(
+    incoming.status || existing?.status || ACTIVITY_STATUS.RUNNING
+  )
+    .trim()
+    .toLowerCase();
+  const createdAt = normalizeActivityTimestamp(
+    existing?.createdAt || incoming.createdAt,
+    now
+  );
+  const startedAt = normalizeActivityTimestamp(
+    incoming.startedAt || existing?.startedAt,
+    createdAt
+  );
+  const endedAt = isTerminalActivityStatus(mergedStatus)
+    ? normalizeActivityTimestamp(incoming.endedAt || existing?.endedAt, now)
+    : 0;
   const merged = {
     id: incoming.id,
     kind: existing?.kind || incoming.kind || "tool",
@@ -9189,9 +9660,7 @@ function upsertActivity(nextItem, { autoExpandReason = "update" } = {}) {
     message: String(
       incoming.message == null ? existing?.message || "" : incoming.message
     ).trim(),
-    status: String(incoming.status || existing?.status || ACTIVITY_STATUS.RUNNING)
-      .trim()
-      .toLowerCase(),
+    status: mergedStatus,
     progress: clampActivityProgress(
       incoming.progress == null ? existing?.progress ?? 0 : incoming.progress,
       existing?.progress ?? 0
@@ -9203,6 +9672,7 @@ function upsertActivity(nextItem, { autoExpandReason = "update" } = {}) {
     combinedPdfPath: String(
       incoming.combinedPdfPath || existing?.combinedPdfPath || ""
     ).trim(),
+    dwgComparePairs: mergedDwgComparePairs,
     workflowTitle: String(
       incoming.workflowTitle || existing?.workflowTitle || ""
     ).trim(),
@@ -9212,6 +9682,17 @@ function upsertActivity(nextItem, { autoExpandReason = "update" } = {}) {
       incoming.canRerun == null
         ? existing?.canRerun ?? isRerunnableToolId(mergedToolId)
         : Boolean(incoming.canRerun),
+    canCancel:
+      incoming.canCancel == null
+        ? existing?.canCancel ?? ACTIVITY_CANCELLABLE_TOOL_IDS.has(mergedToolId)
+        : Boolean(incoming.canCancel),
+    cancelRequested: Boolean(
+      incoming.cancelRequested ?? existing?.cancelRequested ?? false
+    ),
+    queueSequence: Math.max(
+      Number(incoming.queueSequence ?? existing?.queueSequence ?? 0) || 0,
+      0
+    ),
     panelCount: Math.max(
       Number(incoming.panelCount ?? existing?.panelCount ?? 0) || 0,
       0
@@ -9223,7 +9704,9 @@ function upsertActivity(nextItem, { autoExpandReason = "update" } = {}) {
     canvasPanelReview: Boolean(
       incoming.canvasPanelReview ?? existing?.canvasPanelReview ?? false
     ),
-    createdAt: Number(existing?.createdAt || now),
+    createdAt,
+    startedAt,
+    endedAt,
     updatedAt: now,
   };
 
@@ -9236,11 +9719,14 @@ function upsertActivity(nextItem, { autoExpandReason = "update" } = {}) {
     activityTrayState.items.push(merged);
   }
 
-  if (merged.toolId) {
+  if (merged.toolId && isRunningActivityStatus(merged.status)) {
     bindToolActivity(merged.toolId, merged.id);
-    setToolCardRunning(merged.toolId, !isTerminalActivityStatus(merged.status));
-    if (isTerminalActivityStatus(merged.status)) {
-      releaseToolActivity(merged.toolId, merged.id);
+    setToolCardRunning(merged.toolId, true);
+  } else if (merged.toolId && isTerminalActivityStatus(merged.status)) {
+    const activeId = activeToolActivityIds.get(merged.toolId);
+    releaseToolActivity(merged.toolId, merged.id);
+    if (!activeId || activeId === merged.id) {
+      setToolCardRunning(merged.toolId, false);
     }
   }
 
@@ -9260,12 +9746,29 @@ function beginActivity({
   openFolderPath = "",
   openFolderLabel = "Open Folder",
   combinedPdfPath = "",
+  dwgComparePairs = [],
   rerunDefaultPath = "",
   rerunLaunchContext = null,
   workflowTitle = "",
   canRerun,
+  canCancel,
+  startedAt = 0,
+  endedAt = 0,
 } = {}) {
-  const resolvedId = String(activityId || createActivityId(toolId || kind)).trim();
+  const queuedLaunch = getActivityById(activityTrayState.launchingQueuedActivityId);
+  const reuseQueuedActivity = Boolean(
+    !activityId &&
+      queuedLaunch &&
+      (isQueuedActivityStatus(queuedLaunch.status) ||
+        isRunningActivityStatus(queuedLaunch.status)) &&
+      String(queuedLaunch.toolId || "").trim() === String(toolId || "").trim()
+  );
+  const resolvedId = String(
+    activityId || (reuseQueuedActivity ? queuedLaunch.id : createActivityId(toolId || kind))
+  ).trim();
+  if (reuseQueuedActivity) {
+    activityTrayState.launchingQueuedActivityId = "";
+  }
   return upsertActivity(
     {
       id: resolvedId,
@@ -9279,10 +9782,16 @@ function beginActivity({
       openFolderPath,
       openFolderLabel,
       combinedPdfPath,
+      dwgComparePairs,
       rerunDefaultPath,
       rerunLaunchContext,
       workflowTitle,
       canRerun,
+      canCancel,
+      queueSequence: reuseQueuedActivity ? queuedLaunch.queueSequence : 0,
+      createdAt: reuseQueuedActivity ? queuedLaunch.createdAt : 0,
+      startedAt: startedAt || (reuseQueuedActivity ? queuedLaunch.startedAt : 0),
+      endedAt,
     },
     { autoExpandReason: activityTrayState.items.length ? "update" : "first" }
   )?.id || resolvedId;
@@ -9312,7 +9821,7 @@ function completeActivity(activityId, patch = {}) {
   const existing = getActivityById(activityId);
   if (!existing) return null;
   const nextStatus = String(patch.status || ACTIVITY_STATUS.SUCCESS).trim().toLowerCase();
-  return upsertActivity(
+  const completed = upsertActivity(
     {
       ...existing,
       ...patch,
@@ -9324,6 +9833,8 @@ function completeActivity(activityId, patch = {}) {
       autoExpandReason: nextStatus === ACTIVITY_STATUS.ERROR ? "error" : "update",
     }
   );
+  scheduleNextQueuedActivity();
+  return completed;
 }
 
 function failActivity(activityId, patch = {}) {
@@ -9338,8 +9849,11 @@ function acceptActivity(activityId) {
   const existing = getActivityById(activityId);
   if (!existing) return;
   if (existing.toolId) {
+    const activeId = activeToolActivityIds.get(existing.toolId);
     releaseToolActivity(existing.toolId, activityId);
-    setToolCardRunning(existing.toolId, false);
+    if (!activeId || activeId === activityId) {
+      setToolCardRunning(existing.toolId, false);
+    }
   }
   activityTrayState.items = activityTrayState.items.filter((item) => item.id !== activityId);
   renderActivityTray();
@@ -9362,9 +9876,14 @@ function getActivityIdForTool(toolId, { create = false, label = "" } = {}) {
 function normalizeActivityStatusFromPayload(payload = {}, message = "", fallback = ACTIVITY_STATUS.RUNNING) {
   const rawStatus = String(payload?.status || "").trim().toLowerCase();
   if (
-    [ACTIVITY_STATUS.RUNNING, ACTIVITY_STATUS.SUCCESS, ACTIVITY_STATUS.WARNING, ACTIVITY_STATUS.ERROR].includes(
-      rawStatus
-    )
+    [
+      ACTIVITY_STATUS.QUEUED,
+      ACTIVITY_STATUS.RUNNING,
+      ACTIVITY_STATUS.SUCCESS,
+      ACTIVITY_STATUS.WARNING,
+      ACTIVITY_STATUS.ERROR,
+      ACTIVITY_STATUS.CANCELLED,
+    ].includes(rawStatus)
   ) {
     return rawStatus;
   }
@@ -9393,11 +9912,31 @@ function deriveToolActivityProgress(toolId, message, currentProgress = 5) {
   const normalizedToolId = String(toolId || "").trim();
   const text = String(message || "").trim();
   if (!text) return clampActivityProgress(currentProgress, 5);
+  if (normalizedToolId === "toolCleanDrawings") {
+    let progress = currentProgress;
+    if (/^Finding electrical/.test(text)) progress = 4;
+    else if (/^Finding published/.test(text)) progress = 8;
+    else if (/^Reading PDF/.test(text)) progress = 12;
+    else if (/^Inspecting paper-space/.test(text)) progress = 16;
+    else if (/^Inspecting drawings and required/.test(text)) progress = 25;
+    else if (/^Copying/.test(text)) progress = 30;
+    else if (/^Redirecting/.test(text)) progress = 35;
+    else if (/^Cleaning the titleblock/.test(text)) progress = 40;
+    else if (/^Validating the saved titleblock/.test(text)) progress = 45;
+    else if (/^Checking source versions/.test(text)) progress = 95;
+    const drawing = text.match(/^(Cleaning|Validating) drawing (\d+) of (\d+):/);
+    if (drawing) {
+      const fraction = (Number(drawing[2]) - (drawing[1] === "Cleaning" ? 1 : 0.25)) / Math.max(Number(drawing[3]), 1);
+      progress = 45 + 45 * fraction;
+    }
+    // Worker heartbeat messages retain the stage's progress; never imply completion early.
+    return clampActivityProgress(Math.max(Number(currentProgress) || 0, Number(progress) || 0), 2);
+  }
   if (text === "DONE" || text.startsWith("WARN:") || text.startsWith("ERROR:")) {
     return 100;
   }
 
-  const fileMatch = text.match(/(?:Plotting|Processing)\s+(\d+)\s+of\s+(\d+)\s*:/i);
+  const fileMatch = text.match(/(?:Plotting|Processing|Updating)\s+(\d+)\s+of\s+(\d+)\s*:/i);
   if (fileMatch) {
     const completed = Number(fileMatch[1]);
     const total = Math.max(Number(fileMatch[2]), 1);
@@ -9415,10 +9954,14 @@ function deriveToolActivityProgress(toolId, message, currentProgress = 5) {
   }
 
   if (
-    ["toolManageLayers", "toolCleanXrefs"].includes(normalizedToolId)
+    ["toolManageLayers", "toolRepairXrefPaths", "toolCleanXrefs"].includes(
+      normalizedToolId
+    )
   ) {
-    if (/Waiting for layer selection|Waiting for user input/i.test(text)) return 15;
-    if (/Reading extracted data|Using \d+ DWG|ZIP source selected|Found \d+ DWG/i.test(text)) {
+    if (/Waiting for layer selection|Waiting for XREF path selections|Waiting for user input/i.test(text)) {
+      return 15;
+    }
+    if (/Reading extracted data|Scanning \d+ of \d+|Using \d+ (?:selected )?DWG|ZIP source selected|Found \d+ DWG/i.test(text)) {
       return 20;
     }
     if (/Successfully processed|Processing \d+ file\(s\)/i.test(text)) return 92;
@@ -9459,6 +10002,9 @@ function updateActivityStatusFromPayload(payload = {}) {
   let combinedPdfPath = String(
     payload?.combinedPdfPath || existing?.combinedPdfPath || ""
   ).trim();
+  let dwgComparePairs = normalizeDwgComparePairs(
+    payload?.dwgComparePairs || existing?.dwgComparePairs || []
+  );
   let rerunDefaultPath = String(
     payload?.rerunDefaultPath || existing?.rerunDefaultPath || ""
   ).trim();
@@ -9487,6 +10033,14 @@ function updateActivityStatusFromPayload(payload = {}) {
     nextMessage = existing?.message || "Working...";
   } else if (rawMessage.startsWith("INPUT_FOLDER:")) {
     rerunDefaultPath = rawMessage.substring("INPUT_FOLDER:".length).trim();
+    nextMessage = existing?.message || "Working...";
+  } else if (rawMessage.startsWith("DWG_COMPARE_PAIR:")) {
+    const pairJson = rawMessage.substring("DWG_COMPARE_PAIR:".length).trim();
+    try {
+      dwgComparePairs = appendDwgComparePair(dwgComparePairs, JSON.parse(pairJson));
+    } catch (error) {
+      console.warn("Ignoring invalid DWG compare activity metadata:", error);
+    }
     nextMessage = existing?.message || "Working...";
   } else if (rawMessage.startsWith("WARN:")) {
     nextMessage = rawMessage.substring(5).trim() || "Completed with warnings.";
@@ -9528,11 +10082,14 @@ function updateActivityStatusFromPayload(payload = {}) {
       openFolderPath,
       openFolderLabel: payload?.openFolderLabel || "Open Folder",
       combinedPdfPath,
+      dwgComparePairs,
       rerunDefaultPath,
       rerunLaunchContext,
       workflowTitle,
       canRerun: payload?.canRerun,
       kind: payload?.kind || (toolId === "toolWorkflow" ? "workflow" : "tool"),
+      startedAt: payload?.startedAt,
+      endedAt: payload?.endedAt,
     });
   }
 
@@ -9549,19 +10106,26 @@ function updateActivityStatusFromPayload(payload = {}) {
       payload?.openFolderLabel || existing?.openFolderLabel || "Open Folder"
     ).trim(),
     combinedPdfPath,
+    dwgComparePairs,
     rerunDefaultPath,
     rerunLaunchContext,
     workflowTitle,
     canRerun: payload?.canRerun,
     panelCount: payload?.panelCount,
     completedCount: payload?.completedCount,
+    startedAt: payload?.startedAt,
+    endedAt: payload?.endedAt,
   };
 
   if (status === ACTIVITY_STATUS.ERROR) {
     failActivity(activityId, commonPatch);
     return activityId;
   }
-  if (status === ACTIVITY_STATUS.SUCCESS || status === ACTIVITY_STATUS.WARNING) {
+  if (
+    status === ACTIVITY_STATUS.SUCCESS ||
+    status === ACTIVITY_STATUS.WARNING ||
+    status === ACTIVITY_STATUS.CANCELLED
+  ) {
     completeActivity(activityId, {
       ...commonPatch,
       status,
@@ -9841,33 +10405,14 @@ function normalizeWorkflowCadDefaults(value = {}) {
     cleanXrefsSearchZipArchives: source.cleanXrefsSearchZipArchives !== false,
   };
 }
-const DEFAULT_CLOUD_SYNC_SETTINGS = {
-  enabled: false,
-  firebaseUid: "",
-  lastSyncedAt: "",
-  migrationCompleted: false,
-};
-const DEFAULT_CLOUD_SYNC_STATE = {
-  available: false,
-  configured: false,
-  enabled: false,
-  busy: false,
-  status: "local-only",
-  message: "Local-only",
-  error: "",
-  lastSyncedAt: "",
-  firebaseUid: "",
-  sdkLoaded: false,
-  signedIn: false,
-};
-
 const DEFAULT_PROJECT_CARD_COLUMNS = [
   { key: "pinned", label: "Pinned", hidden: false },
-  { key: "none", label: "None", hidden: false },
+  { key: "In progress", label: "In progress", hidden: false },
   { key: "Waiting", label: "Waiting", hidden: false },
   { key: "On hold", label: "On hold", hidden: false },
   { key: "Pending Review", label: "Pending Review", hidden: false },
   { key: "Complete", label: "Complete", hidden: false },
+  { key: "Completed (by others)", label: "Completed (by others)", hidden: false },
   { key: "Delivered", label: "Delivered", hidden: false },
   { key: "nodate", label: "No date", hidden: false },
 ];
@@ -9899,7 +10444,6 @@ let userSettings = {
   workroomAutoSelectCadFiles: true,
   enableUnderConstructionTools: false,
   googleAuth: null,
-  cloudSync: { ...DEFAULT_CLOUD_SYNC_SETTINGS },
 };
 const DEFAULT_GOOGLE_AUTH_STATE = {
   signedIn: false,
@@ -10084,37 +10628,7 @@ const DEFAULT_OUTLOOK_SCAN_STATE = {
 let googleAuthState = { ...DEFAULT_GOOGLE_AUTH_STATE };
 let googleAuthBusy = false;
 let outlookScanCapabilityState = { ...DEFAULT_OUTLOOK_SCAN_CAPABILITY };
-let emailIntakeBusy = false;
-let emailIntakeActivityId = "";
 let outlookScanState = { ...DEFAULT_OUTLOOK_SCAN_STATE };
-let cloudSyncState = { ...DEFAULT_CLOUD_SYNC_STATE };
-let cloudSyncConfig = null;
-let firebaseLoadPromise = null;
-let firebaseAppInstance = null;
-let firebaseAuthInstance = null;
-let firebaseFirestoreInstance = null;
-let cloudSyncInitPromise = null;
-let cloudSyncUnsubscribers = [];
-let cloudSyncPushTimers = {};
-let cloudSyncTimesheetsPushTimer = null;
-let cloudSyncApplyDepth = 0;
-let cloudSyncRemoteTimesheetMeta = { updatedAt: "", knownWeeks: [] };
-let localSyncTimestamps = {
-  settings: "",
-  tasks: "",
-  notes: "",
-  templates: "",
-  checklists: "",
-  timesheets: "",
-};
-let lastCloudComparableFingerprints = {
-  settings: "",
-  tasks: "",
-  notes: "",
-  templates: "",
-  checklists: "",
-  timesheets: "",
-};
 let deliverablesFilter = "all";
 let separateDeliverableCompletionGroups = true;
 let groupDeliverablesByProject = false;
@@ -10182,11 +10696,12 @@ function normalizeProjectCardColumns(raw) {
 
   for (const entry of list) {
     if (!entry || typeof entry !== "object") continue;
-    const key = String(entry.key || "").trim();
+    const oldKey = String(entry.key || "").trim();
+    const key = oldKey === "none" ? "In progress" : oldKey;
     if (!key || !defaultKeys.has(key) || seen.has(key)) continue;
     normalized.push({
       key,
-      label: getProjectCardColumnLabel({ key, label: entry.label }),
+      label: getProjectCardColumnLabel({ key, label: oldKey === "none" ? "In progress" : entry.label }),
       hidden: entry.hidden === true,
     });
     seen.add(key);
@@ -10201,8 +10716,8 @@ function syncProjectViewPreferencesFromSettings() {
   resetProjectsListPagination();
   separateDeliverableCompletionGroups =
     userSettings.separateDeliverableCompletionGroups !== false;
-  groupDeliverablesByProject =
-    userSettings.groupDeliverablesByProject === true;
+  groupDeliverablesByProject = false;
+  userSettings.groupDeliverablesByProject = false;
   projectsViewMode = normalizeProjectsViewMode(userSettings.projectsViewMode);
   projectsWideLayout = userSettings.projectsWideLayout !== false;
   minimizeEmptyProjectColumns =
@@ -10301,70 +10816,11 @@ function deepCloneJson(value, fallback = null) {
   }
 }
 
-function normalizeCloudSyncSettings(raw = {}) {
-  return {
-    ...DEFAULT_CLOUD_SYNC_SETTINGS,
-    ...(raw && typeof raw === "object" ? raw : {}),
-    enabled: raw?.enabled === true,
-    firebaseUid: String(raw?.firebaseUid || "").trim(),
-    lastSyncedAt: String(raw?.lastSyncedAt || "").trim(),
-    migrationCompleted: raw?.migrationCompleted === true,
-  };
-}
-
-function ensureCloudSyncSettingsObject() {
-  userSettings.cloudSync = normalizeCloudSyncSettings(userSettings.cloudSync);
-  return userSettings.cloudSync;
-}
-
 function normalizeIsoTimestamp(value) {
   const raw = String(value || "").trim();
   if (!raw) return "";
   const parsed = Date.parse(raw);
   return Number.isFinite(parsed) ? new Date(parsed).toISOString() : "";
-}
-
-function isIsoAfter(left, right) {
-  const leftMs = Date.parse(normalizeIsoTimestamp(left) || "");
-  const rightMs = Date.parse(normalizeIsoTimestamp(right) || "");
-  if (!Number.isFinite(leftMs)) return false;
-  if (!Number.isFinite(rightMs)) return true;
-  return leftMs > rightMs;
-}
-
-function getLatestIsoTimestamp(values = []) {
-  return values.reduce((latest, value) => {
-    if (isIsoAfter(value, latest)) return normalizeIsoTimestamp(value);
-    return latest;
-  }, "");
-}
-
-function touchLocalSyncTimestamp(domain, timestamp = new Date().toISOString()) {
-  const normalized = normalizeIsoTimestamp(timestamp) || new Date().toISOString();
-  localSyncTimestamps[domain] = normalized;
-  return normalized;
-}
-
-function formatSyncTimestamp(value) {
-  const normalized = normalizeIsoTimestamp(value);
-  if (!normalized) return "";
-  try {
-    return new Date(normalized).toLocaleString();
-  } catch (e) {
-    return normalized;
-  }
-}
-
-function beginCloudSyncApply() {
-  cloudSyncApplyDepth += 1;
-}
-
-function endCloudSyncApply() {
-  cloudSyncApplyDepth = Math.max(0, cloudSyncApplyDepth - 1);
-}
-
-function isCloudSyncApplying() {
-  return cloudSyncApplyDepth > 0;
 }
 
 function isLikelyLocalPath(value) {
@@ -10700,7 +11156,6 @@ function renderGoogleAuthUi() {
   }
   updateHeaderAccountPopoverVisibility();
   renderHeaderDisciplineSwitcher();
-  renderCloudSyncUi();
 }
 
 async function loadGoogleAuthState({ silent = false } = {}) {
@@ -10769,28 +11224,7 @@ async function handleGoogleSignIn() {
       }
       googleAuthBusy = false;
       renderGoogleAuthUi();
-      showAppLoader();
-      try {
-        await bootstrapCloudSync({
-          session: response.syncSession || null,
-          silent: false,
-        });
-      } finally {
-        hideAppLoader();
-      }
-      if (cloudSyncState.enabled) {
-        toast(`Signed in as ${getGoogleAuthDisplayName()}. Cloud sync is active.`);
-      } else if (cloudSyncState.error) {
-        toast(
-          `Signed in as ${getGoogleAuthDisplayName()}, but cloud sync failed: ${cloudSyncState.error}`
-        );
-      } else if (!cloudSyncState.configured) {
-        toast(
-          `Signed in as ${getGoogleAuthDisplayName()}. Firebase sync is not configured, so data stays local.`
-        );
-      } else {
-        toast(`Signed in as ${getGoogleAuthDisplayName()}.`);
-      }
+      toast(`Signed in as ${getGoogleAuthDisplayName()}.`);
       return;
     }
     if (response?.status === "cancelled") {
@@ -10818,7 +11252,6 @@ async function handleGoogleSignOut() {
       throw new Error(response?.message || "Google sign-out failed.");
     }
     closeDlg("googleAccountDlg");
-    await signOutCloud({ preserveMetadata: true });
     await loadUserSettings();
     googleAuthState = normalizeGoogleAuthState(response.auth);
     renderGoogleAuthUi();
@@ -10830,10 +11263,6 @@ async function handleGoogleSignOut() {
     googleAuthBusy = false;
     renderGoogleAuthUi();
   }
-}
-
-function normalizeEmailIntakeMode(value = "") {
-  return "paste";
 }
 
 function normalizeOutlookScanCapability(raw = {}) {
@@ -10999,369 +11428,7 @@ window.updateOutlookScanProgress = function (payload = {}) {
 };
 
 function renderOutlookScanUi() {
-  const toolbarBtn = document.getElementById("outlookScanBtn");
-  const pasteModeInput = null;
-  const scanModeInput = null;
-  const pastePanel = document.getElementById("emailIntakePastePanel");
-  const scanPanel = null;
-  const capabilityStatusEl = null;
-  const capabilityDetailsEl = null;
-  const emailArea = document.getElementById("emailArea");
-  const processBtn = document.getElementById("btnProcessEmail");
-  const scanDateInput = null;
-  const progressEl = null;
-  const runBtn = null;
-  const summaryEl = null;
-  const metaEl = null;
-  const reportEl = null;
-  const reportSummaryEl = null;
-  const reportLogEl = null;
-  const suggestionsEl = null;
-  const skippedEl = null;
-  const emptyEl = null;
-
-  const mode = "paste";
-  const capability = { loading: false };
-  const desktopAvailable = false;
-  const desktopReason = "";
-  const scanBusy = false;
-  const busy = emailIntakeBusy;
-  const visibleSuggestions = [];
-  const skipped = [];
-  const lastResult = null;
-  const progress = createEmptyOutlookScanProgress();
-  const reportModel = {};
-  const selectedDayLabel = "";
-  const showReport = false;
-
-  if (toolbarBtn) {
-    toolbarBtn.disabled = false;
-    toolbarBtn.title = scanBusy
-      ? "Outlook day scan is running"
-      : emailIntakeBusy
-        ? "AI email intake is running"
-        : capability.loading
-          ? "Checking Desktop Outlook availability"
-          : "Email intake";
-  }
-  if (pasteModeInput) {
-    pasteModeInput.checked = mode === "paste";
-    pasteModeInput.disabled = emailIntakeBusy || scanBusy;
-  }
-  if (scanModeInput) {
-    scanModeInput.checked = mode === "scan";
-    scanModeInput.disabled = emailIntakeBusy || scanBusy;
-  }
-  if (pastePanel) {
-    pastePanel.hidden = mode !== "paste";
-  }
-  if (scanPanel) {
-    scanPanel.hidden = mode !== "scan";
-  }
-  if (capabilityStatusEl) {
-    capabilityStatusEl.textContent = capability.loading
-      ? "Checking Desktop Outlook..."
-      : desktopAvailable
-        ? "Desktop Outlook ready"
-        : "Desktop Outlook unavailable";
-  }
-  if (capabilityDetailsEl) {
-    capabilityDetailsEl.textContent = capability.loading
-      ? "Checking whether Desktop Outlook is available on this machine."
-      : desktopAvailable
-        ? "Scan a selected day using the installed Outlook desktop app on this machine."
-        : desktopReason || "Desktop Outlook is unavailable on this machine.";
-  }
-  if (emailArea) {
-    emailArea.disabled = emailIntakeBusy;
-  }
-  if (processBtn) {
-    processBtn.disabled = emailIntakeBusy;
-    processBtn.textContent = "Process with AI";
-  }
-  if (scanDateInput) {
-    scanDateInput.value = normalizeOutlookScanDateInput(outlookScanState.scanDate);
-    scanDateInput.max = getTodayLocalDateInputValue();
-    scanDateInput.disabled = busy;
-  }
-  if (runBtn) {
-    runBtn.disabled = busy || !desktopAvailable;
-    runBtn.textContent = scanBusy
-      ? "Scanning..."
-      : capability.loading
-        ? "Checking..."
-        : "Scan day";
-  }
-  if (progressEl) {
-    progressEl.classList.toggle("is-active", scanBusy || progress.active);
-    progressEl.classList.toggle(
-      "is-error",
-      !scanBusy && String(lastResult?.status || "").trim().toLowerCase() === "error"
-    );
-  }
-  if (summaryEl) {
-    if (scanBusy || progress.active) {
-      summaryEl.textContent = getOutlookScanProgressSummary(progress);
-    } else if (
-      String(lastResult?.status || "").trim().toLowerCase() === "error"
-    ) {
-      summaryEl.textContent = reportModel.errorMessage || "Outlook scan failed.";
-    } else if (!lastResult) {
-      summaryEl.textContent = "No Outlook day scan has been run yet.";
-    } else {
-      summaryEl.textContent =
-        `${visibleSuggestions.length} suggestion` +
-        `${visibleSuggestions.length === 1 ? "" : "s"}, ` +
-        `${skipped.length} skipped item${skipped.length === 1 ? "" : "s"}`;
-    }
-  }
-  if (metaEl) {
-    if (scanBusy || progress.active) {
-      const progressParts = buildOutlookScanProgressParts(progress);
-      metaEl.textContent =
-        progressParts.join(" · ") ||
-        "This can take a bit if there are many emails on the selected day.";
-    } else if (
-      String(lastResult?.status || "").trim().toLowerCase() === "error"
-    ) {
-      const parts = [];
-      if (reportModel.source) {
-        parts.push(`Source: ${getOutlookScanSourceLabel(reportModel.source)}`);
-      }
-      parts.push(`Day: ${selectedDayLabel}`);
-      if (reportModel.promptTruncated) {
-        parts.push("Prompt was trimmed to keep the scan bounded.");
-      }
-      if (reportModel.errorMessage) {
-        parts.push(reportModel.errorMessage);
-      }
-      metaEl.textContent = parts.join(" · ");
-    } else if (!lastResult) {
-      metaEl.textContent = desktopAvailable
-        ? "Choose a day, then run a scan."
-        : capability.loading
-          ? "Checking whether Desktop Outlook is available."
-          : desktopReason || "Desktop Outlook is unavailable on this machine.";
-    } else {
-      const deliverableCount =
-        reportModel.deliverablesInPeriod ?? lastResult.deliverablesIncludedCount ?? 0;
-      const parts = [
-        `Scanned ${Number(lastResult.scannedCount || 0)} email${Number(lastResult.scannedCount || 0) === 1 ? "" : "s"}`,
-        `Included ${Number(lastResult.emailsIncludedCount || 0)} email${Number(lastResult.emailsIncludedCount || 0) === 1 ? "" : "s"} and ${Number(deliverableCount || 0)} current deliverable${Number(deliverableCount || 0) === 1 ? "" : "s"} in one AI review`,
-        `Day: ${selectedDayLabel}`,
-      ];
-      if (lastResult?.source) {
-        parts.push(`Source: ${getOutlookScanSourceLabel(lastResult.source)}`);
-      }
-      if (lastResult.promptTruncated) {
-        parts.push("Prompt was trimmed to keep the scan bounded.");
-      } else if (lastResult.truncated) {
-        parts.push("Results were truncated to keep the scan bounded.");
-      }
-      metaEl.textContent = parts.join(" · ");
-    }
-  }
-  if (reportEl) {
-    reportEl.hidden = !showReport;
-    if (!showReport) {
-      reportEl.open = false;
-    } else if (reportEl.open !== !!outlookScanState.reportOpen) {
-      reportEl.open = !!outlookScanState.reportOpen;
-    }
-  }
-  if (reportSummaryEl) {
-    reportSummaryEl.innerHTML = "";
-    if (showReport) {
-      const rows = [];
-      if (reportModel.source) {
-        rows.push(["Source", getOutlookScanSourceLabel(reportModel.source)]);
-      }
-      rows.push(["Day", selectedDayLabel]);
-      if (reportModel.totalEmails !== null) {
-        rows.push(["Emails found", `${reportModel.totalEmails}`]);
-      }
-      if (reportModel.processedEmails !== null) {
-        rows.push(["Emails processed", `${reportModel.processedEmails}`]);
-      }
-      if (reportModel.includedEmails !== null) {
-        rows.push(["Emails in AI review", `${reportModel.includedEmails}`]);
-      }
-      if (reportModel.skippedEmails !== null) {
-        rows.push(["Skipped emails", `${reportModel.skippedEmails}`]);
-      }
-      if (reportModel.deliverablesInPeriod !== null) {
-        rows.push([
-          "Deliverables on day",
-          `${reportModel.deliverablesInPeriod}`,
-        ]);
-      }
-      if (reportModel.relevantEmails !== null) {
-        rows.push(["Relevant emails", `${reportModel.relevantEmails}`]);
-      }
-      if (reportModel.threadsDetected !== null) {
-        rows.push(["Threads detected", `${reportModel.threadsDetected}`]);
-      }
-      if (reportModel.dedupedEmailCount !== null) {
-        rows.push(["Emails shortened", `${reportModel.dedupedEmailCount}`]);
-      }
-      if (reportModel.dedupeSkippedEmailCount !== null) {
-        rows.push([
-          "Duplicate emails skipped",
-          `${reportModel.dedupeSkippedEmailCount}`,
-        ]);
-      }
-      rows.push(["Prompt trimmed", reportModel.promptTruncated ? "Yes" : "No"]);
-      rows.push(["Suggestions", `${reportModel.suggestionCount}`]);
-      if (reportModel.errorMessage) {
-        rows.push(["Error", reportModel.errorMessage]);
-      }
-      rows.forEach(([label, value]) => {
-        reportSummaryEl.appendChild(
-          el("div", { className: "outlook-scan-report-row" }, [
-            el("div", {
-              className: "outlook-scan-report-label tiny muted",
-              textContent: label,
-            }),
-            el("div", {
-              className: "outlook-scan-report-value",
-              textContent: value,
-            }),
-          ])
-        );
-      });
-    }
-  }
-  if (reportLogEl) {
-    reportLogEl.innerHTML = "";
-    if (showReport) {
-      if (reportModel.log.length) {
-        reportModel.log.forEach((entry) => {
-          const entryParts = buildOutlookScanProgressParts(entry);
-          reportLogEl.appendChild(
-            el("div", { className: "outlook-scan-log-item" }, [
-              el("div", { className: "outlook-scan-log-head" }, [
-                el("div", {
-                  className: "outlook-scan-log-stage",
-                  textContent: formatOutlookScanStageLabel(entry.stage),
-                }),
-                el("div", {
-                  className: "tiny muted",
-                  textContent: formatOutlookScanLogTime(entry.receivedAt),
-                }),
-              ]),
-              el("div", {
-                className: "outlook-scan-log-message",
-                textContent:
-                  String(entry.message || "").trim() ||
-                  formatOutlookScanStageLabel(entry.stage),
-              }),
-              entryParts.length
-                ? el("div", {
-                    className: "tiny muted",
-                    textContent: entryParts.join(" · "),
-                  })
-                : null,
-            ].filter(Boolean))
-          );
-        });
-      } else {
-        reportLogEl.appendChild(
-          el("div", {
-            className: "tiny muted",
-            textContent: "No scan events were recorded for this run.",
-          })
-        );
-      }
-    }
-  }
-
-  if (suggestionsEl) {
-    suggestionsEl.innerHTML = "";
-    visibleSuggestions.forEach((suggestion) => {
-      const projectLabel =
-        suggestion.projectName ||
-        suggestion.projectId ||
-        `Project ${suggestion.projectIndex + 1}`;
-      const metaParts = [];
-      if (suggestion.due) {
-        metaParts.push(`Due ${humanDate(suggestion.due) || suggestion.due}`);
-      }
-      metaParts.push(
-        `${suggestion.relatedMessages.length} related email${suggestion.relatedMessages.length === 1 ? "" : "s"}`
-      );
-      const card = el("div", { className: "outlook-scan-card" }, [
-        el("div", { className: "outlook-scan-card-head" }, [
-          el("div", {
-            className: "outlook-scan-card-project",
-            textContent: projectLabel,
-          }),
-          el("div", {
-            className: "outlook-scan-card-deliverable",
-            textContent: suggestion.deliverableName || "Deliverable",
-          }),
-        ]),
-        el("div", {
-          className: "outlook-scan-card-meta tiny muted",
-          textContent: metaParts.join(" · "),
-        }),
-        el("div", {
-          className: "outlook-scan-card-notes",
-          textContent: suggestion.notes || "No additional notes.",
-        }),
-        el(
-          "div",
-          { className: "outlook-scan-related-list" },
-          suggestion.relatedMessages.slice(0, 3).map((message) =>
-            el("button", {
-              className: "btn ghost tiny",
-              type: "button",
-              textContent: message.subject || "Open email",
-              onclick: () => openOutlookScanMessage(message),
-            })
-          )
-        ),
-        el("div", { className: "outlook-scan-card-actions" }, [
-          el("button", {
-            className: "btn tiny",
-            type: "button",
-            textContent: "Dismiss",
-            onclick: () => dismissOutlookScanSuggestion(suggestion.key),
-          }),
-          el("button", {
-            className: "btn-primary tiny",
-            type: "button",
-            textContent: "Add deliverable",
-            onclick: () => acceptOutlookScanSuggestion(suggestion.key),
-          }),
-        ]),
-      ]);
-      suggestionsEl.appendChild(card);
-    });
-  }
-
-  if (skippedEl) {
-    skippedEl.innerHTML = "";
-    skipped.slice(0, 20).forEach((item) => {
-      const subject = item?.message?.subject || "Untitled email";
-      skippedEl.appendChild(
-        el("div", { className: "outlook-scan-skipped-item" }, [
-          el("div", {
-            className: "outlook-scan-skipped-subject",
-            textContent: subject,
-          }),
-          el("div", {
-            className: "tiny muted",
-            textContent: item.reason || "Skipped",
-          }),
-        ])
-      );
-    });
-  }
-
-  if (emptyEl) {
-    emptyEl.hidden =
-      scanBusy || showReport || visibleSuggestions.length > 0 || skipped.length > 0;
-  }
+  // The legacy scan and email intake interfaces have been removed.
 }
 
 async function loadOutlookScanCapability({ silent = false } = {}) {
@@ -11407,174 +11474,6 @@ async function loadOutlookScanCapability({ silent = false } = {}) {
   }
   renderOutlookScanUi();
   return outlookScanCapabilityState;
-}
-
-
-
-function setEmailIntakeMode(mode = "paste") {
-  outlookScanState.mode = normalizeEmailIntakeMode(mode);
-  renderOutlookScanUi();
-}
-
-async function openOutlookScanDialog(mode = "paste") {
-  setEmailIntakeMode("paste");
-  const dialog = document.getElementById("outlookScanDlg");
-  if (dialog) {
-    renderOutlookScanUi();
-    showDialog(dialog);
-  }
-}
-
-function beginEmailIntakeActivity() {
-  initActivityTray();
-  emailIntakeActivityId = createActivityId("email_intake_ai");
-  beginActivity({
-    activityId: emailIntakeActivityId,
-    kind: "email-intake",
-    label: "Email Intake",
-    message: "Processing with AI...",
-    progress: 15,
-  });
-  return emailIntakeActivityId;
-}
-
-function updateEmailIntakeActivity(message, progress = 50) {
-  if (!emailIntakeActivityId) return;
-  updateActivity(emailIntakeActivityId, {
-    message,
-    progress,
-    status: ACTIVITY_STATUS.RUNNING,
-  });
-}
-
-function completeEmailIntakeActivity(message = "Email processed with AI.") {
-  if (!emailIntakeActivityId) return;
-  completeActivity(emailIntakeActivityId, { message });
-  emailIntakeActivityId = "";
-}
-
-function failEmailIntakeActivity(message = "AI email processing failed.") {
-  if (!emailIntakeActivityId) return;
-  failActivity(emailIntakeActivityId, { message });
-  emailIntakeActivityId = "";
-}
-
-function buildEmailIntakeProjectContext() {
-  const candidates = db
-    .map((rawProject) => normalizeProject(rawProject))
-    .filter(Boolean)
-    .map((project) => {
-      const path = String(project.path || "").trim();
-      return {
-        id: String(project.id || "").trim(),
-        name: String(project.name || "").trim(),
-        nick: String(project.nick || "").trim(),
-        path,
-        pathLeaf: getWindowsPathLeaf(path),
-      };
-    })
-    .filter((project) => Object.values(project).some((value) => !!String(value || "").trim()))
-    .sort((left, right) =>
-      [
-        left.id,
-        left.name,
-        left.nick,
-        left.path,
-        left.pathLeaf,
-      ].join("|").localeCompare(
-        [
-          right.id,
-          right.name,
-          right.nick,
-          right.path,
-          right.pathLeaf,
-        ].join("|")
-      )
-    );
-
-  const context = [];
-  let serializedChars = 2;
-  for (const candidate of candidates) {
-    if (context.length >= EMAIL_INTAKE_PROJECT_CONTEXT_MAX_PROJECTS) break;
-    const serialized = JSON.stringify(candidate);
-    const nextChars = serializedChars + serialized.length + (context.length ? 1 : 0);
-    if (context.length && nextChars > EMAIL_INTAKE_PROJECT_CONTEXT_MAX_CHARS) break;
-    if (!context.length && nextChars > EMAIL_INTAKE_PROJECT_CONTEXT_MAX_CHARS) continue;
-    context.push(candidate);
-    serializedChars = nextChars;
-  }
-  return context;
-}
-
-async function processEmailIntakePaste() {
-  if (emailIntakeBusy || !window.pywebview?.api?.process_email_with_ai) {
-    return;
-  }
-  if (!String(userSettings.apiKey || "").trim()) {
-    toast("Setup API Key in Settings first.");
-    return;
-  }
-  const txt = val("emailArea");
-  if (!txt) return;
-  let timeoutId = null;
-  let slowNoticeId = null;
-  emailIntakeBusy = true;
-  beginEmailIntakeActivity();
-  renderOutlookScanUi();
-  try {
-    const projectContext = buildEmailIntakeProjectContext();
-    const aiRequest = window.pywebview.api.process_email_with_ai(
-      txt,
-      userSettings.apiKey,
-      userSettings.userName,
-      getActiveDisciplineList(),
-      projectContext
-    );
-    updateEmailIntakeActivity("Waiting for AI response...", 35);
-    slowNoticeId = setTimeout(() => {
-      updateEmailIntakeActivity(
-        "Gemini is busy; automatic retries are still running...",
-        65
-      );
-    }, EMAIL_INTAKE_SLOW_NOTICE_MS);
-    const timeoutPromise = new Promise((_, reject) => {
-      timeoutId = setTimeout(() => {
-        reject(
-          new Error(
-            `Gemini did not respond after ${Math.round(
-              EMAIL_INTAKE_REQUEST_TIMEOUT_MS / 60000
-            )} minutes. Google may still be at capacity; please try again later.`
-          )
-        );
-      }, EMAIL_INTAKE_REQUEST_TIMEOUT_MS);
-    });
-    const res = await Promise.race([aiRequest, timeoutPromise]);
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-      timeoutId = null;
-    }
-    if (slowNoticeId) {
-      clearTimeout(slowNoticeId);
-      slowNoticeId = null;
-    }
-    if (res?.status === "success") {
-      const emailField = document.getElementById("emailArea");
-      if (emailField) emailField.value = "";
-      completeEmailIntakeActivity();
-      closeDlg("outlookScanDlg");
-      handleAiProjectResult(res.data || {});
-      return;
-    }
-    throw new Error(res?.message || "Failed to process email.");
-  } catch (e) {
-    const errorMessage = e?.message || "Unknown error.";
-    failEmailIntakeActivity(errorMessage);
-  } finally {
-    if (timeoutId) clearTimeout(timeoutId);
-    if (slowNoticeId) clearTimeout(slowNoticeId);
-    emailIntakeBusy = false;
-    renderOutlookScanUi();
-  }
 }
 
 
@@ -11916,7 +11815,6 @@ function buildOutlookScanDerivedState(result = null) {
 async function runOutlookInboxScan() {
   if (
     outlookScanState.busy ||
-    emailIntakeBusy ||
     !window.pywebview?.api?.scan_outlook_inbox
   ) {
     return;
@@ -12169,968 +12067,6 @@ async function acceptOutlookScanSuggestion(suggestionKey) {
   return true;
 }
 
-// ===================== CLOUD SYNC =====================
-
-function updateCloudSyncState(patch = {}) {
-  cloudSyncState = {
-    ...cloudSyncState,
-    ...patch,
-  };
-  if (patch.lastSyncedAt !== undefined) {
-    cloudSyncState.lastSyncedAt = normalizeIsoTimestamp(patch.lastSyncedAt);
-  }
-  renderGoogleAuthUi();
-}
-
-async function updateLocalCloudSyncMetadata(
-  patch = {},
-  { persist = true } = {}
-) {
-  const current = ensureCloudSyncSettingsObject();
-  userSettings.cloudSync = normalizeCloudSyncSettings({
-    ...current,
-    ...patch,
-    lastSyncedAt:
-      patch.lastSyncedAt !== undefined
-        ? normalizeIsoTimestamp(patch.lastSyncedAt)
-        : current.lastSyncedAt,
-  });
-  if (persist) {
-    await persistUserSettingsLocally({
-      skipCloud: true,
-      saveTimestamp: false,
-      silent: true,
-    });
-  }
-  updateCloudSyncState({
-    enabled: userSettings.cloudSync.enabled,
-    firebaseUid: userSettings.cloudSync.firebaseUid,
-    lastSyncedAt: userSettings.cloudSync.lastSyncedAt,
-  });
-  return userSettings.cloudSync;
-}
-
-function getCloudSyncDisplayModel() {
-  const configured = cloudSyncState.configured === true;
-  const lastSyncedAt =
-    cloudSyncState.lastSyncedAt || ensureCloudSyncSettingsObject().lastSyncedAt;
-  if (!configured) {
-    return {
-      status: "Cloud sync not configured",
-      details:
-        "Add FIREBASE_API_KEY, FIREBASE_AUTH_DOMAIN, FIREBASE_PROJECT_ID, and FIREBASE_APP_ID to .env to enable cross-device sync.",
-      note:
-        "Google sign-in works without Firebase, but cross-device sync stays disabled until Firebase is configured.",
-      dot: "disabled",
-    };
-  }
-  if (!googleAuthState.signedIn) {
-    return {
-      status: "Ready when you sign in",
-      details:
-        "Sign in with Google to sync settings, projects, notes, templates, checklists, and timesheets.",
-      note:
-        "This app stays local-first until a Google account is connected and Firebase sync is available.",
-      dot: "idle",
-    };
-  }
-  if (cloudSyncState.busy) {
-    return {
-      status: "Syncing...",
-      details: cloudSyncState.message || "Connecting your Google account to Firestore.",
-      note: "Sync is in progress. Keep the app open until the initial pull completes.",
-      dot: "busy",
-    };
-  }
-  if (cloudSyncState.error) {
-    return {
-      status: "Sync error",
-      details: cloudSyncState.error,
-      note:
-        "Your local data is still available. Fix the Firebase configuration or connectivity issue and sign in again.",
-      dot: "error",
-    };
-  }
-  if (cloudSyncState.enabled) {
-    return {
-      status: "Cloud sync active",
-      details: lastSyncedAt
-        ? `Last sync: ${formatSyncTimestamp(lastSyncedAt)}`
-        : "Cross-device sync is connected.",
-      note:
-        "Supported app data now syncs through Firestore. Local-only secrets and file paths stay on this device.",
-      dot: "active",
-    };
-  }
-  return {
-    status: "Signed in locally",
-    details: "Google is connected, but Firestore sync is not active yet.",
-    note:
-      "Your Google account is available locally, but cross-device sync has not been established.",
-    dot: "idle",
-  };
-}
-
-function renderCloudSyncUi() {
-  const settingsStatus = document.getElementById("settings_cloudSyncStatus");
-  const settingsDetails = document.getElementById("settings_cloudSyncDetails");
-  const accountNote = document.getElementById("googleAccountSyncNote");
-  const headerBtn = document.getElementById("headerGoogleAuthBtn");
-  const headerDot = document.getElementById("headerGoogleAuthStatusDot");
-  const headerPopover = document.getElementById("headerAccountPopover");
-  const headerPopoverStatus = document.getElementById("headerAccountPopoverStatus");
-  const headerPopoverNote = document.getElementById("headerAccountPopoverNote");
-  const headerPopoverDot = document.getElementById("headerAccountPopoverSyncDot");
-  const model = getCloudSyncDisplayModel();
-
-  if (settingsStatus) {
-    settingsStatus.textContent = model.status;
-  }
-  if (settingsDetails) {
-    settingsDetails.textContent = model.details;
-  }
-  if (accountNote) {
-    accountNote.textContent = model.note;
-  }
-  if (headerBtn) {
-    headerBtn.dataset.syncStatus = model.dot;
-  }
-  if (headerDot) {
-    headerDot.title = model.status;
-  }
-  if (headerPopover) {
-    headerPopover.dataset.syncStatus = model.dot;
-  }
-  if (headerPopoverStatus) {
-    headerPopoverStatus.textContent = model.status;
-  }
-  if (headerPopoverNote) {
-    headerPopoverNote.textContent = model.note;
-  }
-  if (headerPopoverDot) {
-    headerPopoverDot.title = model.status;
-  }
-}
-
-async function loadCloudSyncConfig() {
-  if (cloudSyncConfig) {
-    updateCloudSyncState({
-      configured: !!(
-        cloudSyncConfig.apiKey &&
-        cloudSyncConfig.authDomain &&
-        cloudSyncConfig.projectId &&
-        cloudSyncConfig.appId
-      ),
-      available: true,
-    });
-    return cloudSyncConfig;
-  }
-  if (!window.pywebview?.api?.get_cloud_sync_config) {
-    updateCloudSyncState({
-      configured: false,
-      available: false,
-      status: "local-only",
-    });
-    return null;
-  }
-  try {
-    const response = await window.pywebview.api.get_cloud_sync_config();
-    if (response?.status !== "success") {
-      throw new Error(response?.message || "Failed to load cloud sync configuration.");
-    }
-    cloudSyncConfig = response.config || null;
-    updateCloudSyncState({
-      configured: response.enabled === true,
-      available: true,
-    });
-    return cloudSyncConfig;
-  } catch (e) {
-    console.warn("Failed to load cloud sync config:", e);
-    updateCloudSyncState({
-      configured: false,
-      available: false,
-      error: String(e?.message || "Cloud sync config unavailable."),
-    });
-    return null;
-  }
-}
-
-function loadExternalScript(src) {
-  return new Promise((resolve, reject) => {
-    const existing = document.querySelector(`script[data-cloud-sync-src="${src}"]`);
-    if (existing?.dataset.loaded === "true") {
-      resolve();
-      return;
-    }
-    const script = existing || document.createElement("script");
-    script.async = true;
-    script.src = src;
-    script.dataset.cloudSyncSrc = src;
-    const timeoutId = window.setTimeout(() => {
-      reject(new Error(`Timed out loading ${src}`));
-    }, 15000);
-    script.onload = () => {
-      window.clearTimeout(timeoutId);
-      script.dataset.loaded = "true";
-      resolve();
-    };
-    script.onerror = () => {
-      window.clearTimeout(timeoutId);
-      reject(new Error(`Failed to load ${src}`));
-    };
-    if (!existing) {
-      document.head.appendChild(script);
-    }
-  });
-}
-
-async function ensureFirebaseSdk() {
-  if (window.firebase?.apps) {
-    updateCloudSyncState({ sdkLoaded: true });
-    return true;
-  }
-  if (!firebaseLoadPromise) {
-    firebaseLoadPromise = (async () => {
-      for (const src of FIREBASE_COMPAT_SCRIPT_URLS) {
-        await loadExternalScript(src);
-      }
-      updateCloudSyncState({ sdkLoaded: true });
-      return true;
-    })().catch((error) => {
-      firebaseLoadPromise = null;
-      throw error;
-    });
-  }
-  try {
-    await firebaseLoadPromise;
-    return true;
-  } catch (e) {
-    console.warn("Failed to load Firebase SDK:", e);
-    updateCloudSyncState({
-      sdkLoaded: false,
-      error: String(e?.message || "Firebase SDK could not be loaded."),
-    });
-    return false;
-  }
-}
-
-async function ensureFirebaseServices() {
-  const config = await loadCloudSyncConfig();
-  if (
-    !config ||
-    !config.apiKey ||
-    !config.authDomain ||
-    !config.projectId ||
-    !config.appId
-  ) {
-    updateCloudSyncState({
-      configured: false,
-      enabled: false,
-    });
-    return null;
-  }
-  const sdkReady = await ensureFirebaseSdk();
-  if (!sdkReady || !window.firebase?.initializeApp) {
-    return null;
-  }
-  if (!firebaseAppInstance) {
-    const existingApp =
-      window.firebase.apps?.find((app) => app?.name === "acies-cloud-sync") ||
-      null;
-    firebaseAppInstance =
-      existingApp || window.firebase.initializeApp(config, "acies-cloud-sync");
-    firebaseAuthInstance = window.firebase.auth(firebaseAppInstance);
-    firebaseFirestoreInstance = window.firebase.firestore(firebaseAppInstance);
-    firebaseFirestoreInstance.settings({
-      ignoreUndefinedProperties: true,
-    });
-  }
-  return {
-    app: firebaseAppInstance,
-    auth: firebaseAuthInstance,
-    db: firebaseFirestoreInstance,
-  };
-}
-
-async function getGoogleSyncSessionFromBackend() {
-  if (!window.pywebview?.api?.get_google_sync_session) {
-    return {
-      status: "error",
-      signedIn: false,
-      idToken: "",
-      accessToken: "",
-      firebaseReady: false,
-      auth: { ...DEFAULT_GOOGLE_AUTH_STATE },
-    };
-  }
-  const response = await window.pywebview.api.get_google_sync_session();
-  return {
-    status: response?.status || "error",
-    signedIn: response?.signedIn === true,
-    idToken: String(response?.idToken || "").trim(),
-    accessToken: String(response?.accessToken || "").trim(),
-    firebaseReady: response?.firebaseReady === true,
-    auth: normalizeGoogleAuthState(response?.auth),
-    message: response?.message || "",
-  };
-}
-
-function getCloudSyncDocRefs(uid) {
-  const userDoc = firebaseFirestoreInstance.collection("users").doc(uid);
-  return {
-    settings: userDoc.collection("settings").doc("app"),
-    tasks: userDoc.collection("tasks").doc("main"),
-    notes: userDoc.collection("notes").doc("main"),
-    templates: userDoc.collection("templates").doc("main"),
-    checklists: userDoc.collection("checklists").doc("main"),
-    timesheets: userDoc.collection("timesheets"),
-    timesheetsMeta: userDoc
-      .collection("timesheets")
-      .doc(CLOUD_SYNC_TIMESHEETS_META_DOC_ID),
-  };
-}
-
-function clearCloudSyncSubscriptions() {
-  cloudSyncUnsubscribers.forEach((unsubscribe) => {
-    try {
-      unsubscribe();
-    } catch (e) {
-      console.warn("Failed to unsubscribe cloud sync listener:", e);
-    }
-  });
-  cloudSyncUnsubscribers = [];
-}
-
-async function signInToCloud(session = null) {
-  const services = await ensureFirebaseServices();
-  if (!services) {
-    return null;
-  }
-  const syncSession = session || (await getGoogleSyncSessionFromBackend());
-  if (!syncSession?.signedIn) {
-    return null;
-  }
-  const idToken = String(syncSession.idToken || "").trim();
-  const accessToken = String(syncSession.accessToken || "").trim();
-  if (!idToken && !accessToken) {
-    if (firebaseAuthInstance.currentUser) {
-      return firebaseAuthInstance.currentUser;
-    }
-    throw new Error(
-      "Google sign-in completed, but no Firebase-compatible token was returned."
-    );
-  }
-  const credential = window.firebase.auth.GoogleAuthProvider.credential(
-    idToken || null,
-    accessToken || null
-  );
-  const userCredential = await firebaseAuthInstance.signInWithCredential(
-    credential
-  );
-  return userCredential?.user || firebaseAuthInstance.currentUser;
-}
-
-function queueCloudStatePush(domain, delay = 900) {
-  if (!cloudSyncState.enabled || isCloudSyncApplying()) return;
-  if (domain === "timesheets") {
-    if (cloudSyncTimesheetsPushTimer) {
-      clearTimeout(cloudSyncTimesheetsPushTimer);
-    }
-    cloudSyncTimesheetsPushTimer = setTimeout(() => {
-      pushUserState(["timesheets"]).catch((error) => {
-        console.warn("Failed to push timesheets to cloud:", error);
-        updateCloudSyncState({
-          error: String(error?.message || "Timesheet sync failed."),
-          status: "error",
-        });
-      });
-    }, delay);
-    return;
-  }
-  if (cloudSyncPushTimers[domain]) {
-    clearTimeout(cloudSyncPushTimers[domain]);
-  }
-  cloudSyncPushTimers[domain] = setTimeout(() => {
-    pushUserState([domain]).catch((error) => {
-      console.warn(`Failed to push ${domain} to cloud:`, error);
-      updateCloudSyncState({
-        error: String(error?.message || `${domain} sync failed.`),
-        status: "error",
-      });
-    });
-  }, delay);
-}
-
-const schedulePullUserState = debounce(() => {
-  pullUserState({ silent: true }).catch((error) => {
-    console.warn("Failed to pull remote cloud state:", error);
-    updateCloudSyncState({
-      error: String(error?.message || "Cloud pull failed."),
-      status: "error",
-    });
-  });
-}, 700);
-
-function subscribeToUserState(uid = cloudSyncState.firebaseUid) {
-  if (!uid || !firebaseFirestoreInstance) return;
-  clearCloudSyncSubscriptions();
-  const refs = getCloudSyncDocRefs(uid);
-  const listen = (ref) =>
-    ref.onSnapshot(
-      (snapshot) => {
-        if (snapshot?.metadata?.hasPendingWrites) return;
-        schedulePullUserState();
-      },
-      (error) => {
-        console.warn("Cloud sync listener failed:", error);
-        updateCloudSyncState({
-          error: String(error?.message || "Cloud listener failed."),
-          status: "error",
-        });
-      }
-    );
-  cloudSyncUnsubscribers = [
-    listen(refs.settings),
-    listen(refs.tasks),
-    listen(refs.notes),
-    listen(refs.templates),
-    listen(refs.checklists),
-    listen(refs.timesheetsMeta),
-  ];
-}
-
-async function loadLocalSyncMetadata() {
-  if (!window.pywebview?.api?.get_local_sync_metadata) return;
-  try {
-    const response = await window.pywebview.api.get_local_sync_metadata();
-    if (response?.status !== "success") return;
-    const files = response.files || {};
-    localSyncTimestamps.settings = normalizeIsoTimestamp(
-      files?.settings?.modified || localSyncTimestamps.settings
-    );
-    localSyncTimestamps.tasks = normalizeIsoTimestamp(
-      files?.tasks?.modified || localSyncTimestamps.tasks
-    );
-    localSyncTimestamps.notes = normalizeIsoTimestamp(
-      files?.notes?.modified || localSyncTimestamps.notes
-    );
-    localSyncTimestamps.templates = getLatestIsoTimestamp([
-      files?.templates?.modified,
-      templatesDb?.lastModified,
-      localSyncTimestamps.templates,
-    ]);
-    localSyncTimestamps.checklists = getLatestIsoTimestamp([
-      files?.checklists?.modified,
-      checklistsDb?.lastModified,
-      localSyncTimestamps.checklists,
-    ]);
-    localSyncTimestamps.timesheets = getLatestIsoTimestamp([
-      files?.timesheets?.modified,
-      timesheetDb?.lastModified,
-      localSyncTimestamps.timesheets,
-    ]);
-  } catch (e) {
-    console.warn("Failed to load local sync metadata:", e);
-  }
-}
-
-async function createCloudSyncBackup(reason, metadata = {}) {
-  if (!window.pywebview?.api?.create_cloud_sync_backup) return null;
-  try {
-    const response = await window.pywebview.api.create_cloud_sync_backup(
-      reason,
-      metadata
-    );
-    if (response?.status === "success") {
-      return response;
-    }
-  } catch (e) {
-    console.warn("Failed to create cloud sync backup:", e);
-  }
-  return null;
-}
-
-function getDefaultSyncableSettings() {
-  return {
-    userName: "",
-    discipline: ["Electrical"],
-    activeDiscipline: "Electrical",
-    showSetupHelp: true,
-    theme: "dark",
-    lightingTemplates: [],
-    separateDeliverableCompletionGroups: true,
-    groupDeliverablesByProject: false,
-    projectsViewMode: "list",
-    projectsWideLayout: true,
-    minimizeEmptyProjectColumns: true,
-    hideEmptyProjectColumns: false,
-    projectCardColumns: DEFAULT_PROJECT_CARD_COLUMNS.map((c) => ({ ...c })),
-    defaultPmInitials: "",
-    cleanDwgOptions: { ...DEFAULT_CLEAN_DWG_OPTIONS },
-    publishDwgOptions: { ...DEFAULT_PUBLISH_DWG_OPTIONS },
-    manageLayersOptions: { ...DEFAULT_MANAGE_LAYERS_OPTIONS },
-    workflowCadDefaults: { ...DEFAULT_WORKFLOW_CAD_DEFAULTS },
-    workroomAutoSelectCadFiles: true,
-    enableUnderConstructionTools: false,
-  };
-}
-
-function sanitizeSettingsForCloud(settings = userSettings) {
-  const source = settings && typeof settings === "object" ? settings : {};
-  const updatedAt =
-    normalizeIsoTimestamp(localSyncTimestamps.settings) || new Date().toISOString();
-  return {
-    ...getDefaultSyncableSettings(),
-    userName: String(source.userName || "").trim(),
-    discipline: normalizeDisciplineList(source.discipline),
-    activeDiscipline: normalizeActiveDiscipline(
-      source.activeDiscipline,
-      source.discipline
-    ),
-    showSetupHelp: source.showSetupHelp !== false,
-    theme: source.theme === "light" ? "light" : "dark",
-    lightingTemplates: Array.isArray(source.lightingTemplates)
-      ? deepCloneJson(source.lightingTemplates, [])
-      : [],
-    separateDeliverableCompletionGroups:
-      source.separateDeliverableCompletionGroups !== false,
-    groupDeliverablesByProject: source.groupDeliverablesByProject === true,
-    projectsViewMode: normalizeProjectsViewMode(source.projectsViewMode),
-    projectsWideLayout: source.projectsWideLayout !== false,
-    minimizeEmptyProjectColumns: source.minimizeEmptyProjectColumns !== false,
-    hideEmptyProjectColumns: source.hideEmptyProjectColumns === true,
-    projectCardColumns: normalizeProjectCardColumns(source.projectCardColumns),
-    defaultPmInitials: String(source.defaultPmInitials || "")
-      .trim()
-      .toUpperCase(),
-    cleanDwgOptions: {
-      ...DEFAULT_CLEAN_DWG_OPTIONS,
-      ...(source.cleanDwgOptions || {}),
-    },
-    publishDwgOptions: normalizePublishDwgOptions(source.publishDwgOptions),
-    manageLayersOptions: {
-      ...DEFAULT_MANAGE_LAYERS_OPTIONS,
-      ...(source.manageLayersOptions || {}),
-    },
-    workflowCadDefaults: normalizeWorkflowCadDefaults(source.workflowCadDefaults),
-    workroomAutoSelectCadFiles: source.workroomAutoSelectCadFiles !== false,
-    enableUnderConstructionTools: source.enableUnderConstructionTools === true,
-    updatedAt,
-  };
-}
-
-function normalizeCloudSettingsDoc(raw = {}) {
-  const source = raw && typeof raw === "object" ? raw : {};
-  const defaults = getDefaultSyncableSettings();
-  return {
-    ...defaults,
-    userName: String(source.userName || "").trim(),
-    discipline: normalizeDisciplineList(source.discipline),
-    activeDiscipline: normalizeActiveDiscipline(
-      source.activeDiscipline,
-      source.discipline
-    ),
-    showSetupHelp: source.showSetupHelp !== false,
-    theme: source.theme === "light" ? "light" : "dark",
-    lightingTemplates: Array.isArray(source.lightingTemplates)
-      ? deepCloneJson(source.lightingTemplates, [])
-      : [],
-    separateDeliverableCompletionGroups:
-      source.separateDeliverableCompletionGroups !== false,
-    groupDeliverablesByProject: source.groupDeliverablesByProject === true,
-    projectsViewMode: normalizeProjectsViewMode(source.projectsViewMode),
-    projectsWideLayout: source.projectsWideLayout !== false,
-    minimizeEmptyProjectColumns: source.minimizeEmptyProjectColumns !== false,
-    hideEmptyProjectColumns: source.hideEmptyProjectColumns === true,
-    projectCardColumns: normalizeProjectCardColumns(source.projectCardColumns),
-    defaultPmInitials: String(source.defaultPmInitials || "")
-      .trim()
-      .toUpperCase(),
-    cleanDwgOptions: {
-      ...DEFAULT_CLEAN_DWG_OPTIONS,
-      ...(source.cleanDwgOptions || {}),
-    },
-    publishDwgOptions: normalizePublishDwgOptions(source.publishDwgOptions),
-    manageLayersOptions: {
-      ...DEFAULT_MANAGE_LAYERS_OPTIONS,
-      ...(source.manageLayersOptions || {}),
-    },
-    workflowCadDefaults: normalizeWorkflowCadDefaults(source.workflowCadDefaults),
-    workroomAutoSelectCadFiles: source.workroomAutoSelectCadFiles !== false,
-    enableUnderConstructionTools: source.enableUnderConstructionTools === true,
-    updatedAt:
-      normalizeIsoTimestamp(source.updatedAt) ||
-      normalizeIsoTimestamp(source.lastModified),
-  };
-}
-
-function hasMeaningfulSettingsState(doc) {
-  if (!doc) return false;
-  const comparable = deepCloneJson(doc, {}) || {};
-  delete comparable.updatedAt;
-  return stableStringify(comparable) !== stableStringify(getDefaultSyncableSettings());
-}
-
-function sanitizeLinkForCloud(link) {
-  const normalized = normalizeRef(link);
-  if (!normalized || isLocalOnlyLink(normalized)) return null;
-  return normalized;
-}
-
-function getLinkKey(link) {
-  const normalized = normalizeRef(link);
-  if (!normalized) return "";
-  return `${String(normalized.raw || normalized.url || "")
-    .trim()
-    .toLowerCase()}|${String(normalized.label || "")
-    .trim()
-    .toLowerCase()}`;
-}
-
-function mergeCloudAndLocalLinks(remoteRefs = [], localRefs = []) {
-  const merged = [];
-  const seen = new Set();
-  [...(Array.isArray(remoteRefs) ? remoteRefs : [])]
-    .map((ref) => normalizeRef(ref))
-    .filter(Boolean)
-    .forEach((ref) => {
-      const key = getLinkKey(ref);
-      if (!key || seen.has(key)) return;
-      seen.add(key);
-      merged.push(ref);
-    });
-  [...(Array.isArray(localRefs) ? localRefs : [])]
-    .map((ref) => normalizeRef(ref))
-    .filter((ref) => ref && isLocalOnlyLink(ref))
-    .forEach((ref) => {
-      const key = getLinkKey(ref);
-      if (!key || seen.has(key)) return;
-      seen.add(key);
-      merged.push(ref);
-    });
-  return merged;
-}
-
-function sanitizeEmailRefForCloud(ref) {
-  const normalized = normalizeEmailRef(ref);
-  if (!normalized) return null;
-  if (
-    String(normalized.source || "").toLowerCase() === "file" ||
-    isLikelyLocalPath(normalized.raw) ||
-    isLikelyLocalPath(normalized.url)
-  ) {
-    return null;
-  }
-  return normalized;
-}
-
-function sanitizeAttachmentForCloud(attachment = {}) {
-  const normalized = normalizeAttachmentEntry(attachment);
-  if (!normalized) return null;
-  if (normalized.type === "email") {
-    const emailRef = sanitizeEmailRefForCloud(normalized.emailRef);
-    if (!emailRef) return null;
-    return {
-      id: normalized.id,
-      type: "email",
-      description: String(normalized.description || "").trim(),
-      emailRef,
-    };
-  }
-  if (normalized.type !== "url") {
-    return null;
-  }
-  return {
-    id: normalized.id,
-    type: "url",
-    description: String(normalized.description || "").trim(),
-    target: normalized.target,
-  };
-}
-
-function mergeCloudAndLocalAttachments(remoteAttachments = [], localAttachments = []) {
-  const merged = [];
-  const seen = new Map();
-  [
-    ...(Array.isArray(remoteAttachments) ? remoteAttachments : []),
-    ...(Array.isArray(localAttachments) ? localAttachments : []),
-  ]
-    .map((attachment) => normalizeAttachmentEntry(attachment))
-    .filter(Boolean)
-    .forEach((attachment) => {
-      const key = getAttachmentEntryKey(attachment);
-      if (!key) return;
-      if (seen.has(key)) {
-        const existing = seen.get(key);
-        if (!existing.description && attachment.description) {
-          existing.description = attachment.description;
-        }
-        return;
-      }
-      seen.set(key, attachment);
-      merged.push(attachment);
-    });
-  return merged;
-}
-
-function mergeCloudAndLocalEmailRefs(remoteRefs = [], localRefs = []) {
-  const merged = [];
-  const seen = new Set();
-  [
-    ...normalizeEmailRefs(remoteRefs, null),
-    ...normalizeEmailRefs(localRefs, null).filter(
-      (ref) =>
-        ref &&
-        (String(ref.source || "").toLowerCase() === "file" ||
-          isLikelyLocalPath(ref.raw) ||
-          isLikelyLocalPath(ref.url))
-    ),
-  ].forEach((ref) => {
-    const normalized = normalizeEmailRef(ref);
-    const key = normalizeEmailRefKey(normalized);
-    if (!normalized || !key || seen.has(key)) return;
-    seen.add(key);
-    merged.push(normalized);
-  });
-  return merged;
-}
-
-function sanitizeDeliverableForCloud(deliverable = {}) {
-  const source =
-    deliverable && typeof deliverable === "object"
-      ? deepCloneJson(deliverable, {}) || {}
-      : {};
-  const normalized = normalizeDeliverable(source);
-  const attachments = normalizeAttachments(normalized.attachments)
-    .map((attachment) => sanitizeAttachmentForCloud(attachment))
-    .filter(Boolean);
-  const emailRefs = buildLegacyEmailRefsFromAttachments(attachments);
-  const sanitized = {
-    ...source,
-    ...normalized,
-    attachments,
-    links: buildLegacyLinksFromAttachments(attachments),
-    emailRefs,
-    emailRef: emailRefs[0] || null,
-    tasks: (Array.isArray(normalized.tasks) ? normalized.tasks : []).map((task) => {
-      const taskAttachments = normalizeAttachments(task.attachments)
-        .map((attachment) => sanitizeAttachmentForCloud(attachment))
-        .filter(Boolean);
-      return {
-        ...task,
-        attachments: taskAttachments,
-        links: buildLegacyLinksFromAttachments(taskAttachments),
-        emailRefs: buildLegacyEmailRefsFromAttachments(taskAttachments),
-      };
-    }),
-    noteItems: normalizeDeliverableNoteItems(
-      normalized.noteItems,
-      normalized.notes || ""
-    ).map((noteItem) => {
-      const noteAttachments = normalizeAttachments(noteItem.attachments)
-        .map((attachment) => sanitizeAttachmentForCloud(attachment))
-        .filter(Boolean);
-      return {
-        ...noteItem,
-        attachments: noteAttachments,
-        links: buildLegacyLinksFromAttachments(noteAttachments),
-        emailRefs: buildLegacyEmailRefsFromAttachments(noteAttachments),
-      };
-    }),
-  };
-  delete sanitized.active;
-  return sanitized;
-}
-
-function getCloudDeliverableKey(deliverable, index = 0) {
-  const id = String(deliverable?.id || "").trim().toLowerCase();
-  if (id) return `id:${id}`;
-  const name = String(deliverable?.name || "").trim().toLowerCase();
-  const due = String(deliverable?.due || "").trim().toLowerCase();
-  if (name || due) return `name:${name}|due:${due}`;
-  return `index:${index}`;
-}
-
-function mergeLocalDeliverableFields(remoteDeliverable, localDeliverable) {
-  const merged = {
-    ...(deepCloneJson(localDeliverable, {}) || {}),
-    ...(deepCloneJson(remoteDeliverable, {}) || {}),
-  };
-  merged.attachments = mergeCloudAndLocalAttachments(
-    normalizeAttachments(remoteDeliverable?.attachments, {
-      legacyLinks: remoteDeliverable?.links,
-      legacyEmailRefs: remoteDeliverable?.emailRefs,
-      legacyEmailRef: remoteDeliverable?.emailRef,
-    }),
-    normalizeAttachments(localDeliverable?.attachments, {
-      legacyLinks: localDeliverable?.links,
-      legacyEmailRefs: localDeliverable?.emailRefs,
-      legacyEmailRef: localDeliverable?.emailRef,
-    })
-  );
-  const emailRefs = mergeCloudAndLocalEmailRefs(
-    remoteDeliverable?.emailRefs,
-    localDeliverable?.emailRefs
-  );
-  merged.emailRefs = emailRefs;
-  merged.emailRef = emailRefs[0] || null;
-  return merged;
-}
-
-function sanitizeProjectForCloud(project = {}) {
-  const source =
-    project && typeof project === "object"
-      ? deepCloneJson(project, {}) || {}
-      : {};
-  const normalized = normalizeProject(source);
-  const attachments = normalizeAttachments(normalized.attachments)
-    .map((attachment) => sanitizeAttachmentForCloud(attachment))
-    .filter(Boolean);
-  const sanitized = {
-    ...source,
-    ...normalized,
-    path: "",
-    localProjectPath: "",
-    workroomRootPath: "",
-    attachments,
-    refs: (Array.isArray(source.refs) ? source.refs : [])
-      .map((ref) => sanitizeLinkForCloud(ref))
-      .filter(Boolean),
-    links: buildLegacyLinksFromAttachments(attachments),
-    deliverables: getProjectDeliverables(normalized).map((deliverable) =>
-      sanitizeDeliverableForCloud(deliverable)
-    ),
-    lightingSchedule: normalized.lightingSchedule
-      ? {
-          ...deepCloneJson(normalized.lightingSchedule, {}),
-          targetDwgPath: "",
-        }
-      : createDefaultLightingSchedule(),
-    title24: normalized.title24
-      ? {
-          ...deepCloneJson(normalized.title24, {}),
-          roomAreas: {
-            ...(deepCloneJson(normalized.title24.roomAreas, {}) || {}),
-            sourcePath: "",
-          },
-        }
-      : createDefaultTitle24(),
-  };
-  delete sanitized.overviewDeliverableId;
-  return sanitized;
-}
-
-function getCloudProjectKey(project, index = 0) {
-  const id = String(project?.id || "").trim().toLowerCase();
-  if (id) return `id:${id}`;
-  const name = String(project?.name || "").trim().toLowerCase();
-  const nick = String(project?.nick || "").trim().toLowerCase();
-  if (name || nick) return `name:${name}|nick:${nick}`;
-  return `index:${index}`;
-}
-
-function mergeLocalProjectFields(remoteProject, localProject) {
-  const merged = {
-    ...(deepCloneJson(localProject, {}) || {}),
-    ...(deepCloneJson(remoteProject, {}) || {}),
-  };
-  merged.path = String(localProject?.path || merged.path || "").trim();
-  merged.localProjectPath = String(
-    localProject?.localProjectPath || merged.localProjectPath || ""
-  ).trim();
-  merged.workroomRootPath = String(
-    localProject?.workroomRootPath || merged.workroomRootPath || ""
-  ).trim();
-  merged.refs = mergeCloudAndLocalLinks(remoteProject?.refs, localProject?.refs);
-  merged.attachments = mergeCloudAndLocalAttachments(
-    normalizeAttachments(remoteProject?.attachments, {
-      legacyLinks: remoteProject?.links,
-    }),
-    normalizeAttachments(localProject?.attachments, {
-      legacyLinks: localProject?.links,
-    })
-  );
-
-  const localDeliverables = Array.isArray(localProject?.deliverables)
-    ? localProject.deliverables
-    : [];
-  const localDeliverableMap = new Map(
-    localDeliverables.map((deliverable, index) => [
-      getCloudDeliverableKey(deliverable, index),
-      deliverable,
-    ])
-  );
-  merged.deliverables = getProjectDeliverables(remoteProject).map(
-    (deliverable, index) =>
-      mergeLocalDeliverableFields(
-        deliverable,
-        localDeliverableMap.get(getCloudDeliverableKey(deliverable, index))
-      )
-  );
-
-  if (merged.lightingSchedule) {
-    merged.lightingSchedule.targetDwgPath = String(
-      localProject?.lightingSchedule?.targetDwgPath ||
-        merged.lightingSchedule.targetDwgPath ||
-        ""
-    ).trim();
-  }
-  if (merged.title24?.roomAreas) {
-    merged.title24.roomAreas.sourcePath = normalizeTitle24Text(
-      localProject?.title24?.roomAreas?.sourcePath ||
-        merged.title24.roomAreas.sourcePath ||
-        ""
-    );
-  }
-  return normalizeProject(merged);
-}
-
-function restoreLocalOnlyProjectFields(remoteProjects, localProjects = db) {
-  const localMap = new Map(
-    (Array.isArray(localProjects) ? localProjects : []).map((project, index) => [
-      getCloudProjectKey(project, index),
-      project,
-    ])
-  );
-  return (Array.isArray(remoteProjects) ? remoteProjects : [])
-    .map((project, index) =>
-      mergeLocalProjectFields(
-        project,
-        localMap.get(getCloudProjectKey(project, index))
-      )
-    )
-    .filter(Boolean);
-}
-
-function buildTasksCloudDoc() {
-  return {
-    projects: deepCloneJson(db, []).map((project) => sanitizeProjectForCloud(project)),
-    updatedAt:
-      normalizeIsoTimestamp(localSyncTimestamps.tasks) || new Date().toISOString(),
-  };
-}
-
-function normalizeCloudTasksDoc(raw = {}) {
-  const source = Array.isArray(raw)
-    ? { projects: raw }
-    : raw && typeof raw === "object"
-      ? raw
-      : {};
-  const migrated = migrateProjects(
-    Array.isArray(source.projects) ? source.projects : []
-  );
-  return {
-    projects: migrated.data,
-    updatedAt:
-      normalizeIsoTimestamp(source.updatedAt) ||
-      normalizeIsoTimestamp(source.lastModified),
-  };
-}
-
-function hasMeaningfulTasksState(doc) {
-  return Array.isArray(doc?.projects) && doc.projects.length > 0;
-}
-
 function serializeGlobalPagesForStore() {
   return (Array.isArray(globalPages) ? globalPages : []).map((p) => {
     const page = { html: p.page?.html || "", updatedAt: p.page?.updatedAt || "" };
@@ -13144,16 +12080,7 @@ function serializeGlobalPagesForStore() {
   });
 }
 
-function buildNotesCloudDoc() {
-  return {
-    version: 2,
-    pages: serializeGlobalPagesForStore(),
-    updatedAt:
-      normalizeIsoTimestamp(localSyncTimestamps.notes) || new Date().toISOString(),
-  };
-}
 
-// Migrate the legacy notes shape ({tabs, general, keyed}) into global pages.
 function migrateLegacyNotesToPages(source = {}) {
   const data = source && typeof source === "object" ? source : {};
   const tabs = Array.isArray(data.tabs) ? data.tabs : [];
@@ -13177,6 +12104,7 @@ function migrateLegacyNotesToPages(source = {}) {
   return pages;
 }
 
+
 function readGlobalPagesData(raw = {}) {
   const source = raw && typeof raw === "object" ? raw : {};
   if (Number(source.version) >= 2 && Array.isArray(source.pages)) {
@@ -13185,886 +12113,6 @@ function readGlobalPagesData(raw = {}) {
   return migrateLegacyNotesToPages(source);
 }
 
-function normalizeCloudNotesDoc(raw = {}) {
-  const source = raw && typeof raw === "object" ? raw : {};
-  return {
-    pages: readGlobalPagesData(source),
-    updatedAt:
-      normalizeIsoTimestamp(source.updatedAt) ||
-      normalizeIsoTimestamp(source.lastModified),
-  };
-}
-
-function hasMeaningfulNotesState(doc) {
-  if (!doc) return false;
-  const pages = Array.isArray(doc.pages) ? doc.pages : [];
-  return pages.some(
-    (p) => String(p?.title || "").trim() || String(p?.page?.html || "").trim()
-  );
-}
-
-function buildTemplateSourceName(template) {
-  return basename(template?.sourcePath || template?.sourceName || "");
-}
-
-function sanitizeTemplateForCloud(template = {}) {
-  const source =
-    template && typeof template === "object"
-      ? deepCloneJson(template, {}) || {}
-      : {};
-  const sourceName = buildTemplateSourceName(source);
-  return {
-    ...source,
-    sourcePath: "",
-    sourceName,
-    cloudNeedsRelink: !source.isDefault && !!sourceName,
-  };
-}
-
-function mergeLocalTemplateFields(remoteTemplate, localTemplate) {
-  const merged = {
-    ...(deepCloneJson(remoteTemplate, {}) || {}),
-  };
-  const localSourcePath = String(localTemplate?.sourcePath || "").trim();
-  if (!String(merged.sourcePath || "").trim() && localSourcePath) {
-    merged.sourcePath = localSourcePath;
-    merged.cloudNeedsRelink = false;
-  }
-  if (!String(merged.sourceName || "").trim()) {
-    merged.sourceName = buildTemplateSourceName(localTemplate) || "";
-  }
-  return merged;
-}
-
-function mergeLocalTemplatePaths(remoteDoc, localDoc = templatesDb) {
-  const localMap = new Map(
-    (Array.isArray(localDoc?.templates) ? localDoc.templates : []).map((template) => [
-      String(template?.id || "").trim(),
-      template,
-    ])
-  );
-  return {
-    templates: (Array.isArray(remoteDoc?.templates) ? remoteDoc.templates : []).map(
-      (template) =>
-        mergeLocalTemplateFields(
-          template,
-          localMap.get(String(template?.id || "").trim())
-        )
-    ),
-    defaultTemplatesInstalled: remoteDoc?.defaultTemplatesInstalled === true,
-    lastModified: normalizeIsoTimestamp(
-      remoteDoc?.lastModified || remoteDoc?.updatedAt
-    ),
-    updatedAt: normalizeIsoTimestamp(remoteDoc?.updatedAt),
-  };
-}
-
-function buildTemplatesCloudDoc() {
-  const updatedAt =
-    normalizeIsoTimestamp(localSyncTimestamps.templates) ||
-    normalizeIsoTimestamp(templatesDb?.lastModified) ||
-    new Date().toISOString();
-  return {
-    templates: (Array.isArray(templatesDb?.templates) ? templatesDb.templates : []).map(
-      (template) => sanitizeTemplateForCloud(template)
-    ),
-    defaultTemplatesInstalled: templatesDb?.defaultTemplatesInstalled === true,
-    lastModified: updatedAt,
-    updatedAt,
-  };
-}
-
-function normalizeCloudTemplatesDoc(raw = {}) {
-  const source = raw && typeof raw === "object" ? raw : {};
-  return {
-    templates: (Array.isArray(source.templates) ? source.templates : []).map((template) => ({
-      ...(deepCloneJson(template, {}) || {}),
-      sourcePath: String(template?.sourcePath || "").trim(),
-      sourceName: String(template?.sourceName || "").trim(),
-      cloudNeedsRelink:
-        template?.cloudNeedsRelink === true ||
-        (!template?.isDefault &&
-          !String(template?.sourcePath || "").trim() &&
-          !!String(template?.sourceName || "").trim()),
-    })),
-    defaultTemplatesInstalled: source.defaultTemplatesInstalled === true,
-    lastModified:
-      normalizeIsoTimestamp(source.lastModified) ||
-      normalizeIsoTimestamp(source.updatedAt),
-    updatedAt:
-      normalizeIsoTimestamp(source.updatedAt) ||
-      normalizeIsoTimestamp(source.lastModified),
-  };
-}
-
-function hasMeaningfulTemplatesState(doc) {
-  return Array.isArray(doc?.templates) && doc.templates.length > 0;
-}
-
-function buildChecklistsCloudDoc() {
-  const updatedAt =
-    normalizeIsoTimestamp(localSyncTimestamps.checklists) ||
-    normalizeIsoTimestamp(checklistsDb?.lastModified) ||
-    new Date().toISOString();
-  return {
-    ...deepCloneJson(checklistsDb, {
-      checklists: [],
-      templateOverrides: {},
-      lastModified: null,
-    }),
-    lastModified: updatedAt,
-    updatedAt,
-  };
-}
-
-function normalizeCloudChecklistsDoc(raw = {}) {
-  const source = raw && typeof raw === "object" ? raw : {};
-  const normalized = normalizeChecklistsDb(source || {});
-  return {
-    ...normalized.data,
-    updatedAt:
-      normalizeIsoTimestamp(source.updatedAt) ||
-      normalizeIsoTimestamp(source.lastModified) ||
-      normalizeIsoTimestamp(normalized.data.lastModified),
-  };
-}
-
-function hasMeaningfulChecklistsState(doc) {
-  return (
-    (Array.isArray(doc?.checklists) && doc.checklists.length > 0) ||
-    (doc?.templateOverrides &&
-      Object.keys(doc.templateOverrides).length > 0)
-  );
-}
-
-function buildTimesheetsCloudState() {
-  const updatedAt =
-    normalizeIsoTimestamp(localSyncTimestamps.timesheets) ||
-    normalizeIsoTimestamp(timesheetDb?.lastModified) ||
-    new Date().toISOString();
-  const weeks =
-    timesheetDb?.weeks && typeof timesheetDb.weeks === "object"
-      ? deepCloneJson(timesheetDb.weeks, {})
-      : {};
-  const expenses =
-    timesheetDb?.expenses && typeof timesheetDb.expenses === "object"
-      ? deepCloneJson(timesheetDb.expenses, {})
-      : {};
-  const weekKeys = Object.keys(weeks || {}).filter(Boolean);
-  const expenseWeeks = Object.keys(expenses || {}).filter((weekKey) => {
-    const projects = expenses?.[weekKey]?.projects;
-    return Array.isArray(projects) && projects.length > 0;
-  });
-  const knownWeeks = [...new Set([...weekKeys, ...expenseWeeks])].sort();
-  return {
-    weeks,
-    expenses,
-    knownWeeks,
-    updatedAt,
-  };
-}
-
-function normalizeRemoteTimesheetsState(metaDoc = {}, docs = []) {
-  const weeks = {};
-  const expenses = {};
-  const knownWeeks = [];
-  let updatedAt =
-    normalizeIsoTimestamp(metaDoc?.updatedAt) ||
-    normalizeIsoTimestamp(metaDoc?.lastModified);
-  (Array.isArray(docs) ? docs : []).forEach((doc) => {
-    const docId = String(doc?.id || "").trim();
-    if (!docId || docId === CLOUD_SYNC_TIMESHEETS_META_DOC_ID) return;
-    const payload = doc?.data && typeof doc.data === "object" ? doc.data : {};
-    const weekData = deepCloneJson(payload.data, {}) || {};
-    if (weekData.expenses && typeof weekData.expenses === "object") {
-      expenses[docId] = deepCloneJson(weekData.expenses, { projects: [] }) || {
-        projects: [],
-      };
-      delete weekData.expenses;
-    }
-    weeks[docId] = weekData;
-    knownWeeks.push(docId);
-    if (isIsoAfter(payload.updatedAt, updatedAt)) {
-      updatedAt = normalizeIsoTimestamp(payload.updatedAt);
-    }
-  });
-  const metaKnownWeeks = Array.isArray(metaDoc?.knownWeeks)
-    ? metaDoc.knownWeeks.map((weekKey) => String(weekKey || "").trim()).filter(Boolean)
-    : [];
-  return {
-    weeks,
-    expenses,
-    knownWeeks: [...new Set(metaKnownWeeks.length ? metaKnownWeeks : knownWeeks)].sort(),
-    updatedAt,
-  };
-}
-
-function hasMeaningfulTimesheetsState(state) {
-  return (
-    Object.keys(state?.weeks || {}).length > 0 ||
-    Object.keys(state?.expenses || {}).some((weekKey) => {
-      const projects = state?.expenses?.[weekKey]?.projects;
-      return Array.isArray(projects) && projects.length > 0;
-    })
-  );
-}
-
-function getLocalCloudDoc(domain) {
-  if (domain === "settings") return sanitizeSettingsForCloud(userSettings);
-  if (domain === "tasks") return buildTasksCloudDoc();
-  if (domain === "notes") return buildNotesCloudDoc();
-  if (domain === "templates") return buildTemplatesCloudDoc();
-  if (domain === "checklists") return buildChecklistsCloudDoc();
-  if (domain === "timesheets") return buildTimesheetsCloudState();
-  return null;
-}
-
-function hasMeaningfulCloudDoc(domain, doc) {
-  if (domain === "settings") return hasMeaningfulSettingsState(doc);
-  if (domain === "tasks") return hasMeaningfulTasksState(doc);
-  if (domain === "notes") return hasMeaningfulNotesState(doc);
-  if (domain === "templates") return hasMeaningfulTemplatesState(doc);
-  if (domain === "checklists") return hasMeaningfulChecklistsState(doc);
-  if (domain === "timesheets") return hasMeaningfulTimesheetsState(doc);
-  return false;
-}
-
-function buildComparableCloudDoc(domain, doc = getLocalCloudDoc(domain)) {
-  const comparable = deepCloneJson(doc, null);
-  if (!comparable || typeof comparable !== "object") return comparable;
-  delete comparable.updatedAt;
-  if (domain === "templates" || domain === "checklists") {
-    delete comparable.lastModified;
-  }
-  return comparable;
-}
-
-function getCloudComparableFingerprint(domain, doc = getLocalCloudDoc(domain)) {
-  return stableStringify(buildComparableCloudDoc(domain, doc));
-}
-
-function syncCloudComparableFingerprint(domain, doc = getLocalCloudDoc(domain)) {
-  const fingerprint = getCloudComparableFingerprint(domain, doc);
-  lastCloudComparableFingerprints[domain] = fingerprint;
-  return fingerprint;
-}
-
-function syncAllCloudComparableFingerprints() {
-  [
-    "settings",
-    "tasks",
-    "notes",
-    "templates",
-    "checklists",
-    "timesheets",
-  ].forEach((domain) => {
-    syncCloudComparableFingerprint(domain);
-  });
-}
-
-async function prepareLocalStateForUserSwitch(nextUid) {
-  const currentMetadata = ensureCloudSyncSettingsObject();
-  const previousUid = String(currentMetadata.firebaseUid || "").trim();
-  if (!previousUid || previousUid === nextUid) return false;
-
-  await createCloudSyncBackup("cloud-user-switch", {
-    previousFirebaseUid: previousUid,
-    nextFirebaseUid: nextUid,
-  });
-
-  const resetAt = new Date().toISOString();
-  userSettings = {
-    ...userSettings,
-    ...getDefaultSyncableSettings(),
-    googleAuth: userSettings.googleAuth,
-    cloudSync: {
-      ...currentMetadata,
-      enabled: false,
-      migrationCompleted: false,
-      lastSyncedAt: "",
-    },
-  };
-  db = [];
-  globalPages = [];
-  activeGlobalPageId = null;
-  notesSearchQuery = "";
-  checklistSearchQuery = "";
-  timesheetDb = { weeks: {}, expenses: {}, lastModified: null };
-  templatesDb = {
-    templates: [],
-    defaultTemplatesInstalled: false,
-    lastModified: null,
-  };
-  checklistsDb = {
-    checklists: [],
-    templateOverrides: {},
-    lastModified: null,
-  };
-  activeChecklistTabId = null;
-  cloudSyncRemoteTimesheetMeta = {
-    updatedAt: "",
-    knownWeeks: [],
-  };
-
-  await persistUserSettingsLocally({
-    skipCloud: true,
-    timestamp: resetAt,
-    silent: true,
-  });
-  await save({ skipCloud: true, timestamp: resetAt, silent: true });
-  await saveGlobalPages({ skipCloud: true, timestamp: resetAt, silent: true });
-  await saveTimesheets({ skipCloud: true, timestamp: resetAt, silent: true });
-  await saveTemplates({ skipCloud: true, timestamp: resetAt, silent: true });
-  templatesDb = (await loadTemplates()) || templatesDb;
-  await saveChecklists({ skipCloud: true, timestamp: resetAt, silent: true });
-  syncAllCloudComparableFingerprints();
-  renderGlobalPagesView();
-  renderChecklistTabs();
-  renderChecklistsView();
-  renderTemplates();
-  renderTimesheets();
-  render();
-  return true;
-}
-
-async function pushCloudDomain(domain) {
-  if (!cloudSyncState.enabled || !firebaseFirestoreInstance || !cloudSyncState.firebaseUid) {
-    return "";
-  }
-  const refs = getCloudSyncDocRefs(cloudSyncState.firebaseUid);
-  if (domain === "timesheets") {
-    return pushCloudTimesheetsState();
-  }
-  const payload = getLocalCloudDoc(domain);
-  if (!payload) return "";
-  const updatedAt = normalizeIsoTimestamp(payload.updatedAt) || new Date().toISOString();
-  const ref = refs[domain];
-  if (!ref) return "";
-  await ref.set(payload, { merge: false });
-  return updatedAt;
-}
-
-async function pushCloudTimesheetsState() {
-  if (!cloudSyncState.enabled || !firebaseFirestoreInstance || !cloudSyncState.firebaseUid) {
-    return "";
-  }
-  const refs = getCloudSyncDocRefs(cloudSyncState.firebaseUid);
-  const state = buildTimesheetsCloudState();
-  const upserts = state.knownWeeks.map((weekKey) => {
-    const data = deepCloneJson(state.weeks[weekKey], {}) || {};
-    const expenseData = state.expenses?.[weekKey];
-    if (expenseData && Array.isArray(expenseData.projects) && expenseData.projects.length) {
-      data.expenses = deepCloneJson(expenseData, { projects: [] });
-    }
-    return refs.timesheets.doc(weekKey).set(
-      {
-        weekKey,
-        data,
-        updatedAt: state.updatedAt,
-      },
-      { merge: false }
-    );
-  });
-  const previousKnownWeeks = Array.isArray(cloudSyncRemoteTimesheetMeta.knownWeeks)
-    ? cloudSyncRemoteTimesheetMeta.knownWeeks
-    : [];
-  const removals = previousKnownWeeks
-    .filter((weekKey) => !state.knownWeeks.includes(weekKey))
-    .map((weekKey) => refs.timesheets.doc(weekKey).delete());
-  await Promise.all([
-    ...upserts,
-    ...removals,
-    refs.timesheetsMeta.set(
-      {
-        updatedAt: state.updatedAt,
-        knownWeeks: state.knownWeeks,
-      },
-      { merge: false }
-    ),
-  ]);
-  cloudSyncRemoteTimesheetMeta = {
-    updatedAt: state.updatedAt,
-    knownWeeks: state.knownWeeks,
-  };
-  return state.updatedAt;
-}
-
-
-
-async function pushUserState(domains = null) {
-  if (!cloudSyncState.enabled || isCloudSyncApplying()) return "";
-  const requested =
-    Array.isArray(domains) && domains.length
-      ? domains
-      : ["settings", "tasks", "notes", "templates", "checklists", "timesheets"];
-  const uniqueDomains = [...new Set(requested)];
-  updateCloudSyncState({
-    busy: true,
-    status: "syncing",
-    message: "Uploading local changes...",
-    error: "",
-  });
-  try {
-    const timestamps = [];
-    for (const domain of uniqueDomains) {
-      const updatedAt = await pushCloudDomain(domain);
-      if (updatedAt) timestamps.push(updatedAt);
-    }
-    const lastSyncedAt = new Date().toISOString();
-    await updateLocalCloudSyncMetadata(
-      {
-        enabled: true,
-        firebaseUid: cloudSyncState.firebaseUid,
-        migrationCompleted: true,
-        lastSyncedAt,
-      },
-      { persist: true }
-    );
-    updateCloudSyncState({
-      busy: false,
-      enabled: true,
-      status: "synced",
-      message: lastSyncedAt
-        ? `Last sync ${formatSyncTimestamp(lastSyncedAt)}`
-        : "Cloud sync ready",
-      error: "",
-      lastSyncedAt,
-    });
-    return lastSyncedAt;
-  } catch (e) {
-    updateCloudSyncState({
-      busy: false,
-      status: "error",
-      error: String(e?.message || "Cloud push failed."),
-    });
-    throw e;
-  }
-}
-
-async function fetchRemoteUserState(uid = cloudSyncState.firebaseUid) {
-  if (!uid || !firebaseFirestoreInstance) {
-    return {
-      settings: null,
-      tasks: null,
-      notes: null,
-      templates: null,
-      checklists: null,
-      timesheets: normalizeRemoteTimesheetsState({}, []),
-    };
-  }
-  const refs = getCloudSyncDocRefs(uid);
-  const [
-    settingsSnap,
-    tasksSnap,
-    notesSnap,
-    templatesSnap,
-    checklistsSnap,
-    timesheetsSnap,
-  ] = await Promise.all([
-    refs.settings.get(),
-    refs.tasks.get(),
-    refs.notes.get(),
-    refs.templates.get(),
-    refs.checklists.get(),
-    refs.timesheets.get(),
-  ]);
-
-  let timesheetsMeta = {};
-  const timesheetDocs = [];
-  timesheetsSnap.forEach((doc) => {
-    if (doc.id === CLOUD_SYNC_TIMESHEETS_META_DOC_ID) {
-      timesheetsMeta = doc.data() || {};
-      return;
-    }
-    timesheetDocs.push({
-      id: doc.id,
-      data: doc.data() || {},
-    });
-  });
-
-  return {
-    settings: settingsSnap.exists ? normalizeCloudSettingsDoc(settingsSnap.data()) : null,
-    tasks: tasksSnap.exists ? normalizeCloudTasksDoc(tasksSnap.data()) : null,
-    notes: notesSnap.exists ? normalizeCloudNotesDoc(notesSnap.data()) : null,
-    templates: templatesSnap.exists
-      ? normalizeCloudTemplatesDoc(templatesSnap.data())
-      : null,
-    checklists: checklistsSnap.exists
-      ? normalizeCloudChecklistsDoc(checklistsSnap.data())
-      : null,
-    timesheets: normalizeRemoteTimesheetsState(timesheetsMeta, timesheetDocs),
-  };
-}
-
-async function applyRemoteCloudDoc(domain, remoteDoc) {
-  beginCloudSyncApply();
-  try {
-    if (domain === "settings") {
-      const cloudSettings = normalizeCloudSettingsDoc(remoteDoc);
-      const currentCloudSync = ensureCloudSyncSettingsObject();
-      userSettings = {
-        ...userSettings,
-        ...cloudSettings,
-        apiKey: userSettings.apiKey,
-        autocadPath: userSettings.autocadPath,
-        googleAuth: userSettings.googleAuth,
-        cloudSync: currentCloudSync,
-      };
-      userSettings.discipline = normalizeConfiguredDisciplineList(userSettings.discipline);
-      syncActiveDisciplineWithConfigured();
-      touchLocalSyncTimestamp("settings", cloudSettings.updatedAt);
-      await persistUserSettingsLocally({
-        skipCloud: true,
-        saveTimestamp: false,
-        silent: true,
-      });
-      syncProjectViewPreferencesFromSettings();
-      applyTheme(userSettings.theme);
-      syncUnderConstructionToolsAvailability();
-      refreshActiveDisciplineDependentUi();
-      render();
-      return cloudSettings.updatedAt;
-    }
-    if (domain === "tasks") {
-      const cloudTasks = normalizeCloudTasksDoc(remoteDoc);
-      db = restoreLocalOnlyProjectFields(cloudTasks.projects, db);
-      touchLocalSyncTimestamp("tasks", cloudTasks.updatedAt);
-      await save({
-        skipCloud: true,
-        saveTimestamp: false,
-        silent: true,
-      });
-      render();
-      return cloudTasks.updatedAt;
-    }
-    if (domain === "notes") {
-      const cloudNotes = normalizeCloudNotesDoc(remoteDoc);
-      globalPages = cloudNotes.pages;
-      activeGlobalPageId =
-        getGlobalPageById(activeGlobalPageId)?.id || globalPages[0]?.id || null;
-      touchLocalSyncTimestamp("notes", cloudNotes.updatedAt);
-      await saveGlobalPages({
-        skipCloud: true,
-        saveTimestamp: false,
-        silent: true,
-      });
-      renderGlobalPagesView();
-      return cloudNotes.updatedAt;
-    }
-    if (domain === "templates") {
-      const cloudTemplates = mergeLocalTemplatePaths(
-        normalizeCloudTemplatesDoc(remoteDoc),
-        templatesDb
-      );
-      templatesDb = {
-        templates: cloudTemplates.templates,
-        defaultTemplatesInstalled: cloudTemplates.defaultTemplatesInstalled,
-        lastModified: cloudTemplates.updatedAt || cloudTemplates.lastModified,
-      };
-      touchLocalSyncTimestamp("templates", cloudTemplates.updatedAt);
-      await saveTemplates({
-        skipCloud: true,
-        saveTimestamp: false,
-        silent: true,
-      });
-      templatesDb = (await loadTemplates()) || templatesDb;
-      renderTemplates();
-      return cloudTemplates.updatedAt;
-    }
-    if (domain === "checklists") {
-      const cloudChecklists = normalizeCloudChecklistsDoc(remoteDoc);
-      checklistsDb = {
-        checklists: cloudChecklists.checklists,
-        templateOverrides: cloudChecklists.templateOverrides,
-        lastModified: cloudChecklists.updatedAt || cloudChecklists.lastModified,
-      };
-      activeChecklistTabId =
-        checklistsDb.checklists.find((checklist) => checklist.id === activeChecklistTabId)
-          ?.id || checklistsDb.checklists[0]?.id || null;
-      touchLocalSyncTimestamp("checklists", cloudChecklists.updatedAt);
-      await saveChecklists({
-        skipCloud: true,
-        saveTimestamp: false,
-        silent: true,
-      });
-      renderChecklistTabs();
-      renderChecklistsView();
-      return cloudChecklists.updatedAt;
-    }
-  } finally {
-    endCloudSyncApply();
-  }
-  return "";
-}
-
-async function pullUserState({ silent = false } = {}) {
-  if (!cloudSyncState.enabled || !cloudSyncState.firebaseUid) return false;
-  updateCloudSyncState({
-    busy: true,
-    status: "syncing",
-    message: "Checking for remote updates...",
-    error: "",
-  });
-
-  let backupCreated = false;
-  const maybeBackup = async (reason, metadata = {}) => {
-    if (backupCreated) return;
-    backupCreated = true;
-    await createCloudSyncBackup(reason, metadata);
-  };
-
-  try {
-    const remote = await fetchRemoteUserState(cloudSyncState.firebaseUid);
-    const domains = ["settings", "tasks", "notes", "templates", "checklists"];
-    const syncedAtValues = [];
-
-    for (const domain of domains) {
-      const localDoc = getLocalCloudDoc(domain);
-      const remoteDoc = remote[domain];
-      const localHasData = hasMeaningfulCloudDoc(domain, localDoc);
-      const remoteHasData = hasMeaningfulCloudDoc(domain, remoteDoc);
-      const localUpdatedAt =
-        normalizeIsoTimestamp(localDoc?.updatedAt) ||
-        normalizeIsoTimestamp(localSyncTimestamps[domain]);
-      const remoteUpdatedAt = normalizeIsoTimestamp(remoteDoc?.updatedAt);
-
-      if (
-        remoteHasData &&
-        (!localHasData || isIsoAfter(remoteUpdatedAt, localUpdatedAt))
-      ) {
-        if (localHasData && isIsoAfter(remoteUpdatedAt, localUpdatedAt)) {
-          await maybeBackup(`cloud-remote-${domain}`, {
-            domain,
-            localUpdatedAt,
-            remoteUpdatedAt,
-            firebaseUid: cloudSyncState.firebaseUid,
-          });
-        }
-        const appliedAt = await applyRemoteCloudDoc(domain, remoteDoc);
-        if (appliedAt) syncedAtValues.push(appliedAt);
-        continue;
-      }
-
-      if (
-        localHasData &&
-        (!remoteHasData || isIsoAfter(localUpdatedAt, remoteUpdatedAt))
-      ) {
-        const pushedAt = await pushCloudDomain(domain);
-        if (pushedAt) syncedAtValues.push(pushedAt);
-      }
-    }
-
-    const localTimesheets = getLocalCloudDoc("timesheets");
-    const remoteTimesheets = remote.timesheets || normalizeRemoteTimesheetsState({}, []);
-    const localTimesheetsHasData = hasMeaningfulCloudDoc("timesheets", localTimesheets);
-    const remoteTimesheetsHasData = hasMeaningfulCloudDoc("timesheets", remoteTimesheets);
-    const localTimesheetsUpdatedAt =
-      normalizeIsoTimestamp(localTimesheets?.updatedAt) ||
-      normalizeIsoTimestamp(localSyncTimestamps.timesheets);
-    const remoteTimesheetsUpdatedAt = normalizeIsoTimestamp(remoteTimesheets?.updatedAt);
-
-    if (
-      remoteTimesheetsHasData &&
-      (!localTimesheetsHasData ||
-        isIsoAfter(remoteTimesheetsUpdatedAt, localTimesheetsUpdatedAt))
-    ) {
-      if (
-        localTimesheetsHasData &&
-        isIsoAfter(remoteTimesheetsUpdatedAt, localTimesheetsUpdatedAt)
-      ) {
-        await maybeBackup("cloud-remote-timesheets", {
-          domain: "timesheets",
-          localUpdatedAt: localTimesheetsUpdatedAt,
-          remoteUpdatedAt: remoteTimesheetsUpdatedAt,
-          firebaseUid: cloudSyncState.firebaseUid,
-        });
-      }
-      timesheetDb = {
-        weeks: deepCloneJson(remoteTimesheets.weeks, {}),
-        expenses: deepCloneJson(remoteTimesheets.expenses, {}),
-        lastModified: remoteTimesheets.updatedAt || null,
-      };
-      cloudSyncRemoteTimesheetMeta = {
-        updatedAt: remoteTimesheets.updatedAt || "",
-        knownWeeks: remoteTimesheets.knownWeeks || [],
-      };
-      touchLocalSyncTimestamp("timesheets", remoteTimesheets.updatedAt);
-      await saveTimesheets({
-        skipCloud: true,
-        saveTimestamp: false,
-        silent: true,
-      });
-      renderTimesheets();
-      await refreshTimesheetsInfo();
-      if (remoteTimesheets.updatedAt) {
-        syncedAtValues.push(remoteTimesheets.updatedAt);
-      }
-    } else if (
-      localTimesheetsHasData &&
-      (!remoteTimesheetsHasData ||
-        isIsoAfter(localTimesheetsUpdatedAt, remoteTimesheetsUpdatedAt))
-    ) {
-      const pushedAt = await pushCloudTimesheetsState();
-      if (pushedAt) syncedAtValues.push(pushedAt);
-    } else {
-      cloudSyncRemoteTimesheetMeta = {
-        updatedAt: remoteTimesheets.updatedAt || "",
-        knownWeeks: remoteTimesheets.knownWeeks || [],
-      };
-    }
-
-    const lastSyncedAt = new Date().toISOString();
-    await updateLocalCloudSyncMetadata(
-      {
-        enabled: true,
-        firebaseUid: cloudSyncState.firebaseUid,
-        migrationCompleted: true,
-        lastSyncedAt,
-      },
-      { persist: true }
-    );
-    updateCloudSyncState({
-      busy: false,
-      enabled: true,
-      status: "synced",
-      message: lastSyncedAt
-        ? `Last sync ${formatSyncTimestamp(lastSyncedAt)}`
-        : "Cloud sync ready",
-      error: "",
-      lastSyncedAt,
-    });
-    return true;
-  } catch (e) {
-    if (!silent) {
-      toast(e?.message || "Cloud sync failed.");
-    }
-    updateCloudSyncState({
-      busy: false,
-      status: "error",
-      error: String(e?.message || "Cloud sync failed."),
-    });
-    throw e;
-  }
-}
-
-async function bootstrapCloudSync({ session = null, silent = true } = {}) {
-  if (cloudSyncInitPromise) return cloudSyncInitPromise;
-  cloudSyncInitPromise = (async () => {
-    await loadCloudSyncConfig();
-    if (!cloudSyncState.configured) {
-      updateCloudSyncState({
-        enabled: false,
-        status: "local-only",
-        message: "Firebase is not configured.",
-      });
-      return { enabled: false };
-    }
-    if (!googleAuthState.signedIn) {
-      updateCloudSyncState({
-        enabled: false,
-        signedIn: false,
-        status: "idle",
-        message: "Sign in to enable sync.",
-      });
-      return { enabled: false };
-    }
-
-    updateCloudSyncState({
-      busy: true,
-      signedIn: true,
-      status: "syncing",
-      message: "Connecting cloud sync...",
-      error: "",
-    });
-
-    const user = await signInToCloud(session);
-    if (!user?.uid) {
-      updateCloudSyncState({
-        busy: false,
-        enabled: false,
-        status: "idle",
-        message: "Google is signed in locally.",
-      });
-      return { enabled: false };
-    }
-
-    await prepareLocalStateForUserSwitch(user.uid);
-    updateCloudSyncState({
-      enabled: true,
-      signedIn: true,
-      firebaseUid: user.uid,
-    });
-    await updateLocalCloudSyncMetadata(
-      {
-        enabled: true,
-        firebaseUid: user.uid,
-      },
-      { persist: true }
-    );
-    await pullUserState({ silent });
-    subscribeToUserState(user.uid);
-    return { enabled: true, uid: user.uid };
-  })()
-    .catch((error) => {
-      if (!silent) {
-        toast(error?.message || "Cloud sync failed.");
-      }
-      updateCloudSyncState({
-        busy: false,
-        enabled: false,
-        status: "error",
-        error: String(error?.message || "Cloud sync failed."),
-      });
-      return { enabled: false, error };
-    })
-    .finally(() => {
-      cloudSyncInitPromise = null;
-    });
-  return cloudSyncInitPromise;
-}
-
-async function signOutCloud({ preserveMetadata = true } = {}) {
-  clearCloudSyncSubscriptions();
-  Object.values(cloudSyncPushTimers).forEach((timer) => clearTimeout(timer));
-  cloudSyncPushTimers = {};
-  if (cloudSyncTimesheetsPushTimer) {
-    clearTimeout(cloudSyncTimesheetsPushTimer);
-    cloudSyncTimesheetsPushTimer = null;
-  }
-  if (firebaseAuthInstance) {
-    try {
-      await firebaseAuthInstance.signOut();
-    } catch (e) {
-      console.warn("Failed to sign out of Firebase:", e);
-    }
-  }
-  cloudSyncRemoteTimesheetMeta = {
-    updatedAt: "",
-    knownWeeks: [],
-  };
-  await updateLocalCloudSyncMetadata(
-    {
-      enabled: false,
-      migrationCompleted: false,
-      ...(preserveMetadata ? {} : { firebaseUid: "", lastSyncedAt: "" }),
-    },
-    { persist: true }
-  );
-  updateCloudSyncState({
-    enabled: false,
-    busy: false,
-    signedIn: false,
-    status: "idle",
-    message: "Sign in to enable sync.",
-    error: "",
-    ...(preserveMetadata
-      ? {}
-      : {
-          firebaseUid: "",
-          lastSyncedAt: "",
-        }),
-  });
-}
 
 // ===================== THEMING =====================
 function readLocalTheme() {
@@ -14078,16 +12126,8 @@ function readLocalTheme() {
 function applyTheme(theme) {
   const resolved = theme === "light" ? "light" : "dark";
   document.documentElement.setAttribute("data-theme", resolved);
-  const toggle = document.getElementById("themeToggleBtn");
-  if (toggle) {
-    const isLight = resolved === "light";
-    const label = isLight ? "Switch to dark mode" : "Switch to light mode";
-    const sunIcon = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>`;
-    const moonIcon = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>`;
-    toggle.innerHTML = isLight ? moonIcon : sunIcon;
-    toggle.setAttribute("aria-label", label);
-    toggle.title = label;
-  }
+  const themeSelect = document.getElementById("settings_theme");
+  if (themeSelect) themeSelect.value = resolved;
   try {
     localStorage.setItem(THEME_STORAGE_KEY, resolved);
   } catch (e) {
@@ -14112,33 +12152,11 @@ function initThemeFromPreferences() {
   applyTheme(nextTheme);
 }
 
-async function persistUserSettingsLocally({
-  skipCloud = false,
-  saveTimestamp = true,
-  timestamp = new Date().toISOString(),
-  silent = false,
-} = {}) {
-  const resolvedTimestamp =
-    normalizeIsoTimestamp(timestamp) || new Date().toISOString();
-  const comparableChanged =
-    getCloudComparableFingerprint("settings") !==
-    lastCloudComparableFingerprints.settings;
-  if (saveTimestamp && comparableChanged) {
-    touchLocalSyncTimestamp("settings", resolvedTimestamp);
-  }
+async function persistUserSettingsLocally({ silent = false } = {}) {
   try {
     const response = await window.pywebview.api.save_user_settings(userSettings);
     if (response?.status && response.status !== "success") {
       throw new Error(response.message || "Failed to save settings.");
-    }
-    syncCloudComparableFingerprint("settings");
-    if (
-      !skipCloud &&
-      comparableChanged &&
-      cloudSyncState.enabled &&
-      !isCloudSyncApplying()
-    ) {
-      queueCloudStatePush("settings");
     }
     return true;
   } catch (e) {
@@ -14166,12 +12184,7 @@ async function load() {
   }
 }
 
-async function save({
-  skipCloud = false,
-  saveTimestamp = true,
-  timestamp = new Date().toISOString(),
-  silent = false,
-} = {}) {
+async function save({ silent = false } = {}) {
   syncPinnedProjectOrders(db, { seedMissing: true });
   db.forEach((project) => {
     syncProjectAttachmentFields(project);
@@ -14180,26 +12193,9 @@ async function save({
       syncDeliverableWorkItemFields(deliverable);
     });
   });
-  const resolvedTimestamp =
-    normalizeIsoTimestamp(timestamp) || new Date().toISOString();
-  const comparableChanged =
-    getCloudComparableFingerprint("tasks") !==
-    lastCloudComparableFingerprints.tasks;
-  if (saveTimestamp && comparableChanged) {
-    touchLocalSyncTimestamp("tasks", resolvedTimestamp);
-  }
   try {
     const response = await window.pywebview.api.save_tasks(db);
     if (response.status !== "success") throw new Error(response.message);
-    syncCloudComparableFingerprint("tasks");
-    if (
-      !skipCloud &&
-      comparableChanged &&
-      cloudSyncState.enabled &&
-      !isCloudSyncApplying()
-    ) {
-      queueCloudStatePush("tasks");
-    }
     return true;
   } catch (e) {
     console.warn("Backend save failed:", e);
@@ -14350,34 +12346,12 @@ async function loadGlobalPages() {
   }
 }
 
-async function saveGlobalPages({
-  skipCloud = false,
-  saveTimestamp = true,
-  timestamp = new Date().toISOString(),
-  silent = false,
-} = {}) {
-  const resolvedTimestamp =
-    normalizeIsoTimestamp(timestamp) || new Date().toISOString();
-  const comparableChanged =
-    getCloudComparableFingerprint("notes") !==
-    lastCloudComparableFingerprints.notes;
-  if (saveTimestamp && comparableChanged) {
-    touchLocalSyncTimestamp("notes", resolvedTimestamp);
-  }
+async function saveGlobalPages({ silent = false } = {}) {
   try {
     const dataToSave = buildGlobalPagesData();
     const response = await window.pywebview.api.save_notes(dataToSave);
     if (response?.status && response.status !== "success") {
       throw new Error(response.message || "Failed to save pages.");
-    }
-    syncCloudComparableFingerprint("notes");
-    if (
-      !skipCloud &&
-      comparableChanged &&
-      cloudSyncState.enabled &&
-      !isCloudSyncApplying()
-    ) {
-      queueCloudStatePush("notes");
     }
     return true;
   } catch (e) {
@@ -14443,21 +12417,14 @@ async function loadUserSettings() {
       userSettings.enableUnderConstructionTools === true;
     userSettings.separateDeliverableCompletionGroups =
       userSettings.separateDeliverableCompletionGroups !== false;
-    userSettings.groupDeliverablesByProject =
-      userSettings.groupDeliverablesByProject === true;
+    userSettings.groupDeliverablesByProject = false;
     userSettings.projectsWideLayout = userSettings.projectsWideLayout !== false;
     userSettings.minimizeEmptyProjectColumns =
       userSettings.minimizeEmptyProjectColumns !== false;
     userSettings.hideEmptyProjectColumns =
       userSettings.hideEmptyProjectColumns === true;
-    userSettings.cloudSync = normalizeCloudSyncSettings(userSettings.cloudSync);
+    delete userSettings.cloudSync;
     syncProjectViewPreferencesFromSettings();
-    updateCloudSyncState({
-      enabled: userSettings.cloudSync.enabled,
-      firebaseUid: userSettings.cloudSync.firebaseUid,
-      lastSyncedAt: userSettings.cloudSync.lastSyncedAt,
-    });
-    syncCloudComparableFingerprint("settings");
     syncUnderConstructionToolsAvailability();
     refreshActiveDisciplineDependentUi();
     renderGoogleAuthUi();
@@ -14682,6 +12649,7 @@ async function populateSettingsModal() {
         });
         radio.onchange = () => {
           userSettings.autocadPath = radio.value;
+          document.getElementById("settings_autocadPath").value = radio.value;
           settingsAutocadPathExplicitlyChanged = true;
           debouncedSaveUserSettings();
         };
@@ -15540,7 +13508,7 @@ function normalizeProjectSubpages(rawSubpages = []) {
 // clone, orphaning live references held by the open page editor
 // (pageNav.subpage / pageEditorTarget) and silently dropping edits. Normalize
 // only when this exact array hasn't been normalized yet; the marker is
-// non-enumerable so it never reaches JSON persistence or the cloud.
+// non-enumerable so it never reaches JSON persistence.
 function getProjectSubpages(project) {
   if (!project) return [];
   if (!Array.isArray(project.subpages) || !project.subpages.__normalized) {
@@ -15813,6 +13781,7 @@ function createDeliverable(seed = {}) {
 function canonStatus(s) {
   if (!s) return null;
   const t = String(s).trim().toLowerCase();
+  if (["in progress", "in-progress", "inprogress", "working"].includes(t)) return "In progress";
   if (["waiting", "wait", "blocked"].includes(t)) return "Waiting";
   if (["on hold", "on-hold", "onhold", "hold", "paused", "pause"].includes(t))
     return "On hold";
@@ -15820,6 +13789,7 @@ function canonStatus(s) {
     ["pending review", "pending-review", "review", "pr", "pending"].includes(t)
   )
     return "Pending Review";
+  if (t === "completed (by others)") return "Completed (by others)";
   if (["complete", "completed", "done"].includes(t)) return "Complete";
   if (["delivered", "sent", "shipped"].includes(t)) return "Delivered";
   return null;
@@ -15845,14 +13815,14 @@ function hasStatus(p, s) {
   return Array.isArray(p.statuses) && p.statuses.includes(s);
 }
 function isFinished(p) {
-  return hasStatus(p, "Complete") || hasStatus(p, "Delivered");
+  return hasStatus(p, "Complete") || hasStatus(p, "Completed (by others)") || hasStatus(p, "Delivered");
 }
 
 function setSingleStatus(p, label) {
   if (!p) return;
-  const canonical = label && STATUS_CANON.includes(label) ? label : "";
-  p.statuses = canonical ? [canonical] : [];
-  p.statusTags = canonical ? [LABEL_TO_KEY[canonical]].filter(Boolean) : [];
+  const canonical = canonStatus(label) || "In progress";
+  p.statuses = [canonical];
+  p.statusTags = [LABEL_TO_KEY[canonical]];
   p.status = canonical;
   if (isFinished(p) && Array.isArray(p.tasks)) {
     p.tasks.forEach((task) => {
@@ -15863,8 +13833,7 @@ function setSingleStatus(p, label) {
 function toggleStatus(p, label) {
   if (!p) return;
   if (!Array.isArray(p.statuses)) p.statuses = [];
-  const current = p.statuses[0] || "";
-  setSingleStatus(p, current === label ? "" : label);
+  setSingleStatus(p, label);
 }
 function syncStatusArrays(p) {
   if (!Array.isArray(p.statuses)) p.statuses = [];
@@ -15874,9 +13843,9 @@ function syncStatusArrays(p) {
     if (L && !p.statuses.includes(L)) p.statuses.push(L);
   }
   const valid = [...new Set(p.statuses.filter((s) => STATUS_CANON.includes(s)))];
-  const primary = STATUS_PRIORITY.find((s) => valid.includes(s)) || "";
-  p.statuses = primary ? [primary] : [];
-  p.statusTags = primary ? [LABEL_TO_KEY[primary]].filter(Boolean) : [];
+  const primary = STATUS_PRIORITY.find((s) => valid.includes(s)) || "In progress";
+  p.statuses = [primary];
+  p.statusTags = [LABEL_TO_KEY[primary]];
   p.status = primary;
 }
 function migrateStatuses(arr) {
@@ -16753,7 +14722,7 @@ function renderCopyProjectLocallyFolderList(container, items) {
   if (!items.length) {
     container.appendChild(
       el("div", {
-        className: "deliverable-notepad-empty",
+        className: "local-project-manager-empty",
         textContent: "No subfolders were found in the selected server project folder.",
       })
     );
@@ -16931,7 +14900,7 @@ function renderLocalProjectManagerEmptyState(container, message = "") {
   if (!container) return;
   container.replaceChildren(
     el("div", {
-      className: "deliverable-notepad-empty",
+      className: "local-project-manager-empty",
       textContent: message || "No items are available.",
     })
   );
@@ -17985,7 +15954,7 @@ function renderLocalProjectManagerDirectionRecommendations(
   if (directionState.previewLoading) {
     container.appendChild(
       el("div", {
-        className: "deliverable-notepad-empty",
+        className: "local-project-manager-empty",
         textContent: loadingMessage,
       })
     );
@@ -17995,7 +15964,7 @@ function renderLocalProjectManagerDirectionRecommendations(
   if (directionState.previewError) {
     container.appendChild(
       el("div", {
-        className: "deliverable-notepad-empty",
+        className: "local-project-manager-empty",
         textContent: directionState.previewError,
       })
     );
@@ -18005,7 +15974,7 @@ function renderLocalProjectManagerDirectionRecommendations(
   if (!directionState.previewLoaded) {
     container.appendChild(
       el("div", {
-        className: "deliverable-notepad-empty",
+        className: "local-project-manager-empty",
         textContent: emptyMessage,
       })
     );
@@ -18015,7 +15984,7 @@ function renderLocalProjectManagerDirectionRecommendations(
   if (!items.length) {
     container.appendChild(
       el("div", {
-        className: "deliverable-notepad-empty",
+        className: "local-project-manager-empty",
         textContent: emptyMessage,
       })
     );
@@ -18102,7 +16071,7 @@ function createLocalProjectManagerReviewSection(title, items, emptyMessage, acti
   if (!items.length) {
     list.appendChild(
       el("div", {
-        className: "deliverable-notepad-empty local-project-manager-review-empty",
+        className: "local-project-manager-empty local-project-manager-review-empty",
         textContent: emptyMessage,
       })
     );
@@ -18189,7 +16158,7 @@ function renderLocalProjectManagerConflictResolutionView(container) {
   if (conflicts.length === 0) {
     container.appendChild(
       el("div", {
-        className: "deliverable-notepad-empty",
+        className: "local-project-manager-empty",
         textContent: "All conflicts have been resolved.",
       })
     );
@@ -19104,579 +17073,6 @@ async function runLocalProjectManagerTimestampComparison() {
   }
 }
 
-let deliverableNotepadEntries = [];
-let deliverableNotepadSelectedEntryIds = [];
-let deliverableNotepadScope = "incomplete";
-let deliverableNotepadSummary = null;
-let deliverableNotepadSummaryLoading = false;
-const DELIVERABLE_SUMMARY_MAX_ROWS = 150;
-
-function formatDeliverableExportField(value, fallback = "--") {
-  const normalized = String(value ?? "")
-    .replace(/\s+/g, " ")
-    .trim();
-  return normalized || fallback;
-}
-
-function getDeliverableStatusText(deliverable) {
-  const statuses = Array.isArray(deliverable?.statuses)
-    ? deliverable.statuses
-      .map((status) => String(status || "").trim())
-      .filter(Boolean)
-    : [];
-  if (statuses.length) return [...new Set(statuses)].join(", ");
-
-  const singleStatus = String(deliverable?.status || "").trim();
-  return singleStatus || "None";
-}
-
-function hasDeliverableExportContent(deliverable) {
-  if (!deliverable || typeof deliverable !== "object") return false;
-  if (String(deliverable.name || "").trim()) return true;
-  if (String(deliverable.due || "").trim()) return true;
-  if (String(deliverable.hardDue || "").trim()) return true;
-  if (String(deliverable.notes || "").trim()) return true;
-  if (String(deliverable.status || "").trim()) return true;
-  if (
-    Array.isArray(deliverable.statuses) &&
-    deliverable.statuses.some((status) => String(status || "").trim())
-  ) {
-    return true;
-  }
-  if (
-    Array.isArray(deliverable.tasks) &&
-    deliverable.tasks.some((task) => String(task?.text || "").trim())
-  ) {
-    return true;
-  }
-  return false;
-}
-
-function buildDeliverableNotepadEntries(projects = db, scope = "incomplete") {
-  const candidates = Array.isArray(projects) ? projects : [];
-  return candidates
-    .flatMap((project, projectIndex) =>
-      getProjectDeliverables(project)
-        .filter((deliverable) => scope === "all" || !isFinished(deliverable))
-        .filter((deliverable) => hasDeliverableExportContent(deliverable))
-        .map((deliverable, deliverableIndex) => {
-          const projectId = String(project?.id || "").trim();
-          const projectName = String(project?.name || "").trim();
-          const deliverableId = String(deliverable?.id || "").trim();
-          const deliverableName = String(deliverable?.name || "").trim();
-          return {
-            id: `${projectId || projectName || `project-${projectIndex}`}::${
-              deliverableId ||
-              deliverableName ||
-              `deliverable-${deliverableIndex}`
-            }`,
-            projectId,
-            projectName,
-            projectPath: String(project?.path || "").trim(),
-            deliverableName,
-            due: String(deliverable?.due || "").trim(),
-            hardDue: getHardDueStr(deliverable),
-            dueIso: toDeliverableSummaryIsoDate(
-              parseDueStr(String(deliverable?.due || "").trim())
-            ),
-            hardDueIso: toDeliverableSummaryIsoDate(
-              parseDueStr(getHardDueStr(deliverable))
-            ),
-            dueBucket: getDeliverableSummaryBucket(deliverable),
-            dueLabel: humanDate(getEffectiveDueStr(deliverable)) || "No date",
-            statusText: getDeliverableStatusText(deliverable),
-            project,
-            deliverable,
-          };
-        })
-    )
-    .sort((a, b) => {
-      const dueCompare = compareDeliverablesByDueDesc(a.deliverable, b.deliverable);
-      if (dueCompare) return dueCompare;
-      const projectCompare = String(a.projectId || a.projectName || "").localeCompare(
-        String(b.projectId || b.projectName || ""),
-        undefined,
-        { numeric: true, sensitivity: "base" }
-      );
-      if (projectCompare) return projectCompare;
-      return String(a.deliverableName || "").localeCompare(
-        String(b.deliverableName || ""),
-        undefined,
-        { numeric: true, sensitivity: "base" }
-      );
-    });
-}
-
-// parseDueStr builds dates at local noon; toISOString() would shift the day in
-// far-eastern timezones, so format from the local components instead.
-function toDeliverableSummaryIsoDate(date) {
-  if (!(date instanceof Date) || isNaN(date)) return "";
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${date.getFullYear()}-${month}-${day}`;
-}
-
-// dueState() returns "ok" for undated items, so the undated check must come first
-// or deliverables with no date get filed as on-track.
-function getDeliverableSummaryBucket(deliverable) {
-  if (!parseDueStr(getEffectiveDueStr(deliverable))) return "undated";
-  const state = deliverableDueState(deliverable);
-  if (state === "critical") return "missedHardDeadline";
-  if (state === "overdue") return "overdue";
-  if (state === "dueSoon") return "dueThisWeek";
-  return "upcoming";
-}
-
-const DELIVERABLE_SUMMARY_BUCKET_ORDER = [
-  "missedHardDeadline",
-  "overdue",
-  "dueThisWeek",
-  "upcoming",
-  "undated",
-];
-
-function buildDeliverableSummaryRequest(selectedItems = []) {
-  const items = Array.isArray(selectedItems) ? selectedItems.filter(Boolean) : [];
-  const byBucket = new Map(
-    DELIVERABLE_SUMMARY_BUCKET_ORDER.map((bucket) => [bucket, []])
-  );
-  items.forEach((item) => {
-    const bucket = item.dueBucket || getDeliverableSummaryBucket(item.deliverable);
-    (byBucket.get(bucket) || byBucket.get("undated")).push(item);
-  });
-
-  const buckets = [];
-  let remaining = DELIVERABLE_SUMMARY_MAX_ROWS;
-  let omittedCount = 0;
-
-  DELIVERABLE_SUMMARY_BUCKET_ORDER.forEach((bucket) => {
-    // A briefing reads soonest-first, unlike the Excel sheet's descending sort.
-    const all = (byBucket.get(bucket) || [])
-      .slice()
-      .sort((a, b) => compareDeliverablesByDue(a?.deliverable, b?.deliverable));
-    const take = Math.max(0, Math.min(remaining, all.length));
-    remaining -= take;
-    omittedCount += all.length - take;
-    buckets.push({
-      bucket,
-      totalCount: all.length,
-      deliverables: all.slice(0, take).map((item) => ({
-        projectId: item.projectId,
-        projectName: item.projectName,
-        deliverableName: item.deliverableName || "Untitled Deliverable",
-        due: item.dueIso || "",
-        hardDue: item.hardDueIso || "",
-        statusText: item.statusText || "None",
-      })),
-    });
-  });
-
-  return {
-    scope: deliverableNotepadScope,
-    today: toDeliverableSummaryIsoDate(new Date()),
-    deliverableCount: items.length,
-    omittedCount,
-    buckets,
-  };
-}
-
-function buildSelectedDeliverablesExcelRows(entries = []) {
-  const selectedEntries = Array.isArray(entries) ? entries.filter(Boolean) : [];
-  const sortedEntries = selectedEntries.slice().sort((a, b) => {
-    const dueCompare = compareDeliverablesByDueDesc(a?.deliverable, b?.deliverable);
-    if (dueCompare) return dueCompare;
-    const projectCompare = String(a?.projectId || a?.projectName || "").localeCompare(
-      String(b?.projectId || b?.projectName || ""),
-      undefined,
-      { numeric: true, sensitivity: "base" }
-    );
-    if (projectCompare) return projectCompare;
-    return String(a?.deliverableName || "").localeCompare(
-      String(b?.deliverableName || ""),
-      undefined,
-      { numeric: true, sensitivity: "base" }
-    );
-  });
-
-  return {
-    entries: sortedEntries.map((item) => ({
-      projectId: String(item?.projectId || "").trim(),
-      projectName: String(item?.projectName || "").trim(),
-      deliverableName:
-        String(item?.deliverableName || "").trim() || "Untitled Deliverable",
-      due: String(item?.due || "").trim(),
-      hardDue: String(item?.hardDue || "").trim(),
-      statusText: String(item?.statusText || "").trim() || "None",
-      projectPath: String(item?.projectPath || "").trim(),
-    })),
-    deliverableCount: sortedEntries.length,
-  };
-}
-
-function createDeliverableNotepadListItem(item) {
-  return el("label", { className: "deliverable-notepad-item", role: "listitem" }, [
-    el("input", {
-      type: "checkbox",
-      value: item.id,
-      "aria-label": `Select ${item.deliverableName || "untitled deliverable"}`,
-    }),
-    el("div", { className: "deliverable-notepad-item-content" }, [
-      el("div", {
-        className: "deliverable-notepad-item-title",
-        textContent: item.deliverableName || "Untitled Deliverable",
-      }),
-      el("div", {
-        className: "deliverable-notepad-item-subtitle",
-        textContent: `Project ID: ${formatDeliverableExportField(item.projectId)}`,
-      }),
-      el("div", {
-        className: "deliverable-notepad-item-subtitle",
-        textContent: `Project Name: ${formatDeliverableExportField(
-          item.projectName
-        )}`,
-      }),
-      el("div", {
-        className: "deliverable-notepad-item-meta",
-        textContent: `Due: ${item.dueLabel} | Status: ${item.statusText}`,
-      }),
-    ]),
-  ]);
-}
-
-function renderDeliverableNotepadList(container, items, emptyMessage) {
-  if (!container) return;
-  container.replaceChildren();
-  if (!items.length) {
-    container.appendChild(
-      el("div", {
-        className: "deliverable-notepad-empty",
-        textContent: emptyMessage,
-      })
-    );
-    return;
-  }
-  items.forEach((item) => container.appendChild(createDeliverableNotepadListItem(item)));
-}
-
-function renderDeliverableNotepadDialog() {
-  const availableList = document.getElementById("deliverableNotepadAvailableList");
-  const selectedList = document.getElementById("deliverableNotepadSelectedList");
-  if (!availableList || !selectedList) return;
-
-  const entryMap = new Map(deliverableNotepadEntries.map((item) => [item.id, item]));
-  const selectedIdSet = new Set(deliverableNotepadSelectedEntryIds);
-  const availableItems = deliverableNotepadEntries.filter(
-    (item) => !selectedIdSet.has(item.id)
-  );
-  const selectedItems = deliverableNotepadSelectedEntryIds
-    .map((id) => entryMap.get(id))
-    .filter(Boolean);
-
-  // With everything preselected the available panel starts empty, so the message
-  // has to explain that rather than reading as "nothing was found".
-  renderDeliverableNotepadList(
-    availableList,
-    availableItems,
-    deliverableNotepadScope === "incomplete"
-      ? "All incomplete deliverables are already selected for export."
-      : "No deliverables are available to add."
-  );
-  renderDeliverableNotepadList(
-    selectedList,
-    selectedItems,
-    "No deliverables have been selected for export."
-  );
-
-  const availableTitle = document.getElementById(
-    "deliverableNotepadAvailablePanelTitle"
-  );
-  if (availableTitle) {
-    availableTitle.textContent =
-      deliverableNotepadScope === "incomplete"
-        ? "Incomplete Deliverables"
-        : "All Deliverables";
-  }
-
-  document.querySelectorAll("[data-notepad-scope]").forEach((chip) => {
-    const isActive = chip.dataset.notepadScope === deliverableNotepadScope;
-    chip.classList.toggle("is-active", isActive);
-    chip.setAttribute("aria-pressed", isActive ? "true" : "false");
-  });
-
-  const availableCount = document.getElementById("deliverableNotepadAvailableCount");
-  if (availableCount) {
-    availableCount.textContent = `${availableItems.length} deliverable${
-      availableItems.length === 1 ? "" : "s"
-    }`;
-  }
-
-  const selectedCount = document.getElementById("deliverableNotepadSelectedCount");
-  if (selectedCount) {
-    selectedCount.textContent = `${selectedItems.length} deliverable${
-      selectedItems.length === 1 ? "" : "s"
-    }`;
-  }
-
-  const addBtn = document.getElementById("deliverableNotepadAddBtn");
-  if (addBtn) addBtn.disabled = !availableItems.length;
-
-  const removeBtn = document.getElementById("deliverableNotepadRemoveBtn");
-  if (removeBtn) removeBtn.disabled = !selectedItems.length;
-
-  const exportBtn = document.getElementById("deliverableNotepadExportBtn");
-  if (exportBtn) exportBtn.disabled = !selectedItems.length;
-
-  const summaryBtn = document.getElementById("deliverableNotepadSummaryBtn");
-  if (summaryBtn) {
-    summaryBtn.disabled = !selectedItems.length || deliverableNotepadSummaryLoading;
-  }
-
-  renderDeliverableNotepadSummary();
-}
-
-function renderDeliverableNotepadSummary() {
-  const panel = document.getElementById("deliverableNotepadSummaryPanel");
-  const body = document.getElementById("deliverableNotepadSummaryBody");
-  const meta = document.getElementById("deliverableNotepadSummaryMeta");
-  if (!panel || !body) return;
-
-  if (deliverableNotepadSummaryLoading) {
-    panel.hidden = false;
-    if (meta) meta.textContent = "";
-    body.replaceChildren(
-      el("p", { textContent: "Generating status briefing..." })
-    );
-    return;
-  }
-
-  if (!deliverableNotepadSummary) {
-    panel.hidden = true;
-    body.replaceChildren();
-    if (meta) meta.textContent = "";
-    return;
-  }
-
-  panel.hidden = false;
-  if (meta) {
-    const count = deliverableNotepadSummary.deliverableCount;
-    meta.textContent = `${count} deliverable${
-      count === 1 ? "" : "s"
-    } - included as a second Excel sheet`;
-  }
-
-  const nodes = [];
-  if (deliverableNotepadSummary.headline) {
-    nodes.push(
-      el("p", {
-        className: "deliverable-notepad-summary-headline",
-        textContent: deliverableNotepadSummary.headline,
-      })
-    );
-  }
-  (deliverableNotepadSummary.paragraphs || []).forEach((text) => {
-    nodes.push(el("p", { textContent: text }));
-  });
-  body.replaceChildren(...nodes);
-}
-
-function getCheckedDeliverableNotepadEntryIds(listId) {
-  const list = document.getElementById(listId);
-  if (!list) return [];
-  return [...list.querySelectorAll('input[type="checkbox"]:checked')].map(
-    (input) => input.value
-  );
-}
-
-function addDeliverablesToNotepadSelection() {
-  const ids = getCheckedDeliverableNotepadEntryIds("deliverableNotepadAvailableList");
-  if (!ids.length) {
-    toast("Select at least one deliverable to add.");
-    return;
-  }
-
-  clearDeliverableNotepadSummary();
-  const selectedIdSet = new Set(deliverableNotepadSelectedEntryIds);
-  ids.forEach((id) => {
-    if (!selectedIdSet.has(id)) {
-      deliverableNotepadSelectedEntryIds.push(id);
-      selectedIdSet.add(id);
-    }
-  });
-  renderDeliverableNotepadDialog();
-}
-
-function removeDeliverablesFromNotepadSelection() {
-  const ids = new Set(
-    getCheckedDeliverableNotepadEntryIds("deliverableNotepadSelectedList")
-  );
-  if (!ids.size) {
-    toast("Select at least one deliverable to remove.");
-    return;
-  }
-
-  clearDeliverableNotepadSummary();
-  deliverableNotepadSelectedEntryIds = deliverableNotepadSelectedEntryIds.filter(
-    (id) => !ids.has(id)
-  );
-  renderDeliverableNotepadDialog();
-}
-
-async function exportSelectedDeliverablesToExcel() {
-  const entryMap = new Map(deliverableNotepadEntries.map((item) => [item.id, item]));
-  const selectedItems = deliverableNotepadSelectedEntryIds
-    .map((id) => entryMap.get(id))
-    .filter(Boolean);
-
-  if (!selectedItems.length) {
-    toast("Select at least one deliverable to export.");
-    return;
-  }
-
-  if (!window.pywebview?.api?.export_deliverables_excel) {
-    toast("Excel export is unavailable.");
-    return;
-  }
-
-  const { entries, deliverableCount } =
-    buildSelectedDeliverablesExcelRows(selectedItems);
-
-  const payload = { entries };
-  if (deliverableNotepadSummary) {
-    payload.summary = {
-      headline: deliverableNotepadSummary.headline,
-      paragraphs: deliverableNotepadSummary.paragraphs,
-      generatedAt: deliverableNotepadSummary.generatedAt,
-      scope: deliverableNotepadSummary.scope,
-      deliverableCount: deliverableNotepadSummary.deliverableCount,
-    };
-  }
-
-  try {
-    const response = await window.pywebview.api.export_deliverables_excel(payload);
-    if (response?.status === "success") {
-      closeDlg("deliverableNotepadDlg");
-      toast(
-        `Exported ${deliverableCount} deliverable${
-          deliverableCount === 1 ? "" : "s"
-        } to Excel.`
-      );
-      return;
-    }
-    toast(response?.message || "Failed to export deliverables to Excel.");
-  } catch (error) {
-    console.error("Failed to export deliverables to Excel:", error);
-    toast("Failed to export deliverables to Excel.");
-  }
-}
-
-function clearDeliverableNotepadSummary() {
-  deliverableNotepadSummary = null;
-  deliverableNotepadSummaryLoading = false;
-}
-
-// Entries hold live project/deliverable references, so a cloud sync that replaces
-// db mid-dialog would leave this operating on detached objects. Pre-existing.
-function openDeliverablesExcelDialog() {
-  const dialog = document.getElementById("deliverableNotepadDlg");
-  if (!dialog) return;
-
-  deliverableNotepadScope = "incomplete";
-  clearDeliverableNotepadSummary();
-  deliverableNotepadEntries = buildDeliverableNotepadEntries(
-    db,
-    deliverableNotepadScope
-  );
-
-  if (!deliverableNotepadEntries.length) {
-    // Everything is Complete/Delivered - fall back to the full list rather than
-    // dead-ending the user on an empty dialog.
-    deliverableNotepadScope = "all";
-    deliverableNotepadEntries = buildDeliverableNotepadEntries(db, "all");
-    if (!deliverableNotepadEntries.length) {
-      toast("No deliverables found on projects.");
-      return;
-    }
-    toast("No incomplete deliverables - showing all deliverables.");
-  }
-
-  deliverableNotepadSelectedEntryIds = deliverableNotepadEntries.map(
-    (item) => item.id
-  );
-  renderDeliverableNotepadDialog();
-  dialog.showModal();
-}
-
-function setDeliverableNotepadScope(scope) {
-  const next = scope === "all" ? "all" : "incomplete";
-  if (next === deliverableNotepadScope) return;
-
-  deliverableNotepadScope = next;
-  deliverableNotepadEntries = buildDeliverableNotepadEntries(db, next);
-  if (next === "incomplete") {
-    // Keep Export immediately clickable when returning to the default scope.
-    deliverableNotepadSelectedEntryIds = deliverableNotepadEntries.map(
-      (item) => item.id
-    );
-  } else {
-    const availableIds = new Set(
-      deliverableNotepadEntries.map((item) => item.id)
-    );
-    deliverableNotepadSelectedEntryIds =
-      deliverableNotepadSelectedEntryIds.filter((id) => availableIds.has(id));
-  }
-  clearDeliverableNotepadSummary();
-  renderDeliverableNotepadDialog();
-}
-
-async function generateDeliverableStatusBriefing() {
-  const entryMap = new Map(deliverableNotepadEntries.map((item) => [item.id, item]));
-  const selectedItems = deliverableNotepadSelectedEntryIds
-    .map((id) => entryMap.get(id))
-    .filter(Boolean);
-
-  if (!selectedItems.length) {
-    toast("Select at least one deliverable to summarize.");
-    return;
-  }
-  if (!window.pywebview?.api?.generate_deliverable_status_summary) {
-    toast("AI status briefing is unavailable.");
-    return;
-  }
-  if (deliverableNotepadSummaryLoading) return;
-
-  deliverableNotepadSummaryLoading = true;
-  deliverableNotepadSummary = null;
-  renderDeliverableNotepadDialog();
-
-  try {
-    const request = buildDeliverableSummaryRequest(selectedItems);
-    const response =
-      await window.pywebview.api.generate_deliverable_status_summary({
-        ...request,
-        apiKey: userSettings.apiKey || "",
-      });
-    if (response?.status === "success") {
-      deliverableNotepadSummary = {
-        headline: String(response.headline || "").trim(),
-        paragraphs: Array.isArray(response.paragraphs)
-          ? response.paragraphs.map((p) => String(p || "").trim()).filter(Boolean)
-          : [],
-        generatedAt: String(response.generatedAt || ""),
-        scope: request.scope,
-        deliverableCount: request.deliverableCount,
-      };
-    } else {
-      toast(response?.message || "Failed to generate the status briefing.");
-    }
-  } catch (error) {
-    console.error("Failed to generate deliverable status briefing:", error);
-    toast(error?.message || "Failed to generate the status briefing.");
-  } finally {
-    deliverableNotepadSummaryLoading = false;
-    renderDeliverableNotepadDialog();
-  }
-}
-
 function compareDeliverablesByDue(a, b) {
   const da = parseDueStr(getEffectiveDueStr(a));
   const dbb = parseDueStr(getEffectiveDueStr(b));
@@ -19761,6 +17157,7 @@ function matchesProjectStatusFilter(deliverable, filter) {
 function matchesProjectDeliverablesFilter(deliverable, filter) {
   if (filter === "all") return true;
   if (filter === "incomplete") return !isFinished(deliverable);
+  if (filter.startsWith("type:")) return String(deliverable.name || "").trim() === filter.slice(5);
   return true;
 }
 
@@ -19853,23 +17250,24 @@ function compareProjectListSortBuckets(a, b, projectListContextMap = null) {
 }
 
 function getProjectListRenderContext(project) {
+  const isBoard = projectsViewMode === "card";
   const projectListPriority = getProjectListPriorityMeta(project);
   const priorityDeliverable = projectListPriority.priorityDeliverable;
   if (!priorityDeliverable) return null;
   const overviewDeliverables = getOverviewDeliverables(project);
   if (!overviewDeliverables.length) return null;
 
-  const isTimeframeView = dueFilter !== "all";
+  const isTimeframeView = !isBoard && dueFilter !== "all";
   const timeframeDeliverables = isTimeframeView
     ? overviewDeliverables.filter((deliverable) =>
         matchesDueFilter(deliverable, dueFilter)
       )
     : overviewDeliverables;
   const statusMatchingDeliverables = timeframeDeliverables.filter(
-    (deliverable) => matchesProjectStatusFilter(deliverable, statusFilter)
+    (deliverable) => isBoard || matchesProjectStatusFilter(deliverable, statusFilter)
   );
   const filteredDeliverables = statusMatchingDeliverables.filter((deliverable) =>
-    matchesProjectDeliverablesFilter(deliverable, deliverablesFilter)
+    isBoard || matchesProjectDeliverablesFilter(deliverable, deliverablesFilter)
   );
   const visibleDeliverables = isTimeframeView
     ? filteredDeliverables.slice().sort(compareDeliverablesByDueDesc)
@@ -22088,45 +19486,98 @@ function positionDropdownMenuInCardView(dropdown, isOpen) {
     menu.style.left = "";
     menu.style.right = "";
     menu.style.bottom = "";
+    menu.style.maxHeight = "";
+    menu.style.overflowY = "";
+    menu.style.overscrollBehavior = "";
     return;
   }
 
-  if (!dropdown.closest(".projects-card-view")) return;
+  const cardView = dropdown.closest(".projects-card-view");
+  if (!cardView) return;
 
   const trigger = dropdown.querySelector(
     ":scope > .deliverable-tool-trigger, :scope > .deliverable-actions-trigger, :scope > .deliverable-status-trigger"
   );
   if (!trigger) return;
 
-  // Apply fixed positioning first so the measured rect reflects unclipped size.
+  // Apply fixed positioning and clear constraints first so measured rect reflects unclipped natural size.
   menu.style.position = "fixed";
   menu.style.top = "0px";
   menu.style.left = "0px";
   menu.style.right = "auto";
   menu.style.bottom = "auto";
+  menu.style.maxHeight = "";
+  menu.style.overflowY = "";
+  menu.style.overscrollBehavior = "";
 
   const menuRect = menu.getBoundingClientRect();
   const triggerRect = trigger.getBoundingClientRect();
+  const cardViewRect = cardView.getBoundingClientRect();
   const viewportW = window.innerWidth;
   const viewportH = window.innerHeight;
   const gap = 6;
   const margin = 8;
+  const minLeft = Math.max(margin, cardViewRect.left + margin);
+  const maxRight = Math.min(viewportW - margin, cardViewRect.right - margin);
   const isLeftAligned =
     menu.classList.contains("deliverable-status-menu") ||
-    dropdown.classList.contains("deliverable-card-tool-action");
+    dropdown.classList.contains("deliverable-card-tool-action") ||
+    dropdown.classList.contains("deliverable-card-quick-access-action");
 
   let left = isLeftAligned
     ? triggerRect.left
     : triggerRect.right - menuRect.width;
-  left = Math.max(margin, Math.min(left, viewportW - menuRect.width - margin));
+  left = Math.max(
+    minLeft,
+    Math.min(left, Math.max(minLeft, maxRight - menuRect.width))
+  );
 
-  let top = triggerRect.bottom + gap;
-  if (top + menuRect.height > viewportH - margin) {
-    const topAbove = triggerRect.top - menuRect.height - gap;
-    top = topAbove >= margin
-      ? topAbove
-      : Math.max(margin, viewportH - menuRect.height - margin);
+  // The card board is its own scroll/clipping viewport. Its top edge sits below
+  // the project controls, and each column also has a sticky header. Keep menus
+  // below both boundaries instead of treating obscured page space as available.
+  let minTop = Math.max(margin, cardViewRect.top + margin);
+  const maxBottom = Math.min(viewportH - margin, cardViewRect.bottom - margin);
+  const stickyHeader = dropdown
+    .closest(".kanban-column")
+    ?.querySelector(":scope > .kanban-column__header");
+  if (stickyHeader) {
+    const headerRect = stickyHeader.getBoundingClientRect();
+    const headerIntersectsVisibleBoard =
+      headerRect.bottom > minTop && headerRect.top < maxBottom;
+    if (headerIntersectsVisibleBoard && headerRect.top <= triggerRect.top) {
+      minTop = Math.max(minTop, headerRect.bottom + gap);
+    }
   }
+
+  const spaceBelow = Math.max(0, maxBottom - (triggerRect.bottom + gap));
+  const spaceAbove = Math.max(0, (triggerRect.top - gap) - minTop);
+
+  let top = 0;
+  let maxHeight = 0;
+
+  if (menuRect.height <= spaceBelow) {
+    // Fits comfortably below trigger
+    top = triggerRect.bottom + gap;
+    maxHeight = spaceBelow;
+  } else if (menuRect.height <= spaceAbove) {
+    // Fits comfortably above trigger
+    top = triggerRect.top - menuRect.height - gap;
+    maxHeight = spaceAbove;
+  } else if (spaceAbove >= spaceBelow) {
+    // Doesn't fit completely on either side, but there is more space above
+    maxHeight = spaceAbove;
+    top = triggerRect.top - maxHeight - gap;
+  } else {
+    // Doesn't fit completely on either side, but there is more space below
+    top = triggerRect.bottom + gap;
+    maxHeight = spaceBelow;
+  }
+
+  top = Math.max(minTop, Math.min(top, maxBottom - 1));
+  maxHeight = Math.max(
+    1,
+    Math.floor(Math.min(maxHeight, Math.max(0, maxBottom - top)))
+  );
 
   // An ancestor with backdrop-filter / transform / filter / etc. establishes a
   // containing block for our fixed menu. getBoundingClientRect returns viewport
@@ -22134,6 +19585,9 @@ function positionDropdownMenuInCardView(dropdown, isOpen) {
   const containerOffset = getFixedContainingBlockOffset(menu);
   menu.style.top = `${Math.round(top - containerOffset.top)}px`;
   menu.style.left = `${Math.round(left - containerOffset.left)}px`;
+  menu.style.maxHeight = `${maxHeight}px`;
+  menu.style.overflowY = "auto";
+  menu.style.overscrollBehavior = "contain";
   ensureCardViewDropdownScrollHandlers();
 }
 
@@ -22343,6 +19797,194 @@ function createDeliverableToolDropdown(deliverable, project, card) {
   return dropdown;
 }
 
+// Quick access sits beside the tools menu and jumps straight to published
+// files. Entries stay data-driven so more shortcuts can join the menu later.
+const DELIVERABLE_QUICK_ACCESS_ACTIONS = Object.freeze([
+  {
+    id: "openLatestPdf",
+    getLabel: () => `Open Latest ${getActiveWorkroomDiscipline()} Set`,
+    iconSvg:
+      '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"></path><path d="M14 2v6h6"></path><path d="M9 14h6"></path><path d="M9 18h4"></path>',
+    run: (project, deliverable) => openLatestDeliverablePdf(project, deliverable),
+  },
+  {
+    id: "openLatestArchSet",
+    label: "Open Latest Arch Set",
+    iconSvg:
+      '<path d="M3 21h18"></path><path d="M5 21V7l7-4 7 4v14"></path><path d="M10 21v-6h4v6"></path>',
+    run: (project) => openLatestArchSet(project),
+  },
+]);
+
+function getDeliverableQuickAccessActionLabel(action) {
+  return typeof action?.getLabel === "function" ? action.getLabel() : action?.label || "";
+}
+
+function createDeliverableQuickAccessTriggerIcon() {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "1.9");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  svg.setAttribute("class", "deliverable-tool-trigger-icon");
+  svg.innerHTML = '<path d="M13 2 3 14h7l-1 8 10-12h-7l1-8Z"></path>';
+  return svg;
+}
+
+function createDeliverableQuickAccessOptionIcon(action) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("width", "14");
+  svg.setAttribute("height", "14");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "1.9");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  svg.setAttribute("class", "deliverable-tool-option-icon");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  svg.innerHTML = action?.iconSvg || "";
+  return svg;
+}
+
+function buildDeliverablePdfLookupProject(project) {
+  return {
+    path: normalizeProjectPath(project?.path || ""),
+    localProjectPath: normalizeWindowsPath(project?.localProjectPath || ""),
+    id: String(project?.id || "").trim(),
+    name: String(project?.name || "").trim(),
+  };
+}
+
+// Every quick access entry resolves a file in the backend and opens it, so they
+// share the project payload, the missing-path guard, and the toast handling.
+async function runDeliverableQuickAccessOpen({
+  project,
+  methodName,
+  buildArgs = () => [],
+  fallbackLabel,
+}) {
+  const method = window.pywebview?.api?.[methodName];
+  if (typeof method !== "function") {
+    toast(`Opening the ${fallbackLabel} is unavailable.`);
+    return;
+  }
+
+  const lookupProject = buildDeliverablePdfLookupProject(project);
+  if (!lookupProject.path && !lookupProject.localProjectPath) {
+    toast("Add a project path before opening files.");
+    return;
+  }
+
+  try {
+    const result = await method(lookupProject, ...buildArgs());
+    if (String(result?.status || "").trim().toLowerCase() !== "success") {
+      throw new Error(result?.message || `No ${fallbackLabel} was found.`);
+    }
+    toast(`Opening ${result.fileName || fallbackLabel}.`);
+  } catch (error) {
+    console.warn(`Failed to open ${fallbackLabel}:`, error);
+    toast(error?.message || `Unable to open the ${fallbackLabel}.`);
+  }
+}
+
+// The published PDF is named for the discipline, so the active discipline
+// decides whether Electrical, Mechanical, or Plumbing opens.
+function openLatestDeliverablePdf(project, deliverable) {
+  const discipline = getActiveWorkroomDiscipline();
+  return runDeliverableQuickAccessOpen({
+    project,
+    methodName: "open_latest_deliverable_pdf",
+    buildArgs: () => [discipline, String(deliverable?.name || "").trim()],
+    fallbackLabel: `latest ${discipline} PDF`,
+  });
+}
+
+// The architect's set is whatever PDF sits newest under the project's Arch
+// folder, so it needs no discipline or deliverable context.
+function openLatestArchSet(project) {
+  return runDeliverableQuickAccessOpen({
+    project,
+    methodName: "open_latest_arch_set",
+    fallbackLabel: "latest Arch set",
+  });
+}
+
+// Shares the tool dropdown's classes and open/close state so the two menus
+// position identically and never stay open at the same time.
+function createDeliverableQuickAccessDropdown(deliverable, project, card) {
+  ensureDeliverableToolDropdownGlobalHandlers();
+
+  const dropdown = el("div", {
+    className: "deliverable-tool-dropdown deliverable-quick-access-dropdown",
+  });
+  const trigger = el("button", {
+    className: "deliverable-tool-trigger deliverable-quick-access-trigger",
+    type: "button",
+    title: "Quick access",
+    "aria-label": "Quick access",
+    "aria-expanded": "false",
+  });
+  trigger.appendChild(createDeliverableQuickAccessTriggerIcon());
+
+  const menu = el("div", {
+    className: "deliverable-tool-menu deliverable-quick-access-menu",
+  });
+  DELIVERABLE_QUICK_ACCESS_ACTIONS.forEach((action) => {
+    const option = el("button", {
+      className: "deliverable-tool-option",
+      type: "button",
+      "data-quick-access-id": action.id,
+    });
+    const label = el("span", {
+      className: "deliverable-tool-option-label",
+      textContent: getDeliverableQuickAccessActionLabel(action),
+    });
+    option.append(createDeliverableQuickAccessOptionIcon(action), label);
+    option.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setDeliverableToolDropdownState(dropdown, false);
+      void action.run(project, deliverable);
+    });
+    menu.appendChild(option);
+  });
+
+  trigger.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const isOpen = !dropdown.classList.contains("open");
+
+    if (isOpen) {
+      menu.querySelectorAll("[data-quick-access-id]").forEach((option) => {
+        const action = DELIVERABLE_QUICK_ACCESS_ACTIONS.find(
+          (entry) => entry.id === option.dataset.quickAccessId
+        );
+        const label = option.querySelector(".deliverable-tool-option-label");
+        if (label && action) {
+          label.textContent = getDeliverableQuickAccessActionLabel(action);
+        }
+      });
+    }
+
+    closeOpenDeliverableToolDropdown({ except: dropdown });
+    closeOpenDeliverableStatusDropdowns();
+    closeOpenDeliverableActionsDropdown();
+    if (openAttachmentPanelContext) {
+      void requestAttachmentPanelClose();
+    }
+
+    setDeliverableToolDropdownState(dropdown, isOpen);
+  });
+
+  dropdown.append(trigger, menu);
+  card?.classList.remove("deliverable-menu-open");
+  return dropdown;
+}
+
 function createDeliverablePinButton(deliverable) {
   const button = createWorkItemPinButton({
     pinned: isDeliverablePinned(deliverable),
@@ -22502,40 +20144,30 @@ function createDeliverableCardTopActions(deliverable, project, card) {
   const toolDropdown = createDeliverableToolDropdown(deliverable, project, card);
   toolDropdown.classList.add("deliverable-card-tool-action");
 
-  const pinBtn = createDeliverablePinButton(deliverable);
-  pinBtn.classList.add(
-    "deliverable-card-action-btn",
-    "deliverable-card-pin-action"
+  const quickAccessDropdown = createDeliverableQuickAccessDropdown(
+    deliverable,
+    project,
+    card
   );
+  quickAccessDropdown.classList.add("deliverable-card-quick-access-action");
 
-  leftActions.append(pinBtn, statusDropdown, toolDropdown);
-
-  const projectIndex = Array.isArray(db) ? db.indexOf(project) : -1;
-  if (project && projectIndex >= 0) {
-    rightActions.append(
-      createDeliverableCardActionButton({
-        className: "deliverable-card-delete-action",
-        title: "Delete deliverable",
-        ariaLabel: "Delete deliverable",
-        iconPath: TRASH_ICON_PATH,
-        danger: true,
-        onClick: () => {
-          closeDeliverableCardActionOverlays();
-          removeDeliverable(project, deliverable);
-        },
-      }),
-      createDeliverableCardActionButton({
-        className: "deliverable-card-edit-action",
-        title: "Edit project",
-        ariaLabel: "Edit project",
-        iconPath: PENCIL_ICON_PATH,
-        onClick: () => {
-          closeDeliverableCardActionOverlays();
-          openEdit(projectIndex);
-        },
-      })
-    );
+  if (project) {
+    const openButton = createDeliverableCardActionButton({
+      className: "deliverable-card-open-page-action",
+      title: "Open project notes",
+      ariaLabel: "Open project notes",
+      iconPath: NOTE_ICON_PATH,
+      onClick: () => {
+        closeDeliverableCardActionOverlays();
+        openProjectPage(project);
+      },
+    });
+    openButton.appendChild(el("span", { textContent: "Notes" }));
+    leftActions.appendChild(openButton);
   }
+  leftActions.append(statusDropdown, toolDropdown, quickAccessDropdown);
+  statusDropdown.querySelector("button")?.appendChild(el("span", { textContent: "Status" }));
+  toolDropdown.querySelector("button")?.appendChild(el("span", { textContent: "Tools" }));
   // Important-line alert -> jumps to the page carrying the first flag
   if (project) {
     const importantItems = getProjectImportantItems(project);
@@ -22561,21 +20193,7 @@ function createDeliverableCardTopActions(deliverable, project, card) {
       rightActions.append(importantBtn);
     }
   }
-  // Notion-style project notes entry point
-  if (project) {
-    rightActions.append(
-      createDeliverableCardActionButton({
-        className: "deliverable-card-open-page-action",
-        title: "Open project notes",
-        ariaLabel: "Open project notes",
-        iconPath: NOTE_ICON_PATH,
-        onClick: () => {
-          closeDeliverableCardActionOverlays();
-          openProjectPage(project);
-        },
-      })
-    );
-  }
+  rightActions.appendChild(createDeliverableActionsDropdown(deliverable, project, card));
   actions.append(leftActions, rightActions);
 
   return actions;
@@ -22887,12 +20505,13 @@ function createDeliverableActionsDropdown(deliverable, project, card) {
   const trigger = el("button", {
     className: "deliverable-actions-trigger",
     type: "button",
-    title: "Deliverable actions",
-    "aria-label": "Deliverable actions",
+    title: "More deliverable actions",
+    "aria-label": "More deliverable actions",
     "aria-haspopup": "true",
     "aria-expanded": "false",
   });
   trigger.appendChild(createDeliverableActionsTriggerIcon());
+  trigger.appendChild(el("span", { textContent: "More" }));
 
   const menu = el("div", { className: "deliverable-actions-menu", role: "menu" });
 
@@ -22930,89 +20549,6 @@ function createDeliverableActionsDropdown(deliverable, project, card) {
     },
   });
   menu.appendChild(pinItem);
-
-  const statusSubmenu = buildDeliverableActionsSubmenu("Status", (submenu) => {
-    const availableStatuses = [
-      "Waiting",
-      "On hold",
-      "Pending Review",
-      "Complete",
-      "Delivered",
-    ];
-    availableStatuses.forEach((status) => {
-      const isActive = hasStatus(deliverable, status);
-      const item = buildDeliverableActionsItem({
-        label: isActive ? `${status} ✓` : status,
-        onClick: async () => {
-          setDeliverableActionsDropdownState(dropdown, false);
-          setSingleStatus(deliverable, status);
-          await save();
-          renderProjectsPreservingExpandedDeliverables();
-        },
-      });
-      submenu.appendChild(item);
-    });
-    const clearItem = buildDeliverableActionsItem({
-      label: "Clear status",
-      onClick: async () => {
-        setDeliverableActionsDropdownState(dropdown, false);
-        setSingleStatus(deliverable, "");
-        await save();
-        renderProjectsPreservingExpandedDeliverables();
-      },
-    });
-    submenu.appendChild(clearItem);
-  }, { iconPath: STATUS_ICON_PATH });
-  menu.appendChild(statusSubmenu);
-
-  const toolsSubmenu = buildDeliverableActionsSubmenu("Tools", (submenu) => {
-    const categories = getDeliverableToolMenuEntriesByCategory();
-    if (categories.length === 0) {
-      submenu.appendChild(
-        el("div", {
-          className: "deliverable-actions-empty",
-          textContent: "No tools available",
-        })
-      );
-      return;
-    }
-    categories.forEach((cat) => {
-      const catWrapper = buildDeliverableActionsSubmenu(cat.label, (catSubmenu) => {
-        cat.entries.forEach((entry) => {
-          const toolItem = buildDeliverableActionsItem({
-            label: entry.menuLabel || entry.label,
-            iconElement: createSharedToolIcon(entry, 14),
-            onClick: () => {
-              setDeliverableActionsDropdownState(dropdown, false);
-              const launchContext = buildProjectsTabToolLaunchContext(project, deliverable);
-              launchSharedToolCard(entry.id, launchContext);
-            },
-          });
-          toolItem.setAttribute("data-shared-tool-id", entry.id);
-          toolItem.setAttribute("data-launch-type", entry.launchType);
-          catSubmenu.appendChild(toolItem);
-        });
-      });
-      catWrapper
-        .querySelector(":scope > .deliverable-actions-item")
-        ?.setAttribute("data-tool-category", cat.key);
-      submenu.appendChild(catWrapper);
-    });
-  }, { iconPath: TOOLS_ICON_PATH });
-  menu.appendChild(toolsSubmenu);
-
-  const attachmentItem = buildDeliverableActionsItem({
-    label: "Attachments",
-    iconPath: ATTACHMENT_ICON_PATH,
-    onClick: () => {
-      closeOpenDeliverableToolDropdown();
-      closeOpenDeliverableStatusDropdowns();
-      setDeliverableActionsDropdownState(dropdown, false);
-      openAttachmentPanel(attachmentContext);
-    },
-  });
-  attachmentItem.classList.add("deliverable-actions-attachments");
-  menu.appendChild(attachmentItem);
 
   const projectIndex = Array.isArray(db) ? db.indexOf(project) : -1;
   if (project && projectIndex >= 0) {
@@ -23056,12 +20592,12 @@ function createDeliverableActionsDropdown(deliverable, project, card) {
 
     menu.appendChild(
       buildDeliverableActionsItem({
-        label: "Delete Project",
+        label: "Delete deliverable",
         danger: true,
         iconPath: TRASH_ICON_PATH,
         onClick: () => {
           setDeliverableActionsDropdownState(dropdown, false);
-          removeProject(projectIndex);
+          removeDeliverable(project, deliverable);
         },
       })
     );
@@ -23190,7 +20726,7 @@ function createCardHeader(deliverable, card, project) {
 
 function createDeliverableDueBadge(deliverable, project, { field, stateClass, text, label }) {
   const badge = el("div", {
-    className: `deliverable-due-badge ${stateClass} is-clickable`,
+    className: `deliverable-due-badge ${isFinished(deliverable) ? "finished" : stateClass} is-clickable`,
     textContent: text,
   });
   badge.setAttribute("role", "button");
@@ -23201,7 +20737,9 @@ function createDeliverableDueBadge(deliverable, project, { field, stateClass, te
       ? "Hard deadline – must finish. Click to change."
       : "Click to change due date"
   );
-  badge.setAttribute("aria-label", label);
+  badge.setAttribute("aria-label", isFinished(deliverable)
+    ? `${field === "hardDue" ? "Hard deadline" : "Target date"} ${text}. Finished deliverable. Click to change.`
+    : label);
   const handleOpen = (e) => {
     e.stopPropagation();
     showCalendarForDeliverableBadge(badge, deliverable, project, field);
@@ -23349,7 +20887,7 @@ function renderDeliverableStatusBadges(container, deliverable) {
   container.replaceChildren();
   if (deliverable.statuses && deliverable.statuses.length) {
     deliverable.statuses.forEach(status => {
-      const statusClass = status.toLowerCase().replace(/\s+/g, "");
+      const statusClass = (LABEL_TO_KEY[status] || status).toLowerCase().replace(/\s+/g, "");
       const badge = el("div", {
         className: `deliverable-status-badge ${statusClass}`,
         textContent: status
@@ -23391,10 +20929,12 @@ function setDeliverableStatusDropdownState(dropdown, isOpen) {
 
 function createStatusDropdown(deliverable, project, card) {
   const availableStatuses = [
+    "In progress",
     "Waiting",
     "On hold",
     "Pending Review",
     "Complete",
+    "Completed (by others)",
     "Delivered",
   ];
   const dropdown = el("div", { className: "deliverable-status-dropdown" });
@@ -23437,20 +20977,6 @@ function createStatusDropdown(deliverable, project, card) {
     option.append(radio, label);
     menu.appendChild(option);
   });
-
-  const clearBtn = el("button", {
-    type: "button",
-    className: "deliverable-status-clear",
-    textContent: "Clear status",
-  });
-  clearBtn.addEventListener("click", async (e) => {
-    e.stopPropagation();
-    setSingleStatus(deliverable, "");
-    await save();
-    setDeliverableStatusDropdownState(dropdown, false);
-    renderProjectsPreservingExpandedDeliverables();
-  });
-  menu.appendChild(clearBtn);
 
   // Toggle dropdown
   trigger.addEventListener("click", (e) => {
@@ -23750,7 +21276,7 @@ function renderDeliverableCardLegacy(deliverable, project) {
   // Tasks preview (2-3 tasks, now clickable)
   const tasksPreview = createTasksPreviewLegacy(deliverable, card);
 
-  card.append(actionRow, header, progress, statusSection, tasksPreview);
+  card.append(header, progress, statusSection, actionRow, tasksPreview);
   updateDeliverableTaskStats(card, deliverable);
   return card;
 }
@@ -24127,7 +21653,7 @@ function renderDeliverableCard(deliverable, project) {
     card
   );
 
-  card.append(actionRow, header, statusSection);
+  card.append(header, statusSection, actionRow);
   updateDeliverableWorkItemUi(card, deliverable);
   return card;
 }
@@ -25332,6 +22858,29 @@ function attachProjectDirectoryContextMenu(target, project) {
   return target;
 }
 
+// Opens the project's saved folder. Shared by the card project name and by the
+// folder button on the deliverable plate card.
+async function openProjectPathFolder(project) {
+  const path = String(project?.path || "").trim();
+  if (!path) {
+    toast("No project path saved.");
+    return;
+  }
+  if (!window.pywebview?.api?.open_path) {
+    toast("Open path is unavailable.");
+    return;
+  }
+  try {
+    const result = await window.pywebview.api.open_path(convertPath(path));
+    if (result?.status && result.status !== "success") {
+      throw new Error(result.message || "Unable to open folder.");
+    }
+    toast("Opening folder...");
+  } catch (error) {
+    toast(error?.message || "Failed to open path.");
+  }
+}
+
 function attachCardProjectPathOpen(target, project) {
   if (!target) return target;
   target.dataset.projectPathOpen = "true";
@@ -25341,26 +22890,10 @@ function attachCardProjectPathOpen(target, project) {
   if (path) {
     target.title = `Open: ${path}`;
   }
-  const openPath = async (event) => {
+  const openPath = (event) => {
     event.preventDefault();
     event.stopPropagation();
-    if (!path) {
-      toast("No project path saved.");
-      return;
-    }
-    if (!window.pywebview?.api?.open_path) {
-      toast("Open path is unavailable.");
-      return;
-    }
-    try {
-      const result = await window.pywebview.api.open_path(convertPath(path));
-      if (result?.status && result.status !== "success") {
-        throw new Error(result.message || "Unable to open folder.");
-      }
-      toast("Opening folder...");
-    } catch (error) {
-      toast(error?.message || "Failed to open path.");
-    }
+    return openProjectPathFolder(project);
   };
   target.addEventListener("click", openPath);
   target.addEventListener("keydown", (event) => {
@@ -25501,30 +23034,16 @@ function renderGroupedProjectDeliverablesCell(
   const visibleDeliverables = projectListContext.visibleDeliverables;
 
   if (visibleDeliverables.length) {
-    if (projectListContext.showTimeframeNote && projectListContext.timeframeNote) {
-      deliverablesCell.appendChild(
-        el("div", {
-          className: "project-timeframe-note",
-          textContent: projectListContext.timeframeNote,
-        })
-      );
-    }
-
-    const cardsContainer = el("div", { className: "deliverable-cards-container" });
-    visibleDeliverables.forEach((deliverable) => {
-      cardsContainer.appendChild(renderDeliverableCard(deliverable, project));
-    });
-
-    deliverablesCell.appendChild(cardsContainer);
+    renderDeliverableRegisterCellGroup(
+      deliverablesCell,
+      visibleDeliverables,
+      project,
+      projectListContext.showTimeframeNote ? projectListContext.timeframeNote : ""
+    );
     return;
   }
 
-  deliverablesCell.appendChild(
-    el("div", {
-      className: "deliverable-empty",
-      textContent: "--",
-    })
-  );
+  renderDeliverableRegisterCellGroup(deliverablesCell, [], project);
 }
 
 function renderProjectDeliverableCell(
@@ -25543,7 +23062,7 @@ function renderProjectDeliverableCell(
     );
     return;
   }
-  deliverablesCell.appendChild(renderDeliverableCard(deliverable, project));
+  renderDeliverableRegisterCell(deliverablesCell, deliverable, project);
 }
 
 function appendProjectSearchContextRow(tbody, query, project, matchContextMap) {
@@ -25591,6 +23110,7 @@ function renderGroupedProjectRows({
     }
 
     const tr = buildProjectTableRow(project, db.indexOf(project), rowTemplate);
+    decorateProjectRegisterRow(tr, project, projectListContext.priorityDeliverable);
     renderGroupedProjectDeliverablesCell(
       tr.querySelector(".cell-deliverables"),
       project,
@@ -25662,6 +23182,7 @@ function renderUngroupedDeliverableRows({
     }
 
     const tr = buildProjectTableRow(project, projectIndex, rowTemplate);
+    decorateProjectRegisterRow(tr, project, deliverable);
     renderProjectDeliverableCell(
       tr.querySelector(".cell-deliverables"),
       deliverable,
@@ -25726,11 +23247,12 @@ function buildMatchContextRow(q, project, context) {
 
 const KANBAN_COLUMN_SLUGS = {
   pinned: "pinned",
-  none: "none",
+  "In progress": "in-progress",
   Waiting: "waiting",
   "On hold": "on-hold",
   "Pending Review": "pending-review",
   Complete: "complete",
+  "Completed (by others)": "completed-by-others",
   Delivered: "delivered",
   nodate: "nodate",
 };
@@ -25775,7 +23297,7 @@ function updateProjectsViewModeUi() {
   if (table) table.hidden = !isList;
   if (cardView) cardView.hidden = !isCard;
   if (cardControls) cardControls.hidden = !isCard;
-  if (filterControls) filterControls.hidden = !isList;
+  if (filterControls) filterControls.hidden = false;
   if (pagination && !isList) pagination.hidden = true;
   if (emptyState && !isList) emptyState.style.display = "none";
 }
@@ -25940,7 +23462,7 @@ function renderCardView(items = db, projectListContextMap = null) {
     if (!inWeek && !overduePull) continue;
 
     const primary =
-      STATUS_PRIORITY.find((s) => hasStatus(deliverable, s)) || "none";
+      STATUS_PRIORITY.find((s) => hasStatus(deliverable, s)) || "In progress";
     if (buckets.has(primary)) {
       buckets.get(primary).push({
         project,
@@ -26005,12 +23527,13 @@ function renderCardView(items = db, projectListContextMap = null) {
       );
     } else {
       for (const { project, deliverable } of bucketRows) {
-        const card = renderDeliverableCard(deliverable, project);
+        const card = renderDeliverablePlateCard(deliverable, project);
         card.draggable = true;
-        const projectMeta = buildCardProjectMeta(project, db.indexOf(project), deliverable);
+        const projectMeta = card.classList.contains("plate-card")
+          ? null
+          : buildCardProjectMeta(project, db.indexOf(project), deliverable);
         if (projectMeta) {
-          const actionRow = card.querySelector(":scope > .deliverable-card-action-row");
-          card.insertBefore(projectMeta, actionRow?.nextSibling || card.firstChild);
+          card.insertBefore(projectMeta, card.firstChild);
         }
         cardsHost.appendChild(card);
       }
@@ -26560,11 +24083,7 @@ function attachKanbanDragHandlers(host) {
       if (sourceColumnKey === "pinned" && deliverable.pinned) {
         setDeliverablePinnedState(deliverable, false);
       }
-      if (targetKey === "none") {
-        setSingleStatus(deliverable, "");
-      } else {
-        setSingleStatus(deliverable, targetKey);
-      }
+      setSingleStatus(deliverable, targetKey);
     }
 
     await save();
@@ -26598,6 +24117,7 @@ function render() {
   });
 
   sortProjectsByCurrent(items, projectListContextMap);
+  updateProjectsIndustryChrome();
 
   if (isCardView) {
     emptyState.style.display = "none";
@@ -26654,6 +24174,7 @@ function render() {
       query: q,
       appendSectionSeparator,
     });
+    finalizeProjectsRegister(tbody, pagination);
     return;
   }
 
@@ -26676,6 +24197,7 @@ function render() {
     appendSectionSeparator,
     paginatedDeliverableRows: pagination.items,
   });
+  finalizeProjectsRegister(tbody, pagination);
 }
 
 function renderStatusToggles(p) {
@@ -26697,10 +24219,12 @@ function renderStatusToggles(p) {
     return b;
   };
   [
+    ["progress", "In progress"],
     ["wait", "Waiting"],
     ["hold", "On hold"],
     ["pr", "Pending Review"],
     ["comp", "Complete"],
+    ["comp", "Completed (by others)"],
     ["del", "Delivered"],
   ].forEach(([cls, label]) => wrap.append(mk(cls, label)));
   return wrap;
@@ -27294,7 +24818,7 @@ function addDeliverableCard(deliverable, options = {}) {
     renderModalDeliverableTaskList(card, taskList);
   };
   const picker = buildStatusPicker(deliverable.statuses || [], (label, pressed) => {
-    if (pressed && (label === "Complete" || label === "Delivered")) {
+    if (pressed && isFinished({ statuses: [label] })) {
       markTasksDone();
     }
     refreshModalDeliverableSummary(card);
@@ -27382,7 +24906,7 @@ function refreshModalDeliverableSummary(card) {
       .map((b) => b.dataset.status)
       .filter(Boolean);
     activeStatuses.forEach((status) => {
-      const cls = status.toLowerCase().replace(/\s+/g, "");
+      const cls = (LABEL_TO_KEY[status] || status).toLowerCase().replace(/\s+/g, "");
       const badge = el("span", {
         className: `deliverable-status-badge ${cls}`,
         textContent: status,
@@ -27393,7 +24917,7 @@ function refreshModalDeliverableSummary(card) {
 
   const isCardFinished = Array.from(
     card.querySelectorAll('.deliverable-status .st[aria-pressed="true"]')
-  ).some((b) => b.dataset.status === "Complete" || b.dataset.status === "Delivered");
+  ).some((b) => isFinished({ statuses: [b.dataset.status] }));
 
   const dueInput = card.querySelector(".d-due");
   const hardDueInput = card.querySelector(".d-hard-due");
@@ -27448,6 +24972,7 @@ function toggleModalDeliverableCard(card, expanded) {
 }
 
 function buildStatusPicker(selected = [], onToggle) {
+  if (!selected.some((status) => STATUS_CANON.includes(status))) selected = ["In progress"];
   const wrap = el("div", { className: "status-picker" });
   const mk = (cls, label) => {
     const b = el("button", {
@@ -27460,17 +24985,20 @@ function buildStatusPicker(selected = [], onToggle) {
     });
     b.onclick = (e) => {
       e.preventDefault();
-      const next = b.getAttribute("aria-pressed") !== "true";
-      b.setAttribute("aria-pressed", String(next));
-      if (onToggle) onToggle(label, next, b);
+      wrap.querySelectorAll(".st").forEach((button) => {
+        button.setAttribute("aria-pressed", String(button === b));
+      });
+      if (onToggle) onToggle(label, true, b);
     };
     return b;
   };
   [
+    ["progress", "In progress"],
     ["wait", "Waiting"],
     ["hold", "On hold"],
     ["pr", "Pending Review"],
     ["comp", "Complete"],
+    ["comp", "Completed (by others)"],
     ["del", "Delivered"],
   ].forEach(([cls, label]) => wrap.append(mk(cls, label)));
   return wrap;
@@ -29199,7 +26727,7 @@ const PLUGIN_DOC_OVERRIDES = {
   },
   CleanCADCommands: {
     replace: true,
-    order: ["EMBEDIMAGES", "EMBEDPDFS", "CLEANTBLK", "CLEANCAD"],
+    order: ["EMBEDIMAGES", "EMBEDPDFS", "CLEANTBLK", "CLEANCAD", "CLEANCAD2"],
     commands: {
       EMBEDIMAGES:
         "Embeds raster images from XREFs into the drawing by converting them to OLE objects using PowerPoint, preserving orientation.",
@@ -29209,6 +26737,8 @@ const PLUGIN_DOC_OVERRIDES = {
         "Cleans the title block by exploding blocks, keeping only the title block, detaching XREFs, and embedding images.",
       CLEANCAD:
         "Cleans the entire sheet by embedding XREFs and performing cleanup operations.",
+      CLEANCAD2:
+        "Runs the initial non-interactive cleanup workflow, aborting safely when unresolved XREFs or media requiring desktop embedding are detected.",
     },
     links: {
       EMBEDIMAGES: buildPluginDocUrl(
@@ -29296,8 +26826,7 @@ const PLUGIN_DOC_OVERRIDES = {
     order: [
       "TEXTCOUNT",
       "TEXTSELECT",
-      "TEXTSUM",
-      "TEXTSUMEXPORT",
+      "SUMTEXT",
       "TEXTREPLACE",
       "TEXTINCREMENT",
       "TEXTADD",
@@ -29307,10 +26836,8 @@ const PLUGIN_DOC_OVERRIDES = {
         "Counts selected TEXT, MTEXT, and ATTRIB values, groups identical strings, reports totals, and exports a timestamped text report.",
       TEXTSELECT:
         "Filters a mixed selection so only TEXT and MTEXT objects remain selected.",
-      TEXTSUM:
-        "Sums numeric values parsed from selected TEXT and MTEXT objects.",
-      TEXTSUMEXPORT:
-        "Finds room-type text near square-footage text and exports grouped totals to T24Output.json.",
+      SUMTEXT:
+        "Totals selected room square-footage text, labels the total above the selection, and exports grouped totals to T24Output.json.",
       TEXTREPLACE:
         "Replaces the content of selected TEXT and MTEXT objects with a new user-specified value.",
       TEXTINCREMENT:
@@ -29327,13 +26854,9 @@ const PLUGIN_DOC_OVERRIDES = {
         "TEXTSELECT",
         "5ed6ba4a1b2f4c2090673c79785b77aa"
       ),
-      TEXTSUM: buildPluginDocUrl(
-        "TEXTSUM",
+      SUMTEXT: buildPluginDocUrl(
+        "SUMTEXT",
         "2b13fdbb662c807aa0d6e00948b128d6"
-      ),
-      TEXTSUMEXPORT: buildPluginDocUrl(
-        "TEXTSUMEXPORT",
-        "2b13fdbb662c8098967edf32021a5f6c"
       ),
       TEXTREPLACE: buildPluginDocUrl(
         "TEXTREPLACE",
@@ -29941,6 +27464,14 @@ function getPanelScheduleManagerProjectOptions() {
     .filter((entry) => entry.id);
 }
 
+function filterPanelScheduleProjects(options, query) {
+  const terms = String(query || "").trim().toLowerCase().split(/\s+/).filter(Boolean);
+  return options.filter((entry) => {
+    const text = [entry.id, entry.label, entry.project?.name, entry.project?.nick].join(" ").toLowerCase();
+    return terms.every((term) => text.includes(term));
+  });
+}
+
 function getSelectedPanelScheduleManagerProject() {
   return (
     getPanelScheduleManagerProjectOptions().find(
@@ -29998,20 +27529,23 @@ function renderPanelScheduleManagerProjects() {
   const select = document.getElementById("psmProjectSelect");
   if (!select) return;
   const options = getPanelScheduleManagerProjectOptions();
+  const search = document.getElementById("psmProjectSearch");
+  const matches = filterPanelScheduleProjects(options, search?.value);
+  const selected = options.find((entry) => entry.id === panelScheduleManagerState.projectId);
+  const label = document.getElementById("psmProjectLabel");
+  if (label) label.textContent = selected ? `${selected.id} · ${selected.label}` : "Choose project";
+  const count = document.getElementById("psmProjectResultCount");
+  if (count) count.textContent = `${matches.length} matching project${matches.length === 1 ? "" : "s"}`;
   select.replaceChildren();
-  if (!options.length) {
-    select.appendChild(el("option", { value: "", textContent: "No projects available" }));
+  if (!matches.length) {
+    select.appendChild(el("option", { value: "", textContent: options.length ? "No matching projects" : "No projects available" }));
     select.disabled = true;
     return;
   }
   select.disabled = false;
-  options.forEach((entry) => {
-    select.appendChild(el("option", { value: entry.id, textContent: entry.label }));
+  matches.forEach((entry) => {
+    select.appendChild(el("option", { value: entry.id, textContent: `${entry.id} · ${entry.label}` }));
   });
-  if (!options.some((entry) => entry.id === panelScheduleManagerState.projectId)) {
-    panelScheduleManagerState.projectId = options[0].id;
-    panelScheduleManagerState.projectPath = options[0].path;
-  }
   select.value = panelScheduleManagerState.projectId;
 }
 
@@ -30291,6 +27825,22 @@ function formatPanelScheduleManagerSyncTime(value) {
 }
 
 function updatePanelScheduleManagerControls() {
+  const hasProject = Boolean(panelScheduleManagerState.projectId);
+  const chooseButton = document.getElementById("psmChooseWorkbookBtn");
+  if (chooseButton) chooseButton.disabled = !hasProject || panelScheduleManagerState.loading;
+  const emptyButton = document.getElementById("psmEmptyChooseBtn");
+  if (emptyButton) {
+    emptyButton.disabled = panelScheduleManagerState.loading;
+    emptyButton.textContent = hasProject ? "Choose Excel file" : "Choose project";
+  }
+  const emptyTitle = document.querySelector("#psmEmpty h3");
+  const emptyDescription = document.querySelector("#psmEmpty p");
+  if (emptyTitle) emptyTitle.textContent = hasProject
+    ? "Link this project's panel schedule workbook"
+    : "Choose a project to get started";
+  if (emptyDescription) emptyDescription.textContent = hasProject
+    ? "Select the existing .xls or .xlsx file used by the AutoCAD OLE objects."
+    : "Search by project number, client or address, then link its Excel workbook.";
   const reloadButton = document.getElementById("psmReloadBtn");
   const saveButton = document.getElementById("psmSaveBtn");
   const footer = document.getElementById("psmFooterMessage");
@@ -30326,7 +27876,9 @@ function updatePanelScheduleManagerControls() {
     }
   } else {
     setPanelScheduleManagerSyncStatus("Not connected");
-    if (footer) footer.textContent = "Choose a project workbook to begin.";
+    if (footer) footer.textContent = panelScheduleManagerState.projectId
+      ? "Choose a project workbook to begin."
+      : "Choose a project above, then link its panel schedule workbook.";
   }
 }
 
@@ -30416,6 +27968,11 @@ async function connectPanelScheduleManager(workbookPath = "") {
 }
 
 async function choosePanelScheduleManagerWorkbook() {
+  if (!panelScheduleManagerState.projectId) {
+    const picker = document.getElementById("psmProjectPicker");
+    if (picker) picker.open = true;
+    return;
+  }
   if (!window.pywebview?.api?.select_files) {
     toast("The Excel file picker is unavailable.");
     return;
@@ -30603,7 +28160,11 @@ async function openPanelScheduleManager() {
   const contextProjectId = getLaunchContextProjectId(launchContext);
   const projects = getPanelScheduleManagerProjectOptions();
   const contextProject = projects.find((entry) => entry.id === contextProjectId);
-  const selected = contextProject || projects[0] || null;
+  const selected = contextProject || projects.find((entry) => entry.id === panelScheduleManagerState.projectId) || null;
+  const search = document.getElementById("psmProjectSearch");
+  if (search) search.value = "";
+  const picker = document.getElementById("psmProjectPicker");
+  if (picker) picker.open = false;
   panelScheduleManagerState.projectId = selected?.id || contextProjectId || "";
   panelScheduleManagerState.projectPath =
     selected?.path || getLaunchContextProjectRoot(launchContext) || "";
@@ -30668,10 +28229,28 @@ function createCircuitBreakerPanel() {
     inputMode: "field_photos",
     breakerPaths: [],
     directoryPaths: [],
+    panelLabelPaths: [],
+    mainBreakerPaths: [],
     breakerFiles: [],
     directoryFiles: [],
+    panelLabelFiles: [],
+    mainBreakerFiles: [],
+    breakerPathCoverage: [],
+    breakerFileCoverage: [],
   };
 }
+
+const CIRCUIT_BREAKER_PHOTO_FIELDS = Object.freeze({
+  breaker: {
+    paths: "breakerPaths",
+    files: "breakerFiles",
+    pathCoverage: "breakerPathCoverage",
+    fileCoverage: "breakerFileCoverage",
+  },
+  directory: { paths: "directoryPaths", files: "directoryFiles" },
+  panelLabel: { paths: "panelLabelPaths", files: "panelLabelFiles" },
+  mainBreaker: { paths: "mainBreakerPaths", files: "mainBreakerFiles" },
+});
 
 function normalizeCircuitBreakerPaths(paths) {
   if (!Array.isArray(paths)) {
@@ -30692,7 +28271,9 @@ function normalizeCircuitBreakerFiles(files) {
 }
 
 function normalizeCircuitBreakerPhotoKind(kind) {
-  return kind === "breaker" || kind === "directory" ? kind : "";
+  return Object.prototype.hasOwnProperty.call(CIRCUIT_BREAKER_PHOTO_FIELDS, kind)
+    ? kind
+    : "";
 }
 
 function setCircuitBreakerPasteTarget(kind) {
@@ -30702,21 +28283,28 @@ function setCircuitBreakerPasteTarget(kind) {
 }
 
 function getCircuitBreakerDropTargetKind(target) {
-  const zone = target?.closest?.("#cbBreakerDrop, #cbDirectoryDrop");
+  const zone = target?.closest?.(
+    "#cbBreakerDrop, #cbDirectoryDrop, #cbPanelLabelDrop, #cbMainBreakerDrop"
+  );
   if (!zone) return "";
-  return zone.id === "cbBreakerDrop" ? "breaker" : "directory";
+  const kindById = {
+    cbBreakerDrop: "breaker",
+    cbDirectoryDrop: "directory",
+    cbPanelLabelDrop: "panelLabel",
+    cbMainBreakerDrop: "mainBreaker",
+  };
+  return kindById[zone.id] || "";
 }
 
 function resolveCircuitBreakerPasteTargetKind(eventTarget = null) {
   const panel = getActiveCircuitBreakerPanel();
   if (!panel) return "";
+  const eventKind = getCircuitBreakerDropTargetKind(eventTarget);
+  if (eventKind) return eventKind;
   if (panel.inputMode === "existing_directory") {
     return "directory";
   }
-  return (
-    getCircuitBreakerDropTargetKind(eventTarget) ||
-    normalizeCircuitBreakerPhotoKind(circuitBreakerState.pasteTargetKind)
-  );
+  return normalizeCircuitBreakerPhotoKind(circuitBreakerState.pasteTargetKind);
 }
 
 function getCircuitBreakerClipboardImageFiles(clipboardData) {
@@ -30975,19 +28563,40 @@ function removeCircuitBreakerPhoto(panelId, kind, index, source = "auto") {
   if (circuitBreakerState.running) return;
   const panel = circuitBreakerState.panels.find((p) => p.id === panelId);
   if (!panel) return;
-  const isBreaker = kind === "breaker";
-  const paths = isBreaker ? panel.breakerPaths : panel.directoryPaths;
-  const files = isBreaker ? panel.breakerFiles : panel.directoryFiles;
+  const fields = CIRCUIT_BREAKER_PHOTO_FIELDS[normalizeCircuitBreakerPhotoKind(kind)];
+  if (!fields) return;
+  const paths = Array.isArray(panel[fields.paths]) ? panel[fields.paths] : [];
+  const files = Array.isArray(panel[fields.files]) ? panel[fields.files] : [];
   if (source === "path" && paths && paths.length > 0) {
     paths.splice(index, 1);
+    if (fields.pathCoverage && Array.isArray(panel[fields.pathCoverage])) {
+      panel[fields.pathCoverage].splice(index, 1);
+    }
   } else if (source === "file" && files && files.length > 0) {
     files.splice(index, 1);
+    if (fields.fileCoverage && Array.isArray(panel[fields.fileCoverage])) {
+      panel[fields.fileCoverage].splice(index, 1);
+    }
   } else if (paths && paths.length > 0) {
     paths.splice(index, 1);
+    if (fields.pathCoverage && Array.isArray(panel[fields.pathCoverage])) {
+      panel[fields.pathCoverage].splice(index, 1);
+    }
   } else if (files && files.length > 0) {
     files.splice(index, 1);
+    if (fields.fileCoverage && Array.isArray(panel[fields.fileCoverage])) {
+      panel[fields.fileCoverage].splice(index, 1);
+    }
   }
   updateCircuitBreakerUi();
+}
+
+function setCircuitBreakerPhotoCoverage(panelId, source, index, value) {
+  const panel = circuitBreakerState.panels.find((p) => p.id === panelId);
+  if (!panel) return;
+  const field = source === "path" ? "breakerPathCoverage" : "breakerFileCoverage";
+  if (!Array.isArray(panel[field])) panel[field] = [];
+  panel[field][index] = String(value || "").trimStart().slice(0, 160);
 }
 
 function formatCircuitBreakerBytes(bytes) {
@@ -30998,7 +28607,15 @@ function formatCircuitBreakerBytes(bytes) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
 }
 
-function renderCircuitBreakerFileList(containerId, paths, files, kind, panelId) {
+function renderCircuitBreakerFileList(
+  containerId,
+  paths,
+  files,
+  kind,
+  panelId,
+  pathCoverage = [],
+  fileCoverage = []
+) {
   const container = document.getElementById(containerId);
   if (!container) return;
   container.innerHTML = "";
@@ -31008,7 +28625,13 @@ function renderCircuitBreakerFileList(containerId, paths, files, kind, panelId) 
     paths.forEach((path, index) => {
       const parts = path.split(/[\\/]/);
       const name = parts[parts.length - 1];
-      items.push({ name, index, source: "path", isPath: true });
+      items.push({
+        name,
+        index,
+        source: "path",
+        isPath: true,
+        coverage: pathCoverage[index] || "",
+      });
     });
   }
   if (files && files.length > 0) {
@@ -31019,6 +28642,7 @@ function renderCircuitBreakerFileList(containerId, paths, files, kind, panelId) 
         index,
         source: "file",
         isPath: false,
+        coverage: fileCoverage[index] || "",
       });
     });
   }
@@ -31027,9 +28651,12 @@ function renderCircuitBreakerFileList(containerId, paths, files, kind, panelId) 
     return;
   }
 
-  items.forEach((item) => {
+  items.forEach((item, displayIndex) => {
     const fileItem = document.createElement("div");
     fileItem.className = "cb-file-item";
+
+    const mainRow = document.createElement("div");
+    mainRow.className = "cb-file-item-main";
 
     const info = document.createElement("div");
     info.className = "cb-file-item-info";
@@ -31046,7 +28673,10 @@ function renderCircuitBreakerFileList(containerId, paths, files, kind, panelId) 
 
     const nameSpan = document.createElement("span");
     nameSpan.className = "cb-file-item-name";
-    nameSpan.textContent = item.name;
+    nameSpan.textContent =
+      kind === "breaker"
+        ? `Photo ${displayIndex + 1} · ${item.name}`
+        : item.name;
     nameSpan.title = item.name;
 
     info.appendChild(iconSpan);
@@ -31074,8 +28704,37 @@ function renderCircuitBreakerFileList(containerId, paths, files, kind, panelId) 
       removeCircuitBreakerPhoto(panelId, kind, item.index, item.source);
     });
 
-    fileItem.appendChild(info);
-    fileItem.appendChild(removeBtn);
+    mainRow.appendChild(info);
+    mainRow.appendChild(removeBtn);
+    fileItem.appendChild(mainRow);
+
+    if (kind === "breaker") {
+      const coverageRow = document.createElement("label");
+      coverageRow.className = "cb-file-coverage";
+      const coverageLabel = document.createElement("span");
+      coverageLabel.textContent = "Circuit coverage";
+      const coverageInput = document.createElement("input");
+      coverageInput.type = "text";
+      coverageInput.value = item.coverage;
+      coverageInput.placeholder = "e.g. 11-31 and 12-32";
+      coverageInput.maxLength = 160;
+      coverageInput.disabled = circuitBreakerState.running;
+      coverageInput.setAttribute(
+        "aria-label",
+        `Circuit coverage shown in ${item.name}`
+      );
+      coverageInput.addEventListener("input", (event) => {
+        setCircuitBreakerPhotoCoverage(
+          panelId,
+          item.source,
+          item.index,
+          event.target.value
+        );
+      });
+      coverageRow.appendChild(coverageLabel);
+      coverageRow.appendChild(coverageInput);
+      fileItem.appendChild(coverageRow);
+    }
     container.appendChild(fileItem);
   });
 }
@@ -31085,6 +28744,8 @@ function updateCircuitBreakerUi() {
   const activePanel = getActiveCircuitBreakerPanel();
   const breakerFile = document.getElementById("cbBreakerFile");
   const directoryFile = document.getElementById("cbDirectoryFile");
+  const panelLabelFile = document.getElementById("cbPanelLabelFile");
+  const mainBreakerFile = document.getElementById("cbMainBreakerFile");
   const newRow = document.getElementById("cbNewScheduleRow");
   const newFormatRow = document.getElementById("cbNewScheduleFormatRow");
   const newFormatSelect = document.getElementById("cbNewScheduleFormat");
@@ -31102,6 +28763,8 @@ function updateCircuitBreakerUi() {
   const modeExisting = document.getElementById("cbOutputModeExisting");
   const breakerDrop = document.getElementById("cbBreakerDrop");
   const directoryDrop = document.getElementById("cbDirectoryDrop");
+  const panelLabelDrop = document.getElementById("cbPanelLabelDrop");
+  const mainBreakerDrop = document.getElementById("cbMainBreakerDrop");
   const runningOverlay = document.getElementById("cbRunningOverlay");
 
   renderCircuitBreakerPanelTabs();
@@ -31134,6 +28797,38 @@ function updateCircuitBreakerUi() {
       hasCircuitBreakerPhotoSelection(
         activePanel.directoryPaths,
         activePanel.directoryFiles
+      )
+        ? "false"
+        : "true";
+  }
+  if (panelLabelFile) {
+    const summary = getCircuitBreakerPhotoSummary(
+      activePanel?.panelLabelPaths,
+      activePanel?.panelLabelFiles
+    );
+    panelLabelFile.textContent = summary.label;
+    panelLabelFile.title = summary.title || summary.label;
+    panelLabelFile.dataset.empty =
+      activePanel &&
+      hasCircuitBreakerPhotoSelection(
+        activePanel.panelLabelPaths,
+        activePanel.panelLabelFiles
+      )
+        ? "false"
+        : "true";
+  }
+  if (mainBreakerFile) {
+    const summary = getCircuitBreakerPhotoSummary(
+      activePanel?.mainBreakerPaths,
+      activePanel?.mainBreakerFiles
+    );
+    mainBreakerFile.textContent = summary.label;
+    mainBreakerFile.title = summary.title || summary.label;
+    mainBreakerFile.dataset.empty =
+      activePanel &&
+      hasCircuitBreakerPhotoSelection(
+        activePanel.mainBreakerPaths,
+        activePanel.mainBreakerFiles
       )
         ? "false"
         : "true";
@@ -31266,6 +28961,28 @@ function updateCircuitBreakerUi() {
         : "false";
     directoryDrop.classList.toggle("is-disabled", circuitBreakerState.running);
   }
+  if (panelLabelDrop) {
+    panelLabelDrop.dataset.hasFile =
+      activePanel &&
+      hasCircuitBreakerPhotoSelection(
+        activePanel.panelLabelPaths,
+        activePanel.panelLabelFiles
+      )
+        ? "true"
+        : "false";
+    panelLabelDrop.classList.toggle("is-disabled", circuitBreakerState.running);
+  }
+  if (mainBreakerDrop) {
+    mainBreakerDrop.dataset.hasFile =
+      activePanel &&
+      hasCircuitBreakerPhotoSelection(
+        activePanel.mainBreakerPaths,
+        activePanel.mainBreakerFiles
+      )
+        ? "true"
+        : "false";
+    mainBreakerDrop.classList.toggle("is-disabled", circuitBreakerState.running);
+  }
 
   if (modeNew) modeNew.disabled = circuitBreakerState.running;
   if (modeExisting) modeExisting.disabled = circuitBreakerState.running;
@@ -31281,7 +28998,9 @@ function updateCircuitBreakerUi() {
       activePanel.breakerPaths,
       activePanel.breakerFiles,
       "breaker",
-      activePanel.id
+      activePanel.id,
+      activePanel.breakerPathCoverage,
+      activePanel.breakerFileCoverage
     );
     renderCircuitBreakerFileList(
       "cbDirectoryFileList",
@@ -31290,11 +29009,29 @@ function updateCircuitBreakerUi() {
       "directory",
       activePanel.id
     );
+    renderCircuitBreakerFileList(
+      "cbPanelLabelFileList",
+      activePanel.panelLabelPaths,
+      activePanel.panelLabelFiles,
+      "panelLabel",
+      activePanel.id
+    );
+    renderCircuitBreakerFileList(
+      "cbMainBreakerFileList",
+      activePanel.mainBreakerPaths,
+      activePanel.mainBreakerFiles,
+      "mainBreaker",
+      activePanel.id
+    );
   } else {
     const list1 = document.getElementById("cbBreakerFileList");
     if (list1) list1.innerHTML = "";
     const list2 = document.getElementById("cbDirectoryFileList");
     if (list2) list2.innerHTML = "";
+    const list3 = document.getElementById("cbPanelLabelFileList");
+    if (list3) list3.innerHTML = "";
+    const list4 = document.getElementById("cbMainBreakerFileList");
+    if (list4) list4.innerHTML = "";
   }
 
   if (circuitBreakerState.running) {
@@ -31350,13 +29087,16 @@ function openCircuitBreakerFilePicker(kind) {
 function setCircuitBreakerFiles(kind, files) {
   const panel = getActiveCircuitBreakerPanel();
   if (!panel) return;
+  const fields = CIRCUIT_BREAKER_PHOTO_FIELDS[normalizeCircuitBreakerPhotoKind(kind)];
+  if (!fields) return;
   const nextFiles = normalizeCircuitBreakerFiles(files);
-  if (kind === "breaker") {
-    panel.breakerFiles = nextFiles;
-    panel.breakerPaths = [];
-  } else {
-    panel.directoryFiles = nextFiles;
-    panel.directoryPaths = [];
+  panel[fields.files] = nextFiles;
+  panel[fields.paths] = [];
+  if (fields.fileCoverage) {
+    panel[fields.fileCoverage] = nextFiles.map(() => "");
+  }
+  if (fields.pathCoverage) {
+    panel[fields.pathCoverage] = [];
   }
   updateCircuitBreakerUi();
 }
@@ -31364,13 +29104,16 @@ function setCircuitBreakerFiles(kind, files) {
 function setCircuitBreakerPaths(kind, paths) {
   const panel = getActiveCircuitBreakerPanel();
   if (!panel) return;
+  const fields = CIRCUIT_BREAKER_PHOTO_FIELDS[normalizeCircuitBreakerPhotoKind(kind)];
+  if (!fields) return;
   const nextPaths = normalizeCircuitBreakerPaths(paths);
-  if (kind === "breaker") {
-    panel.breakerPaths = nextPaths;
-    panel.breakerFiles = [];
-  } else {
-    panel.directoryPaths = nextPaths;
-    panel.directoryFiles = [];
+  panel[fields.paths] = nextPaths;
+  panel[fields.files] = [];
+  if (fields.pathCoverage) {
+    panel[fields.pathCoverage] = nextPaths.map(() => "");
+  }
+  if (fields.fileCoverage) {
+    panel[fields.fileCoverage] = [];
   }
   updateCircuitBreakerUi();
 }
@@ -31379,17 +29122,19 @@ function appendCircuitBreakerFiles(kind, files) {
   const panel = getActiveCircuitBreakerPanel();
   if (!panel) return 0;
   const normalizedKind = normalizeCircuitBreakerPhotoKind(kind);
+  const fields = CIRCUIT_BREAKER_PHOTO_FIELDS[normalizedKind];
   const nextFiles = normalizeCircuitBreakerFiles(files);
-  if (!normalizedKind || !nextFiles.length) return 0;
-  if (normalizedKind === "breaker") {
-    panel.breakerFiles = [
-      ...normalizeCircuitBreakerFiles(panel.breakerFiles),
-      ...nextFiles,
-    ];
-  } else {
-    panel.directoryFiles = [
-      ...normalizeCircuitBreakerFiles(panel.directoryFiles),
-      ...nextFiles,
+  if (!fields || !nextFiles.length) return 0;
+  panel[fields.files] = [
+    ...normalizeCircuitBreakerFiles(panel[fields.files]),
+    ...nextFiles,
+  ];
+  if (fields.fileCoverage) {
+    panel[fields.fileCoverage] = [
+      ...(Array.isArray(panel[fields.fileCoverage])
+        ? panel[fields.fileCoverage]
+        : []),
+      ...nextFiles.map(() => ""),
     ];
   }
   setCircuitBreakerPasteTarget(normalizedKind);
@@ -31397,7 +29142,10 @@ function appendCircuitBreakerFiles(kind, files) {
   return nextFiles.length;
 }
 
+let isSelectingCircuitBreakerImage = false;
+
 async function selectCircuitBreakerImage(kind) {
+  if (isSelectingCircuitBreakerImage) return;
   const panel = getActiveCircuitBreakerPanel();
   if (!panel) return;
   setCircuitBreakerPasteTarget(kind);
@@ -31405,6 +29153,7 @@ async function selectCircuitBreakerImage(kind) {
     toast("File picker is unavailable.");
     return;
   }
+  isSelectingCircuitBreakerImage = true;
   const defaultDirectory = getCircuitBreakerLaunchDefaultDirectory();
   try {
     const result = await window.pywebview.api.select_files({
@@ -31412,22 +29161,28 @@ async function selectCircuitBreakerImage(kind) {
       file_types: ["Image Files (*.jpg;*.jpeg;*.png;*.bmp;*.gif;*.tif;*.tiff;*.heic;*.heif)"],
       default_directory: defaultDirectory,
     });
-    if (result.status === "success" && result.paths?.length) {
+    if (result?.status === "success" && result.paths?.length) {
       setCircuitBreakerPaths(kind, result.paths);
     }
   } catch (e) {
     toast("Error selecting photos.");
+  } finally {
+    isSelectingCircuitBreakerImage = false;
   }
 }
 
+let isSelectingCircuitBreakerSchedule = false;
+
 async function selectCircuitBreakerSchedulePath(mode) {
+  if (isSelectingCircuitBreakerSchedule) return;
   if (!window.pywebview?.api) {
     toast("File picker is unavailable.");
     return;
   }
+  isSelectingCircuitBreakerSchedule = true;
   const defaultDirectory = getCircuitBreakerLaunchDefaultDirectory();
-  if (mode === "new") {
-    try {
+  try {
+    if (mode === "new") {
       const outputExtension = normalizeCircuitBreakerOutputExtension(
         circuitBreakerState.newOutputExtension
       );
@@ -31449,13 +29204,9 @@ async function selectCircuitBreakerSchedulePath(mode) {
         }
         updateCircuitBreakerUi();
       }
-    } catch (e) {
-      toast("Error selecting save location.");
+      return;
     }
-    return;
-  }
 
-  try {
     const selection = await window.pywebview.api.select_files({
       allow_multiple: false,
       file_types: ["Excel Files (*.xlsx;*.xls)"],
@@ -31467,6 +29218,8 @@ async function selectCircuitBreakerSchedulePath(mode) {
     }
   } catch (e) {
     toast("Error selecting panel schedule.");
+  } finally {
+    isSelectingCircuitBreakerSchedule = false;
   }
 }
 
@@ -31522,7 +29275,12 @@ function handleCircuitBreakerPaste(e) {
   }
   const count = appendCircuitBreakerFiles(targetKind, imageFiles);
   if (count > 0) {
-    const targetLabel = targetKind === "breaker" ? "breaker" : "directory";
+    const targetLabel = {
+      breaker: "breaker",
+      directory: "directory",
+      panelLabel: "panel label",
+      mainBreaker: "main breaker",
+    }[targetKind] || "panel";
     toast(
       count === 1
         ? `Pasted 1 ${targetLabel} photo.`
@@ -31751,14 +29509,29 @@ async function runCircuitBreakerInBackground() {
   for (const panel of circuitBreakerState.panels) {
     const breakerUploads = await filesToUploadPayloads(panel.breakerFiles);
     const directoryUploads = await filesToUploadPayloads(panel.directoryFiles);
+    const panelLabelUploads = await filesToUploadPayloads(panel.panelLabelFiles);
+    const mainBreakerUploads = await filesToUploadPayloads(panel.mainBreakerFiles);
+    const breakerCoverage = [
+      ...normalizeCircuitBreakerPaths(panel.breakerPaths).map(
+        (_, index) => String(panel.breakerPathCoverage?.[index] || "").trim()
+      ),
+      ...normalizeCircuitBreakerFiles(panel.breakerFiles).map(
+        (_, index) => String(panel.breakerFileCoverage?.[index] || "").trim()
+      ),
+    ];
     panels.push({
       panelId: panel.id,
       panelName: panel.panelName?.trim() || panel.label || "PANEL",
       inputMode: panel.inputMode || "field_photos",
       breakerPaths: [...normalizeCircuitBreakerPaths(panel.breakerPaths)],
       directoryPaths: [...normalizeCircuitBreakerPaths(panel.directoryPaths)],
+      panelLabelPaths: [...normalizeCircuitBreakerPaths(panel.panelLabelPaths)],
+      mainBreakerPaths: [...normalizeCircuitBreakerPaths(panel.mainBreakerPaths)],
+      breakerCoverage,
       breakerUploads,
       directoryUploads,
+      panelLabelUploads,
+      mainBreakerUploads,
     });
   }
 
@@ -31776,8 +29549,13 @@ async function runCircuitBreakerInBackground() {
     inputMode: firstPanel.inputMode || "field_photos",
     breakerPaths: firstPanel.breakerPaths || [],
     directoryPaths: firstPanel.directoryPaths || [],
+    panelLabelPaths: firstPanel.panelLabelPaths || [],
+    mainBreakerPaths: firstPanel.mainBreakerPaths || [],
+    breakerCoverage: firstPanel.breakerCoverage || [],
     breakerUploads: firstPanel.breakerUploads || [],
     directoryUploads: firstPanel.directoryUploads || [],
+    panelLabelUploads: firstPanel.panelLabelUploads || [],
+    mainBreakerUploads: firstPanel.mainBreakerUploads || [],
     panelName: firstPanel.panelName || "",
   };
   const outputFolderPath = outputPath.split(/[\\/]/).slice(0, -1).join("\\");
@@ -31890,9 +29668,11 @@ async function revealPanelScheduleOutput(targetPath) {
 
 // ---- Canvas selection -> Panel Schedule AI ----
 const CANVAS_PANEL_ROLE_LABELS = {
-  breaker: "Breaker photo",
+  breaker: "Branch breaker photo",
   as_built_schedule: "As-built schedule (printed)",
   field_directory: "Field directory card",
+  panel_label: "Panel label / nameplate",
+  main_breaker: "Main breaker photo",
   ignore: "Skip",
 };
 const CANVAS_PANEL_DIRECTORY_ROLES = ["as_built_schedule", "field_directory"];
@@ -32122,7 +29902,7 @@ async function openCanvasPanelScheduleDialog() {
     };
     canvasPanelScheduleState.loading = true;
     updateActivity(activityId, {
-      message: "Sorting breaker photos from circuit directories...",
+      message: "Sorting breakers, directories, panel labels, and main breakers...",
       progress: 40,
     });
     scheduleCanvasPanelClassificationPoll(canvasPanelScheduleState.job.jobId);
@@ -32410,12 +30190,16 @@ async function confirmCanvasPanelSchedule() {
   const directoryPaths = usable
     .filter((image) => isCanvasPanelDirectoryRole(image.role))
     .map((image) => image.absPath);
-  // The analyzer forwards breaker + directory images to Gemini regardless of mode,
-  // but the existing-directory prompt only describes directory images.
   const breakerPaths =
     state.inputMode === "existing_directory"
       ? []
       : usable.filter((image) => image.role === "breaker").map((image) => image.absPath);
+  const panelLabelPaths = usable
+    .filter((image) => image.role === "panel_label")
+    .map((image) => image.absPath);
+  const mainBreakerPaths = usable
+    .filter((image) => image.role === "main_breaker")
+    .map((image) => image.absPath);
 
   const panelName = state.panelName.trim() || "PANEL";
   const outputFolderPath = state.outputFolder;
@@ -32430,13 +30214,19 @@ async function confirmCanvasPanelSchedule() {
         inputMode: state.inputMode,
         breakerPaths,
         directoryPaths,
+        panelLabelPaths,
+        mainBreakerPaths,
         breakerUploads: [],
         directoryUploads: [],
+        panelLabelUploads: [],
+        mainBreakerUploads: [],
       },
     ],
     inputMode: state.inputMode,
     breakerPaths,
     directoryPaths,
+    panelLabelPaths,
+    mainBreakerPaths,
     panelName,
   };
 
@@ -34349,7 +32139,7 @@ function renderTitle24RoomAreaRows(title24) {
     td.colSpan = 3;
     td.className = "title24-room-empty-row tiny muted";
     td.textContent =
-      "No room areas imported yet. Click Import T24Output.json to load room types.";
+      "No room areas imported yet. Click Import AreaLabel.json to load room types.";
     tr.appendChild(td);
     body.appendChild(tr);
     return;
@@ -34676,7 +32466,7 @@ async function importTitle24OutputJson() {
       selection.paths[0]
     );
     if (response?.status !== "success") {
-      throw new Error(response?.message || "Failed to read T24Output.json.");
+      throw new Error(response?.message || "Failed to read room area JSON.");
     }
 
     const incomingRows = Array.isArray(response?.data?.rows)
@@ -34692,11 +32482,15 @@ async function importTitle24OutputJson() {
 
     renderTitle24Compliance(title24);
     save();
+    const sourceFileName =
+      String(title24.roomAreas.sourcePath || "")
+        .split(/[\\/]/)
+        .pop() || "AreaLabel.json";
     toast(
-      `Imported ${incomingRows.length} room type entr${incomingRows.length === 1 ? "y" : "ies"} from T24Output.json.`
+      `Imported ${incomingRows.length} room type entr${incomingRows.length === 1 ? "y" : "ies"} from ${sourceFileName}.`
     );
   } catch (error) {
-    reportClientError("Failed to import T24Output.json", error);
+    reportClientError("Failed to import room area JSON", error);
     toast(`Import failed: ${error?.message || "Unknown error."}`);
   }
 }
@@ -36018,9 +33812,10 @@ function initTabbedInterfaces() {
   document.body.dataset.activeTab =
     document.querySelector(".main-tab-btn.active")?.dataset.tab || "projects";
 
-  mainTabContainer.addEventListener("click", (e) => {
+  mainTabContainer.addEventListener("click", async (e) => {
     if (!e.target.matches(".main-tab-btn")) return;
     const tab = e.target.dataset.tab;
+    if (document.body.dataset.pageOpen === "1") await closePageView();
     document.body.dataset.activeTab = tab;
 
     document
@@ -36965,6 +34760,11 @@ async function runWorkflow(workflowId) {
       failActivity(activityId, {
         message: result.message || "Workflow failed.",
       });
+    } else if (result?.status === "cancelled") {
+      completeActivity(activityId, {
+        status: ACTIVITY_STATUS.CANCELLED,
+        message: result.message || "Workflow cancelled by user.",
+      });
     }
   } catch (err) {
     failActivity(activityId, {
@@ -37101,38 +34901,6 @@ function initEventListeners() {
     });
   }
   setupProjectsViewModeControls();
-  const deliverableNotepadAddBtn = document.getElementById(
-    "deliverableNotepadAddBtn"
-  );
-  if (deliverableNotepadAddBtn) {
-    deliverableNotepadAddBtn.onclick = () => addDeliverablesToNotepadSelection();
-  }
-  const deliverableNotepadRemoveBtn = document.getElementById(
-    "deliverableNotepadRemoveBtn"
-  );
-  if (deliverableNotepadRemoveBtn) {
-    deliverableNotepadRemoveBtn.onclick = () =>
-      removeDeliverablesFromNotepadSelection();
-  }
-  const deliverableNotepadExportBtn = document.getElementById(
-    "deliverableNotepadExportBtn"
-  );
-  if (deliverableNotepadExportBtn) {
-    deliverableNotepadExportBtn.onclick = () =>
-      exportSelectedDeliverablesToExcel();
-  }
-  const deliverableNotepadSummaryBtn = document.getElementById(
-    "deliverableNotepadSummaryBtn"
-  );
-  if (deliverableNotepadSummaryBtn) {
-    deliverableNotepadSummaryBtn.onclick = () =>
-      generateDeliverableStatusBriefing();
-  }
-  document.querySelectorAll("[data-notepad-scope]").forEach((chip) => {
-    chip.addEventListener("click", () =>
-      setDeliverableNotepadScope(chip.dataset.notepadScope)
-    );
-  });
   const copyProjectLocallyFolderList = document.getElementById(
     "copyProjectLocallyFolderList"
   );
@@ -37452,14 +35220,9 @@ function initEventListeners() {
     saveCustomExpense();
   initImagePreviewDialog();
 
-  document.getElementById("checkUpdateBtn").onclick = () =>
-    refreshAppUpdateStatus({ manual: true });
   document.getElementById("appUpdateBtn").onclick = installAppUpdate;
-  document.getElementById("themeToggleBtn").onclick = () => {
-    const currentTheme =
-      document.documentElement.getAttribute("data-theme") || "dark";
-    const nextTheme = currentTheme === "light" ? "dark" : "light";
-    persistThemePreference(nextTheme);
+  document.getElementById("settings_theme").onchange = (event) => {
+    persistThemePreference(event.target.value);
   };
 
   const mergeSimilarBtn = document.getElementById("btnMergeSimilarProjects");
@@ -37482,10 +35245,6 @@ function initEventListeners() {
     }
   });
   document.getElementById("statsBtn").onclick = () => showStatsModal();
-  const exportDeliverablesBtn = document.getElementById("exportDeliverablesBtn");
-  if (exportDeliverablesBtn) {
-    exportDeliverablesBtn.onclick = () => openDeliverablesExcelDialog();
-  }
   const scratchpadBtn = document.getElementById("scratchpadBtn");
   if (scratchpadBtn) scratchpadBtn.onclick = () => toggleScratchpad();
   document.getElementById("settings_howToSetupBtn").onclick = () =>
@@ -37499,14 +35258,6 @@ function initEventListeners() {
   const googleSignOutBtn = document.getElementById("googleSignOutBtn");
   if (googleSignOutBtn) {
     googleSignOutBtn.onclick = () => handleGoogleSignOut();
-  }
-  const outlookScanBtn = document.getElementById("outlookScanBtn");
-  if (outlookScanBtn) {
-    outlookScanBtn.onclick = () => openOutlookScanDialog();
-  }
-  const btnProcessEmail = document.getElementById("btnProcessEmail");
-  if (btnProcessEmail) {
-    btnProcessEmail.onclick = () => processEmailIntakePaste();
   }
   const headerAccountSignOutBtn = document.getElementById(
     "headerAccountSignOutBtn"
@@ -37826,6 +35577,54 @@ function initEventListeners() {
     });
 
   document
+    .getElementById("toolRepairXrefPaths")
+    .addEventListener("click", async (e) => {
+      let launchContext = resolveCadLaunchContextForTool();
+      if (e.currentTarget.classList.contains("running")) return;
+      if (!(await ensureAutocadPathLoaded())) {
+        await showAutocadSelectModal();
+        return;
+      }
+      try {
+        launchContext = await resolveCadFilesBeforeLaunch(
+          launchContext,
+          "toolRepairXrefPaths"
+        );
+        if (!launchContext) return;
+      } catch (error) {
+        toast(error?.message || "Could not select DWG files.");
+        return;
+      }
+      console.debug("CAD launch context (repair XREF paths):", launchContext);
+      const activityId = beginActivity({
+        toolId: "toolRepairXrefPaths",
+        message: "Initializing...",
+        progress: 5,
+        rerunLaunchContext: launchContext,
+        rerunDefaultPath: getLaunchContextProjectRoot(launchContext),
+      });
+      try {
+        const result = launchContext
+          ? await window.pywebview.api.run_repair_xref_paths_script(
+              launchContext,
+              activityId
+            )
+          : await window.pywebview.api.run_repair_xref_paths_script(null, activityId);
+        if (result?.status === "error") {
+          failActivity(activityId, {
+            message: result.message || "Failed to start Repair XREF Paths.",
+          });
+        } else if (result?.status === "cancelled") {
+          acceptActivity(activityId);
+        }
+      } catch (error) {
+        failActivity(activityId, {
+          message: error?.message || "Failed to start Repair XREF Paths.",
+        });
+      }
+    });
+
+  document
     .getElementById("toolCleanXrefs")
     .addEventListener("click", async (e) => {
       const launchContext = resolveCadLaunchContextForTool();
@@ -37856,6 +35655,54 @@ function initEventListeners() {
         });
       }
     });
+
+  document.getElementById("toolCleanDrawings")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    if (button.classList.contains("running") || button.dataset.cleanBusy) return;
+    const launchContext = resolveCadLaunchContextForTool();
+    if (!(await ensureAutocadPathLoaded())) {
+      await showAutocadSelectModal();
+      return;
+    }
+    let activityId;
+    button.dataset.cleanBusy = "true";
+    button.setAttribute("aria-busy", "true");
+    const status = button.querySelector(".tool-card-status");
+    if (status) status.textContent = "Inspecting project drawings…";
+    try {
+      activityId = beginActivity({ toolId: "toolCleanDrawings", message: "Inspecting project drawings…", progress: 2,
+        canCancel: false, rerunLaunchContext: launchContext,
+        rerunDefaultPath: getLaunchContextProjectRoot(launchContext) });
+      const preview = await window.pywebview.api.preview_clean_drawings(launchContext, activityId);
+      if (preview.status !== "success") throw new Error(preview.message);
+      if (!preview.titleblocks.length || !preview.drawings.length) {
+        throw new Error("No titleblock candidates in XREF/Xrefs or drawings in Electrical were found.");
+      }
+      updateActivity(activityId, { message: "Waiting for titleblock and drawing confirmation…", progress: 20 });
+      const selection = await confirmCleanDrawingSelection(preview);
+      if (!selection) {
+        completeActivity(activityId, { status: ACTIVITY_STATUS.CANCELLED, message: "Clean Drawings cancelled." });
+        return;
+      }
+      updateActivity(activityId, { message: "Inspecting selected drawings…", progress: 22 });
+      const result = await window.pywebview.api.run_clean_drawings(selection, launchContext, activityId);
+      if (result.status !== "success") throw new Error(result.message);
+      const warning = [result.comparisonWarning, result.cleanupWarning].filter(Boolean).join(" ");
+      completeActivity(activityId, { status: warning ? ACTIVITY_STATUS.WARNING : ACTIVITY_STATUS.SUCCESS,
+        message: warning || `Cleaned ${result.count} drawing(s), removed titleblock stamps/signatures, and compared plotted PDFs. No differences above the comparison tolerance.`,
+        openFolderPath: result.output, openFolderLabel: "Open Cleaned CAD" });
+    } catch (error) {
+      if (activityId) failActivity(activityId, { message: error.message });
+      else toast(error.message || "Could not start Clean Drawings.");
+    } finally {
+      delete button.dataset.cleanBusy;
+      button.removeAttribute("aria-busy");
+      if (!activityId && status) status.textContent = "";
+    }
+  });
+  document.getElementById("toolCleanDrawings")?.addEventListener("keydown", event => {
+    if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.currentTarget.click(); }
+  });
 
   const bindTemplateToolButton = (toolId, templateKey, label) => {
     const button = document.getElementById(toolId);
@@ -37895,8 +35742,10 @@ function initEventListeners() {
     ?.querySelector(".tools-grid");
   if (generalToolsGrid) {
     const generalToolOrder = [
+      "toolCleanDrawings",
       "toolPublishDwgs",
       "toolManageLayers",
+      "toolRepairXrefPaths",
       "toolCleanXrefs",
       "toolBackupDrawings",
     ];
@@ -37915,6 +35764,7 @@ function initEventListeners() {
         toolId: "toolBackupDrawings",
         message: "Resolving project folder...",
         progress: 8,
+        canCancel: false,
       });
       const launchContext = resolveCadLaunchContextForTool();
       updateActivity(activityId, {
@@ -37929,6 +35779,7 @@ function initEventListeners() {
           updateActivity(activityId, {
             message: "Select project folder...",
             progress: 10,
+            canCancel: false,
           });
           const selection = await window.pywebview.api.select_folder(
             getLaunchContextProjectRoot(launchContext) || null
@@ -37949,8 +35800,13 @@ function initEventListeners() {
           updateActivity(activityId, {
             message: "Resolving project folder...",
             progress: 18,
+            canCancel: true,
           });
-          result = await window.pywebview.api.backup_project_drawings(null, launchContext);
+          result = await window.pywebview.api.backup_project_drawings(
+            null,
+            launchContext,
+            activityId
+          );
 
           const resultCode = String(result?.code || "").trim().toLowerCase();
           const resultMessage = String(result?.message || "").trim().toLowerCase();
@@ -37964,6 +35820,7 @@ function initEventListeners() {
             updateActivity(activityId, {
               message: "Could not auto-resolve project folder. Select it manually...",
               progress: 10,
+              canCancel: false,
             });
             selectedProjectPath = await selectProjectFolder();
             if (!selectedProjectPath) {
@@ -37981,15 +35838,25 @@ function initEventListeners() {
           updateActivity(activityId, {
             message: "Creating archive backup...",
             progress: 42,
+            canCancel: true,
           });
           result = await window.pywebview.api.backup_project_drawings(
             selectedProjectPath,
-            launchContext
+            launchContext,
+            activityId
           );
         }
 
         if (!result && !selectedProjectPath) {
           acceptActivity(activityId);
+          return;
+        }
+
+        if (result?.status === "cancelled") {
+          completeActivity(activityId, {
+            status: ACTIVITY_STATUS.CANCELLED,
+            message: result?.message || "Drawing backup cancelled by user.",
+          });
           return;
         }
 
@@ -38160,8 +36027,30 @@ function initEventListeners() {
   );
 
   const psmProjectSelect = document.getElementById("psmProjectSelect");
+  document.getElementById("psmProjectSearch")?.addEventListener("input", renderPanelScheduleManagerProjects);
+  const projectPicker = document.getElementById("psmProjectPicker");
+  projectPicker?.addEventListener("toggle", () => {
+    if (projectPicker.open) document.getElementById("psmProjectSearch")?.focus();
+  });
+  projectPicker?.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && projectPicker.open) {
+      event.preventDefault();
+      event.stopPropagation();
+      projectPicker.open = false;
+      document.getElementById("psmProjectLabel")?.focus();
+    }
+    if (event.key === "ArrowDown" && event.target.id === "psmProjectSearch") {
+      event.preventDefault();
+      psmProjectSelect?.focus();
+    }
+  });
+  document.addEventListener("click", (event) => {
+    if (projectPicker?.open && !projectPicker.contains(event.target) &&
+        !event.target.closest("#psmEmptyChooseBtn")) projectPicker.open = false;
+  });
   if (psmProjectSelect) {
     psmProjectSelect.addEventListener("change", async (e) => {
+      if (!e.target.value) return;
       const previousProjectId = panelScheduleManagerState.projectId;
       if (
         panelScheduleManagerState.dirty &&
@@ -38173,6 +36062,8 @@ function initEventListeners() {
       panelScheduleManagerState.projectId = String(e.target.value || "").trim();
       const selected = getSelectedPanelScheduleManagerProject();
       panelScheduleManagerState.projectPath = selected?.path || "";
+      if (projectPicker) projectPicker.open = false;
+      document.getElementById("psmProjectLabel")?.focus();
       await connectPanelScheduleManager();
     });
   }
@@ -38256,6 +36147,62 @@ function initEventListeners() {
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
         void selectCircuitBreakerImage("directory");
+      }
+    });
+  }
+
+  const cbPanelLabelDrop = document.getElementById("cbPanelLabelDrop");
+  if (cbPanelLabelDrop) {
+    cbPanelLabelDrop.addEventListener("focus", () =>
+      setCircuitBreakerPasteTarget("panelLabel")
+    );
+    cbPanelLabelDrop.addEventListener("pointerdown", () =>
+      setCircuitBreakerPasteTarget("panelLabel")
+    );
+    cbPanelLabelDrop.addEventListener("click", () => {
+      void selectCircuitBreakerImage("panelLabel");
+    });
+    cbPanelLabelDrop.addEventListener("dragover", (e) =>
+      handleCircuitBreakerDragOver(e, cbPanelLabelDrop)
+    );
+    cbPanelLabelDrop.addEventListener("dragleave", (e) =>
+      handleCircuitBreakerDragLeave(e, cbPanelLabelDrop)
+    );
+    cbPanelLabelDrop.addEventListener("drop", (e) =>
+      handleCircuitBreakerDrop("panelLabel", e, cbPanelLabelDrop)
+    );
+    cbPanelLabelDrop.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        void selectCircuitBreakerImage("panelLabel");
+      }
+    });
+  }
+
+  const cbMainBreakerDrop = document.getElementById("cbMainBreakerDrop");
+  if (cbMainBreakerDrop) {
+    cbMainBreakerDrop.addEventListener("focus", () =>
+      setCircuitBreakerPasteTarget("mainBreaker")
+    );
+    cbMainBreakerDrop.addEventListener("pointerdown", () =>
+      setCircuitBreakerPasteTarget("mainBreaker")
+    );
+    cbMainBreakerDrop.addEventListener("click", () => {
+      void selectCircuitBreakerImage("mainBreaker");
+    });
+    cbMainBreakerDrop.addEventListener("dragover", (e) =>
+      handleCircuitBreakerDragOver(e, cbMainBreakerDrop)
+    );
+    cbMainBreakerDrop.addEventListener("dragleave", (e) =>
+      handleCircuitBreakerDragLeave(e, cbMainBreakerDrop)
+    );
+    cbMainBreakerDrop.addEventListener("drop", (e) =>
+      handleCircuitBreakerDrop("mainBreaker", e, cbMainBreakerDrop)
+    );
+    cbMainBreakerDrop.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        void selectCircuitBreakerImage("mainBreaker");
       }
     });
   }
@@ -38678,11 +36625,13 @@ function initEventListeners() {
       });
       if (res.status === "success" && res.paths.length) {
         document.getElementById("settings_autocadPath").value = res.paths[0];
+        userSettings.autocadPath = res.paths[0];
         settingsAutocadPathExplicitlyChanged = true;
-        // Uncheck radio buttons
+        // Keep detected versions selected when the chosen executable matches.
         document
           .querySelectorAll('input[name="autocad_version_radio"]')
-          .forEach((radio) => (radio.checked = false));
+          .forEach((radio) => (radio.checked = radio.value === res.paths[0]));
+        debouncedSaveUserSettings();
       }
     });
 
@@ -38723,7 +36672,6 @@ function initEventListeners() {
       }
       try {
         const saved = await persistUserSettingsLocally({
-          skipCloud: true,
           silent: true,
         });
         if (!saved) {
@@ -39213,12 +37161,7 @@ async function init() {
       templateOverrides: {},
       lastModified: null,
     };
-    await loadLocalSyncMetadata();
-    syncAllCloudComparableFingerprints();
 
-    if (googleAuthState.signedIn) {
-      await bootstrapCloudSync({ silent: true });
-    }
 
     if (checklistsDb.checklists.length > 0) {
       activeChecklistTabId =
@@ -39467,7 +37410,10 @@ function normalizeHtmlForProjectPagesEditor(html) {
 }
 function setPageSaveStatus(text) {
   const el = document.getElementById("pageSaveStatus");
-  if (el) el.textContent = text || "";
+  if (el) {
+    el.textContent = text || "";
+    el.classList.toggle("is-saved", text === "Saved" || text === "Published");
+  }
 }
 
 const PAGE_FIND_MATCH_SELECTOR = 'mark.page-find-match[data-page-find-match="true"]';
@@ -39697,6 +37643,7 @@ function updatePageFindUi() {
     input.value = pageFindState.query;
   }
   const hasQuery = String(pageFindState.query || "").trim().length > 0;
+  document.getElementById("pageFind")?.classList.toggle("has-query", hasQuery);
   if (countEl) {
     countEl.textContent = hasQuery
       ? pageFindState.matchCount
@@ -40733,7 +38680,7 @@ function deleteProjectSubpage(project, subpage) {
       openProjectPage(project, getProjectSubpageById(project, subpage.parentId));
     } else {
       render();
-      if (getProjectPagesEditorRoot()?.querySelector("#pageEditor")) renderPageView();
+      if (getProjectPagesEditorRoot()?.querySelector("#pageEditor") || isCanvasPage(pageEditorTarget)) renderPageView();
       else renderPageChildLinks(project, pageNav.subpage);
     }
     reportPageWorkbookCleanup(cleanupResult);
@@ -41290,9 +39237,18 @@ function hydratePageWikiLinks(editor) {
 }
 
 // --- Navigation state & rendering ---
+let pageHeaderPlaceholder = null;
 function showPageView() {
   const view = document.getElementById("pageView");
   if (!view) return;
+  const header = document.querySelector(".app-header");
+  if (header && !view.contains(header)) {
+    pageHeaderPlaceholder = document.createComment("Application header home");
+    header.before(pageHeaderPlaceholder);
+    view.prepend(header);
+  }
+  const actions = document.getElementById("pageActionsMenu");
+  if (actions) actions.open = false;
   view.hidden = false;
   document.body.dataset.pageOpen = "1";
   const editor = getPageEditorEl();
@@ -41321,6 +39277,9 @@ function setPageViewMode(mode) {
 }
 async function closePageView() {
   await flushPageSave();
+  const header = document.querySelector("#pageView > .app-header");
+  if (header && pageHeaderPlaceholder) pageHeaderPlaceholder.replaceWith(header);
+  pageHeaderPlaceholder = null;
   if (window.ProjectPagesEditor?.unmount) {
     try {
       window.ProjectPagesEditor.unmount();
@@ -41438,6 +39397,23 @@ function setProjectPagesEditorDocument(context) {
   window.ProjectPagesEditor.mount(root, {});
   window.ProjectPagesEditor.setDocument({
     ...context,
+    navigationPages: context.project ? (() => {
+      const groups = getProjectSubpagesByParent(context.project);
+      const pages = [];
+      const visited = new Set();
+      const visit = (parentId, depth) => {
+        (groups.get(parentId) || []).forEach((page) => {
+          if (visited.has(page.id)) return;
+          visited.add(page.id);
+          pages.push({ id: page.id, title: page.title || "Untitled", depth,
+            canvas: isCanvasPage(page.page) });
+          visit(page.id, depth + 1);
+        });
+      };
+      visit("", 0);
+      return pages;
+    })() : [],
+    onOpenOverview: () => flushPageSave().then(() => openProjectPage(pageNav.project)),
     globalPages: (Array.isArray(globalPages) ? globalPages : []).map((page) => ({
       id: page.id,
       title: page.title || "Untitled",
@@ -41644,7 +39620,9 @@ function renderPageBreadcrumb(project, subpage) {
     addSep();
     addCrumb(subpage.title || "Untitled", null, true);
   } else {
-    addCrumb(project.name || project.id || "Project", null, true);
+    addCrumb(project.name || project.id || "Project", null, false);
+    addSep();
+    addCrumb("Overview", null, true);
   }
 }
 function queuePageMiscSave() {
@@ -41685,6 +39663,7 @@ function getProjectSubpagesByParent(project) {
 function renderPageChildLinks(project, activeSubpage = null) {
   const container = document.getElementById("pageChildLinks");
   if (!container) return;
+  if (getProjectPagesEditorRoot()?.contains(container)) return;
   container.innerHTML = "";
   if (!project) {
     container.hidden = true;
@@ -41867,6 +39846,23 @@ function ensurePageViewReady() {
   document.getElementById("pageViewBackBtn")?.addEventListener("click", pageGoBack);
   document.getElementById("pagePublishPdfBtn")?.addEventListener("click", publishActivePagePdf);
   document.getElementById("pageViewCloseBtn")?.addEventListener("click", () => closePageView());
+  const actionsMenu = document.getElementById("pageActionsMenu");
+  document.addEventListener("click", (event) => {
+    if (actionsMenu?.open && !actionsMenu.contains(event.target)) actionsMenu.open = false;
+  });
+  actionsMenu?.addEventListener("click", (event) => {
+    if (event.target.closest("button")) actionsMenu.open = false;
+  });
+  const toolbar = view.querySelector(".page-view-topbar");
+  if (toolbar && typeof ResizeObserver !== "undefined") {
+    const header = document.querySelector(".app-header");
+    const observer = new ResizeObserver(() => {
+      view.style.setProperty("--notes-toolbar-height", `${toolbar.offsetHeight}px`);
+      if (header) document.documentElement.style.setProperty("--header-height", `${header.offsetHeight}px`);
+    });
+    observer.observe(toolbar);
+    if (header) observer.observe(header);
+  }
 
   view.addEventListener("keydown", (e) => {
     if ((e.ctrlKey || e.metaKey) && String(e.key || "").toLowerCase() === "f") {
@@ -41875,6 +39871,12 @@ function ensurePageViewReady() {
       return;
     }
     if (e.key === "Escape") {
+      if (actionsMenu?.open) {
+        actionsMenu.open = false;
+        actionsMenu.querySelector("summary")?.focus();
+        e.preventDefault();
+        return;
+      }
       e.preventDefault();
       pageGoBack();
     }
@@ -43141,6 +41143,13 @@ function renderPageCanvasView() {
   pageEditorTarget.canvas = normalizePageCanvas(pageEditorTarget.canvas);
   resetPageCanvasState();
   const { project, subpage, globalPage } = pageNav;
+  setProjectPagesEditorDocument({
+    documentKey: `canvas:${globalPage?.id || subpage?.id || project?.id || "x"}`,
+    navigationOnly: true,
+    kind: globalPage ? "global" : subpage ? "subpage" : "project",
+    project, subpage, globalPage,
+    title: (globalPage ? globalPage.title : subpage ? subpage.title : project?.name) || "",
+  });
   const titleInput = document.getElementById("pageCanvasTitle");
   if (titleInput) {
     titleInput.value =
@@ -43153,3 +41162,62 @@ function renderPageCanvasView() {
 }
 
 init();
+
+function confirmCleanDrawingSelection(preview) {
+  return new Promise(resolve => {
+    const dialog = document.createElement("dialog");
+    dialog.className = "clean-drawings-dialog";
+    const form = document.createElement("form");
+    form.method = "dialog";
+    const heading = document.createElement("h2"); heading.textContent = "Clean Drawings"; form.append(heading);
+    const note = document.createElement("p");
+    note.textContent = "Select the border/titleblock XREF, not a site or plan background. Cleanup removes identifiable titleblock stamps/signatures from local copies and converts supported PDFs/images. Original and cleaned PDFs are compared; other differences are flagged for review.";
+    form.append(note);
+    function field(text, control) {
+      const label = document.createElement("label"); label.append(document.createTextNode(text), control); form.append(label); return control;
+    }
+    const titleblock = field("Titleblock XREF", document.createElement("select"));
+    titleblock.required = true;
+    titleblock.add(new Option("Select the titleblock XREF…", ""));
+    preview.titleblocks.forEach(path => titleblock.add(new Option(
+      `${path}${path === preview.recommendedTitleblock ? " (recommended titleblock)" : preview.detectedTitleblocks?.includes(path) ? " (paper-space XREF; verify its purpose)" : ""}`, path)));
+    if (preview.recommendedTitleblock) titleblock.value = preview.recommendedTitleblock;
+    const pdf = field("Reference PDF and sheet size", document.createElement("select"));
+    pdf.add(new Option("Enter dimensions manually", ""));
+    preview.sizes.forEach((size, index) => pdf.add(new Option(`${size.pdf}, page ${size.page}: ${size.width} x ${size.height} in`, String(index))));
+    const width = field("Width in CAD units", document.createElement("input"));
+    const height = field("Height in CAD units", document.createElement("input"));
+    const dimensions = document.createElement("div"); dimensions.className = "clean-drawings-size";
+    dimensions.append(width.parentElement, height.parentElement); form.append(dimensions);
+    [width, height].forEach(input => { input.type = "number"; input.min = "0.001"; input.max = "1000"; input.step = "any"; input.required = true; });
+    pdf.addEventListener("change", () => {
+      if (pdf.value !== "") { const size = preview.sizes[Number(pdf.value)]; width.value = size.width; height.value = size.height; }
+    });
+    if (preview.sizes.length) { pdf.value = "0"; pdf.dispatchEvent(new Event("change")); }
+    const unitNote = document.createElement("p");
+    unitNote.textContent = "PDF dimensions are inches. Confirm the CAD dimensions; for a 36 x 24 inch titleblock use 36 and 24."; form.append(unitNote);
+    const files = document.createElement("fieldset");
+    const legend = document.createElement("legend"); legend.textContent = "Electrical drawings"; files.append(legend);
+    const checks = preview.drawings.map(path => {
+      const label = document.createElement("label"); const check = document.createElement("input");
+      check.type = "checkbox"; check.checked = true; check.value = path;
+      label.append(check, document.createTextNode(path)); files.append(label); return check;
+    });
+    form.append(files);
+    const error = document.createElement("p"); error.setAttribute("role", "alert"); form.append(error);
+    const cancel = document.createElement("button"); cancel.type = "button"; cancel.className = "btn ghost"; cancel.textContent = "Cancel";
+    cancel.addEventListener("click", () => dialog.close());
+    const submit = document.createElement("button"); submit.type = "submit"; submit.className = "btn"; submit.textContent = "Clean selected drawings";
+    form.append(cancel, submit);
+    let selection = null;
+    form.addEventListener("submit", event => {
+      event.preventDefault(); const drawings = checks.filter(check => check.checked).map(check => check.value);
+      if (!titleblock.value) { error.textContent = "Select the border/titleblock XREF."; return; }
+      if (!drawings.length) { error.textContent = "Select at least one electrical drawing."; return; }
+      selection = { titleblock: titleblock.value, drawings, width: Number(width.value), height: Number(height.value), pdfSource: pdf.value === "" ? null : preview.sizes[Number(pdf.value)] };
+      dialog.close();
+    });
+    dialog.addEventListener("close", () => { dialog.remove(); resolve(selection); }, { once: true });
+    dialog.append(form); document.body.append(dialog); dialog.showModal();
+  });
+}

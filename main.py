@@ -459,18 +459,36 @@ def _open_panel_schedule_image(path, max_edge=PANEL_SCHEDULE_MAX_IMAGE_EDGE):
 _register_heif_support()
 
 # Helper functions for date parsing and status management
-STATUS_CANON = ["Waiting", "Working",
-                "Pending Review", "Complete", "Delivered"]
-STATUS_PRIORITY = ['Delivered', 'Complete',
-                   'Pending Review', 'Working', 'Waiting']
+STATUS_CANON = ["In progress", "Waiting", "On hold",
+                "Pending Review", "Complete", "Completed (by others)", "Delivered"]
+STATUS_PRIORITY = ['Delivered', 'Complete', 'Completed (by others)',
+                   'Pending Review', 'On hold', 'Waiting', 'In progress']
 LABEL_TO_KEY = {
     "Waiting": "waiting",
-    "Working": "working",
+    "In progress": "inProgress",
+    "On hold": "onHold",
     "Pending Review": "pendingReview",
     "Complete": "complete",
+    "Completed (by others)": "completed-by-others",
     "Delivered": "delivered"
 }
 KEY_TO_LABEL = {v: k for k, v in LABEL_TO_KEY.items()}
+KEY_TO_LABEL["working"] = "In progress"
+
+# Deliverable PDF quick access: <project>\PDF\<date + deliverable>\<project> <Discipline>.pdf
+DELIVERABLE_PDF_FOLDER_NAME = "PDF"
+DELIVERABLE_PDF_DISCIPLINES = ("Electrical", "Mechanical", "Plumbing")
+DELIVERABLE_PDF_ISSUE_DATE_RE = re.compile(
+    r"^(\d{4})[.\-_ ](\d{1,2})[.\-_ ](\d{1,2})(?!\d)"
+)
+# Arch sets land in <project>\Arch\ with no fixed naming, so the date stamp can
+# sit anywhere in the file name rather than only at the front of a folder name.
+DELIVERABLE_PDF_ISSUE_DATE_SEARCH_RE = re.compile(
+    r"(?<!\d)(\d{4})[.\-_ ](\d{1,2})[.\-_ ](\d{1,2})(?!\d)"
+)
+ARCH_SET_FOLDER_NAME = "Arch"
+ISSUE_DATE_MIN_YEAR = 1990
+ISSUE_DATE_MAX_YEAR = 2100
 
 APP_UPDATE_REPO = "jacobhusband/ACIES-Multi-Tool"
 APP_INSTALLER_NAME = "acies-scheduler-setup.exe"
@@ -537,24 +555,19 @@ OUTLOOK_SCAN_RETRY_SKIP_REASON = (
 )
 EMAIL_INTAKE_PROJECT_CONTEXT_MAX_PROJECTS = 200
 EMAIL_INTAKE_PROJECT_CONTEXT_BUDGET_CHARS = 25000
-EMAIL_INTAKE_GEMINI_MODEL = "gemini-3.7-flash"
+EMAIL_INTAKE_GEMINI_MODEL = "gemini-3.8-flash"
+DEFAULT_GEMINI_FALLBACK_MODELS = (
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-2.5-flash",
+)
+PANEL_SCHEDULE_GEMINI_MODELS = DEFAULT_GEMINI_FALLBACK_MODELS
+AI_ASSISTANT_GEMINI_MODELS = DEFAULT_GEMINI_FALLBACK_MODELS
 EMAIL_INTAKE_CAPACITY_RETRY_DELAYS_SECONDS = (1.0, 2.0)
 EMAIL_INTAKE_REQUEST_TIMEOUT_MS = 240000
-FIREBASE_API_KEY_ENV = "FIREBASE_API_KEY"
-FIREBASE_AUTH_DOMAIN_ENV = "FIREBASE_AUTH_DOMAIN"
-FIREBASE_PROJECT_ID_ENV = "FIREBASE_PROJECT_ID"
-FIREBASE_APP_ID_ENV = "FIREBASE_APP_ID"
-FIREBASE_STORAGE_BUCKET_ENV = "FIREBASE_STORAGE_BUCKET"
-FIREBASE_MESSAGING_SENDER_ID_ENV = "FIREBASE_MESSAGING_SENDER_ID"
 
 
-def build_default_cloud_sync_settings():
-    return {
-        'enabled': False,
-        'firebaseUid': '',
-        'lastSyncedAt': '',
-        'migrationCompleted': False,
-    }
 
 
 def build_default_workflow_cad_defaults():
@@ -600,7 +613,7 @@ WORKFLOW_TOOL_REGISTRY = {
         'displayName': 'Archive',
         'description': 'Archive configured discipline folders and Xrefs into a timestamped Archive folder.',
         'invoke': (lambda api, ctx, aid, params:
-                   api.backup_project_drawings(None, ctx)),
+                   api.backup_project_drawings(None, ctx, aid)),
         'params': [],
         'requiredInputs': [
             {'key': 'projectFolder', 'type': 'folder', 'label': 'Project folder',
@@ -775,7 +788,6 @@ def build_default_user_settings():
         'workroomAutoSelectCadFiles': True,
         'enableUnderConstructionTools': False,
         'googleAuth': None,
-        'cloudSync': build_default_cloud_sync_settings(),
         'workflows': [],
     }
 
@@ -860,6 +872,10 @@ def _merge_missing_user_settings_from_legacy(current_settings, legacy_settings):
 def _sanitize_user_settings_payload(settings):
     normalized = deepcopy(settings) if isinstance(settings, dict) else {}
     changed = False
+
+    if "cloudSync" in normalized:
+        normalized.pop("cloudSync", None)
+        changed = True
 
     if "microsoftAuth" in normalized:
         normalized.pop("microsoftAuth", None)
@@ -1050,16 +1066,20 @@ def sync_status_arrays(task):
     """Sync status arrays similar to JS syncStatusArrays."""
     if not isinstance(task.get('statuses'), list):
         task['statuses'] = []
-    from_tags = task.get('statusTags', [])
+    from_tags = task.get('statusTags') or []
+    legacy_status = task.get('status')
+    if legacy_status and legacy_status not in task['statuses']:
+        task['statuses'].append(legacy_status)
+    task['statuses'] = ['In progress' if s == 'Working' else s for s in task['statuses']]
     for key in from_tags:
         label = KEY_TO_LABEL.get(key)
         if label and label not in task['statuses']:
             task['statuses'].append(label)
-    task['statuses'] = list({s for s in task['statuses'] if s in STATUS_CANON})
-    task['statusTags'] = [LABEL_TO_KEY[s]
-                          for s in task['statuses'] if LABEL_TO_KEY.get(s)]
-    task['status'] = next(
-        (label for label in STATUS_PRIORITY if label in task['statuses']), '')
+    primary = next(
+        (label for label in STATUS_PRIORITY if label in task['statuses']), 'In progress')
+    task['statuses'] = [primary]
+    task['statusTags'] = [LABEL_TO_KEY[primary]]
+    task['status'] = primary
 
 
 def get_default_documents_dir():
@@ -1528,8 +1548,9 @@ def _normalize_t24_output_json_path(json_path):
         raise ValueError("JSON path must be an absolute path.")
     if os.path.splitext(normalized)[1].lower() != ".json":
         raise ValueError("JSON path must end with .json.")
-    if os.path.basename(normalized).lower() != "t24output.json":
-        raise ValueError("Expected file name: T24Output.json.")
+    base = os.path.basename(normalized).lower()
+    if base not in ("arealabel.json", "t24output.json"):
+        raise ValueError("Expected file name: AreaLabel.json or T24Output.json.")
     return normalized
 
 
@@ -1731,46 +1752,6 @@ def _get_local_sync_metadata():
     return files
 
 
-def _create_cloud_sync_backup(reason="", metadata=None):
-    created_at = utc_now_iso()
-    safe_reason = re.sub(r"[^a-z0-9]+", "-", str(reason or "").strip().lower()).strip("-")
-    suffix = safe_reason[:40] or "sync"
-    backup_dir = os.path.join(
-        SYNC_BACKUPS_DIR,
-        f"{created_at.replace(':', '').replace('-', '')}_{suffix}_{uuid.uuid4().hex[:8]}",
-    )
-    os.makedirs(backup_dir, exist_ok=True)
-
-    copied = []
-    for key, source_path in SYNC_TRACKED_FILES.items():
-        if not os.path.exists(source_path):
-            continue
-        destination_path = os.path.join(backup_dir, os.path.basename(source_path))
-        shutil.copy2(source_path, destination_path)
-        copied.append(
-            {
-                "key": key,
-                "sourcePath": os.path.normpath(source_path),
-                "backupPath": os.path.normpath(destination_path),
-                "modified": _get_file_modified_iso(source_path),
-            }
-        )
-
-    backup_metadata = {
-        "createdAt": created_at,
-        "reason": str(reason or "").strip(),
-        "files": copied,
-        "localSyncMetadata": _get_local_sync_metadata(),
-    }
-    if isinstance(metadata, dict) and metadata:
-        backup_metadata["metadata"] = metadata
-
-    _atomic_write_json_file(os.path.join(backup_dir, "metadata.json"), backup_metadata)
-    return {
-        "path": os.path.normpath(backup_dir),
-        "createdAt": created_at,
-        "files": copied,
-    }
 
 
 def _normalize_lighting_schedule_text(value):
@@ -2904,6 +2885,14 @@ class PanelData(BaseModel):
     wire: str = Field(..., description="Wire")
     mounting: str = Field(..., description="Mounting")
     enclosure: str = Field(..., description="Enclosure")
+    main_type: str = Field(
+        "",
+        description="Main device type such as MCB or MLO, or blank if not visible",
+    )
+    main_breaker_amps: str = Field(
+        "",
+        description="Visible main breaker amp rating, or blank if not visible",
+    )
     circuits: List[CircuitItem] = Field(
         ..., description="List of detected breakers")
 
@@ -2919,7 +2908,14 @@ CANVAS_PANEL_UNSUPPORTED_IMAGE_EXTS = {".svg", ".svgz"}
 # "a table of circuits", but they drive opposite behavior downstream: the as-built gets
 # transcribed verbatim, the field card is only a label aid while kVA is estimated off
 # the breakers. They are separate roles so the model never has to pick a tool mode.
-CANVAS_PANEL_IMAGE_ROLES = ("breaker", "as_built_schedule", "field_directory", "ignore")
+CANVAS_PANEL_IMAGE_ROLES = (
+    "breaker",
+    "as_built_schedule",
+    "field_directory",
+    "panel_label",
+    "main_breaker",
+    "ignore",
+)
 CANVAS_PANEL_DIRECTORY_ROLES = ("as_built_schedule", "field_directory")
 CANVAS_PANEL_CONFIDENCE_LEVELS = ("high", "medium", "low")
 
@@ -2932,7 +2928,8 @@ class CanvasPanelImageRole(BaseModel):
         description=(
             "One of 'breaker' (photo of physical breakers), 'as_built_schedule' "
             "(printed/typed panel schedule document), 'field_directory' "
-            "(handwritten circuit card from the panel door), or 'ignore'"
+            "(handwritten circuit card from the panel door), 'panel_label' "
+            "(equipment nameplate), 'main_breaker' (close-up of the main device), or 'ignore'"
         ),
     )
     confidence: str = Field(
@@ -3071,6 +3068,20 @@ def cb_fix_nema_type(raw_type):
     return "NEMA 3R" if any(x in t for x in ["3R", "OUT", "EXT", "WEATHER"]) else "NEMA 1"
 
 
+def cb_format_main_requirement(panel_data: PanelData) -> str:
+    main_type = cb_clean_text(getattr(panel_data, "main_type", ""))
+    main_amps = cb_clean_text(getattr(panel_data, "main_breaker_amps", ""))
+    if main_amps and re.fullmatch(r"\d+(?:\.\d+)?", main_amps):
+        main_amps = f"{main_amps}A"
+    if main_type == "MLO":
+        return "MLO"
+    if main_amps and main_type:
+        return f"{main_amps} {main_type}"
+    if main_amps:
+        return f"{main_amps} MAIN"
+    return main_type
+
+
 def cb_resolve_ditto_marks(circuits: List[CircuitItem]) -> List[CircuitItem]:
     ditto_pattern = re.compile(r'^[\""\u2018\u2019\u201c\u201d\.]+$|^(SAME|DO)$', re.IGNORECASE)
     odds = sorted([c for c in circuits if c.circuit_number % 2 != 0], key=lambda x: x.circuit_number)
@@ -3137,6 +3148,9 @@ def cb_update_excel_workbook(panel_data: PanelData, workbook_path: str, use_extr
     target["K3"] = cb_clean_text(panel_data.phase)
     target["K4"] = cb_fix_nema_type(panel_data.enclosure)
     target["N2"] = cb_clean_text(panel_data.mounting)
+    main_requirement = cb_format_main_requirement(panel_data)
+    if main_requirement:
+        target["G4"] = main_requirement
     aic_rating = cb_clean_text(getattr(panel_data, "aic_rating", ""))
     if aic_rating:
         target["N3"] = aic_rating
@@ -3257,6 +3271,8 @@ class Api:
         self._script_worker_lock = threading.Lock()
         self._script_workers = set()
         self._script_processes = set()
+        self._script_processes_by_activity = {}
+        self._script_cancel_requests = set()
         self._script_shutdown_event = threading.Event()
         # pywebview dispatches JavaScript API calls on independent threads. Keep
         # native dialogs serialized and reject new ones as soon as the window
@@ -3743,8 +3759,65 @@ class Api:
             self._script_workers = set()
         if not hasattr(self, '_script_processes') or self._script_processes is None:
             self._script_processes = set()
+        if (
+            not hasattr(self, '_script_processes_by_activity')
+            or self._script_processes_by_activity is None
+        ):
+            self._script_processes_by_activity = {}
+        if not hasattr(self, '_script_cancel_requests') or self._script_cancel_requests is None:
+            self._script_cancel_requests = set()
         if not hasattr(self, '_script_shutdown_event') or self._script_shutdown_event is None:
             self._script_shutdown_event = threading.Event()
+
+    @staticmethod
+    def _activity_ids_match(requested_activity_id, running_activity_id):
+        """Match a direct activity or one of a workflow's step activities."""
+        requested = str(requested_activity_id or '').strip()
+        running = str(running_activity_id or '').strip()
+        if not requested or not running:
+            return False
+        return running == requested or running.startswith(f'{requested}-step')
+
+    def _is_activity_cancel_requested(self, activity_id):
+        normalized_activity_id = str(activity_id or '').strip()
+        if not normalized_activity_id:
+            return False
+        self._ensure_script_worker_state()
+        with self._script_worker_lock:
+            return any(
+                self._activity_ids_match(requested_id, normalized_activity_id)
+                for requested_id in self._script_cancel_requests
+            )
+
+    def cancel_activity(self, activity_id):
+        """Cancel a running CAD activity and its child process tree.
+
+        The request is recorded before looking up a process so cancellation also
+        works during the short window between starting a worker and spawning its
+        PowerShell process. Cancelling a workflow parent also cancels its active
+        ``-stepN`` child.
+        """
+        normalized_activity_id = str(activity_id or '').strip()
+        if not normalized_activity_id:
+            return {'status': 'error', 'message': 'Activity id is required.'}
+
+        self._ensure_script_worker_state()
+        with self._script_worker_lock:
+            self._script_cancel_requests.add(normalized_activity_id)
+            processes = [
+                process
+                for running_id, process in self._script_processes_by_activity.items()
+                if self._activity_ids_match(normalized_activity_id, running_id)
+            ]
+
+        for process in processes:
+            self._terminate_script_process(process)
+
+        return {
+            'status': 'success',
+            'activityId': normalized_activity_id,
+            'cancelledProcessCount': len(processes),
+        }
 
     def _terminate_script_process(self, process):
         """Stops one script process and any child CAD processes it launched."""
@@ -3823,14 +3896,22 @@ class Api:
             }
 
         result_holder = {'status': 'started'}
+        normalized_activity_id = str(activity_id or '').strip()
 
         def script_runner():
             process = None
             try:
-                if self._script_shutdown_event.is_set():
+                if (
+                    self._script_shutdown_event.is_set()
+                    or self._is_activity_cancel_requested(normalized_activity_id)
+                ):
                     result_holder.update({
                         'status': 'cancelled',
-                        'message': 'CAD tool stopped because the application closed.',
+                        'message': (
+                            'CAD tool stopped because the application closed.'
+                            if self._script_shutdown_event.is_set()
+                            else 'Activity cancelled by user.'
+                        ),
                     })
                     return
                 logging.info("CAD worker starting script for %r", tool_id)
@@ -3877,7 +3958,12 @@ class Api:
 
                 with self._script_worker_lock:
                     self._script_processes.add(process)
-                if self._script_shutdown_event.is_set():
+                    if normalized_activity_id:
+                        self._script_processes_by_activity[normalized_activity_id] = process
+                if (
+                    self._script_shutdown_event.is_set()
+                    or self._is_activity_cancel_requested(normalized_activity_id)
+                ):
                     self._terminate_script_process(process)
                 logging.info(
                     "CAD worker process started for %r (pid=%s)",
@@ -3904,7 +3990,10 @@ class Api:
                         if message.startswith("ERROR:"):
                             last_progress_error = message[len(
                                 "ERROR:"):].strip() or message
-                        if not self._script_shutdown_event.is_set():
+                        if (
+                            not self._script_shutdown_event.is_set()
+                            and not self._is_activity_cancel_requested(normalized_activity_id)
+                        ):
                             self._notify_tool_status(
                                 tool_id,
                                 message,
@@ -3924,10 +4013,17 @@ class Api:
                     return_code=return_code,
                 )
 
-                if self._script_shutdown_event.is_set():
+                if (
+                    self._script_shutdown_event.is_set()
+                    or self._is_activity_cancel_requested(normalized_activity_id)
+                ):
                     result_holder.update({
                         'status': 'cancelled',
-                        'message': 'CAD tool stopped because the application closed.',
+                        'message': (
+                            'CAD tool stopped because the application closed.'
+                            if self._script_shutdown_event.is_set()
+                            else 'Activity cancelled by user.'
+                        ),
                         'returnCode': return_code,
                     })
                 elif return_code == 0:
@@ -3960,7 +4056,10 @@ class Api:
 
             except Exception as e:
                 logging.exception("Failed to execute script for %s", tool_id)
-                if not self._script_shutdown_event.is_set():
+                if (
+                    not self._script_shutdown_event.is_set()
+                    and not self._is_activity_cancel_requested(normalized_activity_id)
+                ):
                     self._notify_tool_status(
                         tool_id,
                         f"ERROR: {str(e)}",
@@ -3979,6 +4078,11 @@ class Api:
                             pass
                     with self._script_worker_lock:
                         self._script_processes.discard(process)
+                        if (
+                            normalized_activity_id
+                            and self._script_processes_by_activity.get(normalized_activity_id) is process
+                        ):
+                            self._script_processes_by_activity.pop(normalized_activity_id, None)
                 with self._script_worker_lock:
                     self._script_workers.discard(threading.current_thread())
 
@@ -4061,24 +4165,6 @@ class Api:
             logging.error(f"Error saving user settings: {e}")
             return {'status': 'error', 'message': str(e)}
 
-    def get_cloud_sync_config(self):
-        config = {
-            "apiKey": str(os.getenv(FIREBASE_API_KEY_ENV) or "").strip(),
-            "authDomain": str(os.getenv(FIREBASE_AUTH_DOMAIN_ENV) or "").strip(),
-            "projectId": str(os.getenv(FIREBASE_PROJECT_ID_ENV) or "").strip(),
-            "appId": str(os.getenv(FIREBASE_APP_ID_ENV) or "").strip(),
-            "storageBucket": str(os.getenv(FIREBASE_STORAGE_BUCKET_ENV) or "").strip(),
-            "messagingSenderId": str(os.getenv(FIREBASE_MESSAGING_SENDER_ID_ENV) or "").strip(),
-        }
-        enabled = all(
-            config.get(key)
-            for key in ("apiKey", "authDomain", "projectId", "appId")
-        )
-        return {
-            "status": "success",
-            "enabled": enabled,
-            "config": config,
-        }
 
     def get_local_sync_metadata(self):
         try:
@@ -4090,16 +4176,6 @@ class Api:
             logging.error(f"Error loading local sync metadata: {e}")
             return {"status": "error", "message": str(e), "files": {}}
 
-    def create_cloud_sync_backup(self, reason="", metadata=None):
-        try:
-            result = _create_cloud_sync_backup(reason=reason, metadata=metadata)
-            return {
-                "status": "success",
-                **result,
-            }
-        except Exception as e:
-            logging.error(f"Error creating cloud sync backup: {e}")
-            return {"status": "error", "message": str(e)}
 
     def _get_google_oauth_client_id(self):
         return (os.getenv(GOOGLE_OAUTH_CLIENT_ID_ENV) or "").strip()
@@ -4207,24 +4283,6 @@ class Api:
             "hasRefreshToken": bool(str(auth_record.get("refreshToken") or "").strip()),
         }
 
-    def _build_google_sync_session(self, auth_record):
-        if not isinstance(auth_record, dict):
-            return {
-                "signedIn": False,
-                "idToken": "",
-                "accessToken": "",
-                "firebaseReady": False,
-                "auth": self._sanitize_google_auth_record(None),
-            }
-        id_token = str(auth_record.get("idToken") or "").strip()
-        access_token = str(auth_record.get("accessToken") or "").strip()
-        return {
-            "signedIn": True,
-            "idToken": id_token,
-            "accessToken": access_token,
-            "firebaseReady": bool(id_token or access_token),
-            "auth": self._sanitize_google_auth_record(auth_record),
-        }
 
     def _load_google_auth_record(self):
         settings = self.get_user_settings()
@@ -4458,22 +4516,6 @@ class Api:
                 "auth": self._sanitize_google_auth_record(None),
             }
 
-    def get_google_sync_session(self):
-        try:
-            auth_record = self._refresh_google_auth_record_if_needed(
-                self._load_google_auth_record()
-            )
-            return {
-                "status": "success",
-                **self._build_google_sync_session(auth_record),
-            }
-        except Exception as e:
-            logging.error(f"Error loading Google sync session: {e}")
-            return {
-                "status": "error",
-                "message": str(e),
-                **self._build_google_sync_session(None),
-            }
 
     def sign_in_with_google(self):
         client_id = self._get_google_oauth_client_id()
@@ -4565,7 +4607,6 @@ class Api:
             return {
                 "status": "success",
                 "auth": self._sanitize_google_auth_record(auth_record),
-                "syncSession": self._build_google_sync_session(auth_record),
             }
         except Exception as e:
             logging.error(f"Error signing in with Google: {e}")
@@ -6126,7 +6167,7 @@ CURRENT_DELIVERABLES_IN_PERIOD:
                 )
             if "model" in lower and ("not found" in lower or "does not exist" in lower):
                 raise RuntimeError(
-                    "AI model not available. The Gemini 3.7 Flash model may not be accessible with your API key."
+                    "AI model not available. The Gemini 3.8 Flash model may not be accessible with your API key."
                 )
             if "quota" in lower or "rate limit" in lower:
                 raise RuntimeError("API rate limit exceeded. Please wait a moment and try again.")
@@ -6635,7 +6676,6 @@ CURRENT_DELIVERABLES_IN_PERIOD:
 
             self._ensure_aiohttp()
             client = genai.Client(api_key=api_key)
-            model = "gemini-3-flash-preview"
 
             # Convert JavaScript chat history to Gemini API format
             contents = []
@@ -6678,8 +6718,9 @@ CURRENT_DELIVERABLES_IN_PERIOD:
                 tools=tools,
             )
 
-            response = client.models.generate_content(
-                model=model,
+            response, used_model = self._generate_content_with_model_fallback(
+                client,
+                AI_ASSISTANT_GEMINI_MODELS,
                 contents=contents,
                 config=generate_content_config,
             )
@@ -6743,12 +6784,12 @@ CURRENT_DELIVERABLES_IN_PERIOD:
     def _email_intake_transient_error_message(self, error):
         if self._is_email_intake_deadline_error(error):
             return (
-                "Gemini 3.7 Flash timed out after automatic retries. Google may "
+                "Gemini 3.8 Flash timed out after automatic retries. Google may "
                 "still be experiencing high demand. Please wait a minute and try "
                 "again; no project data was changed."
             )
         return (
-            "Gemini 3.7 Flash is temporarily at capacity. Email Intake retried "
+            "Gemini 3.8 Flash is temporarily at capacity. Email Intake retried "
             "automatically, but Google is still unavailable. Please wait a minute "
             "and try again; no project data was changed."
         )
@@ -6770,6 +6811,65 @@ CURRENT_DELIVERABLES_IN_PERIOD:
                     exc,
                 )
                 time.sleep(delay)
+
+    def _generate_content_with_model_fallback(
+        self,
+        client,
+        models,
+        **request_kwargs,
+    ):
+        """Attempts generate_content across a fallback ladder of models in priority order.
+
+        Tries each model in order. If a model encounters a transient error, timeout,
+        capacity spike, or unavailability, it immediately attempts the next model in the ladder.
+        Returns (response, used_model).
+        Raises the last exception if all models in the ladder fail.
+        """
+        model_list = list(models) if isinstance(models, (list, tuple)) else [models]
+        if not model_list:
+            model_list = list(DEFAULT_GEMINI_FALLBACK_MODELS)
+
+        last_exc = None
+        attempted = []
+
+        for idx, model_name in enumerate(model_list):
+            attempted.append(model_name)
+            try:
+                logging.info(f"Generating content with model: {model_name}")
+                response = client.models.generate_content(
+                    model=model_name,
+                    **request_kwargs,
+                )
+                if idx > 0:
+                    logging.info(
+                        f"Model fallback succeeded using '{model_name}' "
+                        f"(after {', '.join(attempted[:-1])} failed)."
+                    )
+                return response, model_name
+            except Exception as exc:
+                last_exc = exc
+                msg = str(exc).lower()
+                if (
+                    "api key expired" in msg
+                    or "invalid api key" in msg
+                    or "api_key_invalid" in msg
+                    or ("api key" in msg and "not configured" in msg)
+                ):
+                    raise
+                if idx < len(model_list) - 1:
+                    next_model = model_list[idx + 1]
+                    logging.warning(
+                        f"Model '{model_name}' failed with {type(exc).__name__}: {exc}. "
+                        f"Attempting fallback model '{next_model}'..."
+                    )
+                else:
+                    logging.error(
+                        f"All fallback models failed ({', '.join(attempted)}): {exc}"
+                    )
+
+        if last_exc:
+            raise last_exc
+        raise RuntimeError("No models available.")
 
     def _build_email_analysis_prompt(self, email_text, user_name, discipline, project_context=None):
         current_date = datetime.date.today().strftime("%m/%d/%Y")
@@ -6989,29 +7089,13 @@ Return ONLY the JSON object.
                 )
             if "model" in lower and ("not found" in lower or "does not exist" in lower):
                 raise RuntimeError(
-                    'AI model not available. The Gemini 3.7 Flash model may not be accessible with your API key.'
+                    'AI model not available. The Gemini 3.8 Flash model may not be accessible with your API key.'
                 )
             if "quota" in lower or "rate limit" in lower:
                 raise RuntimeError('API rate limit exceeded. Please wait a moment and try again.')
             if self._is_email_intake_retryable_error(e):
                 raise RuntimeError(self._email_intake_transient_error_message(e))
             raise RuntimeError(f"AI error: {msg}")
-
-    def process_email_with_ai(self, email_text, api_key, user_name, discipline, project_context=None):
-        """
-        Processes email text using Google GenAI to extract project details.
-        """
-        try:
-            project_data = self._extract_project_data_from_email_text(
-                email_text,
-                api_key,
-                user_name,
-                discipline,
-                project_context,
-            )
-            return {'status': 'success', 'data': project_data}
-        except Exception as e:
-            return {'status': 'error', 'message': str(e)}
 
     def get_tasks(self):
         """Reads and returns the content of tasks.json."""
@@ -7467,17 +7551,18 @@ Return ONLY the JSON object.
             return {'status': 'error', 'message': str(e)}
 
     def read_t24_output_json(self, json_path):
-        """Read and validate TXTSUMEXPORT output (T24Output.json)."""
+        """Read and validate AREALABEL / SUMTEXT output (AreaLabel.json or T24Output.json)."""
         try:
             normalized_path = _normalize_t24_output_json_path(json_path)
+            file_name = os.path.basename(normalized_path)
             if not os.path.isfile(normalized_path):
                 raise FileNotFoundError(
-                    f"T24Output.json was not found at: {normalized_path}")
+                    f"{file_name} was not found at: {normalized_path}")
 
             payload = _read_json_file_strict(normalized_path)
             if not isinstance(payload, list):
                 raise ValueError(
-                    "T24Output.json must contain a JSON array of room entries.")
+                    f"{file_name} must contain a JSON array of room entries.")
 
             rows = []
             explicit_total = None
@@ -7486,7 +7571,7 @@ Return ONLY the JSON object.
                     raise ValueError(
                         f"Entry #{idx} must be a JSON object with RoomType and SquareFeet.")
 
-                room_type = str(item.get("RoomType", "")).strip()
+                room_type = str(item.get("RoomType") or item.get("RoomName") or "").strip()
                 if not room_type:
                     raise ValueError(f"Entry #{idx} is missing RoomType.")
 
@@ -7527,10 +7612,10 @@ Return ONLY the JSON object.
         except FileNotFoundError as e:
             return {"status": "error", "message": str(e)}
         except ValueError as e:
-            logging.warning(f"T24Output.json validation failed: {e}")
+            logging.warning(f"Room area JSON validation failed: {e}")
             return {"status": "error", "message": str(e)}
         except Exception as e:
-            logging.error(f"Error reading T24Output.json: {e}")
+            logging.error(f"Error reading room area JSON: {e}")
             return {"status": "error", "message": str(e)}
 
     def get_notes(self):
@@ -8159,6 +8244,67 @@ Return ONLY the JSON object.
         if dialog_type is None:
             raise RuntimeError(f'pywebview does not provide {name} dialogs.')
         return dialog_type
+
+    def _show_open_file_dialog_sta(self, directory=None, allow_multiple=False, file_types=None):
+        """Displays an OpenFileDialog on a dedicated STA thread on Windows.
+
+        pywebview dispatches JS API calls on background MTA threads. Calling
+        WinForms OpenFileDialog.ShowDialog(owner) from an MTA thread with an
+        owner window created on the STA GUI thread causes an inter-thread COM
+        deadlock ('python is not responding' / MoAppHang). Running on a dedicated
+        STA thread without an inter-thread owner avoids this deadlock completely.
+        """
+        if not sys.platform.startswith('win'):
+            return None
+        try:
+            import clr
+            clr.AddReference('System.Windows.Forms')
+            clr.AddReference('System.Threading')
+            import System.Windows.Forms as WinForms
+            from System.Threading import Thread, ThreadStart, ApartmentState
+        except Exception as exc:
+            logging.debug("WinForms STA dialog unavailable: %s", exc)
+            return None
+
+        result = []
+        exception = []
+
+        def target():
+            try:
+                dialog = WinForms.OpenFileDialog()
+                dialog.Multiselect = bool(allow_multiple)
+                dialog.RestoreDirectory = True
+                if directory and os.path.isdir(directory):
+                    dialog.InitialDirectory = os.path.abspath(directory)
+                if file_types:
+                    filters = []
+                    for f in file_types:
+                        try:
+                            from webview.util import parse_file_type
+                            desc, exts = parse_file_type(f)
+                            filters.append(f"{desc} ({exts})|{exts}")
+                        except Exception:
+                            filters.append(f if "|" in f else f"{f}|*.*")
+                    filters.append("All Files (*.*)|*.*")
+                    dialog.Filter = "|".join(filters)
+                else:
+                    dialog.Filter = "All Files (*.*)|*.*"
+
+                res = dialog.ShowDialog()
+                if res == WinForms.DialogResult.OK:
+                    result.extend(list(dialog.FileNames))
+            except Exception as e:
+                exception.append(e)
+
+        t = Thread(ThreadStart(target))
+        t.SetApartmentState(ApartmentState.STA)
+        t.Start()
+        t.Join()
+
+        if exception:
+            logging.warning("STA OpenFileDialog encountered error: %s", exception[0])
+            return None
+        return tuple(result)
 
     def _create_file_dialog(self, dialog_type, **kwargs):
         dialog_lock = getattr(self, '_dialog_lock', None)
@@ -9974,6 +10120,10 @@ Return ONLY the JSON object.
                 deliverables = task.get('deliverables')
                 if isinstance(deliverables, list):
                     for deliverable in deliverables:
+                        if (deliverable.get('status') == 'Completed (by others)'
+                                or 'Completed (by others)' in (deliverable.get('statuses') or [])
+                                or 'completed-by-others' in (deliverable.get('statusTags') or [])):
+                            continue
                         due_str = get_effective_due_str(deliverable)
                         if due_str:
                             due_date = parse_due_str(due_str)
@@ -9986,6 +10136,10 @@ Return ONLY the JSON object.
                                         t['done'] = True
                                 count += 1
                 else:
+                    if (task.get('status') == 'Completed (by others)'
+                            or 'Completed (by others)' in (task.get('statuses') or [])
+                            or 'completed-by-others' in (task.get('statusTags') or [])):
+                        continue
                     due_str = task.get('due', '')
                     if due_str:
                         due_date = parse_due_str(due_str)
@@ -10014,6 +10168,10 @@ Return ONLY the JSON object.
                 deliverables = task.get('deliverables')
                 if isinstance(deliverables, list):
                     for deliverable in deliverables:
+                        if (deliverable.get('status') == 'Completed (by others)'
+                                or 'Completed (by others)' in (deliverable.get('statuses') or [])
+                                or 'completed-by-others' in (deliverable.get('statusTags') or [])):
+                            continue
                         due_str = get_effective_due_str(deliverable)
                         if due_str:
                             due_date = parse_due_str(due_str)
@@ -10026,6 +10184,10 @@ Return ONLY the JSON object.
                                         t['done'] = True
                                 count += 1
                 else:
+                    if (task.get('status') == 'Completed (by others)'
+                            or 'Completed (by others)' in (task.get('statuses') or [])
+                            or 'completed-by-others' in (task.get('statusTags') or [])):
+                        continue
                     due_str = task.get('due', '')
                     if due_str:
                         due_date = parse_due_str(due_str)
@@ -10141,462 +10303,6 @@ Return ONLY the JSON object.
             logging.error(f"Error opening Notepad text export: {e}")
             return {'status': 'error', 'message': str(e)}
 
-    def _normalize_deliverable_summary_payload(self, value):
-        """Coerces an AI status briefing payload into a safe dict, or None."""
-        if not value:
-            return None
-        if isinstance(value, str):
-            headline = ''
-            paragraphs = [value.strip()] if value.strip() else []
-        elif isinstance(value, dict):
-            headline = str(value.get('headline') or '').strip()[:1200]
-            raw_paragraphs = value.get('paragraphs')
-            if isinstance(raw_paragraphs, str):
-                raw_paragraphs = [raw_paragraphs]
-            if not isinstance(raw_paragraphs, list):
-                raw_paragraphs = []
-            paragraphs = []
-            for raw in raw_paragraphs[:12]:
-                text = str(raw or '').strip()[:1200]
-                if text:
-                    paragraphs.append(text)
-        else:
-            return None
-
-        if not headline and not paragraphs:
-            # An empty briefing should produce no sheet at all rather than a blank one.
-            return None
-
-        meta = value if isinstance(value, dict) else {}
-        return {
-            'headline': headline,
-            'paragraphs': paragraphs,
-            'generatedAt': str(meta.get('generatedAt') or '').strip(),
-            'scope': str(meta.get('scope') or '').strip(),
-            'deliverableCount': meta.get('deliverableCount'),
-        }
-
-    def _write_deliverable_summary_sheet(self, workbook, summary, deliverable_count):
-        """Appends a prose 'Status Summary' sheet after the Deliverables sheet."""
-        sheet = workbook.create_sheet("Status Summary")
-        wrap = openpyxl.styles.Alignment(wrap_text=True, vertical="top")
-        column_width = 110
-
-        def _write(row, text, font=None):
-            cell = sheet.cell(row=row, column=1, value=text)
-            cell.alignment = wrap
-            if font is not None:
-                cell.font = font
-            # Excel does not auto-fit heights for programmatically wrapped cells.
-            lines = max(1, math.ceil(len(str(text or '')) / column_width))
-            sheet.row_dimensions[row].height = max(15, lines * 15)
-            return cell
-
-        _write(1, "AI Status Briefing", openpyxl.styles.Font(bold=True, size=14))
-
-        meta_bits = []
-        if summary.get('generatedAt'):
-            meta_bits.append(f"Generated {summary['generatedAt']}")
-        scope = summary.get('scope')
-        if scope:
-            meta_bits.append(
-                "scope: incomplete deliverables" if scope == 'incomplete' else f"scope: {scope}"
-            )
-        count = summary.get('deliverableCount')
-        if not isinstance(count, int):
-            count = deliverable_count
-        meta_bits.append(f"{count} deliverable{'' if count == 1 else 's'}")
-        _write(
-            2,
-            " · ".join(meta_bits),
-            openpyxl.styles.Font(italic=True, color="808080"),
-        )
-
-        if summary.get('headline'):
-            _write(4, summary['headline'], openpyxl.styles.Font(bold=True))
-
-        for offset, paragraph in enumerate(summary.get('paragraphs') or []):
-            _write(6 + offset, paragraph)
-
-        sheet.column_dimensions['A'].width = column_width
-        return sheet
-
-    def export_deliverables_excel(self, data):
-        """Exports selected deliverables to a basic Excel workbook."""
-        try:
-            payload = data or {}
-            if isinstance(payload, str):
-                payload = json.loads(payload)
-            if not isinstance(payload, dict):
-                return {'status': 'error', 'message': 'Invalid export payload.'}
-
-            raw_entries = payload.get('entries', [])
-            if not isinstance(raw_entries, list):
-                return {'status': 'error', 'message': 'Deliverable entries are required.'}
-
-            summary = self._normalize_deliverable_summary_payload(payload.get('summary'))
-
-            cleaned_entries = []
-            for raw_entry in raw_entries:
-                if not isinstance(raw_entry, dict):
-                    continue
-
-                due_raw = str(raw_entry.get('due') or '').strip()
-                due_value = parse_due_str(due_raw)
-                hard_due_raw = get_hard_due_str(raw_entry)
-                hard_due_value = parse_due_str(hard_due_raw)
-                # Sort on the effective date so hard-only deliverables are not
-                # bunched with the undated ones.
-                sort_value = due_value or hard_due_value
-                deliverable_name = str(raw_entry.get('deliverableName') or '').strip()
-                cleaned_entries.append({
-                    'projectId': str(raw_entry.get('projectId') or '').strip(),
-                    'projectName': str(raw_entry.get('projectName') or '').strip(),
-                    'deliverableName': deliverable_name or 'Untitled Deliverable',
-                    'due': due_raw,
-                    'dueValue': due_value.date() if due_value else None,
-                    'hardDue': hard_due_raw,
-                    'hardDueValue': hard_due_value.date() if hard_due_value else None,
-                    'sortValue': sort_value.date() if sort_value else None,
-                    'statusText': str(raw_entry.get('statusText') or '').strip() or 'None',
-                    'projectPath': str(raw_entry.get('projectPath') or '').strip(),
-                })
-
-            if not cleaned_entries:
-                return {'status': 'error', 'message': 'Select at least one deliverable to export.'}
-
-            cleaned_entries.sort(key=lambda entry: (
-                0 if entry['sortValue'] else 1,
-                -(entry['sortValue'].toordinal()) if entry['sortValue'] else 0,
-                entry['projectId'].lower(),
-                entry['projectName'].lower(),
-                entry['deliverableName'].lower(),
-            ))
-
-            file_path = payload.get('filePath')
-            if isinstance(file_path, (list, tuple)):
-                file_path = file_path[0] if file_path else ''
-            file_path = str(file_path or '').strip()
-
-            if not file_path:
-                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                selection = self.select_template_save_location(
-                    default_dir=get_default_documents_dir(),
-                    default_name=f"Deliverables_{timestamp}",
-                    file_type='xlsx',
-                )
-                if selection.get('status') != 'success':
-                    return selection
-                file_path = str(selection.get('path') or '').strip()
-
-            if not file_path:
-                return {'status': 'cancelled'}
-            if not file_path.lower().endswith('.xlsx'):
-                file_path = f"{file_path}.xlsx"
-
-            workbook = openpyxl.Workbook()
-            worksheet = workbook.active
-            worksheet.title = "Deliverables"
-
-            headers = (
-                "Project ID",
-                "Project Name",
-                "Deliverable",
-                "Internal Due",
-                "Hard Deadline",
-                "Status",
-                "Project Path",
-            )
-            worksheet.append(headers)
-            for header_cell in worksheet[1]:
-                header_cell.font = openpyxl.styles.Font(bold=True)
-
-            for row_index, entry in enumerate(cleaned_entries, start=2):
-                worksheet.cell(row=row_index, column=1, value=entry['projectId'])
-                worksheet.cell(row=row_index, column=2, value=entry['projectName'])
-                worksheet.cell(row=row_index, column=3, value=entry['deliverableName'])
-                due_cell = worksheet.cell(
-                    row=row_index,
-                    column=4,
-                    value=entry['dueValue'] or entry['due'],
-                )
-                if entry['dueValue']:
-                    due_cell.number_format = "mm/dd/yyyy"
-                hard_due_cell = worksheet.cell(
-                    row=row_index,
-                    column=5,
-                    value=entry['hardDueValue'] or entry['hardDue'],
-                )
-                if entry['hardDueValue']:
-                    hard_due_cell.number_format = "mm/dd/yyyy"
-                worksheet.cell(row=row_index, column=6, value=entry['statusText'])
-                worksheet.cell(row=row_index, column=7, value=entry['projectPath'])
-
-            worksheet.freeze_panes = "A2"
-            worksheet.auto_filter.ref = worksheet.dimensions
-
-            for column_index, width in {
-                1: 14,
-                2: 28,
-                3: 32,
-                4: 14,
-                5: 16,
-                6: 18,
-                7: 62,
-            }.items():
-                column_letter = openpyxl.utils.get_column_letter(column_index)
-                worksheet.column_dimensions[column_letter].width = width
-
-            if summary:
-                # create_sheet appends, so "Deliverables" stays index 0 and active.
-                self._write_deliverable_summary_sheet(workbook, summary, len(cleaned_entries))
-
-            workbook.save(file_path)
-            workbook.close()
-
-            if sys.platform == "win32":
-                os.startfile(file_path)
-            else:
-                self.open_path(file_path)
-
-            return {'status': 'success', 'path': file_path, 'count': len(cleaned_entries)}
-        except ImportError:
-            return {'status': 'error', 'message': 'openpyxl not installed. Run: pip install openpyxl'}
-        except Exception as e:
-            logging.error(f"Error exporting deliverables to Excel: {e}")
-            return {'status': 'error', 'message': str(e)}
-
-    DELIVERABLE_SUMMARY_BUCKET_LABELS = {
-        'missedHardDeadline': 'MISSED HARD DEADLINE',
-        'overdue': 'PAST INTERNAL DUE DATE',
-        'dueThisWeek': 'DUE THIS WEEK',
-        'upcoming': 'UPCOMING',
-        'undated': 'NO DUE DATE SET',
-    }
-
-    def _build_deliverable_status_summary_prompt(self, payload):
-        """Builds the Gemini prompt for a deliverable status briefing.
-
-        Pure function of the payload - no I/O - so it can be unit tested directly.
-        """
-        data = payload if isinstance(payload, dict) else {}
-        today = str(data.get('today') or '').strip() or 'today'
-        scope = str(data.get('scope') or '').strip()
-        scope_text = (
-            'all incomplete deliverables'
-            if scope == 'incomplete'
-            else 'all deliverables'
-        )
-        raw_buckets = data.get('buckets')
-        if not isinstance(raw_buckets, list):
-            raw_buckets = []
-
-        listed = 0
-        sections = []
-        for raw_bucket in raw_buckets:
-            if not isinstance(raw_bucket, dict):
-                continue
-            deliverables = raw_bucket.get('deliverables')
-            if not isinstance(deliverables, list) or not deliverables:
-                continue
-            key = str(raw_bucket.get('bucket') or '').strip()
-            label = self.DELIVERABLE_SUMMARY_BUCKET_LABELS.get(key, key.upper() or 'OTHER')
-            total = raw_bucket.get('totalCount')
-            if not isinstance(total, int):
-                total = len(deliverables)
-            lines = [f"=== {label} ({len(deliverables)} of {total} listed) ==="]
-            for item in deliverables:
-                if not isinstance(item, dict):
-                    continue
-                listed += 1
-                project_id = str(item.get('projectId') or '').strip() or 'no id'
-                project_name = str(item.get('projectName') or '').strip() or 'Untitled Project'
-                name = str(item.get('deliverableName') or '').strip() or 'Untitled Deliverable'
-                due = str(item.get('due') or '').strip() or 'none'
-                hard_due = str(item.get('hardDue') or '').strip() or 'none'
-                status_text = str(item.get('statusText') or '').strip() or 'None'
-                lines.append(
-                    f"- [{project_id}] {project_name} | {name} | "
-                    f"internal due {due} | hard due {hard_due} | status {status_text}"
-                )
-            sections.append("\n".join(lines))
-
-        deliverable_count = data.get('deliverableCount')
-        if not isinstance(deliverable_count, int):
-            deliverable_count = listed
-        omitted_count = data.get('omittedCount')
-        if not isinstance(omitted_count, int):
-            omitted_count = max(0, deliverable_count - listed)
-
-        body = "\n\n".join(sections) if sections else "(no deliverables listed)"
-
-        return f"""Today is {today}.
-
-You are writing a short status briefing for the engineer who owns the deliverables listed below.
-Scope: {scope_text}.
-Total in scope: {deliverable_count}. Listed below: {listed}. Not listed: {omitted_count}.
-
-{body}
-
-IMPORTANT CONTEXT
-- "status None" means no status label was ever set on that deliverable. It does NOT mean the
-  work is stalled or abandoned. Judge urgency from the dates, not the status.
-- "hard due" is a deadline that cannot move. "internal due" is a target that can slip.
-  A missed hard deadline is always more serious than a missed internal due date.
-- Never invent deliverables, dates, people, or reasons that are not in the list above.
-
-Return JSON with exactly this shape:
-{{"headline": "one sentence, max 20 words", "paragraphs": ["...", "..."]}}
-
-RULES
-- 2 to 4 paragraphs, each 35-70 words, plain prose sentences.
-- No markdown, no bullet points, no headings, no bold.
-- Paragraph 1: what is overdue or has blown a hard deadline, named specifically
-  (project id + deliverable name).
-- Paragraph 2: what is due this week or slipping toward trouble.
-- Final paragraph: what to prioritize first, in order, and why.
-- Reference deliverables as "<deliverable name> on <project id>".
-- If a bucket is empty, say so in one clause rather than inventing filler."""
-
-    def _normalize_deliverable_status_summary(self, parsed):
-        """Coerces the model's JSON into (headline, paragraphs)."""
-        data = parsed if isinstance(parsed, dict) else {}
-
-        def _clean(value):
-            text = str(value or '').strip()
-            # The model occasionally emits markdown despite being told not to.
-            text = re.sub(r'^\s*(?:[-*+]\s+|#{1,6}\s+)', '', text)
-            text = text.replace('**', '').strip()
-            return text[:1200]
-
-        headline = _clean(data.get('headline'))
-
-        raw_paragraphs = data.get('paragraphs')
-        if isinstance(raw_paragraphs, str):
-            raw_paragraphs = [
-                chunk for chunk in re.split(r'\n\s*\n', raw_paragraphs) if chunk.strip()
-            ]
-        if not isinstance(raw_paragraphs, list):
-            raw_paragraphs = []
-
-        paragraphs = []
-        for raw in raw_paragraphs:
-            text = _clean(raw)
-            if text:
-                paragraphs.append(text)
-            if len(paragraphs) >= 6:
-                break
-
-        return headline, paragraphs
-
-    def _format_deliverable_summary_ai_error(self, exc):
-        """Maps a Gemini exception onto actionable copy for the status briefing."""
-        message = str(exc)
-        lower = message.lower()
-        if ("api key expired" in lower or "api_key_invalid" in lower
-                or "invalid api key" in lower):
-            return ('Your Google API key is expired/invalid. Create a new key in '
-                    'Google AI Studio, update your settings, then try again.')
-        if "api key" in lower and "not configured" in lower:
-            return message
-        if "model" in lower and ("not found" in lower or "does not exist" in lower):
-            return ('AI model not available. The Gemini 3 Flash model may not be '
-                    'accessible with your API key.')
-        if "quota" in lower or "rate limit" in lower:
-            return 'API rate limit exceeded. Please wait a moment and try again.'
-        if "deadline" in lower or "unavailable" in lower or "503" in lower or "504" in lower:
-            return ('The AI request timed out. Please try again, or export without '
-                    'the status briefing.')
-        return f"AI error: {message}"
-
-    def generate_deliverable_status_summary(self, data):
-        """Writes a short prose status briefing over the selected deliverables."""
-        try:
-            payload = data or {}
-            if isinstance(payload, str):
-                payload = json.loads(payload)
-            if not isinstance(payload, dict):
-                return {'status': 'error', 'message': 'Invalid summary payload.'}
-
-            buckets = payload.get('buckets')
-            if not isinstance(buckets, list) or not any(
-                isinstance(bucket, dict) and bucket.get('deliverables')
-                for bucket in buckets
-            ):
-                return {
-                    'status': 'error',
-                    'message': 'Select at least one deliverable to summarize.',
-                }
-
-            api_key = str(payload.get('apiKey') or '').strip()
-            if not api_key:
-                api_key = str(os.environ.get('GEMINI_API_KEY') or '').strip()
-            final_api_key = self._resolve_google_ai_api_key(api_key)
-
-            prompt = self._build_deliverable_status_summary_prompt(payload)
-
-            self._ensure_aiohttp()
-            client = genai.Client(
-                api_key=final_api_key,
-                http_options=types.HttpOptions(timeout=120000),
-            )
-            response = client.models.generate_content(
-                model="gemini-3-flash-preview",
-                contents=[
-                    types.Content(
-                        role="user",
-                        parts=[types.Part.from_text(text=prompt)],
-                    ),
-                ],
-                config=types.GenerateContentConfig(
-                    # Prose, not structured extraction - a little latitude reads better,
-                    # while staying near-deterministic. Deliberately not 0.
-                    temperature=0.2,
-                    response_mime_type="application/json",
-                ),
-            )
-
-            raw_text = response.text
-            if raw_text is None:
-                if hasattr(response, 'parts') and response.parts:
-                    raw_text = ''.join(
-                        part.text for part in response.parts
-                        if hasattr(part, 'text') and part.text
-                    )
-            cleaned = (raw_text or '').strip()
-            if not cleaned:
-                return {
-                    'status': 'error',
-                    'message': 'AI returned an empty briefing. Please try again.',
-                }
-
-            headline, paragraphs = self._normalize_deliverable_status_summary(
-                json.loads(cleaned)
-            )
-            if not headline and not paragraphs:
-                return {
-                    'status': 'error',
-                    'message': 'AI returned an empty briefing. Please try again.',
-                }
-
-            return {
-                'status': 'success',
-                'headline': headline,
-                'paragraphs': paragraphs,
-                'generatedAt': datetime.datetime.now().strftime("%m/%d/%Y %I:%M %p"),
-            }
-        except json.JSONDecodeError:
-            return {
-                'status': 'error',
-                'message': 'AI returned invalid JSON. Please try again.',
-            }
-        except Exception as e:
-            logging.error(f"Error generating deliverable status summary: {e}")
-            return {
-                'status': 'error',
-                'message': self._format_deliverable_summary_ai_error(e),
-            }
-
     def save_dropped_email(self, upload, context=None):
         """Persists a dropped .msg/.eml payload and returns a normalized email reference."""
         try:
@@ -10710,6 +10416,40 @@ RULES
             logging.error(f"Error deleting saved email: {e}")
             return {'status': 'error', 'message': str(e)}
 
+    def open_project_cad_files(self, launch_context=None):
+        """Open the active project's working DWGs without browsing to its folder."""
+        context = self._normalize_launch_context(launch_context)
+        project_path = str(context.get('rootProjectPath') or
+                           context.get('projectPath') or
+                           context.get('project_path') or '').strip()
+        if not project_path:
+            return {'status': 'error', 'message': 'Select a project with a saved folder path first.'}
+        discipline = str(context.get('discipline') or 'Electrical').strip()
+        folder = self._resolve_workroom_discipline_folder(
+            project_path, discipline).get('resolved_folder')
+        if not folder:
+            return {'status': 'error', 'message': f'Could not find the project {discipline} folder.'}
+        files = self._list_base_level_dwgs(folder)
+        if not files:
+            return {'status': 'error', 'message': f'No DWG files found in {folder}.'}
+        opened, failed = [], []
+        for path in files:
+            try:
+                if sys.platform == 'win32':
+                    os.startfile(path)
+                else:
+                    subprocess.run(['open' if sys.platform == 'darwin' else 'xdg-open', path],
+                                   check=True)
+                opened.append(path)
+            except Exception as exc:
+                logging.warning('Could not open CAD file %s: %s', path, exc)
+                failed.append({'path': path, 'message': str(exc)})
+        message = f'Opened {len(opened)} CAD file(s).'
+        if failed:
+            message += ' Could not open: ' + ', '.join(os.path.basename(item['path']) for item in failed)
+        return {'status': 'error' if failed else 'success', 'message': message,
+                'opened': opened, 'failed': failed}
+
     def open_path(self, path):
         """Opens a path in the file explorer."""
         try:
@@ -10729,6 +10469,118 @@ RULES
             return {'status': 'success'}
         except Exception as e:
             logging.error(f"Error opening path: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    @staticmethod
+    def _schedule_temp_file_cleanup(path, delay_seconds=120):
+        """Removes a startup script after AutoCAD has had time to consume it."""
+        def cleanup():
+            try:
+                if os.path.isfile(path):
+                    os.remove(path)
+            except OSError as exc:
+                logging.debug("Could not remove temporary AutoCAD script %s: %s", path, exc)
+
+        timer = threading.Timer(max(float(delay_seconds or 0), 1), cleanup)
+        timer.daemon = True
+        timer.start()
+
+    @staticmethod
+    def _resolve_autocad_desktop_executable(configured_path):
+        """Finds acad.exe beside the configured Core Console executable."""
+        raw_path = str(configured_path or '').strip()
+        if not raw_path:
+            return ''
+        normalized = os.path.abspath(os.path.normpath(raw_path))
+        if os.path.basename(normalized).lower() == 'acad.exe' and os.path.isfile(normalized):
+            return normalized
+        candidate = os.path.join(os.path.dirname(normalized), 'acad.exe')
+        return candidate if os.path.isfile(candidate) else ''
+
+    def launch_dwg_compare(self, new_path, old_path):
+        """Opens a native AutoCAD modelspace comparison for an XREF replacement pair."""
+        script_path = ''
+        try:
+            raw_current_dwg = str(new_path or '').strip()
+            raw_archived_dwg = str(old_path or '').strip()
+            if not raw_current_dwg or not raw_archived_dwg:
+                return {
+                    'status': 'error',
+                    'message': 'Both the new and archived DWG paths are required.',
+                }
+            current_dwg = os.path.abspath(os.path.normpath(raw_current_dwg))
+            archived_dwg = os.path.abspath(os.path.normpath(raw_archived_dwg))
+            if os.path.normcase(current_dwg) == os.path.normcase(archived_dwg):
+                return {
+                    'status': 'error',
+                    'message': 'The new and archived drawings must be different files.',
+                }
+            for label, path in (('New', current_dwg), ('Archived', archived_dwg)):
+                if os.path.splitext(path)[1].lower() != '.dwg':
+                    return {
+                        'status': 'error',
+                        'message': f'{label} comparison file must be a DWG.',
+                    }
+                if not os.path.isfile(path):
+                    return {
+                        'status': 'error',
+                        'message': f'{label} comparison drawing was not found: {path}',
+                    }
+
+            settings = self.get_user_settings()
+            configured_path = str((settings or {}).get('autocadPath') or '').strip()
+            acad_executable = self._resolve_autocad_desktop_executable(configured_path)
+            if not acad_executable:
+                return {
+                    'status': 'error',
+                    'message': (
+                        'Full AutoCAD (acad.exe) was not found beside the selected '
+                        'AutoCAD Core Console. Select an installed AutoCAD version in Settings.'
+                    ),
+                }
+
+            # -COMPARE accepts a path at the command prompt. Opening the new DWG
+            # as the current drawing makes green objects "new/current" and red
+            # objects "old/archived" in AutoCAD's native comparison view.
+            archived_script_path = archived_dwg.replace('\\', '/')
+            script_contents = f'_.-COMPARE\n"{archived_script_path}"\n'
+            with tempfile.NamedTemporaryFile(
+                mode='w',
+                prefix='acies_dwg_compare_',
+                suffix='.scr',
+                delete=False,
+                encoding='utf-8',
+                newline='\r\n',
+            ) as script_file:
+                script_file.write(script_contents)
+                script_path = script_file.name
+
+            command = [
+                acad_executable,
+                current_dwg,
+                '/nologo',
+                '/b',
+                script_path,
+            ]
+            process = subprocess.Popen(
+                command,
+                cwd=os.path.dirname(acad_executable),
+            )
+            self._schedule_temp_file_cleanup(script_path)
+            return {
+                'status': 'success',
+                'message': 'Opening the modelspace comparison in AutoCAD.',
+                'newPath': current_dwg,
+                'oldPath': archived_dwg,
+                'processId': process.pid,
+            }
+        except Exception as e:
+            if script_path:
+                try:
+                    os.remove(script_path)
+                except OSError:
+                    pass
+            logging.error(f"Error launching AutoCAD DWG comparison: {e}")
             return {'status': 'error', 'message': str(e)}
 
     def copy_file_to_clipboard(self, path):
@@ -10929,6 +10781,373 @@ RULES
         except Exception as e:
             logging.error(f"Error opening {mode} project directory: {e}")
             return {'status': 'error', 'mode': mode, 'message': str(e)}
+
+    def _normalize_deliverable_pdf_discipline(self, discipline):
+        """Maps a user's discipline/role onto the published PDF naming."""
+        requested = str(discipline or '').strip()
+        for known in DELIVERABLE_PDF_DISCIPLINES:
+            if known.lower() == requested.lower():
+                return known
+        return ''
+
+    def _get_deliverable_pdf_root_candidates(self, project_info):
+        """Project folders that may hold the published PDF tree, best first."""
+        info = project_info if isinstance(project_info, dict) else {}
+        candidates = []
+        seen = set()
+
+        def _add(path_value):
+            raw = str(path_value or '').strip()
+            if not raw:
+                return
+            normalized = os.path.normpath(raw)
+            if normalized in ('', '.'):
+                return
+            key = os.path.normcase(normalized)
+            if key in seen:
+                return
+            seen.add(key)
+            candidates.append(normalized)
+
+        for raw_path in (info.get('path'), info.get('localProjectPath')):
+            _add(raw_path)
+            _add(self._find_project_root_by_id(raw_path))
+
+        return candidates
+
+    def _resolve_deliverable_pdf_folder(self, project_info):
+        """Finds the project's PDF folder, matching the name case-insensitively."""
+        target_name = DELIVERABLE_PDF_FOLDER_NAME.lower()
+        for root in self._get_deliverable_pdf_root_candidates(project_info):
+            extended_root = self._to_windows_extended_path(root)
+            if not os.path.isdir(extended_root):
+                continue
+            if os.path.basename(root.rstrip('\\/')).strip().lower() == target_name:
+                return root
+            try:
+                entries = os.listdir(extended_root)
+            except OSError as exc:
+                logging.warning("Could not list %s: %s", root, exc)
+                continue
+            for entry_name in entries:
+                if entry_name.strip().lower() != target_name:
+                    continue
+                candidate = os.path.join(root, entry_name)
+                if os.path.isdir(self._to_windows_extended_path(candidate)):
+                    return candidate
+        return ''
+
+    def _coerce_issue_date(self, match):
+        """Builds a date from a YYYY/MM/DD regex match, rejecting nonsense years."""
+        if not match:
+            return None
+        year, month, day = (int(part) for part in match.groups())
+        if not ISSUE_DATE_MIN_YEAR <= year <= ISSUE_DATE_MAX_YEAR:
+            return None
+        try:
+            return datetime.date(year, month, day)
+        except ValueError:
+            return None
+
+    def _parse_deliverable_pdf_issue_date(self, folder_name):
+        """Reads the leading YYYY.MM.DD stamp off an issue folder name."""
+        return self._coerce_issue_date(
+            DELIVERABLE_PDF_ISSUE_DATE_RE.match(str(folder_name or '').strip())
+        )
+
+    def _search_issue_date(self, value):
+        """Reads a YYYY.MM.DD stamp from anywhere inside a name."""
+        return self._coerce_issue_date(
+            DELIVERABLE_PDF_ISSUE_DATE_SEARCH_RE.search(str(value or '').strip())
+        )
+
+    def _deliverable_pdf_match_tokens(self, value):
+        """Comparable tokens for a deliverable name or issue folder name.
+
+        Drops the leading date stamp and normalizes numbers so "RFI #3" lines up
+        with an "RFI 03" folder.
+        """
+        text = str(value or '').strip()
+        text = DELIVERABLE_PDF_ISSUE_DATE_RE.sub('', text)
+        tokens = set()
+        for raw_token in re.findall(r'[A-Za-z0-9]+', text):
+            token = raw_token.upper()
+            if token.isdigit():
+                token = str(int(token))
+            tokens.add(token)
+        return tokens
+
+    def _list_deliverable_pdf_issue_folders(self, pdf_folder, deliverable_name=''):
+        """Issue folders under the PDF folder, newest first.
+
+        Folders whose name carries the deliverable's tokens sort ahead of the
+        rest so a deliverable-specific set wins over a newer unrelated one.
+        """
+        try:
+            entry_names = os.listdir(self._to_windows_extended_path(pdf_folder))
+        except OSError as exc:
+            logging.warning("Could not list %s: %s", pdf_folder, exc)
+            return []
+
+        wanted_tokens = self._deliverable_pdf_match_tokens(deliverable_name)
+        folders = []
+        for entry_name in entry_names:
+            folder_path = os.path.join(pdf_folder, entry_name)
+            if not os.path.isdir(self._to_windows_extended_path(folder_path)):
+                continue
+            issued_on = self._parse_deliverable_pdf_issue_date(entry_name)
+            try:
+                modified = os.path.getmtime(self._to_windows_extended_path(folder_path))
+            except OSError:
+                modified = 0.0
+            matches_deliverable = bool(wanted_tokens) and wanted_tokens.issubset(
+                self._deliverable_pdf_match_tokens(entry_name)
+            )
+            folders.append({
+                'name': entry_name,
+                'path': folder_path,
+                'issuedOn': issued_on.isoformat() if issued_on else '',
+                'matchesDeliverable': matches_deliverable,
+                '_sortKey': (
+                    1 if matches_deliverable else 0,
+                    1 if issued_on else 0,
+                    issued_on.toordinal() if issued_on else 0,
+                    modified,
+                ),
+            })
+
+        folders.sort(key=lambda folder: folder['_sortKey'], reverse=True)
+        for folder in folders:
+            folder.pop('_sortKey', None)
+        return folders
+
+    def _find_deliverable_pdf_in_folder(self, folder_path, discipline):
+        """Newest PDF in the folder whose file name carries the discipline."""
+        try:
+            entry_names = os.listdir(self._to_windows_extended_path(folder_path))
+        except OSError as exc:
+            logging.warning("Could not list %s: %s", folder_path, exc)
+            return ''
+
+        discipline_token = discipline.upper()
+        matches = []
+        for entry_name in entry_names:
+            stem, extension = os.path.splitext(entry_name)
+            if extension.lower() != '.pdf':
+                continue
+            if discipline_token not in self._deliverable_pdf_match_tokens(stem):
+                continue
+            file_path = os.path.join(folder_path, entry_name)
+            if not os.path.isfile(self._to_windows_extended_path(file_path)):
+                continue
+            try:
+                modified = os.path.getmtime(self._to_windows_extended_path(file_path))
+            except OSError:
+                modified = 0.0
+            matches.append((modified, entry_name, file_path))
+
+        if not matches:
+            return ''
+        matches.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        return matches[0][2]
+
+    def find_latest_deliverable_pdf(self, project=None, discipline='', deliverable_name=''):
+        """Locates the newest published PDF for the caller's discipline.
+
+        Walks <project>\\PDF\\<date + deliverable>\\ newest first and returns the
+        first issue folder that actually holds a PDF for the discipline, so an
+        issue that skipped the discipline falls through to the previous one.
+        """
+        try:
+            resolved_discipline = self._normalize_deliverable_pdf_discipline(discipline)
+            if not resolved_discipline:
+                return {
+                    'status': 'error',
+                    'message': 'Set your discipline to Electrical, Mechanical, or Plumbing to open PDFs.',
+                }
+
+            pdf_folder = self._resolve_deliverable_pdf_folder(project)
+            if not pdf_folder:
+                return {
+                    'status': 'error',
+                    'discipline': resolved_discipline,
+                    'message': f'No {DELIVERABLE_PDF_FOLDER_NAME} folder was found for this project.',
+                }
+
+            issue_folders = self._list_deliverable_pdf_issue_folders(
+                pdf_folder, deliverable_name)
+            if not issue_folders:
+                return {
+                    'status': 'error',
+                    'discipline': resolved_discipline,
+                    'pdfFolder': pdf_folder,
+                    'message': f'The {DELIVERABLE_PDF_FOLDER_NAME} folder has no issue folders yet.',
+                }
+
+            for folder in issue_folders:
+                file_path = self._find_deliverable_pdf_in_folder(
+                    folder['path'], resolved_discipline)
+                if not file_path:
+                    continue
+                return {
+                    'status': 'success',
+                    'discipline': resolved_discipline,
+                    'path': file_path,
+                    'fileName': os.path.basename(file_path),
+                    'folderName': folder['name'],
+                    'folderPath': folder['path'],
+                    'issuedOn': folder['issuedOn'],
+                    'matchedDeliverable': folder['matchesDeliverable'],
+                    'pdfFolder': pdf_folder,
+                }
+
+            return {
+                'status': 'error',
+                'discipline': resolved_discipline,
+                'pdfFolder': pdf_folder,
+                'message': f'No {resolved_discipline} PDF was found under {os.path.basename(pdf_folder)}.',
+            }
+        except Exception as e:
+            logging.error(f"Error finding latest deliverable PDF: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def open_latest_deliverable_pdf(self, project=None, discipline='', deliverable_name=''):
+        """Opens the newest published PDF for the caller's discipline."""
+        result = self.find_latest_deliverable_pdf(
+            project=project, discipline=discipline, deliverable_name=deliverable_name)
+        if result.get('status') != 'success':
+            return result
+
+        opened = self.open_path(result['path'])
+        if str(opened.get('status') or '').strip().lower() != 'success':
+            return {
+                'status': 'error',
+                'discipline': result.get('discipline', ''),
+                'path': result['path'],
+                'message': opened.get('message') or 'Unable to open the PDF.',
+            }
+        return result
+
+    def _resolve_project_arch_folder(self, project_info):
+        """Finds the project's Arch folder, reusing the CAD tools' resolution."""
+        for root in self._get_deliverable_pdf_root_candidates(project_info):
+            resolution = self._resolve_workroom_discipline_folder(
+                root, ARCH_SET_FOLDER_NAME)
+            arch_folder = resolution.get('resolved_folder') or ''
+            if arch_folder and os.path.isdir(self._to_windows_extended_path(arch_folder)):
+                return arch_folder
+        return ''
+
+    def _extract_arch_set_issue_date(self, file_path, arch_folder):
+        """Issue date for an Arch PDF, from its own name or its nearest folder.
+
+        Arch drops carry no fixed naming, so the file name is checked first and
+        then each folder between the file and Arch, innermost first.
+        """
+        names = [os.path.splitext(os.path.basename(file_path))[0]]
+        try:
+            relative = os.path.relpath(os.path.dirname(file_path), arch_folder)
+        except ValueError:
+            relative = ''
+        if relative and relative not in ('.', os.pardir):
+            names.extend(reversed(relative.split(os.sep)))
+        for name in names:
+            issued = self._search_issue_date(name)
+            if issued:
+                return issued
+        return None
+
+    def _list_arch_set_pdfs(self, arch_folder):
+        """Every PDF under Arch, newest first, skipping archived subtrees.
+
+        A dated name wins over an undated one because folder copies reset mtimes
+        while the architect's date stamp survives them.
+        """
+        entries = []
+        for root, dirs, files in os.walk(arch_folder):
+            dirs[:] = [
+                name for name in dirs
+                if not self._path_has_archive_part(os.path.join(root, name))
+            ]
+            if self._path_has_archive_part(root):
+                continue
+            for filename in files:
+                if not filename.lower().endswith('.pdf'):
+                    continue
+                file_path = os.path.join(root, filename)
+                try:
+                    modified = os.path.getmtime(file_path)
+                except OSError:
+                    modified = 0.0
+                issued_on = self._extract_arch_set_issue_date(file_path, arch_folder)
+                entries.append({
+                    'path': os.path.normpath(file_path),
+                    'fileName': filename,
+                    'issuedOn': issued_on.isoformat() if issued_on else '',
+                    '_sortKey': (
+                        1 if issued_on else 0,
+                        issued_on.toordinal() if issued_on else 0,
+                        modified,
+                        filename.lower(),
+                    ),
+                })
+
+        entries.sort(key=lambda entry: entry['_sortKey'], reverse=True)
+        for entry in entries:
+            entry.pop('_sortKey', None)
+        return entries
+
+    def find_latest_arch_set(self, project=None):
+        """Locates the newest architectural PDF set under <project>\\Arch."""
+        try:
+            arch_folder = self._resolve_project_arch_folder(project)
+            if not arch_folder:
+                return {
+                    'status': 'error',
+                    'message': f'No {ARCH_SET_FOLDER_NAME} folder was found for this project.',
+                }
+
+            entries = self._list_arch_set_pdfs(arch_folder)
+            if not entries:
+                return {
+                    'status': 'error',
+                    'archFolder': arch_folder,
+                    'message': f'No PDF was found in the {ARCH_SET_FOLDER_NAME} folder.',
+                }
+
+            latest = entries[0]
+            folder_path = os.path.dirname(latest['path'])
+            try:
+                relative_folder = os.path.relpath(folder_path, arch_folder)
+            except ValueError:
+                relative_folder = ''
+            return {
+                'status': 'success',
+                'path': latest['path'],
+                'fileName': latest['fileName'],
+                'folderPath': folder_path,
+                'folderName': '' if relative_folder in ('.', '') else relative_folder,
+                'issuedOn': latest['issuedOn'],
+                'archFolder': arch_folder,
+            }
+        except Exception as e:
+            logging.error(f"Error finding latest Arch set: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def open_latest_arch_set(self, project=None):
+        """Opens the newest architectural PDF set for a project."""
+        result = self.find_latest_arch_set(project=project)
+        if result.get('status') != 'success':
+            return result
+
+        opened = self.open_path(result['path'])
+        if str(opened.get('status') or '').strip().lower() != 'success':
+            return {
+                'status': 'error',
+                'path': result['path'],
+                'message': opened.get('message') or 'Unable to open the Arch set.',
+            }
+        return result
 
     def get_local_project_copy_info(self, server_project_path):
         """Returns the expected local copy path for a server project and whether it exists."""
@@ -12662,7 +12881,7 @@ RULES
             logging.error(f"Error applying Local Project Manager sync: {e}")
             return {'status': 'error', 'message': str(e)}
 
-    def _copy_folder_contents(self, source_folder, destination_folder):
+    def _copy_folder_contents(self, source_folder, destination_folder, cancel_check=None):
         """Recursively copy a folder with per-file failure tracking."""
         source_display_root = os.path.normpath(source_folder)
         destination_display_root = os.path.normpath(destination_folder)
@@ -12675,6 +12894,12 @@ RULES
         os.makedirs(destination_copy_root, exist_ok=True)
 
         for current_root, child_dirs, child_files in os.walk(source_copy_root):
+            if callable(cancel_check) and cancel_check():
+                return {
+                    'copiedFileCount': copied_file_count,
+                    'failedFiles': failed_files,
+                    'cancelled': True,
+                }
             relative_root = os.path.relpath(current_root, source_copy_root)
             if relative_root in ('.', os.curdir):
                 relative_root = ''
@@ -12700,6 +12925,12 @@ RULES
                 continue
 
             for child_dir in child_dirs:
+                if callable(cancel_check) and cancel_check():
+                    return {
+                        'copiedFileCount': copied_file_count,
+                        'failedFiles': failed_files,
+                        'cancelled': True,
+                    }
                 source_dir = os.path.join(source_display, child_dir)
                 destination_dir = os.path.join(destination_display, child_dir)
                 try:
@@ -12712,6 +12943,12 @@ RULES
                     })
 
             for child_file in child_files:
+                if callable(cancel_check) and cancel_check():
+                    return {
+                        'copiedFileCount': copied_file_count,
+                        'failedFiles': failed_files,
+                        'cancelled': True,
+                    }
                 source_path = os.path.join(current_root, child_file)
                 destination_path = os.path.join(destination_root, child_file)
                 source_display_path = os.path.join(source_display, child_file)
@@ -12919,7 +13156,12 @@ RULES
             except FileExistsError:
                 candidate_index += 1
 
-    def backup_project_drawings(self, project_root_path=None, launch_context=None):
+    def backup_project_drawings(
+        self,
+        project_root_path=None,
+        launch_context=None,
+        activity_id=None,
+    ):
         """Copy configured discipline folders and Xrefs into Archive\\<timestamp>."""
         try:
             settings = self.get_user_settings()
@@ -12955,12 +13197,43 @@ RULES
             missing_source_folders = []
             copied_file_count = 0
             failed_files = []
+            normalized_activity_id = str(activity_id or '').strip()
+
+            def _cancel_requested():
+                return bool(
+                    normalized_activity_id
+                    and self._is_activity_cancel_requested(normalized_activity_id)
+                )
 
             for folder_name in required_folders:
+                if _cancel_requested():
+                    shutil.rmtree(
+                        self._to_windows_extended_path(archive_path),
+                        ignore_errors=True,
+                    )
+                    return {
+                        'status': 'cancelled',
+                        'message': 'Drawing backup cancelled by user.',
+                        'activityId': normalized_activity_id,
+                    }
                 source_folder = os.path.join(normalized_project_root, folder_name)
                 destination_folder = os.path.join(archive_path, folder_name)
                 if os.path.isdir(self._to_windows_extended_path(source_folder)):
-                    copy_result = self._copy_folder_contents(source_folder, destination_folder)
+                    copy_result = self._copy_folder_contents(
+                        source_folder,
+                        destination_folder,
+                        cancel_check=_cancel_requested,
+                    )
+                    if copy_result.get('cancelled'):
+                        shutil.rmtree(
+                            self._to_windows_extended_path(archive_path),
+                            ignore_errors=True,
+                        )
+                        return {
+                            'status': 'cancelled',
+                            'message': 'Drawing backup cancelled by user.',
+                            'activityId': normalized_activity_id,
+                        }
                     copied_folders.append(folder_name)
                     copied_file_count += int(copy_result.get('copiedFileCount', 0) or 0)
                     failed_files.extend(copy_result.get('failedFiles', []))
@@ -14401,6 +14674,13 @@ RULES
                 normalized.append(path)
         return normalized
 
+    def _normalize_panel_schedule_coverage(self, value):
+        values = value if isinstance(value, (list, tuple)) else [value]
+        return [
+            re.sub(r"\s+", " ", str(raw or "")).strip()[:160]
+            for raw in values
+        ]
+
     def _get_panel_schedule_path_value(self, data, plural_keys, singular_keys):
         if not isinstance(data, dict):
             return None
@@ -14512,7 +14792,7 @@ RULES
                     'images are very large. Click Rerun to try again, or split the '
                     'panel into smaller image groups (one breaker section per run).')
         if "model" in lower and ("not found" in lower or "does not exist" in lower):
-            return 'AI model not available. The Gemini 3.6 Flash model may not be accessible with your API key.'
+            return 'AI model not available. The requested Gemini model may not be accessible with your API key.'
         if "quota" in lower or "rate limit" in lower:
             return 'API rate limit exceeded. Please wait a moment and try again.'
         return msg
@@ -14603,12 +14883,35 @@ RULES
             except Exception:
                 pass
 
-    def _build_panel_schedule_prompt(self, panel_name, num_breaker_imgs, num_dir_imgs):
+    def _build_panel_schedule_prompt(
+        self,
+        panel_name,
+        num_breaker_imgs,
+        num_dir_imgs,
+        breaker_coverage=None,
+        num_label_imgs=0,
+        num_main_breaker_imgs=0,
+    ):
+        coverage_values = breaker_coverage if isinstance(breaker_coverage, (list, tuple)) else []
+        coverage_lines = []
+        for index in range(max(int(num_breaker_imgs or 0), 0)):
+            coverage = re.sub(
+                r"\s+", " ", str(coverage_values[index] if index < len(coverage_values) else "")
+            ).strip()[:160]
+            coverage_lines.append(
+                f'- Breaker image {index + 1}: {coverage or "coverage not provided; infer only from visible numbering"}'
+            )
+        coverage_block = "\n".join(coverage_lines) or "- No breaker images were provided."
         return f"""
 Analyze these electrical panel photos for Panel: {panel_name}.
 
 You are provided with {num_breaker_imgs} images of the CIRCUIT BREAKERS (first {num_breaker_imgs} images)
-and {num_dir_imgs} images of the CIRCUIT DIRECTORY (last {num_dir_imgs} images).
+followed by {num_dir_imgs} images of the CIRCUIT DIRECTORY,
+then {num_label_imgs} images of the PANEL LABEL / NAMEPLATE,
+and finally {num_main_breaker_imgs} images of the MAIN BREAKER.
+
+USER-PROVIDED BREAKER PHOTO COVERAGE
+{coverage_block}
 
 IMAGE INTERPRETATION RULES
 - All breaker images belong to the SAME panel.
@@ -14618,15 +14921,24 @@ IMAGE INTERPRETATION RULES
 - Merge partial and overlapping views into one complete understanding of the panel.
 - Do not treat split photos as separate panels.
 - Reconcile overlapping information by using visible circuit numbers, breaker positions, and the clearest label text.
-- Breaker images come first. Directory images come last.
+- Treat the user-provided breaker-photo coverage above as authoritative image placement guidance. It may list both columns, for example "11-31 and 12-32".
+- Use overlapping breaker views to confirm shared positions, then keep exactly one final breaker record per circuit.
+- Images are grouped in this exact order: breakers, directories, panel labels, main breakers.
 - Do not assume each image shows the entire panel or a complete directory by itself.
 
 TASK 1: HEADER
 - Extract Voltage, Bus Rating, Wire, Phase, Mounting, Enclosure.
-- Look at the directory images or labels on the panel across all images.
+- Use the dedicated PANEL LABEL / NAMEPLATE images as the primary source for these fields when provided. Otherwise use visible labels and directory headers across the other images.
 - Extract the panel AIC rating into JSON field "aic_rating" when visibly shown (examples: "10 KAIC", "22,000 AIC").
 - If AIC is blank, hidden, unreadable, or not present, set "aic_rating" to "".
 - Do not confuse AIC rating with Bus Rating, breaker amperage, voltage, or main requirement.
+- If sources conflict, prefer a legible manufacturer/nameplate value over a handwritten directory value.
+
+TASK 1B: MAIN DEVICE
+- Use the dedicated MAIN BREAKER images as the primary source when provided.
+- Set "main_type" to "MCB" for a main circuit breaker or "MLO" for main-lugs-only. Use another short visible device type only when clearly identified; otherwise use "".
+- Set "main_breaker_amps" to the main breaker handle/nameplate amp rating (examples: "200A", "225A"). If hidden or unreadable, use "".
+- Do not mistake branch breaker ratings, frame size, interrupting rating, voltage, or bus rating for the main breaker amp rating.
 
 TASK 2: CIRCUITS & POLES
 - Identify every breaker visible across the Breaker Images.
@@ -14644,11 +14956,17 @@ TASK 3: LOAD TYPES
 - LIGHTING -> 'C', RECEPTACLES -> 'G', MOTORS/HVAC -> 'M', KITCHEN -> 'K', DEDICATED -> 'D'
 """.strip()
 
-    def _build_existing_directory_prompt(self, panel_name, num_dir_imgs):
+    def _build_existing_directory_prompt(
+        self,
+        panel_name,
+        num_dir_imgs,
+        num_label_imgs=0,
+        num_main_breaker_imgs=0,
+    ):
         return f"""
 Analyze these electrical panel schedule directory document photos for Panel: {panel_name}.
 
-You are provided with {num_dir_imgs} images of the existing panel directory document. This document contains the circuit information (circuit numbers, load descriptions, breaker ratings/amperages, poles, and any visible kVA/load values) needed to recreate the panel schedule.
+You are provided with {num_dir_imgs} images of the existing panel directory document, followed by {num_label_imgs} PANEL LABEL / NAMEPLATE images and {num_main_breaker_imgs} MAIN BREAKER images. The directory document contains the circuit information (circuit numbers, load descriptions, breaker ratings/amperages, poles, and any visible kVA/load values) needed to recreate the panel schedule.
 
 IMAGE INTERPRETATION RULES
 - All directory images belong to the SAME panel directory document.
@@ -14658,9 +14976,12 @@ IMAGE INTERPRETATION RULES
 
 TASK 1: HEADER
 - Extract Voltage, Bus Rating, Wire, Phase, Mounting, Enclosure, and panel AIC rating from any headers, tables, or title block details.
+- When dedicated PANEL LABEL / NAMEPLATE images are provided, use them as the primary source for voltage, bus rating, wire, phase, enclosure, and AIC. Prefer a legible manufacturer/nameplate value if sources conflict.
 - Set the JSON field "aic_rating" to the visible AIC value (examples: "10 KAIC", "22,000 AIC").
 - If AIC is blank, hidden, unreadable, or not present, set "aic_rating" to "".
 - Do not confuse AIC rating with Bus Rating, breaker amperage, voltage, or main requirement.
+- Use dedicated MAIN BREAKER images as the primary source for the main device. Set "main_type" to "MCB" or "MLO" when established, and set "main_breaker_amps" to the visible main amp rating (examples: "200A", "225A"). Use "" for either field when not visible.
+- Do not mistake branch breaker ratings, frame size, interrupting rating, voltage, or bus rating for the main breaker amp rating.
 
 TASK 2: CIRCUITS & POLES
 - Identify every circuit entry in the directory document.
@@ -14681,7 +15002,16 @@ TASK 3: LOAD TYPES
 - LIGHTING -> 'C', RECEPTACLES -> 'G', MOTORS/HVAC -> 'M', KITCHEN -> 'K', DEDICATED -> 'D'
 """.strip()
 
-    def _analyze_panel_schedule_images(self, panel_name, breaker_paths, directory_paths, input_mode="field_photos"):
+    def _analyze_panel_schedule_images(
+        self,
+        panel_name,
+        breaker_paths,
+        directory_paths,
+        input_mode="field_photos",
+        breaker_coverage=None,
+        panel_label_paths=None,
+        main_breaker_paths=None,
+    ):
         api_key = self._resolve_panel_schedule_api_key()
         if not api_key:
             raise RuntimeError(
@@ -14696,45 +15026,53 @@ TASK 3: LOAD TYPES
 
         num_breaker_imgs = len(breaker_paths)
         num_dir_imgs = len(directory_paths)
+        panel_label_paths = list(panel_label_paths or [])
+        main_breaker_paths = list(main_breaker_paths or [])
+        num_label_imgs = len(panel_label_paths)
+        num_main_breaker_imgs = len(main_breaker_paths)
         if input_mode == "existing_directory":
-            prompt = self._build_existing_directory_prompt(panel_name, num_dir_imgs)
+            prompt = self._build_existing_directory_prompt(
+                panel_name,
+                num_dir_imgs,
+                num_label_imgs=num_label_imgs,
+                num_main_breaker_imgs=num_main_breaker_imgs,
+            )
         else:
             prompt = self._build_panel_schedule_prompt(
-                panel_name, num_breaker_imgs, num_dir_imgs
+                panel_name,
+                num_breaker_imgs,
+                num_dir_imgs,
+                breaker_coverage=breaker_coverage,
+                num_label_imgs=num_label_imgs,
+                num_main_breaker_imgs=num_main_breaker_imgs,
             )
+
+        analysis_paths = (
+            list(directory_paths)
+            if input_mode == "existing_directory"
+            else list(breaker_paths) + list(directory_paths)
+        )
+        analysis_paths.extend(panel_label_paths)
+        analysis_paths.extend(main_breaker_paths)
 
         gemini_images = []
         try:
-            for path in breaker_paths + directory_paths:
+            for path in analysis_paths:
                 if not os.path.exists(path):
                     raise ValueError(f"Image not found: {path}")
                 gemini_images.append(_open_panel_schedule_image(path))
 
             cb_enforce_rate_limit()
 
-            response = None
-            for attempt in range(3):
-                try:
-                    response = client.models.generate_content(
-                        model="gemini-3.6-flash",
-                        contents=[prompt, *gemini_images],
-                        config=types.GenerateContentConfig(
-                            response_mime_type="application/json",
-                            response_schema=PanelData
-                        ),
-                    )
-                    break
-                except Exception as exc:
-                    msg = str(exc).lower()
-                    transient = (
-                        "unavailable" in msg
-                        or "deadline" in msg
-                        or "503" in msg
-                        or "504" in msg
-                    )
-                    if not transient or attempt == 2:
-                        raise
-                    time.sleep(5 * (3 ** attempt))
+            response, used_model = self._generate_content_with_model_fallback(
+                client,
+                PANEL_SCHEDULE_GEMINI_MODELS,
+                contents=[prompt, *gemini_images],
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=PanelData
+                ),
+            )
         finally:
             for img in gemini_images:
                 try:
@@ -14828,7 +15166,7 @@ You are given {image_count} images, numbered 0 through {last_index} in the order
 
 ROLE DEFINITIONS
 
-"breaker" - a FIELD PHOTO of the inside of an opened electrical panel showing the physical circuit breakers. Look for:
+"breaker" - a FIELD PHOTO of the inside of an opened electrical panel showing MULTIPLE BRANCH circuit breakers. Look for:
 - rows of breaker handles or toggle switches
 - amperage numbers stamped or molded into the breaker faces
 - bus bars, conduit, wire nuts, or colored conductors
@@ -14850,15 +15188,27 @@ If a person could retype the whole circuit list from this image alone without ev
 - photographed at an angle with the metal door, hinges, screws, or panel cover visible around it
 If the list is partial or informal and only makes sense alongside the panel itself, it is a "field_directory".
 
-"ignore" - anything else: site photos, equipment nameplates, one-line or riser diagrams, floor plans, blank or badly blurred images, screenshots of unrelated software.
+"panel_label" - a close photo of the panel's MANUFACTURER LABEL or EQUIPMENT NAMEPLATE. Look for:
+- manufacturer/model or catalog information
+- voltage, phase, wire, bus rating, AIC/SCCR, enclosure/type, or serial number fields
+- a compact label without a circuit-by-circuit directory table
+
+"main_breaker" - a close photo centered on the panel's SINGLE MAIN BREAKER or main disconnect. Look for:
+- one large breaker or disconnect handle, often marked MAIN
+- a prominent amp rating such as 200 or 225 on that main handle/device
+- frame, trip, catalog, or interrupting markings belonging to the main device
+- do not use this role for a view dominated by rows of branch breakers
+
+"ignore" - anything else: site photos, unrelated equipment nameplates, one-line or riser diagrams, floor plans, blank or badly blurred images, screenshots of unrelated software.
 
 DECIDING FACTORS - apply in this order
 1. Handwriting anywhere in the circuit rows means "field_directory". A handwritten list is NEVER an "as_built_schedule", no matter how complete it looks.
-2. A kVA or VA load column, or a header block listing AIC and bus rating, means "as_built_schedule".
-3. Visible physical breaker handles mean "breaker".
-4. A photo of the open door with the card taped to it, where the card text is readable, is "field_directory". If the card text is not readable but the breakers are, it is "breaker".
-5. A printed document you cannot read well enough to retype is "ignore", not "as_built_schedule". Being printed is not enough on its own.
-6. Do not guess. Use "ignore" whenever no definition clearly fits.
+2. A single compact equipment nameplate with electrical ratings but no circuit rows means "panel_label".
+3. A close-up dominated by one main breaker or disconnect means "main_breaker"; rows of branch handles mean "breaker".
+4. A kVA or VA load column, or a formal header plus circuit-by-circuit rows, means "as_built_schedule".
+5. A photo of the open door with the card taped to it, where the card text is readable, is "field_directory". If the card text is not readable but rows of breakers are, it is "breaker".
+6. A printed document you cannot read well enough to retype is "ignore", not "as_built_schedule". Being printed is not enough on its own.
+7. Do not guess. Use "ignore" whenever no definition clearly fits.
 
 This distinction matters: an "as_built_schedule" is transcribed exactly as drawn, while a "field_directory" is only used to label circuits that are read off the breaker photos. Choosing the wrong one produces a wrong panel schedule.
 
@@ -14917,29 +15267,15 @@ Return JSON matching the provided schema exactly, with image_index values 0 thro
 
             prompt = self._build_canvas_panel_classification_prompt(len(loaded), notes)
 
-            response = None
-            for attempt in range(3):
-                try:
-                    response = client.models.generate_content(
-                        model="gemini-3.6-flash",
-                        contents=[prompt, *gemini_images],
-                        config=types.GenerateContentConfig(
-                            response_mime_type="application/json",
-                            response_schema=CanvasPanelClassification
-                        ),
-                    )
-                    break
-                except Exception as exc:
-                    msg = str(exc).lower()
-                    transient = (
-                        "unavailable" in msg
-                        or "deadline" in msg
-                        or "503" in msg
-                        or "504" in msg
-                    )
-                    if not transient or attempt == 2:
-                        raise
-                    time.sleep(5 * (3 ** attempt))
+            response, used_model = self._generate_content_with_model_fallback(
+                client,
+                PANEL_SCHEDULE_GEMINI_MODELS,
+                contents=[prompt, *gemini_images],
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=CanvasPanelClassification
+                ),
+            )
         finally:
             for img in gemini_images:
                 try:
@@ -15297,8 +15633,27 @@ Return JSON matching the provided schema exactly, with image_index values 0 thro
                             ('directoryPath', 'directory_path'),
                         )
                     ),
+                    'panel_label_paths': self._normalize_panel_schedule_paths(
+                        self._get_panel_schedule_path_value(
+                            raw_panel,
+                            ('panelLabelPaths', 'panel_label_paths'),
+                            ('panelLabelPath', 'panel_label_path'),
+                        )
+                    ),
+                    'main_breaker_paths': self._normalize_panel_schedule_paths(
+                        self._get_panel_schedule_path_value(
+                            raw_panel,
+                            ('mainBreakerPaths', 'main_breaker_paths'),
+                            ('mainBreakerPath', 'main_breaker_path'),
+                        )
+                    ),
+                    'breaker_coverage': self._normalize_panel_schedule_coverage(
+                        raw_panel.get('breakerCoverage') or raw_panel.get('breaker_coverage') or []
+                    ),
                     'breaker_uploads': raw_panel.get('breakerUploads') or raw_panel.get('breaker_uploads') or [],
                     'directory_uploads': raw_panel.get('directoryUploads') or raw_panel.get('directory_uploads') or [],
+                    'panel_label_uploads': raw_panel.get('panelLabelUploads') or raw_panel.get('panel_label_uploads') or [],
+                    'main_breaker_uploads': raw_panel.get('mainBreakerUploads') or raw_panel.get('main_breaker_uploads') or [],
                 })
 
         if not panel_requests:
@@ -15323,8 +15678,27 @@ Return JSON matching the provided schema exactly, with image_index values 0 thro
                         ('directoryPath', 'directory_path'),
                     )
                 ),
+                'panel_label_paths': self._normalize_panel_schedule_paths(
+                    self._get_panel_schedule_path_value(
+                        data,
+                        ('panelLabelPaths', 'panel_label_paths'),
+                        ('panelLabelPath', 'panel_label_path'),
+                    )
+                ),
+                'main_breaker_paths': self._normalize_panel_schedule_paths(
+                    self._get_panel_schedule_path_value(
+                        data,
+                        ('mainBreakerPaths', 'main_breaker_paths'),
+                        ('mainBreakerPath', 'main_breaker_path'),
+                    )
+                ),
+                'breaker_coverage': self._normalize_panel_schedule_coverage(
+                    data.get('breakerCoverage') or data.get('breaker_coverage') or []
+                ),
                 'breaker_uploads': data.get('breakerUploads') or data.get('breaker_uploads') or [],
                 'directory_uploads': data.get('directoryUploads') or data.get('directory_uploads') or [],
+                'panel_label_uploads': data.get('panelLabelUploads') or data.get('panel_label_uploads') or [],
+                'main_breaker_uploads': data.get('mainBreakerUploads') or data.get('main_breaker_uploads') or [],
             })
 
         results = []
@@ -15359,8 +15733,13 @@ Return JSON matching the provided schema exactly, with image_index values 0 thro
             input_mode = str(panel_request.get('input_mode') or 'field_photos').strip().lower()
             breaker_paths = list(panel_request.get('breaker_paths') or [])
             directory_paths = list(panel_request.get('directory_paths') or [])
+            panel_label_paths = list(panel_request.get('panel_label_paths') or [])
+            main_breaker_paths = list(panel_request.get('main_breaker_paths') or [])
+            breaker_coverage = list(panel_request.get('breaker_coverage') or [])
             breaker_uploads = panel_request.get('breaker_uploads') or []
             directory_uploads = panel_request.get('directory_uploads') or []
+            panel_label_uploads = panel_request.get('panel_label_uploads') or []
+            main_breaker_uploads = panel_request.get('main_breaker_uploads') or []
             temp_paths = []
             _store_running_record(
                 f"Processing panel {index + 1} of {panel_count}: {panel_name}",
@@ -15380,6 +15759,18 @@ Return JSON matching the provided schema exactly, with image_index values 0 thro
                     )
                     directory_paths.extend(uploaded_paths)
                     temp_paths.extend(created)
+                if panel_label_uploads:
+                    uploaded_paths, created = self._panel_schedule_save_uploads(
+                        panel_label_uploads, "panel-label"
+                    )
+                    panel_label_paths.extend(uploaded_paths)
+                    temp_paths.extend(created)
+                if main_breaker_uploads:
+                    uploaded_paths, created = self._panel_schedule_save_uploads(
+                        main_breaker_uploads, "main-breaker"
+                    )
+                    main_breaker_paths.extend(uploaded_paths)
+                    temp_paths.extend(created)
 
                 if input_mode == "existing_directory":
                     if not directory_paths:
@@ -15394,7 +15785,13 @@ Return JSON matching the provided schema exactly, with image_index values 0 thro
 
                 try:
                     panel_data = self._analyze_panel_schedule_images(
-                        panel_name, breaker_paths, directory_paths, input_mode=input_mode
+                        panel_name,
+                        breaker_paths,
+                        directory_paths,
+                        input_mode=input_mode,
+                        breaker_coverage=breaker_coverage,
+                        panel_label_paths=panel_label_paths,
+                        main_breaker_paths=main_breaker_paths,
                     )
                 except Exception as e:
                     raise RuntimeError(self._format_panel_schedule_ai_error(e)) from e
@@ -17231,13 +17628,19 @@ Return JSON matching the provided schema exactly, with image_index values 0 thro
             'toolPublishDwgs',
             **run_kwargs,
         )
-        if workflow_blocking and isinstance(script_result, dict) and script_result.get('status') == 'error':
-            return {
-                'status': 'error',
-                'message': script_result.get('message') or 'Publish DWGs failed.',
-                'activityId': str(activity_id or '').strip(),
-                'scriptResult': script_result,
-            }
+        if workflow_blocking and isinstance(script_result, dict):
+            script_status = str(script_result.get('status') or '').strip().lower()
+            if script_status in ('error', 'cancelled'):
+                return {
+                    'status': script_status,
+                    'message': script_result.get('message') or (
+                        'Publish DWGs was cancelled.'
+                        if script_status == 'cancelled'
+                        else 'Publish DWGs failed.'
+                    ),
+                    'activityId': str(activity_id or '').strip(),
+                    'scriptResult': script_result,
+                }
         return {'status': 'success', 'activityId': str(activity_id or '').strip()}
 
     def run_manage_layers_script(self, launch_context=None, activity_id=None, params_override=None):
@@ -17447,14 +17850,49 @@ Return JSON matching the provided schema exactly, with image_index values 0 thro
             'toolManageLayers',
             **run_kwargs,
         )
-        if workflow_blocking and isinstance(script_result, dict) and script_result.get('status') == 'error':
-            return {
-                'status': 'error',
-                'message': script_result.get('message') or 'Freeze/Thaw Layers failed.',
-                'activityId': str(activity_id or '').strip(),
-                'scriptResult': script_result,
-            }
+        if workflow_blocking and isinstance(script_result, dict):
+            script_status = str(script_result.get('status') or '').strip().lower()
+            if script_status in ('error', 'cancelled'):
+                return {
+                    'status': script_status,
+                    'message': script_result.get('message') or (
+                        'Freeze/Thaw Layers was cancelled.'
+                        if script_status == 'cancelled'
+                        else 'Freeze/Thaw Layers failed.'
+                    ),
+                    'activityId': str(activity_id or '').strip(),
+                    'scriptResult': script_result,
+                }
         return {'status': 'success', 'activityId': str(activity_id or '').strip()}
+
+    def preview_clean_drawings(self, launch_context=None, activity_id=None):
+        import clean_drawings
+        try:
+            context = self._resolve_workroom_context(self.get_user_settings(), launch_context)
+            project = context.get('project_path')
+            if not project:
+                return {'status': 'error', 'message': 'Select a project in the Workroom before running Clean Drawings.'}
+            return dict(clean_drawings.preview(
+                project, self.get_user_settings().get('autocadPath', ''),
+                notify=lambda message: self._notify_tool_status(
+                    'toolCleanDrawings', message, activity_id=activity_id)), status='success')
+        except Exception as exc:
+            return {'status': 'error', 'message': str(exc)}
+
+    def run_clean_drawings(self, selection, launch_context=None, activity_id=None):
+        import clean_drawings
+        try:
+            settings = self.get_user_settings()
+            context = self._resolve_workroom_context(settings, launch_context)
+            project = context.get('project_path')
+            if not project:
+                raise ValueError('Select a project in the Workroom first.')
+            return clean_drawings.run(
+                project, selection, settings.get('autocadPath', ''),
+                notify=lambda message: self._notify_tool_status(
+                    'toolCleanDrawings', message, activity_id=activity_id))
+        except Exception as exc:
+            return {'status': 'error', 'message': str(exc)}
 
     def run_clean_xrefs_script(self, launch_context=None, activity_id=None, params_override=None):
         """Runs the removeXREFPaths.ps1 PowerShell script with progress updates.
@@ -17603,13 +18041,19 @@ Return JSON matching the provided schema exactly, with image_index values 0 thro
                 'toolCleanXrefs',
                 **run_kwargs,
             )
-            if workflow_blocking and isinstance(script_result, dict) and script_result.get('status') == 'error':
-                return {
-                    'status': 'error',
-                    'message': script_result.get('message') or 'Prepare CAD for XREF failed.',
-                    'activityId': str(activity_id or '').strip(),
-                    'scriptResult': script_result,
-                }
+            if workflow_blocking and isinstance(script_result, dict):
+                script_status = str(script_result.get('status') or '').strip().lower()
+                if script_status in ('error', 'cancelled'):
+                    return {
+                        'status': script_status,
+                        'message': script_result.get('message') or (
+                            'Prepare CAD for XREF was cancelled.'
+                            if script_status == 'cancelled'
+                            else 'Prepare CAD for XREF failed.'
+                        ),
+                        'activityId': str(activity_id or '').strip(),
+                        'scriptResult': script_result,
+                    }
             return {'status': 'success', 'activityId': str(activity_id or '').strip()}
         except Exception as e:
             logging.error(f"run_clean_xrefs_script failed: {e}")
@@ -17856,6 +18300,17 @@ Return JSON matching the provided schema exactly, with image_index values 0 thro
             _post_parent(f'Starting workflow: {name}', progress=3)
 
             for index, step in enumerate(steps, start=1):
+                if (
+                    parent_activity_id
+                    and self._is_activity_cancel_requested(parent_activity_id)
+                ):
+                    message = 'Workflow cancelled by user.'
+                    _post_parent(message, status='cancelled')
+                    return {
+                        'status': 'cancelled',
+                        'activityId': parent_activity_id,
+                        'message': message,
+                    }
                 if not isinstance(step, dict):
                     msg = f'Step {index} is malformed.'
                     _post_parent(f'ERROR: {msg}', status='error')
@@ -17905,7 +18360,23 @@ Return JSON matching the provided schema exactly, with image_index values 0 thro
                         'message': msg,
                     }
 
-                if isinstance(result, dict) and result.get('status') == 'error':
+                result_status = (
+                    str(result.get('status') or '').strip().lower()
+                    if isinstance(result, dict)
+                    else ''
+                )
+                if result_status == 'cancelled':
+                    msg = str(result.get('message') or 'Workflow cancelled by user.').strip()
+                    _post_parent(msg, status='cancelled')
+                    return {
+                        'status': 'cancelled',
+                        'cancelledStep': index,
+                        'tool': tool_id,
+                        'message': msg,
+                        'activityId': parent_activity_id,
+                        'stepResult': result,
+                    }
+                if result_status == 'error':
                     msg = str(result.get('message') or 'Step reported an error.').strip()
                     _post_parent(
                         f'ERROR: workflow halted at step {index} ({display}): {msg}',
@@ -17951,42 +18422,69 @@ Return JSON matching the provided schema exactly, with image_index values 0 thro
 
     def select_files(self, options):
         """Shows a file dialog and returns selected paths."""
-        try:
-            options = options or {}
-            window = webview.windows[0]
-            default_directory = options.get('default_directory')
-            if default_directory in (None, ''):
-                default_directory = options.get('default_dir')
-            if default_directory in (None, ''):
-                default_directory = options.get('defaultDirectory')
-            directory = self._resolve_dialog_directory(default_directory)
-            file_paths = window.create_file_dialog(
-                webview.FileDialog.OPEN,  # DEPRECATION FIX
-                allow_multiple=options.get('allow_multiple', False),
-                file_types=tuple(options.get('file_types', ())),
-                directory=directory,
-            )
-            if not file_paths:
-                return {'status': 'cancelled', 'paths': []}
-            return {'status': 'success', 'paths': file_paths}
-        except TypeError:
+        dialog_lock = getattr(self, '_dialog_lock', None)
+        if dialog_lock is None:
+            dialog_lock = threading.RLock()
+            self._dialog_lock = dialog_lock
+
+        with dialog_lock:
             try:
                 options = options or {}
-                window = webview.windows[0]
+                window = webview.windows[0] if (getattr(webview, 'windows', None) and len(webview.windows) > 0) else None
+                default_directory = options.get('default_directory')
+                if default_directory in (None, ''):
+                    default_directory = options.get('default_dir')
+                if default_directory in (None, ''):
+                    default_directory = options.get('defaultDirectory')
+                directory = self._resolve_dialog_directory(default_directory)
+                allow_multiple = options.get('allow_multiple', False)
+                file_types = tuple(options.get('file_types', ()))
+
+                # In real GUI on Windows (where window.native is a WinForms Form),
+                # run on dedicated STA thread to prevent MTA cross-thread message loop deadlock
+                if window is not None and getattr(window, 'native', None) is not None:
+                    file_paths = self._show_open_file_dialog_sta(
+                        directory=directory,
+                        allow_multiple=allow_multiple,
+                        file_types=file_types,
+                    )
+                    if file_paths is not None:
+                        if not file_paths:
+                            return {'status': 'cancelled', 'paths': []}
+                        return {'status': 'success', 'paths': list(file_paths)}
+
+                # Standard pywebview window.create_file_dialog (used in tests or non-Windows)
+                if window is None:
+                    return {'status': 'error', 'message': 'No window available'}
+
                 file_paths = window.create_file_dialog(
-                    webview.FileDialog.OPEN,  # DEPRECATION FIX
-                    allow_multiple=options.get('allow_multiple', False),
-                    file_types=tuple(options.get('file_types', ()))
+                    webview.FileDialog.OPEN,
+                    allow_multiple=allow_multiple,
+                    file_types=file_types,
+                    directory=directory,
                 )
                 if not file_paths:
                     return {'status': 'cancelled', 'paths': []}
-                return {'status': 'success', 'paths': file_paths}
+                return {'status': 'success', 'paths': list(file_paths)}
+            except TypeError:
+                try:
+                    window = webview.windows[0] if (getattr(webview, 'windows', None) and len(webview.windows) > 0) else None
+                    if window is None:
+                        return {'status': 'error', 'message': 'No window available'}
+                    file_paths = window.create_file_dialog(
+                        webview.FileDialog.OPEN,
+                        allow_multiple=options.get('allow_multiple', False),
+                        file_types=tuple(options.get('file_types', ()))
+                    )
+                    if not file_paths:
+                        return {'status': 'cancelled', 'paths': []}
+                    return {'status': 'success', 'paths': list(file_paths)}
+                except Exception as e:
+                    logging.error(f"Error in file dialog fallback: {e}")
+                    return {'status': 'error', 'message': str(e)}
             except Exception as e:
-                logging.error(f"Error in file dialog fallback: {e}")
+                logging.error(f"Error in file dialog: {e}")
                 return {'status': 'error', 'message': str(e)}
-        except Exception as e:
-            logging.error(f"Error in file dialog: {e}")
-            return {'status': 'error', 'message': str(e)}
 
 
 

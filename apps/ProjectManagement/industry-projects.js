@@ -136,14 +136,6 @@ function getDeliverableRegisterState(deliverable) {
   };
 }
 
-function countDeliverableNotes(deliverable, project = null) {
-  const noteItems = Array.isArray(deliverable?.noteItems) ? deliverable.noteItems : [];
-  const legacyCount = noteItems.filter((item) => String(item?.text || item || "").trim()).length;
-  const subpage = project?.subpages?.find((page) => page.sourceDeliverableId === deliverable.id);
-  const doc = new DOMParser().parseFromString(subpage?.page?.html || "", "text/html");
-  return legacyCount + doc.querySelectorAll('[data-deliverable-note="true"]').length;
-}
-
 function getAllProjectDeliverableRows() {
   const rows = [];
   (Array.isArray(db) ? db : []).forEach((project) => {
@@ -658,11 +650,14 @@ function renderDeliverablePlateCard(deliverable, project) {
   if (project) foot.appendChild(createPlateFolderButton(project));
   foot.appendChild(el("span", { className: "plate-spacer" }));
   if (project) {
+    const noteCount = getProjectImportantItems(project).length;
     const notes = el("button", {
       type: "button",
       className: "plate-notes reg-kick",
-      textContent: `${countDeliverableNotes(deliverable, project)} notes`,
-      title: "No important notes — open project notes",
+      textContent: industryPlural(noteCount, "note"),
+      title: noteCount
+        ? `${industryPlural(noteCount, "important note")} — open project notes`
+        : "No important notes — open project notes",
     });
     notes.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -1074,6 +1069,7 @@ function buildCommandDockGroups(deliverable, project) {
       key: `tool:${entry.id}`,
       label: entry.menuLabel || entry.label,
       tag: true,
+      scope: entry.id === "toolOpenCadFiles" ? "project" : undefined,
       run: (target) =>
         launchSharedToolCard(
           entry.id,

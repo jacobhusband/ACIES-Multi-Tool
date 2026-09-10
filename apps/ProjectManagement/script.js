@@ -3818,6 +3818,15 @@ function buildWorkroomCadLaunchContext() {
 
 const SHARED_TOOL_LAUNCH_REGISTRY = Object.freeze([
   {
+    id: "toolOpenCadFiles",
+    label: "Open CAD files",
+    menuLabel: "Open CAD files",
+    launchType: "project-manager",
+    category: "general",
+    iconSvg: '<path d="M3 7h7l2 2h9v11H3z"></path><path d="M3 7V4h7l2 3"></path>',
+    isReady: true,
+  },
+  {
     id: "toolCopyProjectLocally",
     label: "Work Locally",
     menuLabel: "Work Locally",
@@ -3998,6 +4007,7 @@ function getReadySharedToolLaunchEntries() {
 
 function getDeliverableToolMenuEntries() {
   const deliverableMenuOrder = [
+    "toolOpenCadFiles",
     "toolCleanDrawings",
     "toolPublishDwgs",
     "toolManageLayers",
@@ -4090,6 +4100,10 @@ function queuePendingCadLaunchContext(launchContext = null) {
 function launchSharedToolCard(toolId, launchContext = null) {
   const entry = getSharedToolLaunchEntry(toolId);
   if (!entry || entry.isReady !== true) return false;
+  if (entry.id === "toolOpenCadFiles") {
+    void openProjectCadFiles(launchContext);
+    return true;
+  }
   if (entry.id === "toolCopyProjectLocally") {
     void runLocalProjectManager(launchContext);
     return true;
@@ -4104,6 +4118,26 @@ function launchSharedToolCard(toolId, launchContext = null) {
   }
   card.click();
   return true;
+}
+
+let openingProjectCadFiles = false;
+
+async function openProjectCadFiles(launchContext = null) {
+  if (openingProjectCadFiles) return;
+  const context = launchContext || resolveCadLaunchContextForTool();
+  if (!hasLaunchContextProjectPath(context)) {
+    toast("Select a project with a saved folder path first.");
+    return;
+  }
+  openingProjectCadFiles = true;
+  try {
+    const result = await window.pywebview.api.open_project_cad_files(context);
+    toast(result?.message || "Could not open CAD files.");
+  } catch (error) {
+    toast(error?.message || "Could not open CAD files.");
+  } finally {
+    openingProjectCadFiles = false;
+  }
 }
 
 function consumePendingCadLaunchContext() {
@@ -33778,9 +33812,10 @@ function initTabbedInterfaces() {
   document.body.dataset.activeTab =
     document.querySelector(".main-tab-btn.active")?.dataset.tab || "projects";
 
-  mainTabContainer.addEventListener("click", (e) => {
+  mainTabContainer.addEventListener("click", async (e) => {
     if (!e.target.matches(".main-tab-btn")) return;
     const tab = e.target.dataset.tab;
+    if (document.body.dataset.pageOpen === "1") await closePageView();
     document.body.dataset.activeTab = tab;
 
     document
@@ -37375,7 +37410,10 @@ function normalizeHtmlForProjectPagesEditor(html) {
 }
 function setPageSaveStatus(text) {
   const el = document.getElementById("pageSaveStatus");
-  if (el) el.textContent = text || "";
+  if (el) {
+    el.textContent = text || "";
+    el.classList.toggle("is-saved", text === "Saved" || text === "Published");
+  }
 }
 
 const PAGE_FIND_MATCH_SELECTOR = 'mark.page-find-match[data-page-find-match="true"]';
@@ -37605,6 +37643,7 @@ function updatePageFindUi() {
     input.value = pageFindState.query;
   }
   const hasQuery = String(pageFindState.query || "").trim().length > 0;
+  document.getElementById("pageFind")?.classList.toggle("has-query", hasQuery);
   if (countEl) {
     countEl.textContent = hasQuery
       ? pageFindState.matchCount
@@ -38641,7 +38680,7 @@ function deleteProjectSubpage(project, subpage) {
       openProjectPage(project, getProjectSubpageById(project, subpage.parentId));
     } else {
       render();
-      if (getProjectPagesEditorRoot()?.querySelector("#pageEditor")) renderPageView();
+      if (getProjectPagesEditorRoot()?.querySelector("#pageEditor") || isCanvasPage(pageEditorTarget)) renderPageView();
       else renderPageChildLinks(project, pageNav.subpage);
     }
     reportPageWorkbookCleanup(cleanupResult);
@@ -39198,9 +39237,18 @@ function hydratePageWikiLinks(editor) {
 }
 
 // --- Navigation state & rendering ---
+let pageHeaderPlaceholder = null;
 function showPageView() {
   const view = document.getElementById("pageView");
   if (!view) return;
+  const header = document.querySelector(".app-header");
+  if (header && !view.contains(header)) {
+    pageHeaderPlaceholder = document.createComment("Application header home");
+    header.before(pageHeaderPlaceholder);
+    view.prepend(header);
+  }
+  const actions = document.getElementById("pageActionsMenu");
+  if (actions) actions.open = false;
   view.hidden = false;
   document.body.dataset.pageOpen = "1";
   const editor = getPageEditorEl();
@@ -39229,6 +39277,9 @@ function setPageViewMode(mode) {
 }
 async function closePageView() {
   await flushPageSave();
+  const header = document.querySelector("#pageView > .app-header");
+  if (header && pageHeaderPlaceholder) pageHeaderPlaceholder.replaceWith(header);
+  pageHeaderPlaceholder = null;
   if (window.ProjectPagesEditor?.unmount) {
     try {
       window.ProjectPagesEditor.unmount();
@@ -39346,6 +39397,23 @@ function setProjectPagesEditorDocument(context) {
   window.ProjectPagesEditor.mount(root, {});
   window.ProjectPagesEditor.setDocument({
     ...context,
+    navigationPages: context.project ? (() => {
+      const groups = getProjectSubpagesByParent(context.project);
+      const pages = [];
+      const visited = new Set();
+      const visit = (parentId, depth) => {
+        (groups.get(parentId) || []).forEach((page) => {
+          if (visited.has(page.id)) return;
+          visited.add(page.id);
+          pages.push({ id: page.id, title: page.title || "Untitled", depth,
+            canvas: isCanvasPage(page.page) });
+          visit(page.id, depth + 1);
+        });
+      };
+      visit("", 0);
+      return pages;
+    })() : [],
+    onOpenOverview: () => flushPageSave().then(() => openProjectPage(pageNav.project)),
     globalPages: (Array.isArray(globalPages) ? globalPages : []).map((page) => ({
       id: page.id,
       title: page.title || "Untitled",
@@ -39552,7 +39620,9 @@ function renderPageBreadcrumb(project, subpage) {
     addSep();
     addCrumb(subpage.title || "Untitled", null, true);
   } else {
-    addCrumb(project.name || project.id || "Project", null, true);
+    addCrumb(project.name || project.id || "Project", null, false);
+    addSep();
+    addCrumb("Overview", null, true);
   }
 }
 function queuePageMiscSave() {
@@ -39593,6 +39663,7 @@ function getProjectSubpagesByParent(project) {
 function renderPageChildLinks(project, activeSubpage = null) {
   const container = document.getElementById("pageChildLinks");
   if (!container) return;
+  if (getProjectPagesEditorRoot()?.contains(container)) return;
   container.innerHTML = "";
   if (!project) {
     container.hidden = true;
@@ -39775,6 +39846,23 @@ function ensurePageViewReady() {
   document.getElementById("pageViewBackBtn")?.addEventListener("click", pageGoBack);
   document.getElementById("pagePublishPdfBtn")?.addEventListener("click", publishActivePagePdf);
   document.getElementById("pageViewCloseBtn")?.addEventListener("click", () => closePageView());
+  const actionsMenu = document.getElementById("pageActionsMenu");
+  document.addEventListener("click", (event) => {
+    if (actionsMenu?.open && !actionsMenu.contains(event.target)) actionsMenu.open = false;
+  });
+  actionsMenu?.addEventListener("click", (event) => {
+    if (event.target.closest("button")) actionsMenu.open = false;
+  });
+  const toolbar = view.querySelector(".page-view-topbar");
+  if (toolbar && typeof ResizeObserver !== "undefined") {
+    const header = document.querySelector(".app-header");
+    const observer = new ResizeObserver(() => {
+      view.style.setProperty("--notes-toolbar-height", `${toolbar.offsetHeight}px`);
+      if (header) document.documentElement.style.setProperty("--header-height", `${header.offsetHeight}px`);
+    });
+    observer.observe(toolbar);
+    if (header) observer.observe(header);
+  }
 
   view.addEventListener("keydown", (e) => {
     if ((e.ctrlKey || e.metaKey) && String(e.key || "").toLowerCase() === "f") {
@@ -39783,6 +39871,12 @@ function ensurePageViewReady() {
       return;
     }
     if (e.key === "Escape") {
+      if (actionsMenu?.open) {
+        actionsMenu.open = false;
+        actionsMenu.querySelector("summary")?.focus();
+        e.preventDefault();
+        return;
+      }
       e.preventDefault();
       pageGoBack();
     }
@@ -41049,6 +41143,13 @@ function renderPageCanvasView() {
   pageEditorTarget.canvas = normalizePageCanvas(pageEditorTarget.canvas);
   resetPageCanvasState();
   const { project, subpage, globalPage } = pageNav;
+  setProjectPagesEditorDocument({
+    documentKey: `canvas:${globalPage?.id || subpage?.id || project?.id || "x"}`,
+    navigationOnly: true,
+    kind: globalPage ? "global" : subpage ? "subpage" : "project",
+    project, subpage, globalPage,
+    title: (globalPage ? globalPage.title : subpage ? subpage.title : project?.name) || "",
+  });
   const titleInput = document.getElementById("pageCanvasTitle");
   if (titleInput) {
     titleInput.value =

@@ -21,12 +21,12 @@
             }
         })();
     </script>
-    <link rel="stylesheet" href="styles.css?v=20260708-richer-blocks-p6" />
+    <link rel="stylesheet" href="styles.css?v=20260910-canvas-sidebar" />
     <link rel="stylesheet" href="symbol_counter.css?v=20260818-delete-actions" />
     <link rel="stylesheet" href="industry.css?v=20260909-cmd-add-deliverable" />
     <link rel="stylesheet" href="modern-workspace.css?v=20260909-deliverables" />
     <link rel="stylesheet" href="deliverables-workspace.css?v=20260909" />
-    <link rel="stylesheet" href="project-pages-editor/dist/project-pages-editor-project-pages-editor.css?v=20260729-page-email-attach" />
+    <link rel="stylesheet" href="project-pages-editor/dist/project-pages-editor-project-pages-editor.css?v=20260910-canvas-sidebar" />
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 
@@ -1021,7 +1021,7 @@
                     <line x1="19" y1="12" x2="5" y2="12"></line>
                     <polyline points="12 19 5 12 12 5"></polyline>
                 </svg>
-                <span>Back</span>
+                <span class="sr-only">Back</span>
             </button>
             <nav class="page-breadcrumb" id="pageBreadcrumb" aria-label="Breadcrumb"></nav>
             <div class="page-view-spacer"></div>
@@ -1033,7 +1033,8 @@
                         <circle cx="11" cy="11" r="8"></circle>
                         <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
                     </svg>
-                    <input id="pageFindInput" type="search" placeholder="Find in page..." autocomplete="off" />
+                    <input id="pageFindInput" type="search" placeholder="Find in page…" aria-label="Find in page" autocomplete="off" />
+                    <kbd class="page-find-shortcut" aria-hidden="true">Ctrl F</kbd>
                 </div>
                 <span class="page-find-count" id="pageFindCount" aria-live="polite"></span>
                 <button type="button" class="icon-btn mini" id="pageFindPrevBtn" aria-label="Previous match"
@@ -1052,10 +1053,6 @@
                 </button>
             </div>
             <div class="page-save-status" id="pageSaveStatus" aria-live="polite"></div>
-            <button type="button" class="btn ghost text-danger mini" id="pageDeleteProjectBtn"
-                aria-label="Delete this project" title="Delete this project" style="display:none;" onclick="onDeleteActiveProjectFromPageView()">
-                Delete Project
-            </button>
             <button type="button" class="page-view-publish" id="pagePublishPdfBtn"
                 aria-label="Publish page as PDF" title="Publish page as PDF">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -1067,13 +1064,16 @@
                 </svg>
                 <span>Publish PDF</span>
             </button>
-            <button type="button" class="icon-btn mini" id="pageViewCloseBtn" aria-label="Close page" title="Close">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                    stroke-linecap="round" stroke-linejoin="round">
-                    <line x1="18" y1="6" x2="6" y2="18"></line>
-                    <line x1="6" y1="6" x2="18" y2="18"></line>
-                </svg>
+            <details class="page-actions-menu" id="pageActionsMenu">
+                <summary aria-label="More page actions" title="More page actions">⋯</summary>
+                <div class="page-actions-panel" aria-label="Page actions">
+                    <button type="button" id="pageViewCloseBtn">Close page</button>
+            <button type="button" class="btn ghost text-danger mini" id="pageDeleteProjectBtn"
+                aria-label="Delete this project" title="Delete this project" style="display:none;" onclick="onDeleteActiveProjectFromPageView()">
+                Delete Project
             </button>
+                </div>
+            </details>
         </header>
         <div class="page-view-scroll">
             <div class="page-view-body">
@@ -1100,6 +1100,7 @@
         </div>
         <input type="file" id="pageImageInput" accept="image/*" multiple hidden />
         <div id="pageCanvasRoot" class="page-canvas-root" hidden>
+            <div id="pageCanvasSidebarRoot"></div>
             <div class="page-canvas-toolbar">
                 <input id="pageCanvasTitle" class="page-canvas-title" type="text" aria-label="Page title"
                     placeholder="Untitled" autocomplete="off" spellcheck="true" />
@@ -3470,8 +3471,8 @@
         </div>
     </section>
     <div id="updateCheckIndicator" class="corner-status" hidden>Checking for updates...</div>
-    <script src="project-pages-editor/dist/project-pages-editor.js?v=20260729-page-email-attach"></script>
-    <script src="script.js?v=20260909-deliverables"></script>
+    <script src="project-pages-editor/dist/project-pages-editor.js?v=20260910-canvas-sidebar"></script>
+    <script src="script.js?v=20260910-canvas-sidebar"></script>
     <script src="industry-projects.js?v=20260909-deliverables"></script>
     <script src="industry-shell.js?v=20260909-modern-dialogs"></script>
     <script src="symbol_counter_ui.js?v=20260818-delete-actions"></script>

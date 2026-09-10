@@ -10416,6 +10416,40 @@ Return ONLY the JSON object.
             logging.error(f"Error deleting saved email: {e}")
             return {'status': 'error', 'message': str(e)}
 
+    def open_project_cad_files(self, launch_context=None):
+        """Open the active project's working DWGs without browsing to its folder."""
+        context = self._normalize_launch_context(launch_context)
+        project_path = str(context.get('rootProjectPath') or
+                           context.get('projectPath') or
+                           context.get('project_path') or '').strip()
+        if not project_path:
+            return {'status': 'error', 'message': 'Select a project with a saved folder path first.'}
+        discipline = str(context.get('discipline') or 'Electrical').strip()
+        folder = self._resolve_workroom_discipline_folder(
+            project_path, discipline).get('resolved_folder')
+        if not folder:
+            return {'status': 'error', 'message': f'Could not find the project {discipline} folder.'}
+        files = self._list_base_level_dwgs(folder)
+        if not files:
+            return {'status': 'error', 'message': f'No DWG files found in {folder}.'}
+        opened, failed = [], []
+        for path in files:
+            try:
+                if sys.platform == 'win32':
+                    os.startfile(path)
+                else:
+                    subprocess.run(['open' if sys.platform == 'darwin' else 'xdg-open', path],
+                                   check=True)
+                opened.append(path)
+            except Exception as exc:
+                logging.warning('Could not open CAD file %s: %s', path, exc)
+                failed.append({'path': path, 'message': str(exc)})
+        message = f'Opened {len(opened)} CAD file(s).'
+        if failed:
+            message += ' Could not open: ' + ', '.join(os.path.basename(item['path']) for item in failed)
+        return {'status': 'error' if failed else 'success', 'message': message,
+                'opened': opened, 'failed': failed}
+
     def open_path(self, path):
         """Opens a path in the file explorer."""
         try:

@@ -15307,3 +15307,86 @@ button.page-crumb:hover {
   border: 1px dashed var(--glass-border);
   border-radius: var(--radius);
 }
+/* Notes reuse the live application header above a contextual toolbar. */
+#pageView > .app-header {
+  position: relative;
+  flex: 0 0 auto;
+  margin-right: 0;
+  box-shadow: none;
+  z-index: 3;
+}
+#pageView .page-view-topbar {
+  min-height: 64px;
+  height: auto;
+  box-sizing: border-box;
+  padding: 12px 24px;
+  gap: 18px;
+  position: relative;
+  z-index: 2;
+  flex-wrap: wrap;
+  background: var(--header-bg, var(--bg-secondary));
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+#pageView .page-view-back { width: 38px; height: 38px; padding: 0; justify-content: center; border-radius: 6px; flex-shrink: 0; }
+#pageView .page-view-back span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+#pageView .page-breadcrumb { gap: 8px; flex: 1 1 280px; }
+#pageView .page-view-spacer { display: none; }
+#pageView .page-crumb { font-size: 12px; }
+#pageView .page-find-input-wrap { width: 260px; max-width: 30vw; }
+#pageView #pageFindInput { height: 36px; padding-right: 60px; border-radius: 6px; }
+.page-find-shortcut { position: absolute; right: 9px; top: 50%; transform: translateY(-50%); border: 1px solid var(--glass-border); border-radius: 3px; padding: 1px 4px; color: var(--text-secondary); font-family: inherit; font-size: 11px; line-height: 1.4; pointer-events: none; }
+#pageFind:not(.has-query) .page-find-count,
+#pageFind:not(.has-query) #pageFindPrevBtn,
+#pageFind:not(.has-query) #pageFindNextBtn { display: none; }
+#pageFind.has-query .page-find-shortcut { display: none; }
+#pageView .page-save-status { min-width: 0; font-size: 12px; white-space: nowrap; }
+#pageView .page-save-status:empty { display: none; }
+#pageView .page-save-status.is-saved::before { content: "✓"; color: var(--accent); margin-right: 7px; }
+#pageView .page-view-publish { height: 36px; padding-inline: 14px; border-radius: 6px; }
+.page-actions-menu { position: relative; flex-shrink: 0; }
+.page-actions-menu > summary { list-style: none; display: grid; place-items: center; width: 36px; height: 36px; box-sizing: border-box; border: 1px solid var(--glass-border); border-radius: 6px; background: var(--surface); color: var(--text); cursor: pointer; font-size: 22px; line-height: 1; }
+.page-actions-menu > summary::-webkit-details-marker { display: none; }
+.page-actions-menu > summary:hover { background: var(--surface-hover); }
+.page-actions-menu > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.page-actions-panel { position: absolute; top: calc(100% + 8px); right: 0; min-width: 185px; padding: 6px; border: 1px solid var(--glass-border); border-radius: 8px; background: var(--menu-bg, var(--bg-secondary)); box-shadow: var(--shadow-lg); }
+#pageView .page-actions-panel button { display: flex; width: 100%; padding: 10px 12px; border: 0; border-radius: 4px; background: transparent; color: var(--text); font: inherit; font-size: 13px; cursor: pointer; text-align: left; }
+#pageView .page-actions-panel button:hover { background: var(--surface-hover); }
+#pageView .page-actions-panel #pageDeleteProjectBtn { color: var(--danger); }
+#pageView .notes-sidebar { height: calc(100dvh - var(--header-height) - var(--notes-toolbar-height, 64px) - 54px); }
+@media (max-width: 900px) {
+  #pageView .page-view-topbar { gap: 10px; padding: 10px 16px; }
+  #pageView .page-breadcrumb { flex-basis: calc(100% - 58px); }
+  #pageView .page-find { margin-right: auto; }
+  #pageView .page-find-input-wrap { width: 220px; max-width: none; }
+}
+@media (max-width: 680px) {
+  #pageView .notes-sidebar { height: auto; }
+  #pageView .page-find-input-wrap { width: 170px; }
+  #pageView .page-save-status { display: none; }
+  #pageView .page-crumb { max-width: 160px; }
+  #pageView .page-find.has-query { flex-wrap: wrap; }
+}
+
+/* Canvas pages share the document navigation without mounting a text editor. */
+#pageCanvasRoot:has(#pageCanvasSidebarRoot:not(:empty)) {
+  display: grid;
+  grid-template-columns: 248px minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+}
+#pageCanvasRoot[hidden], #pageFind[hidden], #pagePublishPdfBtn[hidden],
+#pageView .page-view-scroll[hidden] { display: none; }
+#pageCanvasSidebarRoot { grid-column: 1; grid-row: 1 / 3; min-height: 0; overflow: auto; }
+#pageCanvasSidebarRoot:empty { display: none; }
+#pageCanvasSidebarRoot .notes-sidebar { position: static; height: 100%; min-height: 100%; box-sizing: border-box; }
+#pageCanvasRoot:has(#pageCanvasSidebarRoot:not(:empty)) > .page-canvas-toolbar,
+#pageCanvasRoot:has(#pageCanvasSidebarRoot:not(:empty)) > .page-canvas-viewport { grid-column: 2; min-width: 0; }
+@media (max-width: 1000px) {
+  #pageCanvasRoot:has(#pageCanvasSidebarRoot:not(:empty)) { grid-template-columns: 210px minmax(0, 1fr); }
+}
+@media (max-width: 680px) {
+  #pageCanvasRoot:has(#pageCanvasSidebarRoot:not(:empty)) { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr); }
+  #pageCanvasSidebarRoot { grid-column: 1; grid-row: 1; max-height: 180px; }
+  #pageCanvasSidebarRoot .notes-sidebar { max-height: none; }
+  #pageCanvasRoot:has(#pageCanvasSidebarRoot:not(:empty)) > .page-canvas-toolbar,
+  #pageCanvasRoot:has(#pageCanvasSidebarRoot:not(:empty)) > .page-canvas-viewport { grid-column: 1; }
+}

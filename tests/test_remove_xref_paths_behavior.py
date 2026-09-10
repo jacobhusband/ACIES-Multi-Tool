@@ -293,7 +293,7 @@ class RemoveXrefPathsBehaviorTests(unittest.TestCase):
         self.assertIn("Verified clean on reopen:", text)
         self.assertIn("AUDIT error(s) on reopen.", text)
 
-    def test_script_uses_direct_dwg_only_manual_selection(self):
+    def test_script_offers_zip_entries_in_manual_selection(self):
         text = SCRIPT_PATH.read_text(encoding="utf-8")
 
         self.assertIn('function Show-DwgFileDialog {', text)
@@ -301,10 +301,30 @@ class RemoveXrefPathsBehaviorTests(unittest.TestCase):
         self.assertIn('function Read-SourceManifest {', text)
         self.assertIn('function Resolve-SourceItemToWorkingSource {', text)
         self.assertIn('Write-Host "PROGRESS: Opening DWG file picker..."', text)
-        self.assertIn('$dlg.Filter = "DWG files (*.dwg)|*.dwg"', text)
-        self.assertNotIn("Select ZIP or DWG source file(s)", text)
+        self.assertIn('DWG files and ZIP archives (*.dwg;*.zip)|*.dwg;*.zip', text)
+        self.assertIn('Show-ZipDwgDialog -ZipPath $_', text)
+        self.assertIn('$list.CheckedItems', text)
+        self.assertIn("Kind = 'zipEntry'", text)
         self.assertNotIn("ZIP source selected. Extracting archive", text)
         self.assertNotIn('"{0}_Prepared" -f $zipBaseName', text)
+
+    def test_zip_traversal_does_not_replace_existing_background(self):
+        with tempfile.TemporaryDirectory(prefix="acies-xref-unsafe-zip-") as temporary:
+            root = Path(temporary)
+            archive = root / 'bad.zip'
+            with zipfile.ZipFile(archive, 'w') as bundle:
+                bundle.writestr('A01-01.dwg', 'selected')
+                bundle.writestr('../escape.dwg', 'unsafe')
+            target = root / 'Xrefs/A01-01 (E).dwg'
+            target.parent.mkdir()
+            target.write_text('existing')
+            manifest = root / 'manifest.json'
+            manifest.write_text(json.dumps([{'kind': 'zipEntry', 'zipPath': str(archive),
+                'entryName': 'A01-01.dwg', 'projectRoot': str(root)}]))
+            result, output = self._run_script_with_manifest(manifest)
+            self.assertIn('Unsafe ZIP entry', output)
+            self.assertEqual('existing', target.read_text())
+            self.assertFalse((root / 'escape.dwg').exists())
 
 
 if __name__ == "__main__":

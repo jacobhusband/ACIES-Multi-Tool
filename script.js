@@ -12598,6 +12598,7 @@ let settingsAutocadControlsPopulated = false;
 let settingsAutocadPathExplicitlyChanged = false;
 
 async function populateSettingsModal() {
+  renderHotkeySettings();
   document.getElementById("settings_userName").value =
     userSettings.userName || "";
   document.getElementById("settings_apiKey").value = userSettings.apiKey || "";
@@ -13706,6 +13707,7 @@ function normalizeDeliverable(deliverable = {}) {
       ? deliverable.tasks.map(normalizeTask)
       : [],
     tasksMigratedToNotes: deliverable.tasksMigratedToNotes === true,
+    attachmentsMigratedToProjectNotes: deliverable.attachmentsMigratedToProjectNotes === true,
     statuses: Array.isArray(deliverable.statuses)
       ? [...deliverable.statuses]
       : [],
@@ -14100,6 +14102,37 @@ function migrateDeliverablePagesToProjectSubpages(out) {
   });
 }
 
+function migrateDeliverableAttachmentsToProjectNotes(out) {
+  for (const deliverable of out.deliverables || []) {
+    if (deliverable.attachmentsMigratedToProjectNotes) continue;
+    const attachments = normalizeAttachments(deliverable.attachments, {
+      legacyLinks: deliverable.links,
+      legacyEmailRefs: deliverable.emailRefs,
+      legacyEmailRef: deliverable.emailRef,
+    });
+    if (attachments.length) {
+      const blocks = attachments.map((attachment) => {
+        if (attachment.type === "email") {
+          const fields = { raw: "raw", url: "url", label: "label", source: "source", messageId: "message-id", internetMessageId: "internet-id", savedAt: "saved-at" };
+          const attrs = Object.entries(fields).map(([key, suffix]) =>
+            `data-email-${suffix}="${escapeHtml(attachment.emailRef[key] || "")}"`).join(" ");
+          return `<p><span class="page-email" ${attrs}>${escapeHtml(attachment.description)}</span></p>`;
+        }
+        return `<p><span class="page-attachment" data-attachment-type="${escapeHtml(attachment.type)}" data-attachment-target="${escapeHtml(attachment.target)}">${escapeHtml(attachment.description)}</span></p>`;
+      }).join("");
+      const title = `${deliverable.name || "Deliverable"} — files and links`;
+      if (out.page.kind === "canvas") {
+        out.subpages.push(createProjectSubpage({ title, html: blocks, order: out.subpages.length }));
+      } else {
+        out.page.html += `<h2>${escapeHtml(title)}</h2>${blocks}`;
+        out.page.updatedAt = new Date().toISOString();
+      }
+    }
+    // Keep legacy data for backward compatibility, but present it only in notes.
+    deliverable.attachmentsMigratedToProjectNotes = true;
+  }
+}
+
 function normalizeProject(project) {
   if (!project) return null;
   if (!Array.isArray(project.deliverables) && isLegacyProject(project)) {
@@ -14146,6 +14179,7 @@ function normalizeProject(project) {
   migrateProjectNotesToPage(out);
   migrateCoordinationItemsToPage(out);
   migrateDeliverablePagesToProjectSubpages(out);
+  migrateDeliverableAttachmentsToProjectNotes(out);
   return out;
 }
 
@@ -20499,7 +20533,6 @@ async function handleDeliverableActionsDrop(context, event) {
 
 function createDeliverableActionsDropdown(deliverable, project, card) {
   ensureDeliverableActionsGlobalHandlers();
-  ensureAttachmentPanel();
 
   const dropdown = el("div", { className: "deliverable-actions-dropdown" });
   const trigger = el("button", {
@@ -20514,29 +20547,6 @@ function createDeliverableActionsDropdown(deliverable, project, card) {
   trigger.appendChild(el("span", { textContent: "More" }));
 
   const menu = el("div", { className: "deliverable-actions-menu", role: "menu" });
-
-  const attachmentDescriptor = {
-    kind: "deliverable",
-    owner: deliverable,
-    deliverable,
-    project,
-    scope: "projects-tab",
-  };
-  const getAttachments = () => getAttachmentOwnerAttachments(attachmentDescriptor);
-  const setAttachments = async (nextAttachments) => {
-    const normalized = await setAttachmentOwnerAttachments(attachmentDescriptor, nextAttachments, {
-      persistNow: true,
-      onChange: () => updateDeliverableWorkItemUi(card, deliverable),
-    });
-    updateDeliverableActionsTriggerState(trigger, normalized);
-    return normalized;
-  };
-  const attachmentContext = {
-    ...attachmentDescriptor,
-    trigger,
-    getAttachments,
-    setAttachments,
-  };
 
   const pinItem = buildDeliverableActionsItem({
     label: isDeliverablePinned(deliverable) ? "Unpin deliverable" : "Pin deliverable",
@@ -20616,29 +20626,6 @@ function createDeliverableActionsDropdown(deliverable, project, card) {
     setDeliverableActionsDropdownState(dropdown, isOpen);
   });
 
-  trigger.addEventListener("dragover", (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    trigger.classList.add("is-dragover");
-    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
-  });
-  trigger.addEventListener("dragleave", (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    trigger.classList.remove("is-dragover");
-  });
-  trigger.addEventListener("drop", async (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    trigger.classList.remove("is-dragover");
-    try {
-      await handleDeliverableActionsDrop(attachmentContext, e);
-    } catch (error) {
-      console.warn("Failed to process dropped files:", error);
-      toast(error?.message || "Unable to process dropped files.");
-    }
-  });
-
   trigger.draggable = false;
   trigger.addEventListener("dragstart", (e) => {
     e.preventDefault();
@@ -20646,7 +20633,6 @@ function createDeliverableActionsDropdown(deliverable, project, card) {
   });
 
   dropdown.append(trigger, menu);
-  updateDeliverableActionsTriggerState(trigger, getAttachments());
   return dropdown;
 }
 
@@ -24768,24 +24754,7 @@ function addDeliverableCard(deliverable, options = {}) {
   card.querySelector(".d-due").value = deliverable.due || "";
   card.querySelector(".d-hard-due").value = deliverable.hardDue || "";
 
-  const attachmentControlHost = card.querySelector(".deliverable-attachment-control");
-  if (attachmentControlHost) {
-    attachmentControlHost.replaceChildren(
-      createAttachmentControl(
-        {
-          kind: "deliverable",
-          owner: deliverable,
-          deliverable,
-          project: projectDraft,
-          modalCard: card,
-          scope: "edit-modal",
-        },
-        {
-          persistNow: false,
-        }
-      )
-    );
-  }
+
 
   const taskList = card.querySelector(".deliverable-task-list");
   card._taskItems = (deliverable.tasks || []).map(normalizeTask);
@@ -25480,6 +25449,7 @@ function readForm() {
       noteItems,
       tasks,
       tasksMigratedToNotes: existingDeliverable?.tasksMigratedToNotes === true,
+      attachmentsMigratedToProjectNotes: existingDeliverable?.attachmentsMigratedToProjectNotes === true,
       statuses,
       attachments,
       pinned: !!existingDeliverable?.pinned || card.dataset.pinned === "true",
@@ -33994,7 +33964,7 @@ function generateWorkflowId() {
 }
 
 async function ensureWorkflowToolDescriptors() {
-  if (Array.isArray(workflowToolDescriptors)) return workflowToolDescriptors;
+  if (Array.isArray(workflowToolDescriptors) && workflowToolDescriptors.length) return workflowToolDescriptors;
   try {
     const result = await window.pywebview.api.get_workflow_tools();
     workflowToolDescriptors = Array.isArray(result?.tools) ? result.tools : [];
@@ -34022,6 +33992,80 @@ function getWorkflowDisplayName(workflow) {
   return name || "Unnamed workflow";
 }
 
+function getCommandHotkeyBindings() {
+  const saved = userSettings.commandHotkeys;
+  if (saved && typeof saved === "object" && !Array.isArray(saved)) return saved;
+  return { "1": "tool:toolCleanDrawings", "2": "tool:toolPublishDwgs", "3": "tool:toolCreatePlanCheckTemplate" };
+}
+
+function getCommandHotkeyOptions() {
+  return [
+    ...getDeliverableToolMenuEntries().map((entry) => ({
+      value: `tool:${entry.id}`,
+      label: entry.menuLabel || entry.label,
+      scope: entry.id === "toolOpenCadFiles" ? "project" : undefined,
+      run: (target) => launchSharedToolCard(entry.id, buildProjectsTabToolLaunchContext(target.project, target.deliverable)),
+    })),
+    ...getUserWorkflows().map((workflow) => ({
+      value: `workflow:${workflow.id}`,
+      label: `Workflow: ${getWorkflowDisplayName(workflow)}`,
+      run: (target) => runWorkflow(workflow.id, buildProjectsTabToolLaunchContext(target.project, target.deliverable)),
+    })),
+    ...DELIVERABLE_QUICK_ACCESS_ACTIONS.map((action) => ({
+      value: `quick:${action.id}`,
+      label: getDeliverableQuickAccessActionLabel(action),
+      run: (target) => action.run(target.project, target.deliverable),
+    })),
+  ];
+}
+
+function getCommandHotkeyEntries() {
+  const options = getCommandHotkeyOptions();
+  return Object.entries(getCommandHotkeyBindings())
+    .filter(([number]) => /^[1-9]$/.test(number))
+    .sort(([a], [b]) => Number(a) - Number(b))
+    .flatMap(([number, value]) => {
+      const option = options.find((candidate) => candidate.value === value);
+      return option ? [{ ...option, number }] : [];
+    });
+}
+
+function renderHotkeySettings() {
+  const host = document.getElementById("settings_hotkeys");
+  if (!host) return;
+  host.replaceChildren();
+  const bindings = getCommandHotkeyBindings();
+  const options = getCommandHotkeyOptions();
+  for (let number = 1; number <= 9; number++) {
+    const row = el("div", { className: "inline" });
+    const label = el("label", { className: "label", textContent: String(number) });
+    label.htmlFor = `settings_hotkey_${number}`;
+    const select = el("select", { id: label.htmlFor, "aria-label": `Hotkey ${number}` });
+    select.style.flex = "1";
+    select.appendChild(el("option", { value: "", textContent: "Unassigned" }));
+    options.forEach((option) => select.appendChild(el("option", { value: option.value, textContent: option.label })));
+    const value = bindings[number] || "";
+    if (value && !options.some((option) => option.value === value)) {
+      select.appendChild(el("option", { value, textContent: "Unavailable command — choose a replacement" }));
+    }
+    select.value = value;
+    const edit = el("button", { type: "button", className: "btn tiny", textContent: "Edit workflow" });
+    edit.hidden = !value.startsWith("workflow:");
+    edit.onclick = () => {
+      const workflow = getUserWorkflows().find((item) => `workflow:${item.id}` === select.value);
+      if (workflow) openWorkflowBuilder(workflow);
+    };
+    select.onchange = () => {
+      userSettings.commandHotkeys = { ...getCommandHotkeyBindings(), [number]: select.value };
+      edit.hidden = !select.value.startsWith("workflow:");
+      debouncedSaveUserSettings();
+      if (typeof industryCommandDock !== "undefined" && industryCommandDock) renderCommandDockItems();
+    };
+    row.append(label, select, edit);
+    host.appendChild(row);
+  }
+}
+
 function getWorkflowActivityLabel(workflow) {
   return `Workflow: ${getWorkflowDisplayName(workflow)}`;
 }
@@ -34029,6 +34073,8 @@ function getWorkflowActivityLabel(workflow) {
 
 
 function renderWorkflowCards() {
+  renderHotkeySettings();
+  if (typeof industryCommandDock !== "undefined" && industryCommandDock) renderCommandDockItems();
   const grid = document.getElementById("workflowsGrid");
   if (!grid) return;
   const workflows = getUserWorkflows();
@@ -34136,7 +34182,7 @@ function renderWorkflowCards() {
 function openWorkflowBuilder(workflow) {
   const dlg = document.getElementById("workflowBuilderDlg");
   if (!dlg) return;
-  ensureWorkflowToolDescriptors().then(() => {
+  return ensureWorkflowToolDescriptors().then(() => {
     const isEdit = !!workflow;
     workflowBuilderState = {
       id: isEdit ? workflow.id : generateWorkflowId(),
@@ -34156,6 +34202,9 @@ function openWorkflowBuilder(workflow) {
     populateWorkflowAddStepSelect();
     renderWorkflowBuilderSteps();
     hideWorkflowBuilderError();
+    if (!workflowToolDescriptors?.length) {
+      showWorkflowBuilderError("Workflow tools could not be loaded. Close this dialog and try again once the app is connected.");
+    }
     dlg.showModal();
   });
 }
@@ -34705,7 +34754,7 @@ function closeWorkflowPreFlight(result) {
   if (typeof state.resolve === "function") state.resolve(result);
 }
 
-async function runWorkflow(workflowId) {
+async function runWorkflow(workflowId, explicitLaunchContext = null) {
   const workflows = getUserWorkflows();
   const workflow = workflows.find((w) => w.id === workflowId);
   if (!workflow) return;
@@ -34716,7 +34765,7 @@ async function runWorkflow(workflowId) {
     console.warn("Workflow has unavailable tool descriptors:", missingToolIds);
     return;
   }
-  const launchContext = resolveCadLaunchContextForTool();
+  const launchContext = explicitLaunchContext || resolveCadLaunchContextForTool();
   const workflowTitle = getWorkflowDisplayName(workflow);
 
   let stepInputs = null;
@@ -34822,6 +34871,7 @@ function initWorkflowsUi() {
 }
 
 function initEventListeners() {
+  initWorkflowsUi();
   document.getElementById("search").addEventListener(
     "input",
     debounce(handleProjectSearchInput, 250)
@@ -39453,6 +39503,11 @@ function setProjectPagesEditorDocument(context) {
     onAttachEmailDrop: (event) => resolvePageEmailDropRef(event, buildPageEmailDropContext()),
     onPickEmail: () => requestPageEmailRef(buildPageEmailDropContext()),
     onOpenEmail: (attrs) => openPageEmailRef(attrs),
+    onOpenAttachment: (attrs) => openAttachmentEntry(attrs),
+    onPickAttachment: async () => {
+      const result = await window.pywebview.api.select_files({ allow_multiple: true, file_types: ["All files (*.*)"] });
+      return (result?.paths || []).map((target) => ({ type: "path", target, description: String(target).split(/[\\/]/).pop() || target }));
+    },
     onDeleteEmail: (attrs) => deletePageEmailRef(attrs),
     onGetPageFileInfo: (fileRef) => window.pywebview.api.get_page_file_info(fileRef),
     onOpenPageFile: (fileRef) => window.pywebview.api.open_page_file(fileRef),

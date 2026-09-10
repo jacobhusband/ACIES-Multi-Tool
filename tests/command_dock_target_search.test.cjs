@@ -47,6 +47,14 @@ const items = [
   { key: 'add-deliverable', label: 'Add Deliverable', search: 'add deliverable new create' },
 ];
 
+test('a number selects only its assigned hotkey; # still searches project numbers', () => {
+  const numbered = [...items, { key: 'hotkey:1', label: 'Publish', search: '1 Publish' },
+    { key: 'tool:other', label: 'Tool 1' }];
+  assert.deepEqual(runFilter('1', numbered), ['Publish']);
+  assert.deepEqual(runFilter('9', numbered), []);
+  assert.deepEqual(runFilter('#24-101', numbered), ['Harborview Clinic']);
+});
+
 test('an empty line browses targets and commands, skipping search-only entries', () => {
   assert.deepEqual(runFilter('', items), [
     'Harborview Clinic',

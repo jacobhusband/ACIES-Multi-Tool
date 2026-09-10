@@ -19,11 +19,7 @@ const INDUSTRY_STATUS_OPTIONS = Object.freeze([
   "Delivered",
 ]);
 
-const INDUSTRY_FREQUENT_TOOL_IDS = Object.freeze([
-  "toolCleanDrawings",
-  "toolPublishDwgs",
-  "toolCreatePlanCheckTemplate",
-]);
+
 
 
 // ---------------------------------------------------------------------------
@@ -293,7 +289,7 @@ function createRegisterActions(deliverable, project) {
     className: noteCount ? "has-count" : "",
     title: noteCount
       ? `${industryPlural(noteCount, "important note")} — open project notes`
-      : "No important notes — open project notes",
+      : "Open project notes",
     onClick: () => openProjectPage(project),
   });
   notes.prepend(createIcon("M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z", 15));
@@ -657,7 +653,7 @@ function renderDeliverablePlateCard(deliverable, project) {
       textContent: industryPlural(noteCount, "note"),
       title: noteCount
         ? `${industryPlural(noteCount, "important note")} — open project notes`
-        : "No important notes — open project notes",
+        : "Open project notes",
     });
     notes.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -982,7 +978,7 @@ function buildCommandDockGroups(deliverable, project) {
     {
       key: "notes",
       scope: "project",
-      label: "No important notes — open project notes",
+      label: "Open project notes",
       run: (target) => openProjectPage(target.project),
     },
     {
@@ -1011,16 +1007,6 @@ function buildCommandDockGroups(deliverable, project) {
       },
     },
     {
-      key: "attachments",
-      label: "Attachments",
-      run: (target) =>
-        openDeliverableAttachmentsFromDock(
-          target.deliverable,
-          target.project,
-          findDeliverableElement(target.deliverable) || industryCommandDock.context
-        ),
-    },
-    {
       key: "edit-project",
       scope: "project",
       label: "Edit project",
@@ -1038,33 +1024,21 @@ function buildCommandDockGroups(deliverable, project) {
   ];
 
   const toolEntries = getDeliverableToolMenuEntries();
-  const frequent = [];
-  INDUSTRY_FREQUENT_TOOL_IDS.forEach((toolId, index) => {
-    const entry = toolEntries.find((candidate) => candidate.id === toolId);
-    if (!entry) return;
-    frequent.push({
-      key: `tool:${entry.id}`,
-      label: entry.menuLabel || entry.label,
-      hintKey: `Ctrl ${index + 1}`,
-      shortcut: String(index + 1),
-      run: (target) =>
-        launchSharedToolCard(
-          entry.id,
-          buildProjectsTabToolLaunchContext(target.project, target.deliverable)
-        ),
-    });
-  });
-  DELIVERABLE_QUICK_ACCESS_ACTIONS.forEach((action, index) => {
-    frequent.push({
-      key: `quick:${action.id}`,
-      label: getDeliverableQuickAccessActionLabel(action),
-      hintKey: index === 0 ? "Ctrl ⏎" : "",
-      shortcut: index === 0 ? "Enter" : "",
-      run: (target) => void action.run(target.project, target.deliverable),
-    });
-  });
+  const hotkeys = getCommandHotkeyEntries().map((entry) => ({
+    ...entry,
+    key: `hotkey:${entry.number}`,
+    search: `${entry.number} ${entry.label}`,
+    hintKey: `${entry.number} ↵`,
+    shortcut: entry.number,
+  }));
+  const quickActions = DELIVERABLE_QUICK_ACCESS_ACTIONS.map((action, index) => ({
+    key: `quick:${action.id}`,
+    label: getDeliverableQuickAccessActionLabel(action),
+    hintKey: index === 0 ? "Ctrl ⏎" : "",
+    shortcut: index === 0 ? "Enter" : "",
+    run: (target) => action.run(target.project, target.deliverable),
+  }));
   const allTools = toolEntries
-    .filter((entry) => !INDUSTRY_FREQUENT_TOOL_IDS.includes(entry.id))
     .map((entry) => ({
       key: `tool:${entry.id}`,
       label: entry.menuLabel || entry.label,
@@ -1089,7 +1063,8 @@ function buildCommandDockGroups(deliverable, project) {
     { key: "status", column: "left", label: "Status", items: statusItems },
     { key: "project", column: "left", label: "Project", items: deliverableItems.filter(item => item.scope === "project") },
     { key: "deliverable", column: "left", label: "Deliverable", items: deliverableItems.filter(item => item.scope !== "project") },
-    { key: "tools-frequent", column: "right", label: "Tools · frequent", items: frequent },
+    { key: "hotkeys", column: "right", label: "Hotkeys", items: hotkeys, empty: "Assign numbers in Settings → Hotkeys." },
+    { key: "quick-access", column: "right", label: "Quick access", items: quickActions },
     { key: "tools-all", column: "right", label: "Tools · all", items: allTools, tags: true },
   ];
 }
@@ -1102,28 +1077,6 @@ function findDeliverableElement(deliverable) {
     document.querySelector(`#projectsCardView ${selector}`) ||
     document.querySelector(`#tbody ${selector}`)
   );
-}
-
-function openDeliverableAttachmentsFromDock(deliverable, project, anchor) {
-  ensureAttachmentPanel();
-  const descriptor = {
-    kind: "deliverable",
-    owner: deliverable,
-    deliverable,
-    project,
-    scope: "projects-tab",
-  };
-  const context = {
-    ...descriptor,
-    trigger: anchor || document.body,
-    getAttachments: () => getAttachmentOwnerAttachments(descriptor),
-    setAttachments: async (next) =>
-      setAttachmentOwnerAttachments(descriptor, next, {
-        persistNow: true,
-        onChange: () => renderProjectsPreservingExpandedDeliverables(),
-      }),
-  };
-  openAttachmentPanel(context);
 }
 
 function renderCommandDockItems() {
@@ -1408,6 +1361,7 @@ function filterCommandDock() {
       return tokens.every((token) => haystack.includes(token));
     }
     if (targetMode) return false;
+    if (tokens.length === 1 && /^\d+$/.test(tokens[0])) return item.key === `hotkey:${tokens[0]}`;
     if (!tokens.length) return !item.searchOnly;
     return tokens.every((token) => haystack.includes(token));
   };
@@ -1450,7 +1404,7 @@ function focusCommandDockGroup(focus) {
     index = dock.items.findIndex((item) => item.kind === "status" && item.checked);
     if (index < 0) index = dock.items.findIndex((item) => item.kind === "status");
   } else if (focus === "tools") {
-    index = dock.items.findIndex((item) => item.group === "tools-frequent");
+    index = dock.items.findIndex((item) => item.group === "hotkeys" || item.group === "tools-all");
   }
   if (index >= 0) setCommandDockActive(index);
 }

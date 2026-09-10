@@ -5,7 +5,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-class WorkflowUiRemovalTests(unittest.TestCase):
+class WorkflowHotkeyUiTests(unittest.TestCase):
     def test_tools_tab_no_longer_exposes_workflow_ui(self):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         script = (ROOT / "script.js").read_text(encoding="utf-8")
@@ -14,8 +14,6 @@ class WorkflowUiRemovalTests(unittest.TestCase):
         for removed in (
             'id="workflowsSection"',
             'id="workflowsGrid"',
-            'id="workflowBuilderDlg"',
-            'id="workflowPreFlightDlg"',
             'id="settings_workflowCad_manageLayersElectricalTopLevel"',
             'id="settings_workflowCad_cleanXrefsElectricalXrefsToNewestArch"',
             'id="settings_workflowCad_cleanXrefsSearchZipArchives"',
@@ -23,10 +21,11 @@ class WorkflowUiRemovalTests(unittest.TestCase):
         ):
             self.assertNotIn(removed, html)
 
-        self.assertNotIn("initWorkflowsUi();", script)
+        self.assertIn('id="workflowBuilderDlg"', html)
+        self.assertIn('id="workflowPreFlightDlg"', html)
+        self.assertIn("initWorkflowsUi();", script)
         self.assertNotIn(".tool-card--workflow", styles)
-        self.assertNotIn(".workflow-builder-dialog", styles)
-        self.assertNotIn(".workflow-preflight-sections", styles)
+        self.assertIn(".workflow-builder-dialog", styles)
 
     def test_legacy_workflow_defaults_still_normalize_saved_settings(self):
         script = (ROOT / "script.js").read_text(encoding="utf-8")
@@ -34,7 +33,7 @@ class WorkflowUiRemovalTests(unittest.TestCase):
         for expected in (
             "const DEFAULT_WORKFLOW_CAD_DEFAULTS = {",
             "function normalizeWorkflowCadDefaults(",
-            "workflowCadDefaults: normalizeWorkflowCadDefaults(source.workflowCadDefaults)",
+            "userSettings.workflowCadDefaults = normalizeWorkflowCadDefaults(",
         ):
             self.assertIn(expected, script)
 

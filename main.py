@@ -490,7 +490,7 @@ ARCH_SET_FOLDER_NAME = "Arch"
 ISSUE_DATE_MIN_YEAR = 1990
 ISSUE_DATE_MAX_YEAR = 2100
 
-APP_UPDATE_REPO = "jacobhusband/ACIES-Multi-Tool"
+APP_UPDATE_REPO = "jacobhusband/ProjectManagement"
 APP_INSTALLER_NAME = "acies-scheduler-setup.exe"
 GITHUB_API_BASE = "https://api.github.com"
 KNOWN_PLUGIN_BUNDLES = [

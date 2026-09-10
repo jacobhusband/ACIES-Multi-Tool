@@ -197,6 +197,28 @@ const PageImage = Image.extend({
   },
 });
 
+const PageAttachment = Node.create({
+  name: "pageAttachment",
+  group: "inline",
+  inline: true,
+  atom: true,
+  addAttributes() {
+    return {
+      type: { default: "path", parseHTML: (element) => element.getAttribute("data-attachment-type") || "path" },
+      target: { default: "", parseHTML: (element) => element.getAttribute("data-attachment-target") || "" },
+      description: { default: "Open file", parseHTML: (element) => element.textContent || "Open file" },
+    };
+  },
+  parseHTML() { return [{ tag: "span.page-attachment[data-attachment-target]" }]; },
+  renderHTML({ HTMLAttributes }) {
+    return ["span", {
+      class: "page-attachment", contenteditable: "false", role: "button", tabindex: "0",
+      "data-attachment-type": HTMLAttributes.type,
+      "data-attachment-target": HTMLAttributes.target,
+    }, HTMLAttributes.description];
+  },
+});
+
 const PageLink = Node.create({
   name: "pageLink",
   group: "inline",
@@ -649,6 +671,7 @@ const SLASH_COMMANDS = [
   { id: "image", label: "Image", shortcut: "Img", group: "media" },
   { id: "excel", label: "Excel workbook", shortcut: "XLSX", group: "media" },
   { id: "email", label: "Email", shortcut: "@", group: "media" },
+  { id: "file", label: "File link", shortcut: "FILE", group: "media" },
   { id: "page", label: "Page", shortcut: "+", group: "page", projectOnly: true },
   { id: "canvaspage", label: "Canvas page", shortcut: "<>", group: "page", projectOnly: true },
   { id: "pageref", label: "Link to page", shortcut: "[[", group: "page" },
@@ -819,6 +842,7 @@ function PageEditor({ context, options }) {
       PageLink,
       PageWorkbook,
       PageEmail,
+      PageAttachment,
     ],
     content: context.html || "",
     editorProps: {
@@ -1224,6 +1248,14 @@ function PageEditor({ context, options }) {
     } else if (command.id === "email") {
       chain.run();
       void attachEmailFromPicker();
+    } else if (command.id === "file") {
+      chain.run();
+      const pos = editor.state.selection.from;
+      void context.onPickAttachment?.().then((attachments) => {
+        if (!attachments?.length || editor.isDestroyed) return;
+        editor.chain().focus().insertContentAt(Math.min(pos, editor.state.doc.content.size),
+          attachments.flatMap((attrs) => [{ type: "pageAttachment", attrs }, { type: "text", text: " " }])).run();
+      }).catch((error) => context.onToast?.(error?.message || "Could not add file link."));
     } else if (command.id === "page") {
       chain.run();
       context.onCreateSubpage?.();
@@ -1588,6 +1620,16 @@ function PageEditor({ context, options }) {
       context.onOpenGlobalPage?.(pageAnchor.getAttribute("data-page-id"));
       return;
     }
+    const attachment = event.target.closest?.(".page-attachment[data-attachment-target]");
+    if (attachment) {
+      event.preventDefault();
+      context.onOpenAttachment?.({
+        type: attachment.getAttribute("data-attachment-type"),
+        target: attachment.getAttribute("data-attachment-target"),
+        description: attachment.textContent,
+      });
+      return;
+    }
     const link = event.target.closest?.("a[href]");
     if (link && (event.ctrlKey || event.metaKey)) {
       event.preventDefault();
@@ -1596,7 +1638,9 @@ function PageEditor({ context, options }) {
   }
 
   return (
-    <div className="project-pages-editor" onClick={handleEditorClick}>
+    <div className="project-pages-editor" onClick={handleEditorClick} onKeyDown={(event) => {
+      if ((event.key === "Enter" || event.key === " ") && event.target.matches?.(".page-attachment")) handleEditorClick(event);
+    }}>
       <NotesSidebar context={context} editor={editor} />
       <div className="notes-document">
       <div className="notes-eyebrow">{context.kind === "global" ? "Workspace notes" : "Project notes"}</div>

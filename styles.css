@@ -15390,3 +15390,22 @@ button.page-crumb:hover {
   #pageCanvasRoot:has(#pageCanvasSidebarRoot:not(:empty)) > .page-canvas-toolbar,
   #pageCanvasRoot:has(#pageCanvasSidebarRoot:not(:empty)) > .page-canvas-viewport { grid-column: 1; }
 }
+.workflow-builder-dialog { width: min(720px, 92vw); }
+#settings_hotkeys [hidden], .workflow-builder-dialog [hidden] { display: none !important; }
+.workflow-builder-dialog select { flex: 1; min-width: 0; }
+.workflow-step, .workflow-preflight-step {
+  padding: 14px;
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+}
+.workflow-step-head, .workflow-step-actions, .workflow-preflight-step-head,
+.workflow-preflight-input-row { display: flex; align-items: center; gap: 10px; }
+.workflow-step-head { justify-content: space-between; }
+.workflow-step-title, .workflow-preflight-step-title { font-weight: 600; }
+.workflow-step-params, .workflow-preflight-input { margin-top: 12px; }
+.workflow-step-param { margin-top: 8px; }
+.workflow-step-param-label { display: block; margin-bottom: 5px; }
+.workflow-step-actions button { cursor: pointer; }
+.workflow-preflight-input-value { flex: 1; min-width: 0; overflow-wrap: anywhere; white-space: pre-line; }
+.workflow-preflight-input-help { font-size: 12px; color: var(--text-secondary); }
+#workflowBuilderError, #workflowPreFlightError { color: var(--danger, #dc2626); }

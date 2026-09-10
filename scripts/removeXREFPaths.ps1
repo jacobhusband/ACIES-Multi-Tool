@@ -9,6 +9,7 @@ param(
   [int]$Purge = 1,
   [int]$Audit = 1,
   [int]$HatchColor = 1,
+  [int]$BindExplode = 1,
   [int]$SkipAcad = 0
 )
 
@@ -60,6 +61,7 @@ if ([System.Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') {
   if ($DisciplineShort) { $argsList += @("-DisciplineShort", "`"$DisciplineShort`"") }
   if ($FilesListPath) { $argsList += @("-FilesListPath", "`"$FilesListPath`"") }
   if ($SourceManifestPath) { $argsList += @("-SourceManifestPath", "`"$SourceManifestPath`"") }
+  $argsList += @('-BindExplode', $BindExplode)
   if ($DefaultDirectory) { $argsList += @("-DefaultDirectory", "`"$DefaultDirectory`"") }
   if ($PSBoundParameters.ContainsKey('StripXrefs')) { $argsList += @("-StripXrefs", $StripXrefs) }
   if ($PSBoundParameters.ContainsKey('SetByLayer')) { $argsList += @("-SetByLayer", $SetByLayer) }
@@ -67,7 +69,7 @@ if ([System.Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') {
   if ($PSBoundParameters.ContainsKey('Audit')) { $argsList += @("-Audit", $Audit) }
   if ($PSBoundParameters.ContainsKey('HatchColor')) { $argsList += @("-HatchColor", $HatchColor) }
   if ($PSBoundParameters.ContainsKey('SkipAcad')) { $argsList += @("-SkipAcad", $SkipAcad) }
-  $child = Start-Process -FilePath $ps -ArgumentList $argsList -Wait -PassThru
+  $child = Start-Process -FilePath $ps -ArgumentList $argsList -WindowStyle Hidden -Wait -PassThru
   exit $child.ExitCode
 }
 
@@ -181,8 +183,8 @@ function Show-DwgFileDialog {
   param([string]$InitialDirectory = "")
 
   $dlg = New-Object System.Windows.Forms.OpenFileDialog
-  $dlg.Title = "Select DWG file(s)"
-  $dlg.Filter = "DWG files (*.dwg)|*.dwg"
+  $dlg.Title = "Select DWG files or ZIP archives"
+  $dlg.Filter = "DWG files and ZIP archives (*.dwg;*.zip)|*.dwg;*.zip|DWG files (*.dwg)|*.dwg|ZIP archives (*.zip)|*.zip"
   $dlg.Multiselect = $true
   $dlg.CheckFileExists = $true
   $dlg.CheckPathExists = $true
@@ -196,6 +198,85 @@ function Show-DwgFileDialog {
     return [string[]]$dlg.FileNames
   }
   return $null
+}
+
+function Show-ZipDwgDialog {
+  param([Parameter(Mandatory = $true)][string]$ZipPath)
+
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  $zip = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
+  try {
+    $entryNames = @($zip.Entries | Where-Object {
+      $_.Name -and ([IO.Path]::GetExtension($_.FullName) -ieq '.dwg')
+    } | ForEach-Object { $_.FullName } | Sort-Object)
+  }
+  finally { $zip.Dispose() }
+
+  if ($entryNames.Count -eq 0) {
+    [System.Windows.Forms.MessageBox]::Show("No DWG files were found in $ZipPath", "Select DWGs from ZIP") | Out-Null
+    return @()
+  }
+
+  $form = New-Object System.Windows.Forms.Form
+  try {
+    $form.Text = "Select DWGs from $([IO.Path]::GetFileName($ZipPath))"
+    $form.Size = New-Object System.Drawing.Size(800, 520)
+    $form.MinimumSize = New-Object System.Drawing.Size(600, 350)
+    $form.StartPosition = 'CenterScreen'
+    $label = New-Object System.Windows.Forms.Label
+    $label.Text = 'Check the drawings you want to prepare for XREF. Paths are shown as stored in the ZIP.'
+    $label.Dock = 'Top'
+    $label.Height = 35
+    $list = New-Object System.Windows.Forms.CheckedListBox
+    $list.Dock = 'Fill'
+    $list.CheckOnClick = $true
+    $list.HorizontalScrollbar = $true
+    foreach ($entryName in $entryNames) { [void]$list.Items.Add($entryName) }
+    $buttons = New-Object System.Windows.Forms.FlowLayoutPanel
+    $buttons.Dock = 'Bottom'
+    $buttons.Height = 45
+    $buttons.FlowDirection = 'RightToLeft'
+    $cancel = New-Object System.Windows.Forms.Button
+    $cancel.Text = 'Cancel'
+    $cancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+    $ok = New-Object System.Windows.Forms.Button
+    $ok.Text = 'Use selected'
+    $ok.AutoSize = $true
+    $ok.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $buttons.Controls.Add($cancel)
+    $buttons.Controls.Add($ok)
+    $form.Controls.Add($list)
+    $form.Controls.Add($label)
+    $form.Controls.Add($buttons)
+    $form.AcceptButton = $ok
+    $form.CancelButton = $cancel
+    if ($form.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return @() }
+    $selected = @($list.CheckedItems | ForEach-Object { [string]$_ })
+    if ($selected.Count -eq 0) { return @() }
+
+    $projectRoot = Get-ProjectRootFromArchPath -Path $ZipPath
+    if (-not $projectRoot) {
+      $folder = New-Object System.Windows.Forms.FolderBrowserDialog
+      try {
+        $folder.Description = 'Select the project root folder. Prepared drawings will go into its Xrefs subfolder.'
+        $folder.SelectedPath = Split-Path -Parent $ZipPath
+        if ($folder.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return @() }
+        $projectRoot = $folder.SelectedPath
+      }
+      finally { $folder.Dispose() }
+    }
+    return @($selected | ForEach-Object {
+      [pscustomobject]@{
+        Kind = 'zipEntry'
+        Path = ''
+        ZipPath = [IO.Path]::GetFullPath($ZipPath)
+        EntryName = $_ -replace '\\', '/'
+        ProjectRoot = $projectRoot
+        DisplayPath = "${ZipPath}::$_"
+      }
+    })
+  }
+  finally { $form.Dispose() }
 }
 
 function New-FileSourceItem {
@@ -303,16 +384,43 @@ function Resolve-SourceItemToWorkingSource {
       if (-not $entry) {
         throw "ZIP entry not found: $($SourceItem.EntryName)"
       }
-      $extractDir = Join-Path $TempRoot ([guid]::NewGuid().ToString("N"))
-      New-Item -Path $extractDir -ItemType Directory -Force | Out-Null
-      $extractPath = Join-Path $extractDir ([IO.Path]::GetFileName($SourceItem.EntryName))
-      [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $extractPath, $true)
+      $zipKey = [IO.Path]::GetFullPath($SourceItem.ZipPath)
+      $extractDir = $script:xrefExtractedArchives[$zipKey]
+      if (-not $extractDir) {
+        $extractDir = Join-Path $TempRoot ([guid]::NewGuid().ToString("N"))
+        New-Item -Path $extractDir -ItemType Directory -Force | Out-Null
+      # Keep the dependency tree, not just the selected DWG. Validate every path
+      # before writing so an archive cannot escape the temporary workspace.
+      $destinations = @{}
+      $totalBytes = [long]0
+      foreach ($member in $zip.Entries) {
+        $relative = $member.FullName -replace '/', '\'
+        if ([IO.Path]::IsPathRooted($relative) -or $relative.Contains(':') -or
+            @($relative.Split('\') | Where-Object { $_ -eq '..' -or $_ -match '[. ]$' }).Count -gt 0) {
+          throw "Unsafe ZIP entry: $($member.FullName)"
+        }
+        $destination = [IO.Path]::GetFullPath((Join-Path $extractDir $relative))
+        if (-not $destination.StartsWith($extractDir + '\', [StringComparison]::OrdinalIgnoreCase)) {
+          throw "ZIP entry escapes staging folder: $($member.FullName)"
+        }
+        if (-not $member.Name) { continue }
+        if ($destinations.ContainsKey($destination)) { throw "Duplicate ZIP entry: $($member.FullName)" }
+        $destinations[$destination] = $true
+        $totalBytes += $member.Length
+        if ($totalBytes -gt 10GB -or $destinations.Count -gt 50000) { throw 'ZIP exceeds staging limits (10 GB / 50,000 files).' }
+        New-Item -Path (Split-Path -Parent $destination) -ItemType Directory -Force | Out-Null
+        [System.IO.Compression.ZipFileExtensions]::ExtractToFile($member, $destination, $false)
+      }
+        $script:xrefExtractedArchives[$zipKey] = $extractDir
+      }
+      $extractPath = Join-Path $extractDir ($SourceItem.EntryName -replace '/', '\')
       return [pscustomobject]@{
         SourcePath = [IO.Path]::GetFullPath($extractPath)
         SourceLabel = "Arch ZIP source"
         ProjectRoot = if ($SourceItem.ProjectRoot) { [string]$SourceItem.ProjectRoot } else { Get-ProjectRootFromArchPath -Path $SourceItem.ZipPath }
         ForceXrefsTarget = $true
         ArchiveSelectedSource = $false
+        SearchRoot = $extractDir
       }
     }
     finally {
@@ -326,6 +434,7 @@ function Resolve-SourceItemToWorkingSource {
     ProjectRoot = if ($SourceItem.ProjectRoot) { [string]$SourceItem.ProjectRoot } else { "" }
     ForceXrefsTarget = $false
     ArchiveSelectedSource = $false
+    SearchRoot = Split-Path -Parent ([string]$SourceItem.Path)
   }
 }
 
@@ -334,7 +443,8 @@ function Invoke-AcadCoreScript {
     [Parameter(Mandatory = $true)][string]$AcadCorePath,
     [Parameter(Mandatory = $true)][string]$DwgPath,
     [Parameter(Mandatory = $true)][string]$ScriptPath,
-    [int]$TimeoutSeconds = 600
+    [int]$TimeoutSeconds = 600,
+    [hashtable]$Environment = @{}
   )
 
   # accoreconsole blocks forever on any unanswered prompt, which would freeze
@@ -346,6 +456,7 @@ function Invoke-AcadCoreScript {
   $psi.RedirectStandardOutput = $true
   $psi.RedirectStandardError = $true
   $psi.CreateNoWindow = $true
+  foreach ($key in $Environment.Keys) { $psi.EnvironmentVariables[$key] = [string]$Environment[$key] }
 
   $proc = [System.Diagnostics.Process]::Start($psi)
   $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
@@ -589,12 +700,17 @@ if ($sourceItems.Count -eq 0) {
       Where-Object {
         $_ -and
         (Test-Path -LiteralPath $_) -and
-        ([IO.Path]::GetExtension($_) -ieq ".dwg")
+        ([IO.Path]::GetExtension($_) -iin @('.dwg', '.zip'))
       } |
       ForEach-Object { [IO.Path]::GetFullPath($_) } |
       Select-Object -Unique
   )
-  $sourceItems = @($filesFromDialog | ForEach-Object { New-FileSourceItem -Path $_ })
+  $sourceItems = @($filesFromDialog | ForEach-Object {
+    if ([IO.Path]::GetExtension($_) -ieq '.zip') {
+      Show-ZipDwgDialog -ZipPath $_
+    }
+    else { New-FileSourceItem -Path $_ }
+  })
 }
 
 if ($sourceItems.Count -eq 0) {
@@ -624,6 +740,7 @@ $processed = @()
 $comparisonPairs = @()
 $i = 0
 $sourceTempRoot = Join-Path $env:TEMP ("acies-clean-xrefs-sources-" + [guid]::NewGuid().ToString("N"))
+$script:xrefExtractedArchives = @{}
 New-Item -Path $sourceTempRoot -ItemType Directory -Force | Out-Null
 $outputFolder = ""
 try {
@@ -710,8 +827,36 @@ try {
       $targetName = "{0} ({1})" -f $targetBase, $disciplineShort
       $targetPath = Join-Path -Path $targetDir -ChildPath "$targetName.dwg"
 
+      # Finish binding on a disposable copy before archiving/replacing anything.
+      $transferSource = $sourcePath
+      if ($BindExplode -and -not $SkipAcad) {
+        $framework = if ([Diagnostics.FileVersionInfo]::GetVersionInfo($acadCore).FileMajorPart -ge 25) { 'net8.0-windows' } else { 'net48' }
+        $prepareDll = Join-Path $scriptRoot "PrepareXrefs-bin\$framework\PrepareXrefs.dll"
+        if (-not (Test-Path -LiteralPath $prepareDll)) { throw "Missing XREF preparation component: $prepareDll" }
+        $prepareDir = Join-Path $sourceTempRoot ([guid]::NewGuid().ToString('N'))
+        New-Item -Path $prepareDir -ItemType Directory -Force | Out-Null
+        $prepareInput = Join-Path $prepareDir 'input.dwg'
+        $prepareOutput = Join-Path $prepareDir 'prepared.dwg'
+        Copy-Item -LiteralPath $sourcePath -Destination $prepareInput
+        $prepareScript = Join-Path $prepareDir 'prepare.scr'
+        @('FILEDIA 0', 'SECURELOAD 0', '_.NETLOAD', ('"' + $prepareDll + '"'),
+          'ACIESPREPAREXREFS', '_.QUIT', '_Y') | Set-Content -LiteralPath $prepareScript -Encoding UTF8
+        Write-Host "PROGRESS: Binding and exploding modelspace Xrefs in $name..."
+        $prepareRun = Invoke-AcadCoreScript -AcadCorePath $acadCore -DwgPath $prepareInput -ScriptPath $prepareScript -Environment @{
+          ACIES_XREF_SOURCE = $sourcePath
+          ACIES_XREF_OUTPUT = $prepareOutput
+          ACIES_XREF_SEARCH_ROOT = $resolvedSource.SearchRoot
+          ACIES_XREF_PACKAGE = if ($sourceItem.Kind -eq 'zipEntry') { '1' } else { '0' }
+        }
+        if ($prepareRun.ExitCode -ne 0 -or -not (Test-Path -LiteralPath ($prepareOutput + '.ready')) -or
+            -not (Test-Path -LiteralPath $prepareOutput)) {
+          throw 'Binding/exploding failed. Existing Xrefs and source drawings have been preserved. See AutoCAD output above.'
+        }
+        $transferSource = $prepareOutput
+      }
+
       if ($stagedInXrefs) {
-        $workingPath = New-IncomingWorkingCopy -SourcePath $sourcePath -TargetDir $targetDir -SourceLabel $stageLabel
+        $workingPath = New-IncomingWorkingCopy -SourcePath $transferSource -TargetDir $targetDir -SourceLabel $stageLabel
         if ($archiveSelectedSource) {
           $archivedSelectedSourcePath = Move-FileToArchive -FilePath $sourcePath -ArchiveRoot $targetDir -Message "Archived selected Xrefs source to"
           if ([string]::Equals(
@@ -723,6 +868,9 @@ try {
           }
         }
         Write-Host "PROGRESS: Final target in Xrefs: $([IO.Path]::GetFileName($targetPath))"
+      }
+      elseif ($transferSource -ne $sourcePath) {
+        $workingPath = New-IncomingWorkingCopy -SourcePath $transferSource -TargetDir $targetDir -SourceLabel 'prepared source'
       }
 
       $existing = Get-ChildItem -LiteralPath $targetDir -File |
@@ -800,7 +948,12 @@ try {
   }
 }
 finally {
-  Remove-Item -LiteralPath $sourceTempRoot -Recurse -Force -ErrorAction SilentlyContinue
+  $resolvedTemp = [IO.Path]::GetFullPath($sourceTempRoot)
+  $expectedTempParent = [IO.Path]::GetFullPath($env:TEMP).TrimEnd('\') + '\'
+  if ($resolvedTemp.StartsWith($expectedTempParent, [StringComparison]::OrdinalIgnoreCase) -and
+      [IO.Path]::GetFileName($resolvedTemp).StartsWith('acies-clean-xrefs-sources-')) {
+    Remove-Item -LiteralPath $resolvedTemp -Recurse -Force -ErrorAction SilentlyContinue
+  }
 }
 
 # Reopen each processed drawing and run a read-only AUDIT so corruption that

@@ -787,3 +787,12 @@
   font-weight: 600;
   line-height: 1;
 }
+.page-attachment {
+  display: inline-block;
+  padding: 3px 8px;
+  border: 1px solid var(--glass-border, #cbd5e1);
+  border-radius: 5px;
+  color: var(--accent, #16a34a);
+  cursor: pointer;
+}
+.page-attachment:focus-visible { outline: 2px solid currentColor; }

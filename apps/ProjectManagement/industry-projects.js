@@ -10,6 +10,7 @@
 // presentation changes. Loaded after script.js.
 
 const INDUSTRY_STATUS_OPTIONS = Object.freeze([
+  "In progress",
   "Waiting",
   "On hold",
   "Pending Review",
@@ -56,7 +57,7 @@ function industryRelativeDays(days) {
 }
 
 function getDeliverablePrimaryStatus(deliverable) {
-  return INDUSTRY_STATUS_OPTIONS.find((status) => hasStatus(deliverable, status)) || "";
+  return STATUS_PRIORITY.find((status) => hasStatus(deliverable, status)) || "In progress";
 }
 
 function getProjectClientLabel(project) {
@@ -78,7 +79,7 @@ function getProjectShortName(project) {
 }
 
 // One read of a deliverable that every Industry surface shares:
-//   kind  — late | nostatus | open | done
+//   kind  — late | open | done
 //   rail  — hatch | dashed | accent | muted   (the left rail / bar treatment)
 //   stamp — the status object drawn in the Status column
 function getDeliverableRegisterState(deliverable) {
@@ -114,7 +115,7 @@ function getDeliverableRegisterState(deliverable) {
         text: `${daysLate} ${daysLate === 1 ? "DAY" : "DAYS"} LATE`,
         style: "solid",
       },
-      sub: status || "No status",
+      sub: status,
       daysLate,
       daysAhead: effectiveDays,
       externalLate,
@@ -122,18 +123,6 @@ function getDeliverableRegisterState(deliverable) {
   }
 
   const relative = effectiveDays === null ? "" : industryRelativeDays(effectiveDays);
-  if (!status) {
-    return {
-      kind: "nostatus",
-      rail: "dashed",
-      status,
-      stamp: { text: "NO STATUS", style: "dashed" },
-      sub: effectiveDays === null ? "no date set" : relative,
-      daysLate: 0,
-      daysAhead: effectiveDays,
-      externalLate: false,
-    };
-  }
 
   return {
     kind: "open",
@@ -147,9 +136,12 @@ function getDeliverableRegisterState(deliverable) {
   };
 }
 
-function countDeliverableNotes(deliverable) {
+function countDeliverableNotes(deliverable, project = null) {
   const noteItems = Array.isArray(deliverable?.noteItems) ? deliverable.noteItems : [];
-  return noteItems.filter((item) => String(item?.text || item || "").trim()).length;
+  const legacyCount = noteItems.filter((item) => String(item?.text || item || "").trim()).length;
+  const subpage = project?.subpages?.find((page) => page.sourceDeliverableId === deliverable.id);
+  const doc = new DOMParser().parseFromString(subpage?.page?.html || "", "text/html");
+  return legacyCount + doc.querySelectorAll('[data-deliverable-note="true"]').length;
 }
 
 function getAllProjectDeliverableRows() {
@@ -180,11 +172,8 @@ function isInteractiveTarget(target) {
 // Shared pieces: stamps, date fields, action stamps
 // ---------------------------------------------------------------------------
 
-// "NO STATUS" is a placeholder, not information — the register shows nothing
-// instead. Late, open and done deliverables still carry a real stamp.
 function getRegisterStampText(state) {
-  if (!state) return "";
-  return state.kind === "nostatus" ? "" : String(state.stamp?.text || "").trim();
+  return String(state?.stamp?.text || "").trim();
 }
 
 // Returns null when there is nothing worth stamping; callers skip the cell.
@@ -236,7 +225,7 @@ function createRegisterDateField(deliverable, project, field, state) {
   // an unset date reads as an empty cell.
   const val = el("div", {
     className: `reg-val${value ? "" : " is-empty"}`,
-    textContent: value ? humanDate(value) : "",
+    textContent: value ? humanDate(value) : "—",
   });
   if (field === "hardDue" && value) {
     wrap.classList.add("is-external");
@@ -252,6 +241,14 @@ function createRegisterDateField(deliverable, project, field, state) {
     if (event.key === "Enter" || event.key === " ") open(event);
   });
   wrap.append(val);
+  const date = value ? parseDueStr(value) : null;
+  const days = date ? industryDayDiff(date) : null;
+  if (field === "hardDue" && days !== null && !isFinished(deliverable) && days <= 0) {
+    wrap.appendChild(el("span", {
+      className: `reg-date-context${days < 0 ? " is-late" : ""}`,
+      textContent: days === 0 ? "Due today" : industryRelativeDays(days),
+    }));
+  }
   return wrap;
 }
 
@@ -298,16 +295,16 @@ function addImportantNotesBadge(button, project) {
 function createRegisterActions(deliverable, project) {
   const wrap = el("div", { className: "reg-actions" });
   if (!project) return wrap;
-  const noteCount = countDeliverableNotes(deliverable);
+  const noteCount = getProjectImportantItems(project).length;
   const notes = createRegisterIco({
-    text: noteCount ? `N${noteCount}` : "N",
+    text: String(noteCount),
     className: noteCount ? "has-count" : "",
     title: noteCount
-      ? `${industryPlural(noteCount, "note")} — open project notes`
-      : "Open project notes",
+      ? `${industryPlural(noteCount, "important note")} — open project notes`
+      : "No important notes — open project notes",
     onClick: () => openProjectPage(project),
   });
-  addImportantNotesBadge(notes, project);
+  notes.prepend(createIcon("M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z", 15));
   wrap.appendChild(notes);
   return wrap;
 }
@@ -371,27 +368,13 @@ function buildDeliverableRegisterColumns(deliverable, project) {
   const internal = createRegisterDateField(deliverable, project, "due", state);
   const external = createRegisterDateField(deliverable, project, "hardDue", state);
 
-  // Status: the stamp alone, no sub-line. A deliverable without a status shows
-  // an empty cell that still opens the status picker.
+  // Deadline warnings live beside dates; status always shows workflow state.
   const statusCol = el("div", { className: "reg-status" });
-  const stamp = createRegisterStamp(state, deliverable, project);
+  const workflowState = { ...state, stamp: { text: state.status, style: "tag" } };
+  const stamp = createRegisterStamp(workflowState, deliverable, project);
   if (stamp) {
+    stamp.dataset.status = LABEL_TO_KEY[state.status] || "inProgress";
     statusCol.appendChild(stamp);
-  } else {
-    statusCol.classList.add("is-blank");
-    statusCol.setAttribute("role", "button");
-    statusCol.tabIndex = 0;
-    statusCol.title = "Select this deliverable and choose a status in the command line";
-    statusCol.setAttribute("aria-label", "No status. Select to set a status.");
-    const openStatus = (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      selectDeliverableForCommands(deliverable, project, { expand: true, focus: "status" });
-    };
-    statusCol.addEventListener("click", openStatus);
-    statusCol.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") openStatus(event);
-    });
   }
 
   const actions = createRegisterActions(deliverable, project);
@@ -482,9 +465,11 @@ function decorateProjectRegisterRow(tr, project, deliverable) {
       .join(" · ");
     smalls.forEach((node) => node.remove());
     main.querySelector(".path-link, .project-title-text")?.classList.add("reg-pname");
-    if (clientText) {
-      main.appendChild(el("div", { className: "reg-client", textContent: clientText }));
-    }
+    const meta = el("div", { className: "reg-client" });
+    const idBadge = idCell?.querySelector(".id-badge");
+    if (idBadge) meta.appendChild(idBadge);
+    if (clientText) meta.appendChild(el("span", { textContent: `${idBadge ? " · " : ""}${clientText}` }));
+    main.appendChild(meta);
   }
 
   if (deliverable && !groupDeliverablesByProject) {
@@ -496,10 +481,9 @@ function decorateProjectRegisterRow(tr, project, deliverable) {
 // Numbers each section divider ("Pinned — 01") and fills the footer count.
 function finalizeProjectsRegister(tbody, pagination) {
   if (!tbody) return;
-  let sectionIndex = 0;
-  [...tbody.children].forEach((row) => {
+  const registerRows = [...tbody.children];
+  registerRows.forEach((row, rowIndex) => {
     if (!row.classList.contains("week-separator-row")) return;
-    sectionIndex += 1;
     const separator = row.querySelector(".week-separator");
     if (!separator) return;
     let count = separator.querySelector(".reg-sep-count");
@@ -507,7 +491,12 @@ function finalizeProjectsRegister(tbody, pagination) {
       count = el("span", { className: "reg-sep-count" });
       separator.appendChild(count);
     }
-    count.textContent = String(sectionIndex).padStart(2, "0");
+    let sectionCount = 0;
+    for (let i = rowIndex + 1; i < registerRows.length; i += 1) {
+      if (registerRows[i].classList.contains("week-separator-row")) break;
+      if (registerRows[i].classList.contains("reg-row")) sectionCount += 1;
+    }
+    count.textContent = String(sectionCount);
   });
 
   const footer = document.getElementById("registerFooterCount");
@@ -672,14 +661,14 @@ function renderDeliverablePlateCard(deliverable, project) {
     const notes = el("button", {
       type: "button",
       className: "plate-notes reg-kick",
-      textContent: "NOTES",
-      title: "Open project notes",
+      textContent: `${countDeliverableNotes(deliverable, project)} notes`,
+      title: "No important notes — open project notes",
     });
     notes.addEventListener("click", (event) => {
       event.stopPropagation();
       openProjectPage(project);
     });
-    addImportantNotesBadge(notes, project);
+    notes.prepend(createIcon("M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z", 15));
     foot.appendChild(notes);
   }
   card.appendChild(foot);
@@ -723,7 +712,7 @@ function ensureCommandDock() {
   const scope = el("span", { className: "reg-kick cmd-scope" });
   const footShortcuts = el("span", {
     className: "reg-kick cmd-shortcuts",
-    textContent: "←→ ↑↓ move · ↩ run · esc clear / collapse",
+    textContent: "←→ ↑↓ move · ↩ run · # find a project · esc clear / collapse",
   });
   foot.append(
     footShortcuts,
@@ -868,7 +857,7 @@ function updateCommandDockContext() {
     dock.context.classList.add("has-selection");
     dock.context.title = "Selected deliverable — click to go back to the project";
     dock.scope.textContent = "Acts on 1 deliverable";
-    dock.input.placeholder = "Search projects or type a command…";
+    dock.input.placeholder = "Type a command · # to search projects…";
   } else if (project) {
     const parts = [String(project?.id || "").trim(), getProjectShortName(project)].filter(Boolean);
     dock.context.textContent = parts.join(" · ");
@@ -876,15 +865,15 @@ function updateCommandDockContext() {
     dock.context.title = "Selected project — click to clear";
     dock.scope.textContent = "Project commands available · select a deliverable for more actions";
     dock.input.placeholder = dock.pendingKey
-      ? "Now choose a deliverable…"
-      : "Search projects, deliverables, or type a command…";
+      ? "Now choose a deliverable · # to search…"
+      : "Type a command · # to search projects or deliverables…";
   } else {
     dock.context.textContent = "No project selected";
-    dock.context.title = "Type a project number or name, or click a row";
+    dock.context.title = "Type # then a project number or name, or click a row";
     dock.scope.textContent = "Select a project to run commands";
     dock.input.placeholder = dock.pendingKey
-      ? "Now search a project or select a row…"
-      : "Search projects or type a command…";
+      ? "Now select a row or type # to search a project…"
+      : "Type a command · # to search projects…";
   }
   if (dock.pendingKey) {
     const pending = dock.items.find(item => item.key === dock.pendingKey);
@@ -970,17 +959,6 @@ function buildCommandDockGroups(deliverable, project) {
       rerender();
     },
   }));
-  statusItems.push({
-    key: "status:clear",
-    label: "Clear status",
-    kind: "status-clear",
-    hidden: hasTarget && !getDeliverablePrimaryStatus(deliverable),
-    run: async (target) => {
-      setSingleStatus(target.deliverable, "");
-      await save();
-      rerender();
-    },
-  });
 
   const deliverableItems = [
     {
@@ -1009,7 +987,7 @@ function buildCommandDockGroups(deliverable, project) {
     {
       key: "notes",
       scope: "project",
-      label: "Open project notes",
+      label: "No important notes — open project notes",
       run: (target) => openProjectPage(target.project),
     },
     {
@@ -1246,7 +1224,9 @@ function runCommandDockItem(item) {
     return;
   }
   const target = { deliverable: dock.deliverable, project: dock.project };
-  const query = dock.input.value.trim();
+  // A "#" query is a target search, never argument text for the command.
+  const parsed = parseCommandDockQuery(dock.input.value);
+  const query = parsed.targetMode ? "" : dock.input.value.trim();
   dock.pendingKey = null;
   dock.pendingLabel = "";
   dock.input.value = "";
@@ -1406,13 +1386,33 @@ function moveCommandDockSpatial(direction) {
   }
 }
 
+// The line searches commands by default; a leading "#" switches it to
+// searching targets (projects, then the chosen project's deliverables).
+function parseCommandDockQuery(rawValue) {
+  const trimmed = String(rawValue || "").trim();
+  const targetMode = trimmed.startsWith("#");
+  const query = (targetMode ? trimmed.slice(1) : trimmed).trim().toLowerCase();
+  return { targetMode, query, tokens: query.split(/\s+/).filter(Boolean) };
+}
+
+function isCommandDockTargetItem(item) {
+  return item.kind === "project" || item.kind === "deliverable";
+}
+
 function filterCommandDock() {
   const dock = industryCommandDock;
-  const query = dock.input.value.trim().toLowerCase();
-  const tokens = query.split(/\s+/).filter(Boolean);
+  const { targetMode, tokens } = parseCommandDockQuery(dock.input.value);
+  const hasQuery = targetMode || tokens.length > 0;
   const matches = (item) => {
-    if (!tokens.length) return !item.searchOnly;
     const haystack = `${item.search || ""} ${item.label}`.toLowerCase();
+    if (isCommandDockTargetItem(item)) {
+      // Targets browse freely while the line is empty, but only "#" searches them.
+      if (!targetMode) return !tokens.length && !item.searchOnly;
+      if (!tokens.length) return true;
+      return tokens.every((token) => haystack.includes(token));
+    }
+    if (targetMode) return false;
+    if (!tokens.length) return !item.searchOnly;
     return tokens.every((token) => haystack.includes(token));
   };
   dock.items.forEach((item) => {
@@ -1434,11 +1434,11 @@ function filterCommandDock() {
   (dock.sections || []).forEach(({ section }) => {
     const anyVisible = dock.items.some((item) => item.section === section && !item.node.hidden);
     const hasEmptyNote = !!section.querySelector(".cmd-empty");
-    section.hidden = !anyVisible && !(hasEmptyNote && !query);
+    section.hidden = !anyVisible && !(hasEmptyNote && !hasQuery);
   });
   const visible = getVisibleCommandDockItems();
   const current = dock.items[dock.activeIndex];
-  if (query) {
+  if (hasQuery) {
     if (!current || current.node.hidden) {
       setCommandDockActive(visible.length ? dock.items.indexOf(visible[0]) : -1);
     }
@@ -2028,7 +2028,7 @@ function renderPromptView() {
     createPreviewRow("Project", getProjectShortName(project), "project"),
     createPreviewRow("Internal Due", values.due || "—", "due"),
     createPreviewRow("External Due", values.hardDue || "—", "hardDue"),
-    createPreviewRow("Status", "No status", "status")
+    createPreviewRow("Status", "In progress", "status")
   );
 
   body.append(guide, preview);
@@ -2186,7 +2186,29 @@ function bindCommandDockShortcut() {
 // Chrome: footer and wiring
 // ---------------------------------------------------------------------------
 
+function syncDeliverableTypeOptions() {
+  const menu = document.getElementById("deliverablesFilterMenu");
+  if (!menu) return;
+  const names = [...new Set(getAllProjectDeliverableRows()
+    .map(({ deliverable }) => String(deliverable.name || "").trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const signature = JSON.stringify(names);
+  if (menu.dataset.typeOptions === signature) return;
+  menu.dataset.typeOptions = signature;
+  menu.querySelectorAll('[data-deliverable-type]').forEach((node) => node.remove());
+  names.forEach((name) => menu.appendChild(el("button", {
+    type: "button", className: "projects-filter-option", textContent: name,
+    "data-filter-value": `type:${name}`, "data-deliverable-type": "true",
+    role: "menuitemradio", "aria-checked": "false", tabIndex: -1,
+  })));
+  if (deliverablesFilter.startsWith("type:") && !names.includes(deliverablesFilter.slice(5))) {
+    deliverablesFilter = "all";
+  }
+  syncProjectsFilterDropdowns();
+}
+
 function updateProjectsIndustryChrome() {
+  syncDeliverableTypeOptions();
   const footer = document.getElementById("registerFooter");
   if (footer) footer.hidden = projectsViewMode !== "list";
   // Projects and deliverables change with every render, so the dock's target
@@ -2200,4 +2222,15 @@ function updateProjectsIndustryChrome() {
 document.addEventListener("DOMContentLoaded", () => {
   ensureCommandDock();
   bindCommandDockShortcut();
+  const panel = document.getElementById("projects-panel");
+  const toolbar = panel?.querySelector(".panel-toolbar");
+  const filters = document.getElementById("projectsFilterControls");
+  if (toolbar && filters) {
+    const search = toolbar.querySelector(".nav-search");
+    const actions = toolbar.querySelector(".toolbar-actions");
+    if (search) filters.prepend(search);
+    if (actions) filters.appendChild(actions);
+    toolbar.hidden = true;
+  }
+
 });

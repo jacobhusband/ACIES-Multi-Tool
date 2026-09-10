@@ -82,7 +82,7 @@ class CommandLineAddDeliverableUiTests(unittest.TestCase):
         self.assertIn('moveCommandDockSpatial("right")', self.js_code)
         self.assertIn('moveCommandDockSpatial("left")', self.js_code)
         # Footer shortcuts text updated to show left and right arrows alongside up and down
-        self.assertIn('"←→ ↑↓ move · ↩ run · esc clear / collapse"', self.js_code)
+        self.assertIn('"←→ ↑↓ move · ↩ run · # find a project · esc clear / collapse"', self.js_code)
 
     def test_css_styles_for_prompt_view(self):
         expected_selectors = [

@@ -206,6 +206,7 @@ try {
         (Join-Path $bundleInternal "styles.css"),
         (Join-Path $bundleInternal "industry.css"),
         (Join-Path $bundleInternal "modern-workspace.css"),
+        (Join-Path $bundleInternal "deliverables-workspace.css"),
         (Join-Path $bundleInternal "assets\acies-modern-logo.png"),
         (Join-Path $bundleInternal "industry-projects.js"),
         (Join-Path $bundleInternal "industry-shell.js"),

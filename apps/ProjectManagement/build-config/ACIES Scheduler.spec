@@ -16,6 +16,7 @@ a = Analysis(
         (os.path.join(project_root, 'styles.css'), '.'),
         (os.path.join(project_root, 'industry.css'), '.'),
         (os.path.join(project_root, 'modern-workspace.css'), '.'),
+        (os.path.join(project_root, 'deliverables-workspace.css'), '.'),
         (os.path.join(project_root, 'industry-projects.js'), '.'),
         (os.path.join(project_root, 'industry-shell.js'), '.'),
         (os.path.join(project_root, 'script.js'), '.'),

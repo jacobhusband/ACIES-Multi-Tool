@@ -557,6 +557,7 @@ function installShellIndustryLayer() {
   installTimesheetsIndustryLayer();
   decorateToolsPanel();
   installModernWorkspaceMenus();
+  installModernWorkspaceDialogs();
 }
 
 // Move the original controls, retaining their IDs, handlers and live state.
@@ -623,8 +624,11 @@ function installModernWorkspaceMenus() {
     ["columnConfigBtn", "Configure columns"],
   ]);
   if (panel) {
-    const boardHeading = el("div", { className: "modern-menu-heading modern-board-option", textContent: "Board" });
-    panel.querySelector("#projectsEmptyColumnsToggle")?.before(boardHeading);
+    const boardHeading = el("div", { className: "modern-menu-heading", textContent: "Layout" });
+    panel.querySelector("#projectsWidthToggle")?.before(boardHeading);
+    panel.querySelector("#columnConfigBtn")?.before(el("div", {
+      className: "modern-menu-heading modern-board-option", textContent: "Customize",
+    }));
     ["projectsEmptyColumnsToggle", "projectsHideEmptyColumnsToggle", "columnConfigBtn"].forEach(id => {
       document.getElementById(id)?.classList.add("modern-board-option");
     });
@@ -648,6 +652,65 @@ function installModernWorkspaceMenus() {
       document.documentElement.style.setProperty("--modern-command-height", `${dock.getBoundingClientRect().height}px`);
     });
     observer.observe(dock);
+  }
+}
+
+// Reparent the existing fields so their handlers, values and autosave survive
+// navigation. Every original section remains reachable, including CAD defaults.
+function installModernWorkspaceDialogs() {
+  const dialog = document.getElementById("settingsDlg");
+  const body = dialog?.querySelector(".modal-body");
+  if (!body || dialog.querySelector(".settings-navigation")) return;
+  const nav = el("nav", { className: "settings-navigation", "aria-label": "Settings sections" });
+  const content = el("div", { className: "settings-content" });
+  const sections = [];
+  let section;
+  for (const node of Array.from(body.children)) {
+    if (node.matches(".section-title, .danger-zone")) {
+      const title = node.matches(".danger-zone") ? "Danger Zone" : node.textContent.trim();
+      section = el("section", { className: "settings-page", id: `settings-page-${sections.length}` });
+      const button = el("button", {
+        type: "button", textContent: title, "aria-controls": section.id, "aria-pressed": "false",
+      });
+      const heading = node.matches(".danger-zone") ? node.querySelector("h3") : node;
+      if (heading) {
+        heading.id = `${section.id}-title`;
+        section.setAttribute("aria-labelledby", heading.id);
+      }
+      const sectionForButton = section;
+      button.addEventListener("click", () => {
+        sections.forEach(entry => {
+          entry.section.hidden = entry.section !== sectionForButton;
+          entry.button.setAttribute("aria-pressed", String(entry.button === button));
+        });
+        content.scrollTop = 0;
+      });
+      sections.push({ section, button });
+      nav.appendChild(button);
+      content.appendChild(section);
+    }
+    // The autosave notice moves to the persistent footer below.
+    if (node.matches("p.tiny.muted") && node.textContent.includes("Settings are saved automatically")) {
+      node.remove();
+    } else if (section) section.appendChild(node);
+  }
+  body.classList.remove("stack");
+  body.classList.add("settings-layout");
+  body.append(nav, content);
+  const footer = el("div", { className: "workspace-dialog-footer" });
+  footer.appendChild(el("span", { textContent: "Changes save automatically", className: "muted" }));
+  const done = el("button", { type: "button", className: "btn workspace-dialog-done", textContent: "Done" });
+  done.addEventListener("click", () => dialog.close());
+  footer.appendChild(done);
+  dialog.appendChild(footer);
+  sections[0]?.button.click();
+  const scratchpad = document.getElementById("scratchpadPanel");
+  if (scratchpad) {
+    const footer = el("div", { className: "scratchpad-footer" });
+    footer.appendChild(el("span", { textContent: "Unsorted notes" }));
+    const status = document.getElementById("scratchpadStatus");
+    if (status) footer.appendChild(status);
+    scratchpad.appendChild(footer);
   }
 }
 

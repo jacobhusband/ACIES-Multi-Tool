@@ -459,19 +459,21 @@ def _open_panel_schedule_image(path, max_edge=PANEL_SCHEDULE_MAX_IMAGE_EDGE):
 _register_heif_support()
 
 # Helper functions for date parsing and status management
-STATUS_CANON = ["Waiting", "Working",
+STATUS_CANON = ["In progress", "Waiting", "On hold",
                 "Pending Review", "Complete", "Completed (by others)", "Delivered"]
 STATUS_PRIORITY = ['Delivered', 'Complete', 'Completed (by others)',
-                   'Pending Review', 'Working', 'Waiting']
+                   'Pending Review', 'On hold', 'Waiting', 'In progress']
 LABEL_TO_KEY = {
     "Waiting": "waiting",
-    "Working": "working",
+    "In progress": "inProgress",
+    "On hold": "onHold",
     "Pending Review": "pendingReview",
     "Complete": "complete",
     "Completed (by others)": "completed-by-others",
     "Delivered": "delivered"
 }
 KEY_TO_LABEL = {v: k for k, v in LABEL_TO_KEY.items()}
+KEY_TO_LABEL["working"] = "In progress"
 
 # Deliverable PDF quick access: <project>\PDF\<date + deliverable>\<project> <Discipline>.pdf
 DELIVERABLE_PDF_FOLDER_NAME = "PDF"
@@ -1064,16 +1066,20 @@ def sync_status_arrays(task):
     """Sync status arrays similar to JS syncStatusArrays."""
     if not isinstance(task.get('statuses'), list):
         task['statuses'] = []
-    from_tags = task.get('statusTags', [])
+    from_tags = task.get('statusTags') or []
+    legacy_status = task.get('status')
+    if legacy_status and legacy_status not in task['statuses']:
+        task['statuses'].append(legacy_status)
+    task['statuses'] = ['In progress' if s == 'Working' else s for s in task['statuses']]
     for key in from_tags:
         label = KEY_TO_LABEL.get(key)
         if label and label not in task['statuses']:
             task['statuses'].append(label)
-    task['statuses'] = list({s for s in task['statuses'] if s in STATUS_CANON})
-    task['statusTags'] = [LABEL_TO_KEY[s]
-                          for s in task['statuses'] if LABEL_TO_KEY.get(s)]
-    task['status'] = next(
-        (label for label in STATUS_PRIORITY if label in task['statuses']), '')
+    primary = next(
+        (label for label in STATUS_PRIORITY if label in task['statuses']), 'In progress')
+    task['statuses'] = [primary]
+    task['statusTags'] = [LABEL_TO_KEY[primary]]
+    task['status'] = primary
 
 
 def get_default_documents_dir():

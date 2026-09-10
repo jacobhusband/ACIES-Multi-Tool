@@ -1,5 +1,6 @@
 // ===================== CONFIGURATION & CONSTANTS =====================
 const STATUS_CANON = [
+  "In progress",
   "Waiting",
   "On hold",
   "Pending Review",
@@ -14,8 +15,10 @@ const STATUS_PRIORITY = [
   "Pending Review",
   "On hold",
   "Waiting",
+  "In progress",
 ];
 const LABEL_TO_KEY = {
+  "In progress": "inProgress",
   Waiting: "waiting",
   "On hold": "onHold",
   "Pending Review": "pendingReview",
@@ -24,6 +27,8 @@ const LABEL_TO_KEY = {
   Delivered: "delivered",
 };
 const KEY_TO_LABEL = {
+  inProgress: "In progress",
+  working: "In progress",
   waiting: "Waiting",
   onHold: "On hold",
   pendingReview: "Pending Review",
@@ -10368,7 +10373,7 @@ function normalizeWorkflowCadDefaults(value = {}) {
 }
 const DEFAULT_PROJECT_CARD_COLUMNS = [
   { key: "pinned", label: "Pinned", hidden: false },
-  { key: "none", label: "No status", hidden: false },
+  { key: "In progress", label: "In progress", hidden: false },
   { key: "Waiting", label: "Waiting", hidden: false },
   { key: "On hold", label: "On hold", hidden: false },
   { key: "Pending Review", label: "Pending Review", hidden: false },
@@ -10613,7 +10618,6 @@ function getDefaultProjectCardColumn(key) {
 }
 
 function getProjectCardColumnLabel(column) {
-  if (column?.key === "none" && (!column.label || column.label === "None")) return "No status";
   const fallback = getDefaultProjectCardColumn(column?.key);
   const label =
     typeof column?.label === "string" ? column.label.trim() : "";
@@ -10658,11 +10662,12 @@ function normalizeProjectCardColumns(raw) {
 
   for (const entry of list) {
     if (!entry || typeof entry !== "object") continue;
-    const key = String(entry.key || "").trim();
+    const oldKey = String(entry.key || "").trim();
+    const key = oldKey === "none" ? "In progress" : oldKey;
     if (!key || !defaultKeys.has(key) || seen.has(key)) continue;
     normalized.push({
       key,
-      label: getProjectCardColumnLabel({ key, label: entry.label }),
+      label: getProjectCardColumnLabel({ key, label: oldKey === "none" ? "In progress" : entry.label }),
       hidden: entry.hidden === true,
     });
     seen.add(key);
@@ -10677,8 +10682,8 @@ function syncProjectViewPreferencesFromSettings() {
   resetProjectsListPagination();
   separateDeliverableCompletionGroups =
     userSettings.separateDeliverableCompletionGroups !== false;
-  groupDeliverablesByProject =
-    userSettings.groupDeliverablesByProject === true;
+  groupDeliverablesByProject = false;
+  userSettings.groupDeliverablesByProject = false;
   projectsViewMode = normalizeProjectsViewMode(userSettings.projectsViewMode);
   projectsWideLayout = userSettings.projectsWideLayout !== false;
   minimizeEmptyProjectColumns =
@@ -12378,8 +12383,7 @@ async function loadUserSettings() {
       userSettings.enableUnderConstructionTools === true;
     userSettings.separateDeliverableCompletionGroups =
       userSettings.separateDeliverableCompletionGroups !== false;
-    userSettings.groupDeliverablesByProject =
-      userSettings.groupDeliverablesByProject === true;
+    userSettings.groupDeliverablesByProject = false;
     userSettings.projectsWideLayout = userSettings.projectsWideLayout !== false;
     userSettings.minimizeEmptyProjectColumns =
       userSettings.minimizeEmptyProjectColumns !== false;
@@ -12611,6 +12615,7 @@ async function populateSettingsModal() {
         });
         radio.onchange = () => {
           userSettings.autocadPath = radio.value;
+          document.getElementById("settings_autocadPath").value = radio.value;
           settingsAutocadPathExplicitlyChanged = true;
           debouncedSaveUserSettings();
         };
@@ -13742,6 +13747,7 @@ function createDeliverable(seed = {}) {
 function canonStatus(s) {
   if (!s) return null;
   const t = String(s).trim().toLowerCase();
+  if (["in progress", "in-progress", "inprogress", "working"].includes(t)) return "In progress";
   if (["waiting", "wait", "blocked"].includes(t)) return "Waiting";
   if (["on hold", "on-hold", "onhold", "hold", "paused", "pause"].includes(t))
     return "On hold";
@@ -13780,9 +13786,9 @@ function isFinished(p) {
 
 function setSingleStatus(p, label) {
   if (!p) return;
-  const canonical = label && STATUS_CANON.includes(label) ? label : "";
-  p.statuses = canonical ? [canonical] : [];
-  p.statusTags = canonical ? [LABEL_TO_KEY[canonical]].filter(Boolean) : [];
+  const canonical = canonStatus(label) || "In progress";
+  p.statuses = [canonical];
+  p.statusTags = [LABEL_TO_KEY[canonical]];
   p.status = canonical;
   if (isFinished(p) && Array.isArray(p.tasks)) {
     p.tasks.forEach((task) => {
@@ -13793,8 +13799,7 @@ function setSingleStatus(p, label) {
 function toggleStatus(p, label) {
   if (!p) return;
   if (!Array.isArray(p.statuses)) p.statuses = [];
-  const current = p.statuses[0] || "";
-  setSingleStatus(p, current === label ? "" : label);
+  setSingleStatus(p, label);
 }
 function syncStatusArrays(p) {
   if (!Array.isArray(p.statuses)) p.statuses = [];
@@ -13804,9 +13809,9 @@ function syncStatusArrays(p) {
     if (L && !p.statuses.includes(L)) p.statuses.push(L);
   }
   const valid = [...new Set(p.statuses.filter((s) => STATUS_CANON.includes(s)))];
-  const primary = STATUS_PRIORITY.find((s) => valid.includes(s)) || "";
-  p.statuses = primary ? [primary] : [];
-  p.statusTags = primary ? [LABEL_TO_KEY[primary]].filter(Boolean) : [];
+  const primary = STATUS_PRIORITY.find((s) => valid.includes(s)) || "In progress";
+  p.statuses = [primary];
+  p.statusTags = [LABEL_TO_KEY[primary]];
   p.status = primary;
 }
 function migrateStatuses(arr) {
@@ -17118,6 +17123,7 @@ function matchesProjectStatusFilter(deliverable, filter) {
 function matchesProjectDeliverablesFilter(deliverable, filter) {
   if (filter === "all") return true;
   if (filter === "incomplete") return !isFinished(deliverable);
+  if (filter.startsWith("type:")) return String(deliverable.name || "").trim() === filter.slice(5);
   return true;
 }
 
@@ -17210,23 +17216,24 @@ function compareProjectListSortBuckets(a, b, projectListContextMap = null) {
 }
 
 function getProjectListRenderContext(project) {
+  const isBoard = projectsViewMode === "card";
   const projectListPriority = getProjectListPriorityMeta(project);
   const priorityDeliverable = projectListPriority.priorityDeliverable;
   if (!priorityDeliverable) return null;
   const overviewDeliverables = getOverviewDeliverables(project);
   if (!overviewDeliverables.length) return null;
 
-  const isTimeframeView = dueFilter !== "all";
+  const isTimeframeView = !isBoard && dueFilter !== "all";
   const timeframeDeliverables = isTimeframeView
     ? overviewDeliverables.filter((deliverable) =>
         matchesDueFilter(deliverable, dueFilter)
       )
     : overviewDeliverables;
   const statusMatchingDeliverables = timeframeDeliverables.filter(
-    (deliverable) => matchesProjectStatusFilter(deliverable, statusFilter)
+    (deliverable) => isBoard || matchesProjectStatusFilter(deliverable, statusFilter)
   );
   const filteredDeliverables = statusMatchingDeliverables.filter((deliverable) =>
-    matchesProjectDeliverablesFilter(deliverable, deliverablesFilter)
+    isBoard || matchesProjectDeliverablesFilter(deliverable, deliverablesFilter)
   );
   const visibleDeliverables = isTimeframeView
     ? filteredDeliverables.slice().sort(compareDeliverablesByDueDesc)
@@ -20888,6 +20895,7 @@ function setDeliverableStatusDropdownState(dropdown, isOpen) {
 
 function createStatusDropdown(deliverable, project, card) {
   const availableStatuses = [
+    "In progress",
     "Waiting",
     "On hold",
     "Pending Review",
@@ -20935,20 +20943,6 @@ function createStatusDropdown(deliverable, project, card) {
     option.append(radio, label);
     menu.appendChild(option);
   });
-
-  const clearBtn = el("button", {
-    type: "button",
-    className: "deliverable-status-clear",
-    textContent: "Clear status",
-  });
-  clearBtn.addEventListener("click", async (e) => {
-    e.stopPropagation();
-    setSingleStatus(deliverable, "");
-    await save();
-    setDeliverableStatusDropdownState(dropdown, false);
-    renderProjectsPreservingExpandedDeliverables();
-  });
-  menu.appendChild(clearBtn);
 
   // Toggle dropdown
   trigger.addEventListener("click", (e) => {
@@ -23219,7 +23213,7 @@ function buildMatchContextRow(q, project, context) {
 
 const KANBAN_COLUMN_SLUGS = {
   pinned: "pinned",
-  none: "none",
+  "In progress": "in-progress",
   Waiting: "waiting",
   "On hold": "on-hold",
   "Pending Review": "pending-review",
@@ -23269,7 +23263,7 @@ function updateProjectsViewModeUi() {
   if (table) table.hidden = !isList;
   if (cardView) cardView.hidden = !isCard;
   if (cardControls) cardControls.hidden = !isCard;
-  if (filterControls) filterControls.hidden = !isList;
+  if (filterControls) filterControls.hidden = false;
   if (pagination && !isList) pagination.hidden = true;
   if (emptyState && !isList) emptyState.style.display = "none";
 }
@@ -23434,7 +23428,7 @@ function renderCardView(items = db, projectListContextMap = null) {
     if (!inWeek && !overduePull) continue;
 
     const primary =
-      STATUS_PRIORITY.find((s) => hasStatus(deliverable, s)) || "none";
+      STATUS_PRIORITY.find((s) => hasStatus(deliverable, s)) || "In progress";
     if (buckets.has(primary)) {
       buckets.get(primary).push({
         project,
@@ -24055,11 +24049,7 @@ function attachKanbanDragHandlers(host) {
       if (sourceColumnKey === "pinned" && deliverable.pinned) {
         setDeliverablePinnedState(deliverable, false);
       }
-      if (targetKey === "none") {
-        setSingleStatus(deliverable, "");
-      } else {
-        setSingleStatus(deliverable, targetKey);
-      }
+      setSingleStatus(deliverable, targetKey);
     }
 
     await save();
@@ -24195,6 +24185,7 @@ function renderStatusToggles(p) {
     return b;
   };
   [
+    ["progress", "In progress"],
     ["wait", "Waiting"],
     ["hold", "On hold"],
     ["pr", "Pending Review"],
@@ -24947,6 +24938,7 @@ function toggleModalDeliverableCard(card, expanded) {
 }
 
 function buildStatusPicker(selected = [], onToggle) {
+  if (!selected.some((status) => STATUS_CANON.includes(status))) selected = ["In progress"];
   const wrap = el("div", { className: "status-picker" });
   const mk = (cls, label) => {
     const b = el("button", {
@@ -24959,18 +24951,15 @@ function buildStatusPicker(selected = [], onToggle) {
     });
     b.onclick = (e) => {
       e.preventDefault();
-      const next = b.getAttribute("aria-pressed") !== "true";
-      if (next) {
-        wrap.querySelectorAll(".st").forEach((button) => {
-          button.setAttribute("aria-pressed", "false");
-        });
-      }
-      b.setAttribute("aria-pressed", String(next));
-      if (onToggle) onToggle(label, next, b);
+      wrap.querySelectorAll(".st").forEach((button) => {
+        button.setAttribute("aria-pressed", String(button === b));
+      });
+      if (onToggle) onToggle(label, true, b);
     };
     return b;
   };
   [
+    ["progress", "In progress"],
     ["wait", "Waiting"],
     ["hold", "On hold"],
     ["pr", "Pending Review"],
@@ -36601,11 +36590,13 @@ function initEventListeners() {
       });
       if (res.status === "success" && res.paths.length) {
         document.getElementById("settings_autocadPath").value = res.paths[0];
+        userSettings.autocadPath = res.paths[0];
         settingsAutocadPathExplicitlyChanged = true;
-        // Uncheck radio buttons
+        // Keep detected versions selected when the chosen executable matches.
         document
           .querySelectorAll('input[name="autocad_version_radio"]')
-          .forEach((radio) => (radio.checked = false));
+          .forEach((radio) => (radio.checked = radio.value === res.paths[0]));
+        debouncedSaveUserSettings();
       }
     });
 

@@ -24,12 +24,27 @@
     <link rel="stylesheet" href="styles.css?v=20260708-richer-blocks-p6" />
     <link rel="stylesheet" href="symbol_counter.css?v=20260818-delete-actions" />
     <link rel="stylesheet" href="industry.css?v=20260909-cmd-add-deliverable" />
-    <link rel="stylesheet" href="modern-workspace.css?v=20260909-project-settings" />
+    <link rel="stylesheet" href="modern-workspace.css?v=20260909-deliverables" />
+    <link rel="stylesheet" href="deliverables-workspace.css?v=20260909" />
     <link rel="stylesheet" href="project-pages-editor/dist/project-pages-editor-project-pages-editor.css?v=20260729-page-email-attach" />
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 
 <body data-active-tab="projects" data-projects-layout-width="wide">
+    <!-- Extract the existing wordmark as alpha; theme color supplies the ink. -->
+    <svg width="0" height="0" aria-hidden="true" focusable="false" style="position: absolute; pointer-events: none;">
+        <defs>
+            <filter id="acies-logo-ink" color-interpolation-filters="sRGB">
+                <feColorMatrix in="SourceGraphic" type="matrix" result="lettering" values="
+                    0 0 0 0 1
+                    0 0 0 0 1
+                    0 0 0 0 1
+                    0.24159 0.81273 0.08205 0 -0.13636" />
+                <feFlood style="flood-color: var(--text);" />
+                <feComposite in2="lettering" operator="in" />
+            </filter>
+        </defs>
+    </svg>
     <div id="appLoader" class="app-loader" role="status" aria-live="polite" aria-label="Loading">
         <div class="app-loader-content">
             <span class="brand-mark app-loader-mark supplied-logo" aria-hidden="true">
@@ -154,7 +169,7 @@
             <section class="panel stack">
                 <div class="projects-board-heading">
                     <span class="projects-board-heading__eyebrow">Workspace</span>
-                    <h1>Projects</h1>
+                    <h1 id="projectsWorkspaceTitle">Projects</h1>
                 </div>
                 <div class="panel-toolbar">
                     <div class="nav-search expanded-search">
@@ -163,7 +178,7 @@
                             <circle cx="11" cy="11" r="8"></circle>
                             <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
                         </svg>
-                        <input id="search" type="search" placeholder="Search projects..." />
+                        <input id="search" type="search" placeholder="Search projects or deliverables…" aria-label="Search projects or deliverables" />
                     </div>
                     <div class="toolbar-actions">
                         <button class="icon-btn quick-add" id="quickNew" aria-label="New project" title="New project">
@@ -270,6 +285,7 @@
                                 >
                                     <button type="button" class="projects-filter-option is-selected" data-filter-value="all" role="menuitemradio" aria-checked="true" tabindex="-1">All</button>
                                     <button type="button" class="projects-filter-option" data-filter-value="incomplete" role="menuitemradio" aria-checked="false" tabindex="-1">Incomplete</button>
+                                    <button type="button" class="projects-filter-option" data-filter-value="In progress" role="menuitemradio" aria-checked="false" tabindex="-1">In progress</button>
                                     <button type="button" class="projects-filter-option" data-filter-value="Waiting" role="menuitemradio" aria-checked="false" tabindex="-1">Waiting</button>
                                     <button type="button" class="projects-filter-option" data-filter-value="On hold" role="menuitemradio" aria-checked="false" tabindex="-1">On hold</button>
                                     <button type="button" class="projects-filter-option" data-filter-value="Pending Review" role="menuitemradio" aria-checked="false" tabindex="-1">Pending Review</button>
@@ -397,7 +413,7 @@
                 </nav>
                 <div id="registerFooter" class="register-footer">
                     <span id="registerFooterCount" class="reg-kick">0 of 0 shown</span>
-                    <span class="register-legend">Select a row to use the command bar · Hatched rail marks an overdue external date</span>
+                    <span class="register-legend">Select a row for actions · Select a date or status to edit</span>
                 </div>
                 <div id="emptyState" class="empty" style="display:none">
                     <div class="empty-icon">
@@ -1553,36 +1569,52 @@
 
             <!-- AutoCAD Version Section -->
             <h3 class="section-title" style="margin-top: 1rem;">AutoCAD Version</h3>
-            <div class="modal-grid">
-                <div class="col-12">
-                    <label class="label">Select Preferred AutoCAD Version</label>
-                    <div id="autocad_versions_container" class="radio-group" style="flex-wrap: wrap;">
+            <div class="cad-settings-panel">
+                <p class="cad-settings-intro">Choose the version ACIES uses for CAD automation.</p>
+                <fieldset class="cad-version-fieldset">
+                    <legend>Preferred version</legend>
+                    <div id="autocad_versions_container" class="cad-version-choices" aria-live="polite">
                         <!-- Detected versions will be inserted here -->
                     </div>
-                    <div class="input-with-button" style="margin-top: 0.5rem;">
-                        <input id="settings_autocadPath" placeholder="Custom AutoCAD executable path..." readonly />
-                        <button class="btn tiny" id="btnBrowseAutocad">Browse...</button>
-                    </div>
+                </fieldset>
+                <label class="cad-settings-label" for="settings_autocadPath">Core Console executable</label>
+                <textarea id="settings_autocadPath" rows="3" placeholder="No executable selected" aria-describedby="cad-executable-help" readonly></textarea>
+                <p id="cad-executable-help" class="cad-settings-help">Used to run CAD tasks in the background. Change this path if AutoCAD is installed in a different location.</p>
+                <div class="cad-settings-actions">
+                    <button type="button" class="btn tiny" id="btnBrowseAutocad">Change location…</button>
                 </div>
             </div>
 
             <!-- CAD Cleanup Defaults Section -->
             <h3 class="section-title" style="margin-top: 1rem;">CAD Cleanup Defaults</h3>
-            <div class="modal-grid">
-                <div class="col-12">
-                    <label class="label">XREF</label>
-                    <div class="stack" style="gap: 0.35rem;">
-                        <label class="radio-label"><input type="checkbox" id="settings_clean_stripXrefs"> Strip saved
-                            XREF paths</label>
-                        <label class="radio-label"><input type="checkbox" id="settings_clean_setByLayer"> Set all
-                            objects to &quot;ByLayer&quot;</label>
-                        <label class="radio-label"><input type="checkbox" id="settings_clean_purge"> Purge</label>
-                        <label class="radio-label"><input type="checkbox" id="settings_clean_audit"> Audit</label>
-                        <label class="radio-label"><input type="checkbox" id="settings_clean_hatchColor"> Set all
-                            non-wall hatches to color &quot;9&quot;</label>
-                    </div>
-                    <div class="tiny muted" style="margin-top: 0.35rem;">Applied when running &quot;XREF&quot;.</div>
-                </div>
+            <div class="cad-settings-panel">
+                <p class="cad-settings-intro">Choose the cleanup steps applied when you run <code>XREF</code>.</p>
+                <fieldset class="cad-cleanup-group">
+                    <legend>References &amp; appearance</legend>
+                    <label class="cad-cleanup-row">
+                        <span><span class="cad-cleanup-title">Strip saved XREF paths</span><span class="cad-settings-help" id="clean-strip-help">Remove stored folder paths from external references.</span></span>
+                        <input type="checkbox" role="switch" id="settings_clean_stripXrefs" aria-describedby="clean-strip-help" aria-label="Strip saved XREF paths">
+                    </label>
+                    <label class="cad-cleanup-row">
+                        <span><span class="cad-cleanup-title">Set object properties to ByLayer</span><span class="cad-settings-help" id="clean-layer-help">Use layer settings for object appearance.</span></span>
+                        <input type="checkbox" role="switch" id="settings_clean_setByLayer" aria-describedby="clean-layer-help" aria-label="Set object properties to ByLayer">
+                    </label>
+                    <label class="cad-cleanup-row">
+                        <span><span class="cad-cleanup-title">Set non-wall hatches to color 9</span><span class="cad-settings-help" id="clean-hatch-help">Apply AutoCAD color 9 to hatches other than walls.</span></span>
+                        <input type="checkbox" role="switch" id="settings_clean_hatchColor" aria-describedby="clean-hatch-help" aria-label="Set non-wall hatches to color 9">
+                    </label>
+                </fieldset>
+                <fieldset class="cad-cleanup-group">
+                    <legend>Drawing maintenance</legend>
+                    <label class="cad-cleanup-row">
+                        <span><span class="cad-cleanup-title">Purge unused items</span><span class="cad-settings-help" id="clean-purge-help">Remove unused definitions from the drawing.</span></span>
+                        <input type="checkbox" role="switch" id="settings_clean_purge" aria-describedby="clean-purge-help" aria-label="Purge unused items">
+                    </label>
+                    <label class="cad-cleanup-row">
+                        <span><span class="cad-cleanup-title">Audit drawing</span><span class="cad-settings-help" id="clean-audit-help">Check the drawing for errors.</span></span>
+                        <input type="checkbox" role="switch" id="settings_clean_audit" aria-describedby="clean-audit-help" aria-label="Audit drawing">
+                    </label>
+                </fieldset>
             </div>
 
             <!-- CAD Tool Defaults Section -->
@@ -1697,16 +1729,7 @@
                         <span class="slider round"></span>
                     </label>
                 </div>
-                <div class="setting-row">
-                    <div class="setting-info">
-                        <div class="setting-label">Group Deliverables by Project</div>
-                        <div class="setting-desc">When enabled, the Projects tab groups deliverables under each project instead of showing one row per deliverable.</div>
-                    </div>
-                    <label class="switch">
-                        <input type="checkbox" id="settings_groupDeliverablesByProject">
-                        <span class="slider round"></span>
-                    </label>
-                </div>
+
             </div>
 
             <!-- Danger Zone -->
@@ -3448,9 +3471,9 @@
     </section>
     <div id="updateCheckIndicator" class="corner-status" hidden>Checking for updates...</div>
     <script src="project-pages-editor/dist/project-pages-editor.js?v=20260729-page-email-attach"></script>
-    <script src="script.js?v=20260909-settings-appearance"></script>
-    <script src="industry-projects.js?v=20260909-cmd-add-deliverable"></script>
-    <script src="industry-shell.js?v=20260909-project-settings"></script>
+    <script src="script.js?v=20260909-deliverables"></script>
+    <script src="industry-projects.js?v=20260909-deliverables"></script>
+    <script src="industry-shell.js?v=20260909-modern-dialogs"></script>
     <script src="symbol_counter_ui.js?v=20260818-delete-actions"></script>
 </body>
 

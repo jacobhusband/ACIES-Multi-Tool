@@ -10,7 +10,7 @@
 }
 
 /* Native action disclosures: compact chrome, readable labels, original buttons. */
-/* Display the supplied artwork unchanged, framing out its generous margins. */
+/* Keep the supplied letterforms; remove the dark ground with a luminance filter. */
 .brand-mark.supplied-logo {
   position: relative;
   display: block;
@@ -19,6 +19,7 @@
   overflow: hidden;
   border-radius: 4px;
   flex: none;
+  background: transparent;
 }
 .brand-mark.supplied-logo img {
   position: absolute;
@@ -27,6 +28,7 @@
   height: auto;
   left: -29.73%;
   top: -64.1%;
+  filter: url(#acies-logo-ink);
 }
 .app-loader .brand-mark.supplied-logo { width: min(320px, 75vw); }
 
@@ -465,4 +467,197 @@ body:has(#appLoader:not(.hidden)) .cmd-dock { display: none; }
   #tools-panel .tl-plugin-row { min-width: 410px; }
   #timesheets-panel .timesheet-weekly-total { padding: 0; }
   .cmd-dock-bar { gap: 8px; padding: 0 12px; }
+}
+
+/* Workspace overlays share opaque, theme-aware surfaces and softer geometry. */
+:root {
+  --workspace-overlay-surface: color-mix(in srgb, var(--modern-ground) 91%, var(--text));
+  --workspace-overlay-border: color-mix(in srgb, var(--text) 19%, var(--modern-ground));
+}
+.modern-menu-panel,
+.projects-filter-menu {
+  background: var(--workspace-overlay-surface);
+  border: 1px solid var(--workspace-overlay-border);
+  border-radius: 16px;
+  padding: 8px;
+  box-shadow: var(--shadow-lg);
+}
+.modern-menu-panel { width: 292px; }
+#projects-panel #projectOptionsMenu .modern-menu-panel > button {
+  min-height: 43px;
+  padding: 11px 12px;
+  border-radius: 8px;
+}
+.modern-menu-heading { padding: 14px 8px 6px; letter-spacing: .08em; text-transform: uppercase; }
+.modern-menu-panel > button[aria-pressed]::after {
+  content: "";
+  width: 28px;
+  height: 16px;
+  flex: none;
+  margin-left: auto;
+  border-radius: 20px;
+  background: radial-gradient(circle at 8px 8px, var(--modern-muted) 5px, transparent 6px), var(--modern-line);
+}
+.modern-menu-panel > button[aria-pressed="true"]::after {
+  content: "";
+  background: radial-gradient(circle at 20px 8px, var(--btn-text-on-accent) 5px, transparent 6px), var(--accent);
+}
+.projects-filter-option { border-radius: 8px; padding: 10px 12px; font-family: var(--modern-font); }
+:is(#settingsDlg, #helpDlg) {
+  width: min(960px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  padding: 0;
+  border: 1px solid var(--workspace-overlay-border);
+  border-radius: 18px;
+  background: var(--workspace-overlay-surface);
+  color: var(--text);
+  font: 400 14px/1.6 var(--modern-font);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+:is(#settingsDlg, #helpDlg)::backdrop { background: var(--backdrop-bg); backdrop-filter: blur(5px); }
+:is(#settingsDlg, #helpDlg) .modal-header {
+  padding: 18px 24px;
+  border-bottom: 1px solid var(--modern-line);
+  background: transparent;
+}
+:is(#settingsDlg, #helpDlg) .modal-header .title { font: 500 17px/1.5 var(--modern-font); }
+:is(#settingsDlg, #helpDlg) .btn { border-radius: 8px; font-family: var(--modern-font); }
+#settingsDlg .settings-layout {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  padding: 0;
+  height: min(580px, calc(100dvh - 190px));
+  max-height: none;
+  overflow: hidden;
+  gap: 0;
+}
+.settings-navigation, #helpDlg .help-dlg-sidebar {
+  padding: 18px 12px;
+  background: var(--modern-ground);
+  border-right: 1px solid var(--modern-line);
+  overflow-y: auto;
+  min-height: 0;
+}
+.settings-navigation button, #helpDlg .help-topic-btn {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  margin: 0 0 4px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--modern-muted);
+  text-align: left;
+  cursor: pointer;
+  font: 400 13px/1.5 var(--modern-font);
+}
+.settings-navigation button:hover, #helpDlg .help-topic-btn:hover { background: var(--hover-overlay); color: var(--text); }
+.settings-navigation button[aria-pressed="true"], #helpDlg .help-topic-btn.active {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--modern-ground));
+  border-color: transparent;
+}
+.settings-navigation button:focus-visible,
+#helpDlg .help-topic-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.settings-content { min-width: 0; min-height: 0; padding: 28px 30px; overflow-y: auto; }
+.settings-page[hidden] { display: none; }
+#settingsDlg .settings-page > .section-title {
+  margin: 0 0 26px !important;
+  font: 500 24px/1.3 var(--modern-font);
+  letter-spacing: -.02em;
+}
+#settingsDlg .label { font: 500 12px/1.5 var(--modern-font); text-transform: none; letter-spacing: 0; color: var(--modern-muted); }
+#settingsDlg input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), #settingsDlg select {
+  border: 1px solid var(--modern-line);
+  border-radius: 8px;
+  background: var(--modern-ground);
+  font-family: var(--modern-font);
+  min-height: 40px;
+}
+#settingsDlg input[type="checkbox"] { accent-color: var(--accent); }
+#settingsDlg .settings-page > .label { display: block; margin-bottom: 8px; }
+#settingsDlg .settings-page .col-6 { grid-column: span 12; }
+#settingsDlg #settings_discipline { height: auto !important; flex-wrap: wrap; padding: 0; gap: 8px; background: transparent; }
+#settingsDlg #settings_discipline .radio-label { padding: 9px 12px; border: 1px solid var(--modern-line); border-radius: 8px; color: var(--modern-muted); }
+#settingsDlg .inline { flex-wrap: wrap; }
+#settingsDlg .inline > input { min-width: 0; }
+#settingsDlg .tiny, #settingsDlg .setting-desc { color: var(--modern-muted); }
+#settingsDlg .setting-row { gap: 16px; flex-wrap: wrap; }
+
+/* CAD settings: readable version choices and full-row cleanup switches. */
+#settingsDlg .settings-page:has(.cad-settings-panel) > .section-title { margin-bottom: 8px !important; }
+#settingsDlg .cad-settings-panel { min-width: 0; font-family: var(--modern-font); }
+#settingsDlg .cad-settings-intro { margin: 0; color: var(--modern-muted); font-size: 13px; line-height: 1.6; }
+#settingsDlg .cad-settings-intro code { padding: 2px 5px; border-radius: 4px; color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--modern-ground)); }
+#settingsDlg .cad-version-fieldset, #settingsDlg .cad-cleanup-group { min-width: 0; border: 0; padding: 0; margin: 24px 0 0; }
+#settingsDlg .cad-version-fieldset { margin-bottom: 24px; }
+#settingsDlg .cad-version-fieldset legend, #settingsDlg .cad-settings-label { display: block; padding: 0; margin-bottom: 10px; color: var(--text); font-size: 13px; font-weight: 500; }
+#settingsDlg .cad-version-choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+#settingsDlg .cad-version-choices .radio-label { display: flex; align-items: center; gap: 10px; padding: 14px 12px; margin: 0; border: 1px solid var(--modern-line); border-radius: 8px; background: var(--modern-ground); color: var(--text); font-size: 13px; cursor: pointer; }
+#settingsDlg .cad-version-choices .radio-label:has(:checked) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--modern-ground)); }
+#settingsDlg .cad-version-choices input[type="radio"] { appearance: auto; width: 16px; height: 16px; min-height: 0; flex: 0 0 16px; margin: 0; padding: 0; accent-color: var(--accent); box-shadow: none; }
+#settingsDlg .cad-version-choices > :not(label) { grid-column: 1 / -1; }
+#settingsDlg #settings_autocadPath { display: block; width: 100%; min-width: 0; resize: vertical; border: 1px solid var(--modern-line); border-radius: 8px; padding: 13px; background: var(--modern-ground); color: var(--text); font: 12px/1.65 Consolas, monospace; overflow-wrap: anywhere; }
+#settingsDlg .cad-settings-help { display: block; margin: 6px 0 0; color: var(--modern-muted); font-size: 12px; line-height: 1.6; font-weight: 400; }
+#settingsDlg .cad-settings-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
+#settingsDlg .cad-cleanup-group legend { padding: 0; margin-bottom: 3px; color: var(--modern-muted); font-size: 11px; font-weight: 500; letter-spacing: 1px; text-transform: uppercase; }
+#settingsDlg .cad-cleanup-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 48px; padding: 14px 0; border-bottom: 1px solid var(--modern-line); cursor: pointer; }
+#settingsDlg .cad-cleanup-row:last-child { border-bottom: 0; padding-bottom: 0; }
+#settingsDlg .cad-cleanup-row > span { min-width: 0; }
+#settingsDlg .cad-cleanup-title { display: block; color: var(--text); font-size: 13px; font-weight: 500; }
+#settingsDlg .cad-cleanup-row input[type="checkbox"] { appearance: none; position: relative; flex: 0 0 34px; width: 34px; height: 20px; padding: 0; margin: 0; border: 1px solid var(--modern-line); border-radius: 12px; background: var(--modern-ground); box-shadow: none; cursor: pointer; }
+#settingsDlg .cad-cleanup-row input::after { content: ""; position: absolute; width: 12px; height: 12px; top: 3px; left: 3px; border-radius: 50%; background: var(--modern-muted); }
+#settingsDlg .cad-cleanup-row input:checked { border-color: var(--accent); background: var(--accent); }
+#settingsDlg .cad-cleanup-row input:checked::after { left: 17px; background: var(--btn-text-on-accent); }
+#settingsDlg .cad-settings-panel input:focus-visible, #settingsDlg .cad-settings-panel textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+@media (max-width: 420px) {
+  #settingsDlg .cad-version-choices { grid-template-columns: minmax(0, 1fr); }
+}
+
+.workspace-dialog-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 24px; border-top: 1px solid var(--modern-line); }
+.workspace-dialog-footer .muted { color: var(--modern-muted); font-size: 12px; }
+#settingsDlg .workspace-dialog-done { background: var(--accent); color: var(--btn-text-on-accent); padding: 9px 22px; }
+#helpDlg .help-dlg-body { height: min(580px, calc(100dvh - 120px)); max-height: none; overflow: hidden; }
+#helpDlg .help-dlg-sidebar { flex-basis: 200px; }
+#helpDlg .help-dlg-content { padding: 28px 30px; line-height: 1.75; }
+#helpDlg h2 { font: 500 24px/1.3 var(--modern-font); margin-bottom: 18px; }
+#helpDlg h3 { font: 500 15px/1.5 var(--modern-font); padding-top: 20px; border-top: 1px solid var(--modern-line); }
+#helpDlg .help-dlg-content li { margin-bottom: 10px; }
+#helpDlg .tiny { color: var(--modern-muted); }
+.scratchpad-panel {
+  top: calc(var(--header-height) + 12px);
+  right: 12px;
+  bottom: 12px;
+  width: calc(var(--scratchpad-width) - 24px);
+  min-width: 0;
+  background: var(--workspace-overlay-surface);
+  border: 1px solid var(--workspace-overlay-border);
+  border-radius: 16px;
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  font: 400 14px/1.7 var(--modern-font);
+}
+.scratchpad-panel-header { padding: 18px 20px; background: transparent; border-color: var(--modern-line); }
+.scratchpad-panel-title { font: 500 16px/1.5 var(--modern-font); color: var(--text); }
+#scratchpadCloseBtn { margin-left: auto; }
+.scratchpad-toolbar { padding: 10px 14px; background: transparent; border-color: var(--modern-line); gap: 6px; }
+.scratchpad-fmt-btn, .scratchpad-tool-btn, .scratchpad-color-picker { border-radius: 7px; border-color: transparent; background: transparent; }
+.scratchpad-editor { padding: 22px; line-height: 1.8; color: var(--text); }
+.scratchpad-editor:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+.scratchpad-footer { display: flex; align-items: center; gap: 12px; padding: 12px 20px; border-top: 1px solid var(--modern-line); color: var(--modern-muted); font-size: 12px; }
+.scratchpad-footer .scratchpad-status { color: var(--modern-muted); font-size: inherit; }
+@media (max-width: 900px) {
+  :root { --scratchpad-width: min(420px, 48vw); }
+}
+@media (max-width: 700px) {
+  #settingsDlg .settings-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .settings-navigation, #helpDlg .help-dlg-sidebar { display: flex; flex-direction: row; flex-wrap: wrap; gap: 4px; padding: 8px; border-right: 0; border-bottom: 1px solid var(--modern-line); max-height: 148px; flex: none; }
+  .settings-navigation button, #helpDlg .help-topic-btn { width: auto; padding: 8px 10px; margin: 0; }
+  .settings-content, #helpDlg .help-dlg-content { padding: 20px; }
+  #helpDlg .help-dlg-body { flex-direction: column; }
+  body.scratchpad-open { padding-right: 0; }
+  body.scratchpad-open .app-header { margin-right: 0; }
+  body.scratchpad-open .cmd-dock { right: 0; }
+  .scratchpad-panel { width: min(420px, calc(100vw - 24px)); bottom: calc(var(--modern-command-height, 52px) + 12px); }
 }
